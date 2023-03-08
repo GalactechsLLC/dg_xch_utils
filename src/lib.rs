@@ -6,3 +6,4 @@ pub mod plots;
 pub mod proof_of_space;
 pub mod types;
 pub mod utils;
+pub mod wallet;

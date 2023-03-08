@@ -235,18 +235,24 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_coin_records_by_puzzle_hash(
         &self,
         puzzle_hash: &Bytes32,
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, Error> {
         let mut request_body = Map::new();
         request_body.insert("puzzle_hash".to_string(), json!(puzzle_hash));
-        request_body.insert(
-            "include_spent_coins".to_string(),
-            json!(include_spent_coins),
-        );
-        request_body.insert("start_height".to_string(), json!(start_height));
-        request_body.insert("end_height".to_string(), json!(end_height));
+        if let Some(include_spent_coins) = include_spent_coins {
+            request_body.insert(
+                "include_spent_coins".to_string(),
+                json!(include_spent_coins),
+            );
+        }
+        if let Some(start_height) = start_height {
+            request_body.insert("start_height".to_string(), json!(start_height));
+        }
+        if let Some(end_height) = end_height {
+            request_body.insert("end_height".to_string(), json!(end_height));
+        }
         Ok(post::<CoinRecordAryResp>(
             &self.client,
             &get_url(
@@ -261,19 +267,23 @@ impl FullnodeAPI for FullnodeClient {
     }
     async fn get_coin_records_by_puzzle_hashes(
         &self,
-        puzzle_hashes: Vec<&Bytes32>,
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        puzzle_hashes: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, Error> {
         let mut request_body = Map::new();
         request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
         request_body.insert(
-            "include_spent_coins".to_string(),
-            json!(include_spent_coins),
+        "include_spent_coins".to_string(),
+        json!(include_spent_coins.unwrap_or(true)),
         );
-        request_body.insert("start_height".to_string(), json!(start_height));
-        request_body.insert("end_height".to_string(), json!(end_height));
+        if let Some(sh) = start_height {
+            request_body.insert("start_height".to_string(), json!(sh));
+        }
+        if let Some(eh) = end_height {
+            request_body.insert("end_height".to_string(), json!(eh));
+        }
         Ok(post::<CoinRecordAryResp>(
             &self.client,
             &get_url(
@@ -300,7 +310,7 @@ impl FullnodeAPI for FullnodeClient {
     }
     async fn get_coin_records_by_parent_ids(
         &self,
-        parent_ids: Vec<&Bytes32>,
+        parent_ids: &[Bytes32],
         include_spent_coins: bool,
         start_height: u32,
         end_height: u32,

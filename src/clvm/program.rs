@@ -37,6 +37,19 @@ impl Program {
         }
     }
 
+    pub fn as_list(&self) -> Vec<Program> {
+        match self.as_pair() {
+            None => {
+                vec![]
+            }
+            Some((first, rest)) => {
+                let mut rtn: Vec<Program> = vec![first.clone()];
+                rtn.extend(rest.as_list());
+                rtn
+            }
+        }
+    }
+
     pub fn as_atom_list(&self) -> Vec<Vec<u8>> {
         match self.as_pair() {
             None => {
@@ -250,7 +263,10 @@ impl Program {
     pub fn tree_hash(&self) -> Bytes32 {
         let sexp = match sexp_from_bytes(&self.serialized) {
             Ok(node) => node,
-            Err(_) => NULL.clone(),
+            Err(e) => {
+                println!("ERROR: {:?}", e);
+                NULL.clone()
+            },
         };
         Bytes32::new(tree_hash(&sexp))
     }
@@ -302,6 +318,24 @@ macro_rules! impl_ints {
                         as_bytes = &as_bytes[1..];
                     }
                     as_bytes.to_vec().try_into()
+                }
+            }
+            impl TryInto<$name> for &Program {
+                type Error = Error;
+
+                fn try_into(self) -> Result<$name, Self::Error> {
+                    let as_atom = self.as_vec().ok_or(Error::new(ErrorKind::InvalidInput, "Invalid program for $name"))?;
+                    if as_atom.len() > $size {
+                        return Err(Error::new(ErrorKind::InvalidInput, "Invalid program for $name"));
+                    } else {
+                        Ok($name::from_le_bytes(as_atom.as_slice().try_into().map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid program for $name: {:?}", e)))?))
+                    }
+                }
+            }
+            impl TryInto<$name> for Program {
+                type Error = Error;
+                fn try_into(self) -> Result<$name, Self::Error> {
+                    (&self).try_into()
                 }
             }
         )*
