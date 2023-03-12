@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 
 lazy_static! {
-    pub static ref NULL: SExp = SExp::Atom(vec![0x80].into());
+    pub static ref NULL: SExp = SExp::Atom(vec![].into());
     pub static ref ONE: SExp = SExp::Atom(vec![1u8].into());
 }
 

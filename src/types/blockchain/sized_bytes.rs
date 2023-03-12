@@ -1,3 +1,4 @@
+use crate::clvm::program::Program;
 use blst::min_pk::{PublicKey, SecretKey, Signature};
 use hex::FromHexError;
 use hex::{decode, encode};
@@ -7,7 +8,6 @@ use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::io::{Error, ErrorKind};
-use crate::clvm::program::Program;
 
 pub fn prep_hex_str(to_fix: &str) -> String {
     let lc = to_fix.to_lowercase();
@@ -277,7 +277,6 @@ impl_sized_bytes!(
     Bytes96, 96, Bytes96Visitor;
     Bytes192, 192, Bytes192Visitor
 );
-
 
 impl From<&Bytes32> for SecretKey {
     fn from(val: &Bytes32) -> Self {

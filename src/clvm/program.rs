@@ -43,7 +43,7 @@ impl Program {
                 vec![]
             }
             Some((first, rest)) => {
-                let mut rtn: Vec<Program> = vec![first.clone()];
+                let mut rtn: Vec<Program> = vec![first];
                 rtn.extend(rest.as_list());
                 rtn
             }
@@ -243,10 +243,13 @@ impl Program {
     pub fn new(serialized: Vec<u8>) -> Self {
         match sexp_from_bytes(&serialized) {
             Ok(sexp) => Program { serialized, sexp },
-            Err(_) => Program {
-                serialized: vec![],
-                sexp: NULL.clone(),
-            },
+            Err(e) => {
+                println!("Error building Program: {:?}", e);
+                Program {
+                    serialized: vec![],
+                    sexp: NULL.clone(),
+                }
+            }
         }
     }
     pub fn null() -> Self {
@@ -266,7 +269,7 @@ impl Program {
             Err(e) => {
                 println!("ERROR: {:?}", e);
                 NULL.clone()
-            },
+            }
         };
         Bytes32::new(tree_hash(&sexp))
     }

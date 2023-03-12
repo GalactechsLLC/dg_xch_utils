@@ -17,14 +17,14 @@ pub fn tree_hash(sexp: &SExp) -> Vec<u8> {
     match sexp {
         SExp::Pair(pair) => {
             let mut byte_buf = Vec::new();
-            byte_buf.extend([b'2']);
+            byte_buf.push(2);
             byte_buf.append(&mut tree_hash(&pair.first));
             byte_buf.append(&mut tree_hash(&pair.rest));
             hash_256(&byte_buf)
         }
         SExp::Atom(atom) => {
             let mut byte_buf = Vec::new();
-            byte_buf.extend([b'1']);
+            byte_buf.push(1);
             byte_buf.extend(&atom.data);
             hash_256(&byte_buf)
         }

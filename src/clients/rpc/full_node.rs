@@ -275,8 +275,8 @@ impl FullnodeAPI for FullnodeClient {
         let mut request_body = Map::new();
         request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
         request_body.insert(
-        "include_spent_coins".to_string(),
-        json!(include_spent_coins.unwrap_or(true)),
+            "include_spent_coins".to_string(),
+            json!(include_spent_coins.unwrap_or(true)),
         );
         if let Some(sh) = start_height {
             request_body.insert("start_height".to_string(), json!(sh));

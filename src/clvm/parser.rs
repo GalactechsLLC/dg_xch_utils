@@ -54,7 +54,9 @@ pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
             }
         }
     }
-    val_buf.pop().ok_or_else(|| Error::new(ErrorKind::InvalidData, "Failed to Parse SExp"))
+    val_buf
+        .pop()
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Failed to Parse SExp"))
 }
 
 pub fn sexp_to_bytes(sexp: &SExp) -> std::io::Result<Vec<u8>> {

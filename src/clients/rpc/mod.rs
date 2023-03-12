@@ -54,7 +54,6 @@ where
                     .text()
                     .await
                     .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
-                println!("Response: {}", body);
                 serde_json::from_str(body.as_str()).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,

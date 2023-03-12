@@ -1,10 +1,10 @@
+use crate::clvm::program::Program;
+use crate::clvm::program::SerializedProgram;
 use crate::types::blockchain::coin::Coin;
 use crate::types::blockchain::coin_spend::CoinSpend;
 use crate::types::blockchain::sized_bytes::SizedBytes;
 use crate::types::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::types::blockchain::utils::atom_to_int;
-use crate::clvm::program::Program;
-use crate::clvm::program::SerializedProgram;
 use crate::types::pool::PoolState;
 use lazy_static::lazy_static;
 use num_traits::{ToPrimitive, Zero};
@@ -16,29 +16,47 @@ const POOL_WAITING_ROOM_MOD_HEX: &str = "ff02ffff01ff02ffff03ff82017fffff01ff04f
 const POOL_MEMBER_MOD_HEX: &str = "ff02ffff01ff02ffff03ff8202ffffff01ff02ff16ffff04ff02ffff04ff05ffff04ff8204bfffff04ff8206bfffff04ff82017fffff04ffff0bffff19ff2fffff18ffff019100ffffffffffffffffffffffffffffffffff8202ff8080ff0bff82017f80ff8080808080808080ffff01ff04ffff04ff08ffff04ff17ffff04ffff02ff1effff04ff02ffff04ff82017fff80808080ff80808080ffff04ffff04ff1cffff04ff5fffff04ff8206bfff80808080ff80808080ff0180ffff04ffff01ffff32ff3d33ff3effff04ffff04ff1cffff04ff0bffff04ff17ff80808080ffff04ffff04ff1cffff04ff05ffff04ff2fff80808080ffff04ffff04ff0affff04ff5fff808080ffff04ffff04ff14ffff04ffff0bff5fffff012480ff808080ff8080808080ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff1effff04ff02ffff04ff09ff80808080ffff02ff1effff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080";
 const P2_SINGLETON_OR_DELAYED_MOD_HEX: &str = "ff02ffff01ff02ffff03ff82017fffff01ff04ffff04ff38ffff04ffff0bffff02ff2effff04ff02ffff04ff05ffff04ff81bfffff04ffff02ff3effff04ff02ffff04ffff04ff05ffff04ff0bff178080ff80808080ff808080808080ff82017f80ff808080ffff04ffff04ff3cffff01ff248080ffff04ffff04ff28ffff04ff82017fff808080ff80808080ffff01ff04ffff04ff24ffff04ff2fff808080ffff04ffff04ff2cffff04ff5fffff04ff81bfff80808080ffff04ffff04ff10ffff04ff81bfff808080ff8080808080ff0180ffff04ffff01ffffff49ff463fffff5002ff333cffff04ff0101ffff02ff02ffff03ff05ffff01ff02ff36ffff04ff02ffff04ff0dffff04ffff0bff26ffff0bff2aff1280ffff0bff26ffff0bff26ffff0bff2aff3a80ff0980ffff0bff26ff0bffff0bff2aff8080808080ff8080808080ffff010b80ff0180ffff0bff26ffff0bff2aff3480ffff0bff26ffff0bff26ffff0bff2aff3a80ff0580ffff0bff26ffff02ff36ffff04ff02ffff04ff07ffff04ffff0bff2aff2a80ff8080808080ffff0bff2aff8080808080ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff3effff04ff02ffff04ff09ff80808080ffff02ff3effff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080";
 lazy_static! {
-    pub static ref SINGLETON_LAUNCHER: Program = SerializedProgram::from_hex(SINGLETON_LAUNCHER_HEX).unwrap().to_program().unwrap();
+    pub static ref SINGLETON_LAUNCHER: Program =
+        SerializedProgram::from_hex(SINGLETON_LAUNCHER_HEX)
+            .unwrap()
+            .to_program()
+            .unwrap();
     pub static ref SINGLETON_LAUNCHER_HASH: Bytes32 = SINGLETON_LAUNCHER.tree_hash();
-    pub static ref SINGLETON_MOD: Program = SerializedProgram::from_hex(SINGLETON_MOD_HEX).unwrap().to_program().unwrap();
+    pub static ref SINGLETON_MOD: Program = SerializedProgram::from_hex(SINGLETON_MOD_HEX)
+        .unwrap()
+        .to_program()
+        .unwrap();
     pub static ref SINGLETON_MOD_HASH: Bytes32 = SINGLETON_MOD.tree_hash();
-    pub static ref POOL_WAITING_ROOM_MOD: Program = SerializedProgram::from_hex(POOL_WAITING_ROOM_MOD_HEX).unwrap().to_program().unwrap();
-    pub static ref POOL_MEMBER_MOD: Program = SerializedProgram::from_hex(POOL_MEMBER_MOD_HEX).unwrap().to_program().unwrap();
-    pub static ref P2_SINGLETON_OR_DELAYED_MOD: Program = SerializedProgram::from_hex(P2_SINGLETON_OR_DELAYED_MOD_HEX).unwrap().to_program().unwrap();
+    pub static ref POOL_WAITING_ROOM_MOD: Program =
+        SerializedProgram::from_hex(POOL_WAITING_ROOM_MOD_HEX)
+            .unwrap()
+            .to_program()
+            .unwrap();
+    pub static ref POOL_MEMBER_MOD: Program = SerializedProgram::from_hex(POOL_MEMBER_MOD_HEX)
+        .unwrap()
+        .to_program()
+        .unwrap();
+    pub static ref P2_SINGLETON_OR_DELAYED_MOD: Program =
+        SerializedProgram::from_hex(P2_SINGLETON_OR_DELAYED_MOD_HEX)
+            .unwrap()
+            .to_program()
+            .unwrap();
 }
 
-pub fn puzzle_for_singleton(
-    launcher_id: &Bytes32,
-    inner_puz: &Program,
-) -> Result<Program, Error> {
+pub fn puzzle_for_singleton(launcher_id: &Bytes32, inner_puz: &Program) -> Result<Program, Error> {
     let args = vec![
         (
             SINGLETON_MOD_HASH.clone().try_into()?,
-            (launcher_id.try_into()?, SINGLETON_LAUNCHER_HASH.clone().try_into()?).try_into()?,
+            (
+                launcher_id.try_into()?,
+                SINGLETON_LAUNCHER_HASH.clone().try_into()?,
+            )
+                .try_into()?,
         )
             .try_into()?,
         inner_puz.clone(),
     ];
-
-    Ok(SINGLETON_MOD.curry(&args)?)
+    SINGLETON_MOD.curry(&args)
 }
 
 pub fn create_waiting_room_inner_puzzle(
@@ -86,13 +104,10 @@ pub fn create_pooling_inner_puzzle(
         pool_reward_prefix.try_into()?,
         pool_waiting_room_inner_hash.try_into()?,
     ];
-    Ok(POOL_MEMBER_MOD.curry(&args)?)
+    POOL_MEMBER_MOD.curry(&args)
 }
 
-pub fn create_full_puzzle(
-    inner_puzzle: &Program,
-    launcher_id: &Bytes32,
-) -> Result<Program, Error> {
+pub fn create_full_puzzle(inner_puzzle: &Program, launcher_id: &Bytes32) -> Result<Program, Error> {
     puzzle_for_singleton(launcher_id, inner_puzzle)
 }
 
@@ -135,14 +150,14 @@ pub fn get_delay_puzzle_info_from_launcher_spend(
     let seconds_vec = as_map.get(&Program::new("t".as_bytes().to_vec())).unwrap();
     let hash_vec = as_map.get(&Program::new("h".as_bytes().to_vec())).unwrap();
     Ok((
-        atom_to_int(&seconds_vec.as_vec().unwrap()).to_u64().ok_or_else(||Error::new(ErrorKind::InvalidInput, "Failed to convert Atom to Int"))?,
+        atom_to_int(&seconds_vec.as_vec().unwrap())
+            .to_u64()
+            .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Failed to convert Atom to Int"))?,
         hash_vec.try_into()?,
     ))
 }
 
-pub fn get_template_singleton_inner_puzzle(
-    inner_puzzle: &Program,
-) -> Result<Program, Error> {
+pub fn get_template_singleton_inner_puzzle(inner_puzzle: &Program) -> Result<Program, Error> {
     Ok(inner_puzzle.uncurry()?.0)
 }
 
@@ -153,7 +168,10 @@ pub fn get_seconds_and_delayed_puzhash_from_p2_singleton_puzzle(
         Ok((_, args)) => {
             let as_list = args.as_list();
             if as_list.len() < 5 {
-                return Err(Error::new(ErrorKind::Other, "Failed to unpack inner puzzle"));
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "Failed to unpack inner puzzle",
+                ));
             }
             let seconds_delay = as_list[3].clone();
             let delayed_puzzle_hash = as_list[4].clone();
@@ -162,7 +180,7 @@ pub fn get_seconds_and_delayed_puzhash_from_p2_singleton_puzzle(
                 seconds_delay_int,
                 delayed_puzzle_hash
                     .as_atom()
-                    .unwrap_or(Program::new(Vec::new()))
+                    .unwrap_or_else(|| Program::new(Vec::new()))
                     .serialized
                     .into(),
             ))
@@ -173,7 +191,7 @@ pub fn get_seconds_and_delayed_puzhash_from_p2_singleton_puzzle(
 
 pub fn is_pool_singleton_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error> {
     let inner_f = get_template_singleton_inner_puzzle(inner_puzzle)?;
-    Ok(vec![POOL_WAITING_ROOM_MOD.clone(), POOL_MEMBER_MOD.clone()].contains(&inner_f.into()))
+    Ok(vec![POOL_WAITING_ROOM_MOD.clone(), POOL_MEMBER_MOD.clone()].contains(&inner_f))
 }
 
 pub fn is_pool_waitingroom_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error> {
@@ -186,24 +204,24 @@ pub fn is_pool_member_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error
     Ok(POOL_MEMBER_MOD.clone() == inner_f)
 }
 
-pub fn get_most_recent_singleton_coin_from_coin_spend(coin_solution: &CoinSpend) -> Result<Option<Coin>, Error> {
+pub fn get_most_recent_singleton_coin_from_coin_spend(
+    coin_solution: &CoinSpend,
+) -> Result<Option<Coin>, Error> {
     for coin in coin_solution.additions()? {
         if coin.amount % 2 == 1 {
             return Ok(Some(coin));
         }
     }
-    return Ok(None);
+    Ok(None)
 }
 
-pub fn get_pubkey_from_member_inner_puzzle(
-    inner_puzzle: &Program,
-) -> Result<Bytes48, Error> {
+pub fn get_pubkey_from_member_inner_puzzle(inner_puzzle: &Program) -> Result<Bytes48, Error> {
     match uncurry_pool_member_inner_puzzle(inner_puzzle) {
         Ok((_, _, _, pubkey_program, _, _)) => Ok(pubkey_program
             .as_atom()
-            .unwrap_or(Program::new(Vec::new()))
+            .unwrap_or_else(|| Program::new(Vec::new()))
             .try_into()?),
-        Err(_) => Err(Error::new(ErrorKind::Other,"Unable to extract pubkey")),
+        Err(_) => Err(Error::new(ErrorKind::Other, "Unable to extract pubkey")),
     }
 }
 
@@ -215,7 +233,10 @@ pub fn uncurry_pool_member_inner_puzzle(
             Ok((inner_f, args)) => {
                 let as_list = args.as_list();
                 if as_list.len() < 5 {
-                    return Err(Error::new(ErrorKind::Other, "Failed to unpack inner puzzle"));
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "Failed to unpack inner puzzle",
+                    ));
                 }
                 let target_puzzle_hash = as_list[0].clone();
                 let p2_singleton_hash = as_list[1].clone();
@@ -231,9 +252,15 @@ pub fn uncurry_pool_member_inner_puzzle(
                     escape_puzzlehash,
                 ))
             }
-            Err(_) => Err(Error::new(ErrorKind::Other, "Failed to unpack inner puzzle")),
+            Err(_) => Err(Error::new(
+                ErrorKind::Other,
+                "Failed to unpack inner puzzle",
+            )),
         },
-        false => Err(Error::new(ErrorKind::Other, "Attempting to unpack a non-waitingroom inner puzzle")),
+        false => Err(Error::new(
+            ErrorKind::Other,
+            "Attempting to unpack a non-waitingroom inner puzzle",
+        )),
     }
 }
 
@@ -241,12 +268,18 @@ pub fn uncurry_pool_waitingroom_inner_puzzle(
     inner_puzzle: &Program,
 ) -> Result<(Program, Program, Program, Program), Error> {
     match is_pool_waitingroom_inner_puzzle(inner_puzzle)? {
-        false => Err(Error::new(ErrorKind::Other, "Attempting to unpack a non-waitingroom inner puzzle")),
+        false => Err(Error::new(
+            ErrorKind::Other,
+            "Attempting to unpack a non-waitingroom inner puzzle",
+        )),
         true => match inner_puzzle.uncurry() {
             Ok((_, args)) => {
                 let as_list = args.as_list();
                 if as_list.len() < 5 {
-                    return Err(Error::new(ErrorKind::Other,"Failed to unpack inner puzzle"));
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "Failed to unpack inner puzzle",
+                    ));
                 }
                 let target_puzzle_hash = as_list[0].clone();
                 let p2_singleton_hash = as_list[1].clone();
@@ -259,14 +292,15 @@ pub fn uncurry_pool_waitingroom_inner_puzzle(
                     p2_singleton_hash,
                 ))
             }
-            Err(e) => Err(Error::new(ErrorKind::Other, format!("Failed to unpack inner puzzle: {:?}", e))),
+            Err(e) => Err(Error::new(
+                ErrorKind::Other,
+                format!("Failed to unpack inner puzzle: {:?}", e),
+            )),
         },
     }
 }
 
-pub fn get_inner_puzzle_from_puzzle(
-    full_puzzle: &Program,
-) -> Result<Option<Program>, Error> {
+pub fn get_inner_puzzle_from_puzzle(full_puzzle: &Program) -> Result<Option<Program>, Error> {
     match full_puzzle.uncurry() {
         Ok((_, args)) => {
             let list = args.as_list();
@@ -283,16 +317,14 @@ pub fn get_inner_puzzle_from_puzzle(
     }
 }
 
-pub fn pool_state_from_extra_data(
-    extra_data: Program,
-) -> Result<Option<PoolState>, Error> {
+pub fn pool_state_from_extra_data(extra_data: Program) -> Result<Option<PoolState>, Error> {
     let mut state_bytes: Option<Vec<u8>> = None;
     match extra_data.to_map() {
         Ok(extra_data) => {
             for (key, value) in extra_data {
-                let key_vec = key.as_vec().unwrap_or(vec![]);
+                let key_vec = key.as_vec().unwrap_or_default();
                 if key_vec.len() == 1 && key_vec == b"p".to_vec() {
-                    state_bytes = Some(value.as_vec().unwrap_or(vec![]));
+                    state_bytes = Some(value.as_vec().unwrap_or_default());
                     break;
                 }
             }
@@ -305,15 +337,13 @@ pub fn pool_state_from_extra_data(
     }
 }
 
-pub fn solution_to_pool_state(
-    coin_solution: &CoinSpend,
-) -> Result<Option<PoolState>, Error> {
+pub fn solution_to_pool_state(coin_solution: &CoinSpend) -> Result<Option<PoolState>, Error> {
     let full_solution = Program::new(coin_solution.solution.to_bytes());
     let extra_data: Program;
     if coin_solution.coin.puzzle_hash == SINGLETON_LAUNCHER_HASH.clone() {
         //Launcher spend
         extra_data = full_solution.rest()?.rest()?.first()?;
-        return Ok(pool_state_from_extra_data(extra_data)?);
+        return pool_state_from_extra_data(extra_data);
     }
     // Not launcher spend
     let inner_solution: Program = full_solution.rest()?.rest()?.first()?;
@@ -332,7 +362,7 @@ pub fn solution_to_pool_state(
             // Absorbing
             return Ok(None);
         }
-        return Ok(pool_state_from_extra_data(extra_data)?);
+        pool_state_from_extra_data(extra_data)
     } else {
         let first = inner_solution.first()?;
         let rest = inner_solution.rest()?;
@@ -341,7 +371,7 @@ pub fn solution_to_pool_state(
             return Ok(None);
         }
         extra_data = rest.first()?;
-        return Ok(pool_state_from_extra_data(extra_data)?);
+        pool_state_from_extra_data(extra_data)
     }
 }
 
@@ -367,7 +397,7 @@ pub fn pool_state_to_inner_puzzle(
         //Leaving Pool
         2 => Ok(escaping_inner_puzzle),
         //Pooling
-        _ => Ok(create_pooling_inner_puzzle(
+        _ => create_pooling_inner_puzzle(
             &pool_state.target_puzzle_hash.to_bytes(),
             &escaping_inner_puzzle.tree_hash(),
             &pool_state.owner_pubkey,
@@ -375,7 +405,7 @@ pub fn pool_state_to_inner_puzzle(
             genesis_challenge,
             delay_time,
             delay_ph,
-        )?),
+        ),
     }
 }
 

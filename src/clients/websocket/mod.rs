@@ -130,7 +130,7 @@ impl ChiaSerialize for ChiaMessage {
         let id = if has_id[0] > 0 {
             let mut u16_len_ary: [u8; 2] = [0; 2];
             let (id, r) = rest.split_at(2);
-            u16_len_ary.copy_from_slice(&id);
+            u16_len_ary.copy_from_slice(id);
             rest = r;
             Some(u16::from_be_bytes(u16_len_ary))
         } else {
