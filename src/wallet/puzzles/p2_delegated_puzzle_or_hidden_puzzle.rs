@@ -98,7 +98,7 @@ pub fn calculate_synthetic_secret_key(
 }
 
 pub fn puzzle_for_synthetic_public_key(synthetic_public_key: &Bytes48) -> Result<Program, Error> {
-    MOD.curry(&vec![Program::try_from(synthetic_public_key)?])
+    MOD.curry(&[Program::try_from(synthetic_public_key)?])
 }
 
 pub fn puzzle_hash_for_synthetic_public_key(

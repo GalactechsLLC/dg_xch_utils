@@ -3,10 +3,11 @@ use crate::clvm::dialect::ChiaDialect;
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
 use crate::clvm::run_program::run_program;
 use crate::clvm::sexp::AtomBuf;
-use crate::clvm::sexp::{SExp, NULL};
+use crate::clvm::sexp::{SExp, NULL as SNULL};
 use crate::clvm::utils::{tree_hash, MEMPOOL_MODE};
 use crate::types::blockchain::sized_bytes::*;
 use hex::encode;
+use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -18,15 +19,28 @@ use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::{fmt, fs};
 
+lazy_static! {
+    pub static ref NULL: Program = Program {
+        sexp: SNULL.clone(),
+        serialized: vec![]
+    };
+}
+
 #[derive(Debug)]
 pub struct Program {
     pub serialized: Vec<u8>,
     sexp: SExp,
 }
+
+impl Display for Program {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", &self.sexp)
+    }
+}
+
 impl Program {
-    pub fn curry(&self, args: &Vec<Program>) -> Result<Program, Error> {
-        let (_cost, program) = curry(self, args)?;
-        Ok(program)
+    pub fn curry(&self, args: &[Program]) -> Result<Program, Error> {
+        curry(self, args)
     }
 
     pub fn uncurry(&self) -> Result<(Program, Program), Error> {
@@ -130,17 +144,12 @@ impl Program {
     }
 
     pub fn cons(&self, other: &Program) -> Program {
-        let first = match sexp_from_bytes(&self.serialized) {
-            Ok(ptr) => ptr,
-            Err(_) => NULL.clone(),
-        };
-        let rest = match sexp_from_bytes(&other.serialized) {
-            Ok(ptr) => ptr,
-            Err(_) => NULL.clone(),
-        };
-        match sexp_to_bytes(&SExp::Pair((&first, &rest).into())) {
+        match sexp_to_bytes(&SExp::Pair((&self.sexp, &other.sexp).into())) {
             Ok(bytes) => Program::new(bytes),
-            Err(_) => Program::null(),
+            Err(e) => {
+                println!("{:?}", e);
+                Program::null()
+            }
         }
     }
 
@@ -233,12 +242,6 @@ impl PartialEq for Program {
 }
 impl Eq for Program {}
 
-impl Display for Program {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "({})", encode(&self.serialized))
-    }
-}
-
 impl Program {
     pub fn new(serialized: Vec<u8>) -> Self {
         match sexp_from_bytes(&serialized) {
@@ -247,19 +250,19 @@ impl Program {
                 println!("Error building Program: {:?}", e);
                 Program {
                     serialized: vec![],
-                    sexp: NULL.clone(),
+                    sexp: SNULL.clone(),
                 }
             }
         }
     }
     pub fn null() -> Self {
-        let serial = match sexp_to_bytes(&NULL) {
+        let serial = match sexp_to_bytes(&SNULL) {
             Ok(bytes) => bytes,
             Err(_) => vec![],
         };
         Program {
             serialized: serial,
-            sexp: NULL.clone(),
+            sexp: SNULL.clone(),
         }
     }
 
@@ -268,7 +271,7 @@ impl Program {
             Ok(node) => node,
             Err(e) => {
                 println!("ERROR: {:?}", e);
-                NULL.clone()
+                SNULL.clone()
             }
         };
         Bytes32::new(tree_hash(&sexp))

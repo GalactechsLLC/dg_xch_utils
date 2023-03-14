@@ -78,7 +78,7 @@ pub async fn get_plotnft_by_launcher_id(
             while let Some(sc) = &singleton_coin {
                 if sc.spent {
                     let last_spend = client.get_coin_spend(sc).await?;
-                    let next_coin = get_most_recent_singleton_coin_from_coin_spend(&spend)?;
+                    let next_coin = get_most_recent_singleton_coin_from_coin_spend(&last_spend)?;
                     if let Some(pool_state) = solution_to_pool_state(&last_spend)? {
                         last_not_null_state = pool_state;
                     }

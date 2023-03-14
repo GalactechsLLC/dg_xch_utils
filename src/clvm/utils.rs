@@ -1,5 +1,8 @@
 use crate::clvm::sexp::{AtomBuf, SExp};
+use lazy_static::lazy_static;
 use num_bigint::BigInt;
+use num_traits::{Num, Zero};
+use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::io::{Error, ErrorKind};
 
@@ -198,4 +201,53 @@ pub fn new_concat<'a>(nodes: &'a [&'a SExp]) -> Result<SExp, Error> {
     }
     let new_atom = SExp::Atom(AtomBuf { data: buf });
     Ok(new_atom)
+}
+
+pub fn encode_bigint(int: BigInt) -> Result<Vec<u8>, Error> {
+    if int == BigInt::zero() {
+        Ok(vec![])
+    } else {
+        let length = (int.bits() + 8) >> 3;
+        let bytes = int_to_bytes(int, length as usize, true)?;
+        let mut slice = bytes.as_slice();
+        while slice.len() > 1 && slice[0] == (if (slice[1] & 0x80) != 0 { 0xFF } else { 0 }) {
+            slice = &slice[1..];
+        }
+        Ok(slice.to_vec())
+    }
+}
+
+lazy_static! {
+    static ref RE: Regex = Regex::new("[01]{8}").unwrap();
+}
+
+pub fn int_to_bytes(value: BigInt, size: usize, signed: bool) -> Result<Vec<u8>, Error> {
+    let is_neg = value < BigInt::zero();
+    if is_neg && !signed {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Cannot convert negative int to unsigned.",
+        ));
+    }
+    let pad_len = size * 8;
+    let mut binary = format!(
+        "{:>0pad_len$}",
+        format!("{}", if is_neg { -value } else { value }.to_str_radix(2))
+    );
+    if is_neg {
+        binary = format!(
+            "{:>0pad_len$}",
+            &(BigInt::from_str_radix(&binary, 2)
+                .map_err(|_| { Error::new(ErrorKind::InvalidInput, "Failed to build big int",) })?
+                .to_str_radix(2)
+                .chars()
+                .rev()
+                .collect::<String>())
+        );
+    }
+    let bytes = RE
+        .captures_iter(&binary)
+        .map(|m| -> u8 { u8::from_str_radix(m.get(0).unwrap().as_str(), 2).unwrap() })
+        .collect();
+    Ok(bytes)
 }

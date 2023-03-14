@@ -13,6 +13,7 @@ pub fn assemble_text(s: &str) -> Result<SerializedProgram, Error> {
     let mut reader = Reader::new(stream);
     let token = reader.read_object()?;
     let sexp = assemble_from_reader(&token)?;
+
     Ok(SerializedProgram::from_bytes(&sexp_to_bytes(&sexp)?))
 }
 

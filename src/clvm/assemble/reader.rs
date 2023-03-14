@@ -23,8 +23,8 @@ impl Reader {
         Self { stream }
     }
     fn read(&mut self, n: usize) -> Result<Vec<u8>, Error> {
-        let mut buf = vec![];
-        buf.reserve(n);
+        let mut buf = vec![0; n];
+        // buf.reserve(n);
         self.stream.read_exact(&mut buf)?;
         Ok(buf)
     }
@@ -164,6 +164,7 @@ pub fn consume_cons_body(s: &mut Reader) -> Result<ReaderToken, Error> {
         if b.is_empty() {
             return Err(Error::new(ErrorKind::InvalidInput, "missing )".to_string()));
         }
+
         if b[0] == b')' {
             return Ok(enlist_ir(&mut result, ReaderToken::Null));
         }

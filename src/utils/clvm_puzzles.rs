@@ -124,7 +124,13 @@ pub fn create_p2_singleton_puzzle(
         seconds_delay.try_into()?,
         delayed_puzzle_hash.try_into()?,
     ];
-    P2_SINGLETON_OR_DELAYED_MOD.curry(&args)
+    for arg in &args {
+        println!("Arg: {}", arg);
+    }
+    println!("P2 Hash: {}", &*P2_SINGLETON_OR_DELAYED_MOD);
+    let curried = P2_SINGLETON_OR_DELAYED_MOD.curry(&args)?;
+    println!("Curried: {}", &curried);
+    Ok(curried)
 }
 
 pub fn launcher_id_to_p2_puzzle_hash(
@@ -132,12 +138,16 @@ pub fn launcher_id_to_p2_puzzle_hash(
     seconds_delay: u64,
     delayed_puzzle_hash: &Bytes32,
 ) -> Result<Bytes32, Error> {
+    // println!("L: {:?}", launcher_id);
+    // println!("S: {:?}", seconds_delay);
+    // println!("D: {:?}", delayed_puzzle_hash);
     let as_prog = create_p2_singleton_puzzle(
         &SINGLETON_MOD_HASH,
         launcher_id,
         seconds_delay,
         delayed_puzzle_hash,
     )?;
+
     Ok(as_prog.tree_hash())
 }
 
