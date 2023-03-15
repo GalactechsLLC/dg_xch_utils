@@ -5,7 +5,6 @@ use crate::clvm::program::SerializedProgram;
 use crate::clvm::program::{Program, NULL};
 use crate::clvm::sexp::AtomBuf;
 use crate::clvm::sexp::SExp;
-use hex::encode;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::io::Error;
@@ -15,12 +14,6 @@ lazy_static! {
     pub static ref CURRY_OBJ_CODE: SerializedProgram = assemble_text("(a (q #a 4 (c 2 (c 5 (c 7 0)))) (c (q (c (q . 2) (c (c (q . 1) 5) (c (a 6 (c 2 (c 11 (q 1)))) 0))) #a (i 5 (q 4 (q . 4) (c (c (q . 1) 9) (c (a 6 (c 2 (c 13 (c 11 0)))) 0))) (q . 11)) 1) 1))").expect("Static Assemble Should not fail.");
     pub static ref UNCURRY_PATTERN_FUNCTION: SerializedProgram = assemble_text("(a (q . (: . function)) (: . core))").expect("Static Assemble Should not fail.");
     pub static ref UNCURRY_PATTERN_CORE: SerializedProgram = assemble_text("(c (q . (: . parm)) (: . core))").expect("Static Assemble Should not fail.");
-}
-
-#[tokio::test]
-async fn test_curry_assemble() {
-    let cur_prog = CURRY_OBJ_CODE.clone();
-    println!("Curry prog: {}", encode(&cur_prog.to_bytes()));
 }
 
 const BYTE_MATCH: [u8; 1] = [81u8];
@@ -100,16 +93,7 @@ pub fn concat(sexps: &[SExp]) -> Result<SExp, Error> {
 
 pub fn curry(program: &Program, args: &[Program]) -> Result<Program, Error> {
     let args = make_args(args)?;
-    println!("Args prog: {:?}", &args.serialized);
-    println!("Args prog: {}", encode(&args.serialized));
-    println!("Args prog: {}", args);
-    let as_str = format!("(a (q . {program}) {args})");
-    println!("as_str: {}", as_str);
-    let serialized = assemble_text(&as_str)?;
-    let program = serialized.to_program()?;
-    println!("serialized: {}", serialized);
-    println!("program: {}", program);
-    Ok(program)
+    assemble_text(&format!("(a (q . {program}) {args})"))?.to_program()
 }
 
 fn make_args(args: &[Program]) -> Result<Program, Error> {

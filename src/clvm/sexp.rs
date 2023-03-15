@@ -201,9 +201,12 @@ impl Display for SExp {
                             }
                             if as_utf8.contains('"') && as_utf8.contains('\'') {
                                 f.write_str(&format!("0x{}", encode(atom)))
+                            } else if as_utf8.contains('"') {
+                                f.write_str(&format!("'{as_utf8}'"))
+                            } else if as_utf8.contains('\'') {
+                                f.write_str(&format!("\"{as_utf8}\""))
                             } else {
-                                let quote = if as_utf8.contains('"') { "\"" } else { "'" };
-                                f.write_str(&format!("{quote}{as_utf8}{quote}"))
+                                f.write_str(&format!("0x{}", as_utf8))
                             }
                         }
                         Err(_) => f.write_str(&format!("0x{}", encode(atom))),
