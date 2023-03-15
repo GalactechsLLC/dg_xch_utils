@@ -56,8 +56,8 @@ impl<'a> Iterator for Reader<'a> {
                 Some(token)
             } else if QUOTE_CHARS.contains(chr) {
                 let start = self.index;
-                let quote_chr = chr;
                 let mut bs = false;
+                self.index += 1;
                 loop {
                     if self.stream.len() <= self.index {
                         error!("ERROR: Unterminated String at {}, ", start);
@@ -67,17 +67,16 @@ impl<'a> Iterator for Reader<'a> {
                         self.index += 1;
                     } else if self.stream[self.index] == b'\\' {
                         bs = true;
-                    } else if self.stream[self.index] == *quote_chr {
+                    } else if self.stream[self.index] == *chr {
                         self.index += 1;
-                        break;
+                        return Some(Token {
+                            bytes: &self.stream[start..self.index],
+                            index: start,
+                        });
                     } else {
                         self.index += 1;
                     }
                 }
-                Some(Token {
-                    bytes: &self.stream[start..self.index],
-                    index: start,
-                })
             } else {
                 let start = self.index;
                 self.consume_until_whitespace();

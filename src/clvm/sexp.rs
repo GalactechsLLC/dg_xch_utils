@@ -1,3 +1,4 @@
+use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
 use hex::encode;
 use lazy_static::lazy_static;
@@ -205,8 +206,10 @@ impl Display for SExp {
                                 f.write_str(&format!("'{as_utf8}'"))
                             } else if as_utf8.contains('\'') {
                                 f.write_str(&format!("\"{as_utf8}\""))
-                            } else {
+                            } else if is_hex(as_utf8.as_bytes()) {
                                 f.write_str(&format!("0x{}", as_utf8))
+                            } else {
+                                f.write_str(&format!("\"{as_utf8}\""))
                             }
                         }
                         Err(_) => f.write_str(&format!("0x{}", encode(atom))),

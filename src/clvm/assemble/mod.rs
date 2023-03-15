@@ -24,7 +24,9 @@ pub fn is_hex(chars: &[u8]) -> bool {
 }
 
 pub fn is_quote(chars: &[u8]) -> bool {
-    chars.len() > 2 && chars[0] == b'0' && (chars[1] == b'x' || chars[1] == b'X')
+    chars.len() > 2
+        && ((chars[0] == b'"' && chars[chars.len() - 1] == b'"')
+            || (chars[0] == b'\'' && chars[chars.len() - 1] == b'\''))
 }
 
 pub fn tokenize_cons(tokens: &mut Reader) -> Result<SExp, Error> {
