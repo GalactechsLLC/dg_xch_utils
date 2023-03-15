@@ -4,6 +4,7 @@ use hex::FromHexError;
 use hex::{decode, encode};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::ffi::OsStr;
 use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -107,6 +108,12 @@ macro_rules! impl_sized_bytes {
             impl AsRef<[u8]> for $name {
                 fn as_ref(&self) -> &[u8] {
                     &self.bytes
+                }
+            }
+
+            impl AsRef<OsStr> for $name {
+                fn as_ref(&self) -> &OsStr {
+                    OsStr::new(&self.as_str)
                 }
             }
 
