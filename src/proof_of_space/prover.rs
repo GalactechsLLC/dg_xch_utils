@@ -8,16 +8,14 @@ use crate::proof_of_space::f_calc::{F1Calculator, FXCalculator};
 use crate::proof_of_space::util::{bytes_to_u64, slice_u128from_bytes};
 use crate::types::blockchain::sized_bytes::Bytes32;
 use log::trace;
+use nix::libc;
 use std::cmp::min;
 use std::fs::{File, OpenOptions};
 use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use nix::fcntl::{posix_fadvise, PosixFadviseAdvice};
-use nix::libc;
 
 #[derive(Debug, Clone)]
 pub struct DiskProver {
@@ -29,8 +27,10 @@ pub struct DiskProver {
 }
 impl DiskProver {
     pub fn new(path: &Path) -> Result<Self, Error> {
-        let mut file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECT & libc::O_SYNC).open(&path)?;
-        posix_fadvise(file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_NOREUSE)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECT & libc::O_SYNC)
+            .open(path)?;
         let header = read_plot_header(&mut file)?;
         trace!("Plot ID: {:?}", &header.id);
         let mut table_begin_pointers: [u64; 11] = [0; 11];
@@ -60,7 +60,6 @@ impl DiskProver {
             c2.push(f7);
             prev_c2_f7 = f7;
         }
-        posix_fadvise(file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_DONTNEED)?;
         Ok(DiskProver {
             version: VERSION,
             filename: Arc::new(path.to_path_buf()),
@@ -74,8 +73,10 @@ impl DiskProver {
         // This tells us how many f7 outputs (and therefore proofs) we have for this
         // challenge. The expected value is one proof.
         let mut qualities = vec![];
-        let mut file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECT & libc::O_SYNC).open(&*self.filename)?;
-        posix_fadvise(file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_NOREUSE)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECT & libc::O_SYNC)
+            .open(&*self.filename)?;
         let p7_entries = self.get_p7_entries(&mut file, challenge)?;
         if p7_entries.is_empty() {
             return Ok(vec![]);
@@ -119,7 +120,6 @@ impl DiskProver {
             );
             qualities.push(BitVec::from_be_bytes(hash_256(&hash_input), 32, 256));
         }
-        posix_fadvise(file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_DONTNEED)?;
         Ok(qualities)
     }
 
@@ -473,7 +473,10 @@ impl DiskProver {
         parallel_read: bool,
     ) -> Result<BitVec, Error> {
         let mut full_proof = BitVec::new(0, 0);
-        let mut file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECT & libc::O_SYNC).open(&*self.filename)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECT & libc::O_SYNC)
+            .open(&*self.filename)?;
         let p7_entries = self.get_p7_entries(&mut file, challenge)?;
         if p7_entries.is_empty() || index >= p7_entries.len() {
             return Err(Error::new(
@@ -499,7 +502,6 @@ impl DiskProver {
         for x in xs_sorted {
             full_proof += x;
         }
-        posix_fadvise(file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_DONTNEED)?;
         Ok(full_proof)
     }
 
@@ -609,8 +611,14 @@ impl DiskProver {
         } else {
             let mut left;
             if parallel {
-                let mut left_file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECT & libc::O_SYNC).open(&*file_name)?;
-                let mut right_file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECT & libc::O_SYNC).open(&*file_name)?;
+                let mut left_file = OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_DIRECT & libc::O_SYNC)
+                    .open(&*file_name)?;
+                let mut right_file = OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_DIRECT & libc::O_SYNC)
+                    .open(&*file_name)?;
                 let l_arcs = (
                     header.clone(),
                     table_begin_pointers.clone(),
@@ -618,7 +626,7 @@ impl DiskProver {
                 );
                 let r_arcs = (header, table_begin_pointers, file_name);
                 let left_handle = thread::spawn(move || {
-                    let inputs = Self::get_inputs(
+                    Self::get_inputs(
                         l_arcs.0,
                         l_arcs.1,
                         l_arcs.2,
@@ -626,12 +634,10 @@ impl DiskProver {
                         y,
                         depth - 1,
                         parallel,
-                    );
-                    posix_fadvise(left_file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_DONTNEED)?;
-                    inputs
+                    )
                 });
                 let right_handle = thread::spawn(move || {
-                    let inputs = Self::get_inputs(
+                    Self::get_inputs(
                         r_arcs.0,
                         r_arcs.1,
                         r_arcs.2,
@@ -639,9 +645,7 @@ impl DiskProver {
                         x,
                         depth - 1,
                         parallel,
-                    );
-                    posix_fadvise(right_file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_DONTNEED)?;
-                    inputs
+                    )
                 });
                 if let (Ok(Ok(l)), Ok(Ok(r))) = (left_handle.join(), right_handle.join()) {
                     left = l;
@@ -679,8 +683,10 @@ pub fn read_plot_file_header(p: impl AsRef<Path>) -> Result<(PathBuf, PlotHeader
     if !p.as_ref().is_file() {
         return Err(Error::new(ErrorKind::InvalidInput, "Path must be a file"));
     }
-    let mut file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECT & libc::O_SYNC).open(&p)?;
-    posix_fadvise(file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_NOREUSE)?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECT & libc::O_SYNC)
+        .open(&p)?;
     Ok((p.as_ref().to_path_buf(), read_plot_header(&mut file)?))
 }
 
@@ -711,6 +717,5 @@ pub fn read_plot_header(file: &mut File) -> Result<PlotHeader, Error> {
     let mut memo_buf = vec![0; plot_header.memo_len as usize];
     file.read_exact(memo_buf.as_mut_slice())?;
     plot_header.memo = PlotMemo::try_from(memo_buf)?;
-    posix_fadvise(file.as_raw_fd(), 0, 0, PosixFadviseAdvice::POSIX_FADV_DONTNEED)?;
     Ok(plot_header)
 }

@@ -1,11 +1,16 @@
+use crate::clvm::utils::hash_256;
 use crate::proof_of_space::bitvec::BitVec;
 use crate::proof_of_space::constants::*;
 use crate::proof_of_space::f_calc::F1Calculator;
 use crate::proof_of_space::f_calc::FXCalculator;
+use crate::proof_of_space::prover::DiskProver;
 use log::trace;
+use log::{error, info, warn};
 use sha2::{Digest, Sha256};
 use std::io::Error;
 use std::io::ErrorKind;
+use std::path::Path;
+use std::time::Instant;
 
 pub fn get_quality_string(
     k: u8,
@@ -203,4 +208,53 @@ fn compare_proof_bits(left: &BitVec, right: &BitVec, k: u8) -> Result<bool, Erro
         i -= 1;
     }
     Ok(false)
+}
+
+pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, usize), Error> {
+    info!("Testing plot {:?}", path.as_ref());
+    let prover = DiskProver::new(path.as_ref())?;
+    let mut total_proofs = 0;
+    let mut bad_proofs = 0;
+    for i in 0..challenges {
+        let challenge_hash = hash_256(i.to_be_bytes());
+        let start = Instant::now();
+        let qualities = prover.get_qualities_for_challenge(&challenge_hash.clone().into())?;
+        let duration = Instant::now().duration_since(start).as_millis();
+        for (index, quality) in qualities.iter().enumerate() {
+            if duration > 5000 {
+                warn!("\tLooking up qualities took: {duration} ms. This should be below 5 seconds to minimize risk of losing rewards.");
+            } else {
+                info!("\tLooking up qualities took: {duration} ms.");
+            }
+            let proof_start = Instant::now();
+            let proof = prover.get_full_proof(&challenge_hash.clone().into(), index, true)?;
+            let proof_duration = Instant::now().duration_since(proof_start).as_millis();
+            if proof_duration > 15000 {
+                warn!("\tFinding proof took: {proof_duration} ms. This should be below 15 seconds to minimize risk of losing rewards.");
+            } else {
+                info!("\tFinding proof took: {proof_duration} ms");
+            }
+            total_proofs += 1;
+            let v_quality = validate_proof(
+                &prover.header.id.to_sized_bytes(),
+                prover.header.k,
+                &challenge_hash,
+                &proof.to_bytes(),
+            )?;
+            if *quality != v_quality {
+                bad_proofs += 1;
+                error!("Error Proving Plot: {:?}", path.as_ref());
+            }
+        }
+    }
+    Ok((total_proofs, bad_proofs))
+}
+
+#[test]
+pub fn test_check_plot() {
+    use simple_logger::SimpleLogger;
+    SimpleLogger::new().env().init().unwrap();
+    let path ="/mnt/5becdb53-45ce-4a0f-b0fa-f9d5154f3d9f/plot-k32-2022-07-16-06-41-2fb6752205c0b7f74e0fc9953a623a6590813e4c47775af68ed0fc513ae5f4bc.plot";
+    let (total, bad) = check_plot(path, 30).unwrap();
+    info!("Proofs Found: {total}/30, Bad Proofs: {bad}");
 }
