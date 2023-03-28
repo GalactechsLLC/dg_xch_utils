@@ -4,8 +4,8 @@ use crate::proof_of_space::constants::*;
 use crate::proof_of_space::f_calc::F1Calculator;
 use crate::proof_of_space::f_calc::FXCalculator;
 use crate::proof_of_space::prover::DiskProver;
-use log::trace;
-use log::{error, info, warn};
+use log::{debug, trace};
+use log::{error, warn};
 use sha2::{Digest, Sha256};
 use std::io::Error;
 use std::io::ErrorKind;
@@ -211,7 +211,7 @@ fn compare_proof_bits(left: &BitVec, right: &BitVec, k: u8) -> Result<bool, Erro
 }
 
 pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, usize), Error> {
-    info!("Testing plot {:?}", path.as_ref());
+    debug!("Testing plot {:?}", path.as_ref());
     let prover = DiskProver::new(path.as_ref())?;
     let mut total_proofs = 0;
     let mut bad_proofs = 0;
@@ -224,7 +224,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
             if duration > 5000 {
                 warn!("\tLooking up qualities took: {duration} ms. This should be below 5 seconds to minimize risk of losing rewards.");
             } else {
-                info!("\tLooking up qualities took: {duration} ms.");
+                debug!("\tLooking up qualities took: {duration} ms.");
             }
             let proof_start = Instant::now();
             let proof = prover.get_full_proof(&challenge_hash.clone().into(), index, true)?;
@@ -232,7 +232,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
             if proof_duration > 15000 {
                 warn!("\tFinding proof took: {proof_duration} ms. This should be below 15 seconds to minimize risk of losing rewards.");
             } else {
-                info!("\tFinding proof took: {proof_duration} ms");
+                debug!("\tFinding proof took: {proof_duration} ms");
             }
             total_proofs += 1;
             let v_quality = validate_proof(
@@ -257,4 +257,46 @@ pub fn test_check_plot() {
     let path ="/mnt/5becdb53-45ce-4a0f-b0fa-f9d5154f3d9f/plot-k32-2022-07-16-06-41-2fb6752205c0b7f74e0fc9953a623a6590813e4c47775af68ed0fc513ae5f4bc.plot";
     let (total, bad) = check_plot(path, 30).unwrap();
     info!("Proofs Found: {total}/30, Bad Proofs: {bad}");
+}
+
+#[test]
+pub fn test_parallel_check_plots() {
+    use rayon::prelude::*;
+    use simple_logger::SimpleLogger;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    SimpleLogger::new().env().init().unwrap();
+    let path = "/mnt/5becdb53-45ce-4a0f-b0fa-f9d5154f3d9f/";
+    let mut total_plots = AtomicU64::new(0);
+    let start = Instant::now();
+    match Path::new(path).read_dir() {
+        Ok(dir) => {
+            dir.par_bridge().for_each(|entry| {
+                match entry {
+                    Ok(file) => {
+                        let path = file.path();
+                        if let Some(s) = path.extension() {
+                            if s != "plot" {
+                                return; //Non plot File
+                            } else {
+                                let (total, bad) = check_plot(path, 30).unwrap();
+                                info!("Proofs Found: {total}/30, Bad Proofs: {bad}");
+                                total_plots.fetch_add(1, Ordering::AcqRel);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to read file {:?}", e);
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            error!("Failed to read Plot Directory {:?}, {:?}", path, e);
+        }
+    }
+    info!(
+        "Checked {} Plots in {} ms",
+        total_plots.get_mut(),
+        start.duration_since(Instant::now()).as_millis()
+    );
 }
