@@ -35,13 +35,11 @@ fn verify_fc(t: u8, k: u8, left: u64, right: u64, y1: u64, y: u64, c: Option<u64
     let sizes: [u8; 6] = [1, 2, 4, 4, 3, 2];
     let size = sizes[(t - 2) as usize];
     let calc = FXCalculator::new(k, t);
-    let res = calc
-        .calculate_bucket(
-            &BitVec::new(y1 as u128, (k + K_EXTRA_BITS) as u32),
-            &BitVec::new(left as u128, (k * size) as u32),
-            &BitVec::new(right as u128, (k * size) as u32),
-        )
-        .unwrap();
+    let res = calc.calculate_bucket(
+        &BitVec::new(y1 as u128, (k + K_EXTRA_BITS) as u32),
+        &BitVec::new(left as u128, (k * size) as u32),
+        &BitVec::new(right as u128, (k * size) as u32),
+    );
     assert_eq!(res.0.get_value().unwrap(), y);
     assert_eq!(res.1.get_value(), c);
 }
@@ -53,13 +51,13 @@ fn test_f1() {
         0, 2, 3, 4, 5, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 1, 2, 3, 41, 5, 6, 7, 8, 9, 10, 11,
         12, 13, 11, 15, 16,
     ];
-    let f1 = F1Calculator::new(test_k, &test_key).unwrap();
+    let f1 = F1Calculator::new(test_k, &test_key);
     let mut l = BitVec::new(525, test_k as u32);
-    let mut result1 = f1.calculate_bucket(&l);
+    let mut result1 = f1.calculate_bucket(&l).unwrap();
     let mut l2 = BitVec::new(526, test_k as u32);
-    let mut result2 = f1.calculate_bucket(&l2);
+    let mut result2 = f1.calculate_bucket(&l2).unwrap();
     let mut l3 = BitVec::new(625, test_k as u32);
-    let mut result3 = f1.calculate_bucket(&l3);
+    let mut result3 = f1.calculate_bucket(&l3).unwrap();
     let mut results = vec![0; 256];
     f1.calculate_buckets(l.get_value().unwrap(), 101, results.as_mut());
     assert_eq!(result1.0.get_value().unwrap(), results[0]);
@@ -68,15 +66,15 @@ fn test_f1() {
 
     let max_batch: u64 = 1 << K_BATCH_SIZES;
     test_k = 32;
-    let f1_2 = F1Calculator::new(test_k, &test_key).unwrap();
+    let f1_2 = F1Calculator::new(test_k, &test_key);
     l = BitVec::new(192837491, test_k as u32);
-    result1 = f1_2.calculate_bucket(&l);
+    result1 = f1_2.calculate_bucket(&l).unwrap();
     l2 = BitVec::new(192837491 + 1, test_k as u32);
-    result2 = f1_2.calculate_bucket(&l2);
+    result2 = f1_2.calculate_bucket(&l2).unwrap();
     l3 = BitVec::new(192837491 + 2, test_k as u32);
-    result3 = f1_2.calculate_bucket(&l3);
+    result3 = f1_2.calculate_bucket(&l3).unwrap();
     let l4 = BitVec::new(192837491 + max_batch as u128 - 1, test_k as u32);
-    let result4 = f1_2.calculate_bucket(&l4);
+    let result4 = f1_2.calculate_bucket(&l4).unwrap();
 
     f1_2.calculate_buckets(l.get_value().unwrap(), max_batch, results.as_mut());
     assert_eq!(result1.0.get_value().unwrap(), results[0]);
@@ -100,7 +98,7 @@ fn test_f2() {
     let k = 12u8;
     let num_buckets: u64 = (1u64 << (k + K_EXTRA_BITS)) / K_BC as u64 + 1;
     let mut x: u64 = 0;
-    let f1 = F1Calculator::new(k, &test_key_2).unwrap();
+    let f1 = F1Calculator::new(k, &test_key_2);
     for _ in 0..(1u64 << (k - 4)) + 1 {
         let mut y: [u64; (1u64 << 4) as usize] = [0; (1u64 << 4) as usize];
         f1.calculate_buckets(x, 1u64 << 4, y.as_mut());
