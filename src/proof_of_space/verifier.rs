@@ -252,6 +252,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
 
 #[test]
 pub fn test_check_plot() {
+    use log::info;
     use simple_logger::SimpleLogger;
     SimpleLogger::new().env().init().unwrap();
     let path ="/mnt/5becdb53-45ce-4a0f-b0fa-f9d5154f3d9f/plot-k32-2022-07-16-06-41-2fb6752205c0b7f74e0fc9953a623a6590813e4c47775af68ed0fc513ae5f4bc.plot";
@@ -265,6 +266,7 @@ pub fn test_parallel_check_plots() {
     use simple_logger::SimpleLogger;
     use std::sync::atomic::{AtomicU64, Ordering};
     SimpleLogger::new().env().init().unwrap();
+    use log::info;
     let path = "/mnt/5becdb53-45ce-4a0f-b0fa-f9d5154f3d9f/";
     let mut total_plots = AtomicU64::new(0);
     let start = Instant::now();

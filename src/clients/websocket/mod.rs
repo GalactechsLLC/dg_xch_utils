@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use hyper::upgrade::Upgraded;
-use log::{debug, trace};
+use log::{debug, error, trace};
 use rustls::ClientConfig;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -126,10 +126,12 @@ impl ChiaSerialize for ChiaMessage {
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let (msg_type, rest) = bytes.split_at(1);
-        let (has_id, rest) = rest.split_at(1);
+        let (has_id, mut rest) = rest.split_at(1);
         let id = if has_id[0] > 0 {
             let mut u16_len_ary: [u8; 2] = [0; 2];
-            u16_len_ary.copy_from_slice(&rest[0..2]);
+            let (id, r) = rest.split_at(2);
+            u16_len_ary.copy_from_slice(id);
+            rest = r;
             Some(u16::from_be_bytes(u16_len_ary))
         } else {
             None
@@ -169,7 +171,7 @@ async fn perform_handshake(
         ChiaMessage::new(
             ProtocolMessageTypes::Handshake,
             &Handshake {
-                network_id: network_id.to_string(), //TODO Config
+                network_id: network_id.to_string(),
                 protocol_version: PROTOCOL_VERSION.to_string(),
                 software_version: SOFTWARE_VERSION.to_string(),
                 server_port: port,
@@ -394,12 +396,17 @@ impl ServerReadStream {
                             Message::Binary(bin_data) => match ChiaMessage::from_bytes(&bin_data) {
                                 Ok(chia_msg) => {
                                     let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
+                                    let mut matched = false;
                                     for v in self.subscribers.lock().await.values() {
                                         if v.filter.matches(msg_arc.clone()) {
                                             let msg_arc_c = msg_arc.clone();
                                             let v_arc_c = v.handle.clone();
                                             tokio::spawn(async move { v_arc_c.handle(msg_arc_c).await });
+                                            matched = true;
                                         }
+                                    }
+                                    if !matched{
+                                        error!("No Matches for Message: {:?}", &msg_arc);
                                     }
                                     debug!("Processed Message: {:?}", &msg_arc.msg_type);
                                 }
