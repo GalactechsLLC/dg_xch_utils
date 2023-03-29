@@ -1,7 +1,8 @@
 use crate::clvm::assemble::assemble_text;
+use crate::clvm::assemble::keywords::KEYWORD_TO_ATOM;
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
-use crate::clvm::program::Program;
 use crate::clvm::program::SerializedProgram;
+use crate::clvm::program::{Program, NULL};
 use crate::clvm::sexp::AtomBuf;
 use crate::clvm::sexp::SExp;
 use lazy_static::lazy_static;
@@ -10,9 +11,11 @@ use std::io::Error;
 use std::io::ErrorKind;
 
 lazy_static! {
-    pub static ref CURRY_OBJ_CODE: SerializedProgram = assemble_text("(a (q #a 4 (c 2 (c 5 (c 7 0)))) (c (q (c (q . 2) (c (c (q . 1) 5) (c (a 6 (c 2 (c 11 (q 1)))) 0))) #a (i 5 (q 4 (q . 4) (c (c (q . 1) 9) (c (a 6 (c 2 (c 13 (c 11 0)))) 0))) (q . 11)) 1) 1))").expect("Static Assemble Should not fail.");
-    pub static ref UNCURRY_PATTERN_FUNCTION: SerializedProgram = assemble_text("(a (q . (: . function)) (: . core))").expect("Static Assemble Should not fail.");
-    pub static ref UNCURRY_PATTERN_CORE: SerializedProgram = assemble_text("(c (q . (: . parm)) (: . core))").expect("Static Assemble Should not fail.");
+    pub static ref UNCURRY_PATTERN_FUNCTION: SerializedProgram =
+        assemble_text("(a (q . (: . function)) (: . core))")
+            .expect("Static Assemble Should not fail.");
+    pub static ref UNCURRY_PATTERN_CORE: SerializedProgram =
+        assemble_text("(c (q . (: . parm)) (: . core))").expect("Static Assemble Should not fail.");
 }
 
 const BYTE_MATCH: [u8; 1] = [81u8];
@@ -90,32 +93,45 @@ pub fn concat(sexps: &[SExp]) -> Result<SExp, Error> {
     Ok(SExp::Atom(buf))
 }
 
-pub fn curry(program: &Program, args: &Vec<Program>) -> Result<(u64, Program), Error> {
+pub fn curry(program: &Program, args: &[Program]) -> Result<Program, Error> {
     let args = make_args(args)?;
-    let pair: Program = program.cons(&args);
-    let cur_prog = CURRY_OBJ_CODE.clone();
-    let (cost, result) = cur_prog.run_with_cost(u64::MAX, &pair)?;
-    let bytes = sexp_to_bytes(&result)?;
-    Ok((cost, Program::new(bytes)))
+    assemble_text(&format!("(a (q . {program}) {args})"))?.to_program()
 }
 
-fn make_args(args: &Vec<Program>) -> Result<Program, Error> {
-    if args.is_empty() {
-        return Ok(Program::null());
+fn make_args(args: &[Program]) -> Result<Program, Error> {
+    let mut cur = Program::new(
+        KEYWORD_TO_ATOM
+            .get("q")
+            .expect("Expected keyword Q - should not happen")
+            .clone(),
+    );
+    for arg in args.iter().rev() {
+        cur = cons(
+            &Program::new(
+                KEYWORD_TO_ATOM
+                    .get("c")
+                    .expect("Expected keyword C - should not happen")
+                    .clone(),
+            ),
+            &cons(
+                &cons(
+                    &Program::new(
+                        KEYWORD_TO_ATOM
+                            .get("q")
+                            .expect("Expected keyword Q - should not happen")
+                            .clone(),
+                    ),
+                    arg,
+                ),
+                &cons(&cur, &NULL),
+            ),
+        );
     }
-    let mut rtn = args
-        .last()
-        .ok_or_else(|| {
-            Error::new(
-                ErrorKind::Other,
-                "Not Last Element with Non Empty List (Should not happen)",
-            )
-        })?
-        .cons(&Program::null());
-    for arg in args[1..=args.len() - 1].iter().rev() {
-        rtn = arg.cons(&rtn);
-    }
-    Ok(rtn)
+    Ok(cur)
+}
+
+fn cons(first: &Program, other: &Program) -> Program {
+    first.cons(other)
 }
 
 pub fn match_sexp<'a>(
