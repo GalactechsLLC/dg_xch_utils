@@ -204,10 +204,19 @@ pub fn encode_puzzle_hash(puzzle_hash: &Bytes32, prefix: &str) -> Result<String,
 }
 
 pub fn decode_puzzle_hash(address: &str) -> Result<Bytes32, Error> {
-    let (_, data, _) = bech32::decode(address)
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+    let (_, data, _) = bech32::decode(address).map_err(|e| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            format!("Error Decoding address: ({address}): {:?}", e),
+        )
+    })?;
     Ok(Bytes32::from(Vec::<u8>::from_base32(&data).map_err(
-        |e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)),
+        |e| {
+            Error::new(
+                ErrorKind::InvalidInput,
+                format!("Error Decoding address: ({address}): {:?}", e),
+            )
+        },
     )?))
 }
 pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, Error> {

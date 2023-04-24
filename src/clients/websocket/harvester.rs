@@ -1,4 +1,5 @@
 use crate::clients::websocket::{get_client, get_client_tls, perform_handshake, Client, NodeType};
+use log::info;
 use std::io::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -24,11 +25,15 @@ impl HarvesterClient {
         ssl_ca_crt_path: &str,
         network_id: &str,
     ) -> Result<Self, Error> {
+        info!("Starting Harvester SSL Connection");
         let (client, mut stream) =
             get_client_tls(host, port, ssl_crt_path, ssl_key_path, ssl_ca_crt_path).await?;
+        info!("Spawning Stream Handler for Harvester SSL Connection");
         let handle = tokio::spawn(async move { stream.run().await });
         let client = Arc::new(Mutex::new(client));
+        info!("Performing Handshake");
         perform_handshake(client.clone(), network_id, port, NodeType::Harvester).await?;
+        info!("Harvester Handshake Complete");
         Ok(HarvesterClient { client, handle })
     }
 

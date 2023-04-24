@@ -25,6 +25,7 @@ nix = "0.26.2"
 num-bigint = "=0.4.0"
 num-integer = "0.1.45"
 num-traits = "=0.2.14"
+paperclip = { version = "0.8.0", features = ["actix4"] }
 poll-promise = "0.1"
 rayon = "1.7.0"
 regex = "1.7.1"

@@ -2,6 +2,7 @@ use crate::clvm::program::Program;
 use blst::min_pk::{PublicKey, SecretKey, Signature};
 use hex::FromHexError;
 use hex::{decode, encode};
+use paperclip::actix::Apiv2Schema;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ffi::OsStr;
@@ -58,7 +59,7 @@ macro_rules! impl_sized_bytes {
 
     ($($name: ident, $size:expr, $visitor:ident);*) => {
         $(
-            #[derive(Clone)]
+            #[derive(Clone, Apiv2Schema)]
             pub struct $name {
                 pub bytes: Vec<u8>,
                 pub as_str: String

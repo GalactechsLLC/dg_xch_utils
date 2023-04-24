@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use hyper::upgrade::Upgraded;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use rustls::ClientConfig;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -45,15 +45,22 @@ pub async fn get_client_tls(
             .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
             .with_single_cert(certs, key)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?,
+            .map_err(|e| {
+                Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e))
+            })?,
     );
 
     let connector = Connector::Rustls(cfg.clone());
     let (stream, resp) =
         connect_async_tls_with_config(format!("wss://{}:{}/ws", host, port), None, Some(connector))
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, e))?;
-    debug!("{:?}", resp);
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::Other,
+                    format!("Error Connecting Client: {:?}", e),
+                )
+            })?;
+    info!("Harvester Connect Resp: {:?}", resp);
     Ok(Client::new(stream))
 }
 
