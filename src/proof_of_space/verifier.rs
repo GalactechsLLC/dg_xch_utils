@@ -272,21 +272,19 @@ pub fn test_parallel_check_plots() {
     let start = Instant::now();
     match Path::new(path).read_dir() {
         Ok(dir) => {
-            dir.par_bridge().for_each(|entry| {
-                match entry {
-                    Ok(file) => {
-                        let path = file.path();
-                        if let Some(s) = path.extension() {
-                            if s == "plot" {
-                                let (total, bad) = check_plot(path, 30).unwrap();
-                                info!("Proofs Found: {total}/30, Bad Proofs: {bad}");
-                                total_plots.fetch_add(1, Ordering::AcqRel);
-                            }
+            dir.par_bridge().for_each(|entry| match entry {
+                Ok(file) => {
+                    let path = file.path();
+                    if let Some(s) = path.extension() {
+                        if s == "plot" {
+                            let (total, bad) = check_plot(path, 30).unwrap();
+                            info!("Proofs Found: {total}/30, Bad Proofs: {bad}");
+                            total_plots.fetch_add(1, Ordering::AcqRel);
                         }
                     }
-                    Err(e) => {
-                        error!("Failed to read file {:?}", e);
-                    }
+                }
+                Err(e) => {
+                    error!("Failed to read file {:?}", e);
                 }
             });
         }
