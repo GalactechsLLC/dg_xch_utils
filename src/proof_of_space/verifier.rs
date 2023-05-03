@@ -4,8 +4,8 @@ use crate::proof_of_space::constants::*;
 use crate::proof_of_space::f_calc::F1Calculator;
 use crate::proof_of_space::f_calc::FXCalculator;
 use crate::proof_of_space::prover::DiskProver;
-use log::{debug, trace};
 use log::{error, warn};
+use log::{info, trace};
 use sha2::{Digest, Sha256};
 use std::io::Error;
 use std::io::ErrorKind;
@@ -211,7 +211,7 @@ fn compare_proof_bits(left: &BitVec, right: &BitVec, k: u8) -> Result<bool, Erro
 }
 
 pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, usize), Error> {
-    debug!("Testing plot {:?}", path.as_ref());
+    info!("Testing plot {:?}", path.as_ref());
     let prover = DiskProver::new(path.as_ref())?;
     let mut total_proofs = 0;
     let mut bad_proofs = 0;
@@ -224,7 +224,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
             if duration > 5000 {
                 warn!("\tLooking up qualities took: {duration} ms. This should be below 5 seconds to minimize risk of losing rewards.");
             } else {
-                debug!("\tLooking up qualities took: {duration} ms.");
+                info!("\tLooking up qualities took: {duration} ms.");
             }
             let proof_start = Instant::now();
             let proof = prover.get_full_proof(&challenge_hash.clone().into(), index, true)?;
@@ -232,7 +232,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
             if proof_duration > 15000 {
                 warn!("\tFinding proof took: {proof_duration} ms. This should be below 15 seconds to minimize risk of losing rewards.");
             } else {
-                debug!("\tFinding proof took: {proof_duration} ms");
+                info!("\tFinding proof took: {proof_duration} ms");
             }
             total_proofs += 1;
             let v_quality = validate_proof(

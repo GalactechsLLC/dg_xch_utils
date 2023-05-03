@@ -45,9 +45,7 @@ pub async fn get_client_tls(
             .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
             .with_single_cert(certs, key)
-            .map_err(|e| {
-                Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e))
-            })?,
+            .map_err(|e| Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e)))?,
     );
 
     let connector = Connector::Rustls(cfg.clone());

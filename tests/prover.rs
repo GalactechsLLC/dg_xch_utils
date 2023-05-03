@@ -21,7 +21,7 @@ pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error
         let hash = hash_256(hash_input.as_slice());
         let challenge = Bytes32::from(hash);
         let qualities = prover.get_qualities_for_challenge(&challenge)?;
-        for index in 0..qualities.len() {
+        for (index, vec) in qualities.iter().enumerate() {
             if let Ok(proof) = prover.get_full_proof(&challenge, index, true) {
                 proof_data = proof.to_bytes();
                 let quality =
@@ -30,7 +30,7 @@ pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error
                     invalid += 1;
                     continue;
                 }
-                assert!(quality == qualities[index]);
+                assert!(quality == *vec);
                 success += 1;
                 // Tests invalid proof
                 proof_data[0] = ((proof_data[0] as u16 + 1) % 256) as u8;
