@@ -277,9 +277,7 @@ pub fn test_parallel_check_plots() {
                     Ok(file) => {
                         let path = file.path();
                         if let Some(s) = path.extension() {
-                            if s != "plot" {
-                                return; //Non plot File
-                            } else {
+                            if s == "plot" {
                                 let (total, bad) = check_plot(path, 30).unwrap();
                                 info!("Proofs Found: {total}/30, Bad Proofs: {bad}");
                                 total_plots.fetch_add(1, Ordering::AcqRel);

@@ -1,6 +1,5 @@
 use crate::types::ChiaSerialize;
 use log::error;
-use rustls::client::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::{DigitallySignedStruct, ServerName};
 use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
@@ -8,6 +7,7 @@ use std::fs::File;
 use std::io::{BufReader, Error, ErrorKind};
 use std::iter;
 use std::time::SystemTime;
+use rustls::client::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use tokio_rustls::rustls::{Certificate, PrivateKey};
 
 pub const PROTOCOL_VERSION: &str = "0.0.34";
