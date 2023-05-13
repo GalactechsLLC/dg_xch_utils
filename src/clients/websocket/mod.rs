@@ -7,17 +7,20 @@ use crate::utils::await_termination;
 use async_trait::async_trait;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
+use hyper::header::{HeaderName, HeaderValue};
 use hyper::upgrade::Upgraded;
 use log::{debug, error, info, trace};
 use rustls::ClientConfig;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{
     connect_async_tls_with_config, Connector, MaybeTlsStream, WebSocketStream,
@@ -37,6 +40,7 @@ pub async fn get_client_tls(
     ssl_crt_path: &str,
     ssl_key_path: &str,
     _ssl_ca_crt_path: &str,
+    additional_headers: &Option<HashMap<String, String>>,
 ) -> Result<(Client, ReadStream), Error> {
     let certs = load_certs(ssl_crt_path)?;
     let key = load_private_key(ssl_key_path)?;
@@ -49,22 +53,76 @@ pub async fn get_client_tls(
     );
 
     let connector = Connector::Rustls(cfg.clone());
-    let (stream, resp) =
-        connect_async_tls_with_config(format!("wss://{}:{}/ws", host, port), None, Some(connector))
-            .await
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!("Error Connecting Client: {:?}", e),
-                )
-            })?;
+    let mut request = format!("wss://{}:{}/ws", host, port)
+        .into_client_request()
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Request: {}", e),
+            )
+        })?;
+    if let Some(m) = additional_headers {
+        for (k, v) in m {
+            request.headers_mut().insert(
+                HeaderName::from_str(k).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header Name {},\r\n {}", k, e),
+                    )
+                })?,
+                HeaderValue::from_str(v).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header value {},\r\n {}", v, e),
+                    )
+                })?,
+            );
+        }
+    }
+    let (stream, resp) = connect_async_tls_with_config(request, None, Some(connector))
+        .await
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::Other,
+                format!("Error Connecting Client: {:?}", e),
+            )
+        })?;
     info!("Harvester Connect Resp: {:?}", resp);
     Ok(Client::new(stream))
 }
 
-pub async fn get_client(host: &str, port: u16) -> Result<(Client, ReadStream), Error> {
-    let req = format!("wss://{}:{}/ws", host, port);
-    let (stream, resp) = connect_async_tls_with_config(req, None, None)
+pub async fn get_client(
+    host: &str,
+    port: u16,
+    additional_headers: &Option<HashMap<String, String>>,
+) -> Result<(Client, ReadStream), Error> {
+    let mut request = format!("wss://{}:{}/ws", host, port)
+        .into_client_request()
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Request: {}", e),
+            )
+        })?;
+    if let Some(m) = additional_headers {
+        for (k, v) in m {
+            request.headers_mut().insert(
+                HeaderName::from_str(k).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header Name {},\r\n {}", k, e),
+                    )
+                })?,
+                HeaderValue::from_str(v).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header value {},\r\n {}", v, e),
+                    )
+                })?,
+            );
+        }
+    }
+    let (stream, resp) = connect_async_tls_with_config(request, None, None)
         .await
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
     debug!("{:?}", resp);
@@ -305,11 +363,11 @@ impl ReadStream {
                                     debug!("Processed Message: {:?}", &msg_arc.msg_type);
                                 }
                                 Err(e) => {
-                                    debug!("Invalid Message: {:?}", e);
+                                    error!("Invalid Message: {:?}", e);
                                 }
                             },
                             _ => {
-                                debug!("Invalid Message: {:?}", msg);
+                                error!("Invalid Message: {:?}", msg);
                             }
                         }
                     } else {
@@ -416,11 +474,11 @@ impl ServerReadStream {
                                     debug!("Processed Message: {:?}", &msg_arc.msg_type);
                                 }
                                 Err(e) => {
-                                    debug!("Invalid Message: {:?}", e);
+                                    error!("Invalid Message: {:?}", e);
                                 }
                             },
                             _ => {
-                                debug!("Invalid Message: {:?}", msg);
+                                error!("Invalid Message: {:?}", msg);
                             }
                         }
                     } else {
