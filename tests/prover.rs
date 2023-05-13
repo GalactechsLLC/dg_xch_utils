@@ -5,34 +5,6 @@ use dg_xch_utils::types::blockchain::sized_bytes::Bytes32;
 use std::io::Error;
 use std::path::Path;
 
-pub fn validate_file(filename: &str, iterations: u32) -> Result<bool, Error> {
-    let prover = DiskProver::new(Path::new(filename)).unwrap();
-    let k = prover.header.k;
-    let plot_id = &prover.header.id;
-    let mut proof_data;
-    let mut invalid = 0;
-    for i in 0u32..iterations {
-        let hash_input = i.to_be_bytes();
-        let hash = hash_256(hash_input.as_slice());
-        let challenge = Bytes32::from(hash);
-        let qualities = prover.get_qualities_for_challenge(&challenge)?;
-        for index in 0..qualities.len() {
-            if let Ok(proof) = prover.get_full_proof(&challenge, index, true) {
-                proof_data = proof.to_bytes();
-                let quality =
-                    validate_proof(&plot_id.to_sized_bytes(), k, &challenge.bytes, &proof_data)?;
-                if quality.get_size() != 256 {
-                    invalid += 1;
-                    continue;
-                }
-            } else {
-                invalid += 1;
-            }
-        }
-    }
-    Ok(invalid > 0)
-}
-
 pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error> {
     let prover = DiskProver::new(Path::new(filename)).unwrap();
     let k = prover.header.k;
@@ -49,7 +21,7 @@ pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error
         let hash = hash_256(hash_input.as_slice());
         let challenge = Bytes32::from(hash);
         let qualities = prover.get_qualities_for_challenge(&challenge)?;
-        for index in 0..qualities.len() {
+        for (index, vec) in qualities.iter().enumerate() {
             if let Ok(proof) = prover.get_full_proof(&challenge, index, true) {
                 proof_data = proof.to_bytes();
                 let quality =
@@ -58,7 +30,7 @@ pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error
                     invalid += 1;
                     continue;
                 }
-                assert!(quality == qualities[index]);
+                assert!(quality == *vec);
                 success += 1;
                 // Tests invalid proof
                 proof_data[0] = ((proof_data[0] as u16 + 1) % 256) as u8;

@@ -8,6 +8,7 @@ use crate::types::blockchain::wallet_sync::WalletSync;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Map};
+use std::collections::HashMap;
 use std::io::Error;
 
 use crate::clients::api::responses::{
@@ -20,13 +21,20 @@ pub struct WalletClient {
     client: Client,
     host: String,
     port: u16,
+    additional_headers: Option<HashMap<String, String>>,
 }
 impl WalletClient {
-    pub fn new(host: &str, port: u16, ssl_path: Option<String>) -> Self {
+    pub fn new(
+        host: &str,
+        port: u16,
+        ssl_path: Option<String>,
+        additional_headers: Option<HashMap<String, String>>,
+    ) -> Self {
         WalletClient {
             client: get_client(ssl_path).unwrap_or_default(),
             host: host.to_string(),
             port,
+            additional_headers,
         }
     }
 }
@@ -39,6 +47,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "log_in"),
             &request_body,
+            &self.additional_headers,
         )
         .await?
         .fingerprint)
@@ -50,6 +59,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "log_in_and_skip"),
             &request_body,
+            &self.additional_headers,
         )
         .await?
         .fingerprint)
@@ -59,6 +69,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_wallets"),
             &Map::new(),
+            &self.additional_headers,
         )
         .await?
         .wallets)
@@ -70,6 +81,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_wallet_balance"),
             &request_body,
+            &self.additional_headers,
         )
         .await?
         .wallets)
@@ -79,6 +91,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_sync_status"),
             &Map::new(),
+            &self.additional_headers,
         )
         .await?;
         Ok(WalletSync {
@@ -103,6 +116,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "SendTransaction"),
             &request_body,
+            &self.additional_headers,
         )
         .await?
         .transaction)
@@ -121,6 +135,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "send_transaction_multi"),
             &request_body,
+            &self.additional_headers,
         )
         .await?
         .transaction)
@@ -137,6 +152,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_transaction"),
             &request_body,
+            &self.additional_headers,
         )
         .await?
         .transaction)
@@ -157,6 +173,7 @@ impl WalletAPI for WalletClient {
             &self.client,
             &get_url(self.host.as_str(), self.port, "create_signed_transaction"),
             &request_body,
+            &self.additional_headers,
         )
         .await?
         .signed_tx)
