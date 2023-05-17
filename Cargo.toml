@@ -42,3 +42,6 @@ tokio-tungstenite = {version = "0.18.0", features = ["rustls-tls-webpki-roots", 
 tokio-rustls = {version = "0.23.4", features = [] }
 uuid = {version="1.2.2", features=["v4"]}
 webpki-roots = "0.22.6"
+
+[features]
+async_io = []

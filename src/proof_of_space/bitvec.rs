@@ -1,4 +1,5 @@
 use crate::proof_of_space::constants::ucdiv;
+use log::error;
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter, Write};
 use std::ops;
@@ -41,7 +42,7 @@ impl BitVec {
         };
         if size > 64 {
             bits.init_bits((value >> 64) as u64, size - 64);
-            bits.append_value(value, 64);
+            bits.append_value(value as u64, 64);
         } else {
             bits.init_bits(value as u64, size);
         }
@@ -52,7 +53,7 @@ impl BitVec {
         self.last_size = 0;
         if size > 64 {
             // Get number of extra 0s added at the beginning.
-            let mut zeros = size - self.get_size_bits(value as u128);
+            let mut zeros = size - value.checked_ilog2().map(|u| u + 1).unwrap_or_default();
             // Add a full group of 0s (length 64)
             while zeros > 64 {
                 self.append_value(0, 64);
@@ -60,7 +61,10 @@ impl BitVec {
             }
             // Add the incomplete group of 0s and then the value.
             self.append_value(0, zeros);
-            self.append_value(value.into(), self.get_size_bits(value as u128));
+            self.append_value(
+                value,
+                value.checked_ilog2().map(|u| u + 1).unwrap_or_default(),
+            );
         } else {
             /* 'value' must be under 'size' bits. */
             assert!(size == 64 || value == (value & ((1u64 << size) - 1)));
@@ -96,10 +100,10 @@ impl BitVec {
         if !other.values.is_empty() {
             let mut index = 0;
             while index < other.values.len() {
-                bits.append_value(other.values[index].into(), 64);
+                bits.append_value(other.values[index], 64);
                 index += 1;
             }
-            bits.append_value(other.values[other.values.len() - 1].into(), other.last_size);
+            bits.append_value(other.values[other.values.len() - 1], other.last_size);
         }
         bits
     }
@@ -137,7 +141,7 @@ impl BitVec {
                 bucket_size += 8;
                 j += 1;
             }
-            bits.append_value(val.into(), bucket_size);
+            bits.append_value(val, bucket_size);
             i += u64::BITS / u8::BITS;
         }
         bits
@@ -185,16 +189,16 @@ impl BitVec {
                 last_size: 0,
             };
             // Get the prefix from the last bucket.
-            let mut split = self.split_number_by_prefix(
+            let mut split = split_number_by_prefix(
                 self.values[start_bucket as usize],
                 64,
                 (start_index % 64) as u8,
             );
-            result.append_value(split.1.into(), 64 - start_index % 64);
+            result.append_value(split.1, 64 - start_index % 64);
             // Append all the in between buckets
             let mut i = start_bucket + 1;
             while i < end_bucket {
-                result.append_value(self.values[i as usize].into(), 64);
+                result.append_value(self.values[i as usize], 64);
                 i += 1;
             }
             if end_index % 64 > 0 {
@@ -204,12 +208,12 @@ impl BitVec {
                     64
                 }; //u8?
                    // Get the suffix from the last bucket.
-                split = self.split_number_by_prefix(
+                split = split_number_by_prefix(
                     self.values[end_bucket as usize],
                     bucket_size as u8,
                     (end_index % 64) as u8,
                 );
-                result.append_value(split.0.into(), end_index % 64);
+                result.append_value(split.0, end_index % 64);
             }
             result
         }
@@ -227,7 +231,7 @@ impl BitVec {
             res
         } else {
             assert_eq!((start_index >> 6) + 1, (end_index >> 6));
-            let mut split = self.split_number_by_prefix(
+            let mut split = split_number_by_prefix(
                 self.values[(start_index >> 6) as usize],
                 64,
                 (start_index & 63) as u8,
@@ -239,7 +243,7 @@ impl BitVec {
                 } else {
                     64
                 };
-                split = self.split_number_by_prefix(
+                split = split_number_by_prefix(
                     self.values[(end_index >> 6) as usize],
                     bucket_size as u8,
                     (end_index & 63) as u8,
@@ -270,12 +274,11 @@ impl BitVec {
 
     pub fn get_value(&self) -> Option<u64> {
         if self.values.len() != 1 {
-            println!("Number of 64 bit values is: {}", self.values.len());
-            println!("Size of bits is: : {}", self.get_size());
-            //Err("Number doesn't fit into a 64-bit type. {}", self.get_size());
-            return None;
+            error!("Number doesn't fit into a 64-bit type. {}", self.get_size());
+            None
+        } else {
+            Some(self.values[0])
         }
-        Some(self.values[0])
     }
     pub fn get_value_unchecked(&self) -> u64 {
         self.values[0]
@@ -283,93 +286,54 @@ impl BitVec {
 
     pub fn get_size(&self) -> u32 {
         if self.values.is_empty() {
-            return 0;
-        }
-        // Full buckets contain each 64 bits, last one contains only 'last_size_' bits.
-        (self.values.len() as u32 - 1) * 64 + self.last_size
-    }
-
-    fn append_value(&mut self, value: u128, length: u32) {
-        if length > 64 {
-            println!("SPLITTING append_value");
-            self.do_append_value((value >> 64) as u64, length - 64);
-            self.do_append_value(value as u64, 64);
+            0
         } else {
-            self.do_append_value(value as u64, length);
+            // Full buckets contain each 64 bits, last one contains only 'last_size' bits.
+            (self.values.len() as u32 - 1) * 64 + self.last_size
         }
     }
 
-    fn do_append_value(&mut self, value: u64, length: u32) {
+    fn append_value(&mut self, value: u64, length: u32) {
         // The last bucket is full or no bucket yet, create a new one.
         if self.values.is_empty() || self.last_size == 64 {
             self.values.push(value);
             self.last_size = length;
         } else {
             let free_bits = 64 - self.last_size;
+            let len: usize = self.values.len() - 1;
             if self.last_size == 0 && length == 64 {
-                // Special case for OSX -O3, as per -fsanitize=undefined
-                // runtime error: shift exponent 64 is too large for 64-bit type 'uint64_t' (aka
-                // 'unsigned long long')
-                let len: usize = self.values.len() - 1;
                 self.values[len] = value;
                 self.last_size = length;
             } else if length <= free_bits {
                 // If the value fits into the last bucket, append it all there.
-                let len: usize = self.values.len() - 1;
                 self.values[len] = (self.values[len] << length) + value;
                 self.last_size += length;
             } else {
                 // Otherwise, append the prefix into the last bucket, and create a new bucket for
                 // the suffix.
-                let (prefix, suffix) =
-                    self.split_number_by_prefix(value, length as u8, free_bits as u8);
-                let len: usize = self.values.len() - 1;
+                let (prefix, suffix) = split_number_by_prefix(value, length as u8, free_bits as u8);
                 self.values[len] = (self.values[len] << free_bits) + prefix;
                 self.values.push(suffix);
                 self.last_size = length - free_bits;
             }
         }
     }
-
-    fn split_number_by_prefix(&self, number: u64, num_bits: u8, prefix_size: u8) -> (u64, u64) {
-        assert!(num_bits >= prefix_size);
-        if prefix_size == 0 {
-            let prefix = 0;
-            let suffix = number;
-            return (prefix, suffix);
-        }
-        let suffix_size = num_bits - prefix_size;
-        let mut mask = 1u64 << suffix_size;
-        mask -= 1;
-        let suffix = number & mask;
-        let prefix = number >> suffix_size;
-        (prefix, suffix)
-    }
-
-    fn get_size_bits(&self, value: u128) -> u32 {
-        let mut val = value;
-        let mut count = 0;
-        while val > 0 {
-            count += 1;
-            val >>= 1;
-        }
-        count
+}
+#[inline]
+fn split_number_by_prefix(number: u64, num_bits: u8, prefix_size: u8) -> (u64, u64) {
+    assert!(num_bits >= prefix_size);
+    if prefix_size == 0 {
+        (0, number)
+    } else {
+        let shift_amt = num_bits - prefix_size;
+        (number >> shift_amt, number & ((1u64 << shift_amt) - 1))
     }
 }
 impl ops::Add<BitVec> for BitVec {
     type Output = BitVec;
 
-    fn add(self, _rhs: BitVec) -> BitVec {
-        let mut rtn = self;
-        if !_rhs.values.is_empty() {
-            let mut i = 0;
-            while i < _rhs.values.len() - 1 {
-                rtn.append_value(_rhs.values[i] as u128, 64);
-                i += 1;
-            }
-            rtn.append_value(_rhs.values[_rhs.values.len() - 1] as u128, _rhs.last_size);
-        }
-        rtn
+    fn add(self, rhs: BitVec) -> BitVec {
+        self + &rhs
     }
 }
 impl ops::Add<&BitVec> for BitVec {
@@ -380,24 +344,17 @@ impl ops::Add<&BitVec> for BitVec {
         if !_rhs.values.is_empty() {
             let mut i = 0;
             while i < _rhs.values.len() - 1 {
-                rtn.append_value(_rhs.values[i] as u128, 64);
+                rtn.append_value(_rhs.values[i], 64);
                 i += 1;
             }
-            rtn.append_value(_rhs.values[_rhs.values.len() - 1] as u128, _rhs.last_size);
+            rtn.append_value(_rhs.values[_rhs.values.len() - 1], _rhs.last_size);
         }
         rtn
     }
 }
 impl ops::AddAssign<BitVec> for BitVec {
-    fn add_assign(&mut self, _rhs: BitVec) {
-        if !_rhs.values.is_empty() {
-            let mut i = 0;
-            while i < _rhs.values.len() - 1 {
-                self.append_value(_rhs.values[i] as u128, 64);
-                i += 1;
-            }
-            self.append_value(_rhs.values[_rhs.values.len() - 1] as u128, _rhs.last_size);
-        }
+    fn add_assign(&mut self, rhs: BitVec) {
+        *self += &rhs
     }
 }
 impl ops::AddAssign<&BitVec> for BitVec {
@@ -405,26 +362,16 @@ impl ops::AddAssign<&BitVec> for BitVec {
         if !_rhs.values.is_empty() {
             let mut i = 0;
             while i < _rhs.values.len() - 1 {
-                self.append_value(_rhs.values[i] as u128, 64);
+                self.append_value(_rhs.values[i], 64);
                 i += 1;
             }
-            self.append_value(_rhs.values[_rhs.values.len() - 1] as u128, _rhs.last_size);
+            self.append_value(_rhs.values[_rhs.values.len() - 1], _rhs.last_size);
         }
     }
 }
 impl PartialEq for BitVec {
     fn eq(&self, other: &Self) -> bool {
-        if self.get_size() != other.get_size() {
-            return false;
-        }
-        let mut i = 0;
-        while i < self.values.len() {
-            if self.values[i] != other.values[i] {
-                return false;
-            }
-            i += 1;
-        }
-        true
+        self.values == other.values && self.last_size == other.last_size
     }
 }
 impl Eq for BitVec {}

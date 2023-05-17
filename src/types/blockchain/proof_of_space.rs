@@ -164,7 +164,7 @@ pub fn passes_plot_filter(
 ) -> bool {
     let mut filter = [false; 256];
     let mut index = 0;
-    for b in calculate_plot_filter_input(plot_id, challenge_hash, signage_point).to_bytes() {
+    for b in calculate_plot_filter_input(plot_id, challenge_hash, signage_point).as_slice() {
         for i in (0..=7).rev() {
             filter[index] = (b >> i & 1) == 1;
             index += 1;
@@ -183,12 +183,10 @@ pub fn calculate_plot_filter_input(
     challenge_hash: &Bytes32,
     signage_point: &Bytes32,
 ) -> Bytes32 {
-    let mut to_hash: Vec<u8> = Vec::new();
-    to_hash.extend(plot_id.to_bytes());
-    to_hash.extend(challenge_hash.to_bytes());
-    to_hash.extend(signage_point.to_bytes());
     let mut hasher: Sha256 = Sha256::new();
-    hasher.update(to_hash);
+    hasher.update(plot_id);
+    hasher.update(challenge_hash);
+    hasher.update(signage_point);
     Bytes32::new(hasher.finalize().to_vec())
 }
 
@@ -198,8 +196,11 @@ pub fn calculate_pos_challenge(
     signage_point: &Bytes32,
 ) -> Bytes32 {
     let mut hasher: Sha256 = Sha256::new();
-    let to_hash = calculate_plot_filter_input(plot_id, challenge_hash, signage_point);
-    hasher.update(to_hash.to_bytes());
+    hasher.update(calculate_plot_filter_input(
+        plot_id,
+        challenge_hash,
+        signage_point,
+    ));
     Bytes32::new(hasher.finalize().to_vec())
 }
 
