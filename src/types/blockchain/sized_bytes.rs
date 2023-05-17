@@ -53,6 +53,7 @@ pub trait SizedBytes<'a>: Serialize + Deserialize<'a> + fmt::Display {
     const SIZE: usize;
     fn new(bytes: Vec<u8>) -> Self;
     fn to_bytes(&self) -> Vec<u8>;
+    fn as_slice(&'a self) -> &'a [u8];
 }
 
 macro_rules! impl_sized_bytes {
@@ -74,6 +75,10 @@ macro_rules! impl_sized_bytes {
 
                 fn to_bytes(&self) -> Vec<u8> {
                     self.bytes.clone()
+                }
+
+                fn as_slice(&'a self) -> &'a [u8] {
+                    &self.as_ref()
                 }
             }
             impl $name {

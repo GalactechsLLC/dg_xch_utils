@@ -3,29 +3,59 @@ use crate::clients::protocols::pool::{
     PostFarmerResponse, PostPartialRequest, PostPartialResponse, PutFarmerRequest,
     PutFarmerResponse,
 };
-use log::{debug, warn};
+use async_trait::async_trait;
+use log::warn;
 use reqwest::Client;
 
+#[async_trait]
+pub trait PoolClient {
+    async fn get_farmer(
+        &self,
+        url: &str,
+        request: GetFarmerRequest,
+    ) -> Result<GetFarmerResponse, PoolError>;
+    async fn post_farmer(
+        &self,
+        url: &str,
+        request: PostFarmerRequest,
+    ) -> Result<PostFarmerResponse, PoolError>;
+    async fn put_farmer(
+        &self,
+        url: &str,
+        request: PutFarmerRequest,
+    ) -> Result<PutFarmerResponse, PoolError>;
+    async fn post_partial(
+        &self,
+        url: &str,
+        request: PostPartialRequest,
+    ) -> Result<PostPartialResponse, PoolError>;
+}
+
 #[derive(Default, Debug)]
-pub struct PoolClient {
+pub struct DefaultPoolClient {
     client: Client,
 }
-impl PoolClient {
+impl DefaultPoolClient {
     pub fn new() -> Self {
         Self {
             client: Client::new(),
         }
     }
-
-    pub async fn get_farmer(
+}
+#[async_trait]
+impl PoolClient for DefaultPoolClient {
+    async fn get_farmer(
         &self,
         url: &str,
         request: GetFarmerRequest,
     ) -> Result<GetFarmerResponse, PoolError> {
-        debug!("Sending Request: {:?}", request);
-        let query = self.client.get(format!("{}/farmer", url)).query(&request);
-        debug!("Sending Built Request: {:?}", query);
-        return match query.send().await {
+        match self
+            .client
+            .get(format!("{}/farmer", url))
+            .query(&request)
+            .send()
+            .await
+        {
             Ok(resp) => match resp.status() {
                 reqwest::StatusCode::OK => match resp.text().await {
                     Ok(body) => {
@@ -63,7 +93,7 @@ impl PoolClient {
                     let text = resp.text().await.unwrap_or_default();
                     warn!(
                         "Failed to Get Farmer, Bad Status Code: {:?}, {}",
-                        &status, &text
+                        status, &text
                     );
                     Err(PoolError {
                         error_code: PoolErrorCode::RequestFailed as u8,
@@ -81,15 +111,16 @@ impl PoolClient {
                     error_message: e.to_string(),
                 })
             }
-        };
+        }
     }
 
-    pub async fn post_farmer(
+    async fn post_farmer(
         &self,
         url: &str,
         request: PostFarmerRequest,
     ) -> Result<PostFarmerResponse, PoolError> {
-        match Client::new()
+        match self
+            .client
             .post(format!("{}/farmer", url))
             .json(&request)
             .send()
@@ -144,12 +175,13 @@ impl PoolClient {
         }
     }
 
-    pub async fn put_farmer(
+    async fn put_farmer(
         &self,
         url: &str,
         request: PutFarmerRequest,
     ) -> Result<PutFarmerResponse, PoolError> {
-        match Client::new()
+        match self
+            .client
             .put(format!("{}/farmer", url))
             .json(&request)
             .send()
@@ -203,12 +235,13 @@ impl PoolClient {
             }
         }
     }
-    pub async fn post_partial(
+    async fn post_partial(
         &self,
         url: &str,
         request: PostPartialRequest,
     ) -> Result<PostPartialResponse, PoolError> {
-        match Client::new()
+        match self
+            .client
             .post(format!("{}/partial", url))
             .json(&request)
             .send()
