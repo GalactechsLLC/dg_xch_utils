@@ -13,7 +13,7 @@ use std::path::Path;
 fn test_proof_of_space(filename: &str, iterations: u32, num_proofs: u32) {
     let prover = DiskProver::new(Path::new(filename)).unwrap();
     let k = prover.header.k;
-    let plot_id = prover.header.id;
+    let plot_id = prover.header.id.clone();
     let mut proof_data;
     let mut success = 0;
     // Tries an edge case challenge with many 1s in the front, and ensures there is no segfault
@@ -31,7 +31,9 @@ fn test_proof_of_space(filename: &str, iterations: u32, num_proofs: u32) {
         for index in 0..qualities.len() {
             if let Ok(proof) = prover.get_full_proof(&challenge, index, true) {
                 proof_data = proof.to_bytes();
-                let quality = validate_proof(&plot_id, k, &challenge.bytes, &proof_data).unwrap();
+                let quality =
+                    validate_proof(&plot_id.to_sized_bytes(), k, &challenge.bytes, &proof_data)
+                        .unwrap();
                 if quality.get_size() != 256 {
                     invalid += 1;
                     continue;
@@ -40,7 +42,9 @@ fn test_proof_of_space(filename: &str, iterations: u32, num_proofs: u32) {
                 success += 1;
                 // Tests invalid proof
                 proof_data[0] = ((proof_data[0] as u16 + 1) % 256) as u8;
-                let quality_2 = validate_proof(&plot_id, k, &challenge.bytes, &proof_data).unwrap();
+                let quality_2 =
+                    validate_proof(&plot_id.to_sized_bytes(), k, &challenge.bytes, &proof_data)
+                        .unwrap();
                 assert_eq!(quality_2.get_size(), 0);
             } else {
                 invalid += 1;

@@ -1,12 +1,24 @@
 use crate::types::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::wallet::puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
 use bech32::{FromBase32, ToBase32, Variant};
 use bip39::Mnemonic;
-use blst::min_pk::SecretKey;
+use blst::min_pk::{PublicKey, SecretKey};
 use hkdf::Hkdf;
 use sha2::Digest;
 use sha2::Sha256;
 use std::io::{Error, ErrorKind};
+use std::mem::size_of;
 use std::str::FromStr;
+
+pub const BLS_SPEC_NUMBER: u32 = 12381;
+pub const CHIA_BLOCKCHAIN_NUMBER: u32 = 8444;
+pub const FARMER_PATH: u32 = 0;
+pub const POOL_PATH: u32 = 1;
+pub const WALLET_PATH: u32 = 2;
+pub const LOCAL_PATH: u32 = 3;
+pub const BACKUP_PATH: u32 = 4;
+pub const SINGLETON_PATH: u32 = 5;
+pub const POOL_AUTH_PATH: u32 = 6;
 
 pub fn hmac_extract_expand(
     length: usize,
@@ -82,19 +94,24 @@ pub fn derive_path(key: &SecretKey, paths: Vec<u32>) -> Result<SecretKey, Error>
 // }
 
 pub fn master_sk_to_farmer_sk(key: &SecretKey) -> Result<SecretKey, Error> {
-    derive_path(key, vec![12381, 8444, 0, 0])
-}
-
-pub fn get_farmer_from_master_sk(key: &SecretKey) -> Result<SecretKey, Error> {
-    derive_path(key, vec![12381, 8444, 0, 0])
+    derive_path(
+        key,
+        vec![BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER, FARMER_PATH, 0],
+    )
 }
 
 pub fn master_sk_to_pool_sk(key: &SecretKey) -> Result<SecretKey, Error> {
-    derive_path(key, vec![12381, 8444, 1, 0])
+    derive_path(
+        key,
+        vec![BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER, POOL_PATH, 0],
+    )
 }
 
 fn master_sk_to_wallet_sk_intermediate(key: &SecretKey) -> Result<SecretKey, Error> {
-    derive_path(key, vec![12381, 8444, 2])
+    derive_path(
+        key,
+        vec![BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER, WALLET_PATH],
+    )
 }
 
 pub fn master_sk_to_wallet_sk(key: &SecretKey, index: u32) -> Result<SecretKey, Error> {
@@ -111,14 +128,32 @@ pub fn master_sk_to_wallet_sk(key: &SecretKey, index: u32) -> Result<SecretKey, 
 //     return _derive_path_unhardened(intermediate, [index]);
 // }
 pub fn master_sk_to_local_sk(key: &SecretKey) -> Result<SecretKey, Error> {
-    derive_path(key, vec![12381, 8444, 3, 0])
+    derive_path(
+        key,
+        vec![BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER, LOCAL_PATH, 0],
+    )
+}
+
+pub fn master_sk_to_backup_sk(key: &SecretKey) -> Result<SecretKey, Error> {
+    derive_path(
+        key,
+        vec![BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER, BACKUP_PATH, 0],
+    )
 }
 
 pub fn master_sk_to_singleton_owner_sk(
     key: &SecretKey,
     pool_wallet_index: u32,
 ) -> Result<SecretKey, Error> {
-    derive_path(key, vec![12381, 8444, 5, pool_wallet_index])
+    derive_path(
+        key,
+        vec![
+            BLS_SPEC_NUMBER,
+            CHIA_BLOCKCHAIN_NUMBER,
+            SINGLETON_PATH,
+            pool_wallet_index,
+        ],
+    )
 }
 
 pub fn master_sk_to_pooling_authentication_sk(
@@ -126,7 +161,15 @@ pub fn master_sk_to_pooling_authentication_sk(
     pool_wallet_index: u32,
     index: u32,
 ) -> Result<SecretKey, Error> {
-    derive_path(key, vec![12381, 8444, 6, pool_wallet_index * 10000 + index])
+    derive_path(
+        key,
+        vec![
+            BLS_SPEC_NUMBER,
+            CHIA_BLOCKCHAIN_NUMBER,
+            POOL_AUTH_PATH,
+            pool_wallet_index * 10000 + index,
+        ],
+    )
 }
 
 pub fn key_from_mnemonic(mnemonic: &str) -> Result<SecretKey, Error> {
@@ -135,6 +178,12 @@ pub fn key_from_mnemonic(mnemonic: &str) -> Result<SecretKey, Error> {
     let seed = mnemonic.to_seed("");
     SecretKey::key_gen_v3(&seed, &[])
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+}
+
+pub fn fingerprint(key: &PublicKey) -> u32 {
+    let mut int_buf = [0; size_of::<u32>()];
+    int_buf.copy_from_slice(&hash_256(&key.to_bytes())[0..size_of::<u32>()]);
+    u32::from_be_bytes(int_buf)
 }
 
 pub fn encode_puzzle_hash(puzzle_hash: Bytes32, prefix: &str) -> Result<String, Error> {
@@ -148,4 +197,9 @@ pub fn decode_puzzle_hash(address: &str) -> Result<Bytes32, Error> {
     Ok(Bytes32::from(Vec::<u8>::from_base32(&data).map_err(
         |e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)),
     )?))
+}
+pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, Error> {
+    let wallet_sk = master_sk_to_wallet_sk(key, index)?;
+    let first_address_hex = puzzle_hash_for_pk(&wallet_sk.sk_to_pk().to_bytes().into())?;
+    encode_puzzle_hash(first_address_hex, prefix)
 }

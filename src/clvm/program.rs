@@ -176,9 +176,9 @@ impl TryFrom<Vec<u8>> for Program {
     }
 }
 
-impl TryFrom<&Vec<u8>> for Program {
+impl TryFrom<&[u8]> for Program {
     type Error = Error;
-    fn try_from(bytes: &Vec<u8>) -> Result<Self, Self::Error> {
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         let atom = SExp::Atom(AtomBuf::from(bytes));
         Ok(Program {
             serialized: sexp_to_bytes(&atom)?,
@@ -250,7 +250,10 @@ impl Program {
     pub fn tree_hash(&self) -> Bytes32 {
         let sexp = match sexp_from_bytes(&self.serialized) {
             Ok(node) => node,
-            Err(_) => NULL.clone(),
+            Err(e) => {
+                println!("ERROR: {:?}", e);
+                NULL.clone()
+            }
         };
         Bytes32::new(tree_hash(&sexp))
     }
@@ -262,13 +265,21 @@ macro_rules! impl_sized_bytes {
             impl TryFrom<$name> for Program {
                 type Error = std::io::Error;
                 fn try_from(bytes: $name) -> Result<Self, Self::Error> {
-                    bytes.to_bytes().try_into()
+                    let atom = SExp::Atom(AtomBuf::from(bytes.to_sized_bytes().as_slice()));
+                    Ok(Program {
+                        serialized: sexp_to_bytes(&atom)?,
+                        sexp: atom,
+                    })
                 }
             }
             impl TryFrom<&$name> for Program {
                 type Error = std::io::Error;
                 fn try_from(bytes: &$name) -> Result<Self, Self::Error> {
-                    bytes.to_bytes().try_into()
+                    let atom = SExp::Atom(AtomBuf::from(bytes.to_sized_bytes().as_slice()));
+                    Ok(Program {
+                        serialized: sexp_to_bytes(&atom)?,
+                        sexp: atom,
+                    })
                 }
             }
         )*
