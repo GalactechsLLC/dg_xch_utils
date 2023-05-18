@@ -1,13 +1,15 @@
+use crate::clvm::program::Program;
 use blst::min_pk::{PublicKey, SecretKey, Signature};
 use hex::FromHexError;
 use hex::{decode, encode};
+use paperclip::actix::Apiv2Schema;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::error::Error;
+use std::ffi::OsStr;
 use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
-use std::io::ErrorKind;
+use std::io::{Error, ErrorKind};
 
 pub fn prep_hex_str(to_fix: &str) -> String {
     let lc = to_fix.to_lowercase();
@@ -51,13 +53,14 @@ pub trait SizedBytes<'a>: Serialize + Deserialize<'a> + fmt::Display {
     const SIZE: usize;
     fn new(bytes: Vec<u8>) -> Self;
     fn to_bytes(&self) -> Vec<u8>;
+    fn as_slice(&'a self) -> &'a [u8];
 }
 
 macro_rules! impl_sized_bytes {
 
     ($($name: ident, $size:expr, $visitor:ident);*) => {
         $(
-            #[derive(Clone)]
+            #[derive(Clone, Apiv2Schema)]
             pub struct $name {
                 pub bytes: Vec<u8>,
                 pub as_str: String
@@ -72,6 +75,10 @@ macro_rules! impl_sized_bytes {
 
                 fn to_bytes(&self) -> Vec<u8> {
                     self.bytes.clone()
+                }
+
+                fn as_slice(&'a self) -> &'a [u8] {
+                    &self.as_ref()
                 }
             }
             impl $name {
@@ -107,6 +114,12 @@ macro_rules! impl_sized_bytes {
             impl AsRef<[u8]> for $name {
                 fn as_ref(&self) -> &[u8] {
                     &self.bytes
+                }
+            }
+
+            impl AsRef<OsStr> for $name {
+                fn as_ref(&self) -> &OsStr {
+                    OsStr::new(&self.as_str)
                 }
             }
 
@@ -190,6 +203,24 @@ macro_rules! impl_sized_bytes {
                 }
             }
 
+            impl TryFrom<Program> for $name {
+                type Error = Error;
+
+                fn try_from(value: Program) -> Result<Self, Self::Error> {
+                    let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Program is not a valid $name"))?;
+                    Ok(vec.into())
+                }
+            }
+
+            impl TryFrom<&Program> for $name {
+                type Error = Error;
+
+                fn try_from(value: &Program) -> Result<Self, Self::Error> {
+                    let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Program is not a valid $name"))?;
+                    Ok(vec.into())
+                }
+            }
+
             struct $visitor;
 
             impl<'de> Visitor<'de> for $visitor {
@@ -201,14 +232,14 @@ macro_rules! impl_sized_bytes {
 
                 fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
                 where
-                    E: Error,
+                    E: std::error::Error,
                 {
                     Ok(value.into())
                 }
 
                 fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
                 where
-                    E: Error,
+                    E: std::error::Error,
                 {
                     Ok(value.into())
                 }
@@ -283,18 +314,18 @@ impl From<Bytes48> for PublicKey {
 }
 
 impl TryFrom<&Bytes96> for Signature {
-    type Error = std::io::Error;
+    type Error = Error;
 
-    fn try_from(val: &Bytes96) -> Result<Signature, std::io::Error> {
+    fn try_from(val: &Bytes96) -> Result<Signature, Error> {
         Signature::from_bytes(&val.to_sized_bytes())
-            .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
     }
 }
 impl TryFrom<Bytes96> for Signature {
-    type Error = std::io::Error;
+    type Error = Error;
 
-    fn try_from(val: Bytes96) -> Result<Signature, std::io::Error> {
+    fn try_from(val: Bytes96) -> Result<Signature, Error> {
         Signature::from_bytes(&val.to_sized_bytes())
-            .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
     }
 }

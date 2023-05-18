@@ -86,7 +86,7 @@ fn get_address(
     let wallet_sk = master_sk_to_wallet_sk(key, index)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {:?}", e)))?;
     let address = encode_puzzle_hash(
-        puzzle_hash_for_pk(&wallet_sk.sk_to_pk().to_bytes().into())?,
+        &puzzle_hash_for_pk(&Bytes48::from(wallet_sk.sk_to_pk().to_bytes()))?,
         "xch",
     )?;
     for s in to_find {

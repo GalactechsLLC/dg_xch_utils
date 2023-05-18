@@ -7,17 +7,21 @@ use crate::utils::await_termination;
 use async_trait::async_trait;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
+use hyper::header::{HeaderName, HeaderValue};
 use hyper::upgrade::Upgraded;
-use log::{debug, trace};
+use log::{debug, error, trace};
 use rustls::ClientConfig;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{
     connect_async_tls_with_config, Connector, MaybeTlsStream, WebSocketStream,
@@ -34,35 +38,93 @@ use crate::types::ChiaSerialize;
 pub async fn get_client_tls(
     host: &str,
     port: u16,
-    ssl_crt_path: &str,
-    ssl_key_path: &str,
-    _ssl_ca_crt_path: &str,
+    ssl_info: ClientSSLConfig<'_>,
+    additional_headers: &Option<HashMap<String, String>>,
 ) -> Result<(Client, ReadStream), Error> {
-    let certs = load_certs(ssl_crt_path)?;
-    let key = load_private_key(ssl_key_path)?;
+    let certs = load_certs(ssl_info.ssl_crt_path)?;
+    let key = load_private_key(ssl_info.ssl_key_path)?;
     let cfg = Arc::new(
         ClientConfig::builder()
             .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
             .with_single_cert(certs, key)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?,
+            .map_err(|e| Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e)))?,
     );
 
     let connector = Connector::Rustls(cfg.clone());
-    let (stream, resp) =
-        connect_async_tls_with_config(format!("wss://{}:{}/ws", host, port), None, Some(connector))
-            .await
-            .map_err(|e| Error::new(ErrorKind::Other, e))?;
-    debug!("{:?}", resp);
+    let mut request = format!("wss://{}:{}/ws", host, port)
+        .into_client_request()
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Request: {}", e),
+            )
+        })?;
+    if let Some(m) = additional_headers {
+        for (k, v) in m {
+            request.headers_mut().insert(
+                HeaderName::from_str(k).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header Name {},\r\n {}", k, e),
+                    )
+                })?,
+                HeaderValue::from_str(v).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header value {},\r\n {}", v, e),
+                    )
+                })?,
+            );
+        }
+    }
+    let (stream, resp) = connect_async_tls_with_config(request, None, Some(connector))
+        .await
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::Other,
+                format!("Error Connecting Client: {:?}", e),
+            )
+        })?;
+    debug!("Client Connect Resp: {:?}", resp);
     Ok(Client::new(stream))
 }
 
-pub async fn get_client(host: &str, port: u16) -> Result<(Client, ReadStream), Error> {
-    let req = format!("wss://{}:{}/ws", host, port);
-    let (stream, resp) = connect_async_tls_with_config(req, None, None)
+pub async fn get_client(
+    host: &str,
+    port: u16,
+    additional_headers: &Option<HashMap<String, String>>,
+) -> Result<(Client, ReadStream), Error> {
+    let mut request = format!("wss://{}:{}/ws", host, port)
+        .into_client_request()
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Request: {}", e),
+            )
+        })?;
+    if let Some(m) = additional_headers {
+        for (k, v) in m {
+            request.headers_mut().insert(
+                HeaderName::from_str(k).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header Name {},\r\n {}", k, e),
+                    )
+                })?,
+                HeaderValue::from_str(v).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header value {},\r\n {}", v, e),
+                    )
+                })?,
+            );
+        }
+    }
+    let (stream, resp) = connect_async_tls_with_config(request, None, None)
         .await
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
-    debug!("{:?}", resp);
+    debug!("Client Connect Resp: {:?}", resp);
     Ok(Client::new(stream))
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,10 +188,12 @@ impl ChiaSerialize for ChiaMessage {
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let (msg_type, rest) = bytes.split_at(1);
-        let (has_id, rest) = rest.split_at(1);
+        let (has_id, mut rest) = rest.split_at(1);
         let id = if has_id[0] > 0 {
             let mut u16_len_ary: [u8; 2] = [0; 2];
-            u16_len_ary.copy_from_slice(&rest[0..2]);
+            let (id, r) = rest.split_at(2);
+            u16_len_ary.copy_from_slice(id);
+            rest = r;
             Some(u16::from_be_bytes(u16_len_ary))
         } else {
             None
@@ -169,7 +233,7 @@ async fn perform_handshake(
         ChiaMessage::new(
             ProtocolMessageTypes::Handshake,
             &Handshake {
-                network_id: network_id.to_string(), //TODO Config
+                network_id: network_id.to_string(),
                 protocol_version: PROTOCOL_VERSION.to_string(),
                 software_version: SOFTWARE_VERSION.to_string(),
                 server_port: port,
@@ -279,7 +343,7 @@ pub struct ReadStream {
     subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
 }
 impl ReadStream {
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self, run: Arc<Mutex<bool>>) {
         loop {
             select! {
                 msg = self.read.next() => {
@@ -298,11 +362,11 @@ impl ReadStream {
                                     debug!("Processed Message: {:?}", &msg_arc.msg_type);
                                 }
                                 Err(e) => {
-                                    debug!("Invalid Message: {:?}", e);
+                                    error!("Invalid Message: {:?}", e);
                                 }
                             },
                             _ => {
-                                debug!("Invalid Message: {:?}", msg);
+                                error!("Invalid Message: {:?}", msg);
                             }
                         }
                     } else {
@@ -310,6 +374,18 @@ impl ReadStream {
                     }
                 }
                 _ = await_termination() => {
+                    return;
+                }
+                _ = async {
+                    loop {
+                        if !*run.lock().await {
+                            debug!("Client is exiting");
+                            return;
+                        } else {
+                            tokio::time::sleep(Duration::from_secs(1)).await
+                        }
+                    }
+                } => {
                     return;
                 }
             }
@@ -325,6 +401,11 @@ pub trait Websocket {
     async fn close(&mut self, msg: Option<Message>) -> Result<(), Error>;
 }
 
+pub struct ClientSSLConfig<'a> {
+    pub ssl_crt_path: &'a str,
+    pub ssl_key_path: &'a str,
+    pub ssl_ca_crt_path: &'a str,
+}
 pub struct Client {
     write: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
@@ -339,6 +420,9 @@ impl Client {
         };
         let stream = ReadStream { read, subscribers };
         (client, stream)
+    }
+    pub async fn clear(&mut self) {
+        self.subscribers.lock().await.clear()
     }
 }
 #[async_trait]
@@ -385,7 +469,7 @@ pub struct ServerReadStream {
     subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
 }
 impl ServerReadStream {
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self, run: Arc<Mutex<bool>>) {
         loop {
             select! {
                 msg = self.read.next() => {
@@ -394,21 +478,30 @@ impl ServerReadStream {
                             Message::Binary(bin_data) => match ChiaMessage::from_bytes(&bin_data) {
                                 Ok(chia_msg) => {
                                     let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
+                                    let mut matched = false;
                                     for v in self.subscribers.lock().await.values() {
                                         if v.filter.matches(msg_arc.clone()) {
                                             let msg_arc_c = msg_arc.clone();
                                             let v_arc_c = v.handle.clone();
                                             tokio::spawn(async move { v_arc_c.handle(msg_arc_c).await });
+                                            matched = true;
                                         }
+                                    }
+                                    if !matched{
+                                        error!("No Matches for Message: {:?}", &msg_arc);
                                     }
                                     debug!("Processed Message: {:?}", &msg_arc.msg_type);
                                 }
                                 Err(e) => {
-                                    debug!("Invalid Message: {:?}", e);
+                                    error!("Invalid Message: {:?}", e);
                                 }
+                            }
+                            Message::Close(e) => {
+                                debug!("Server Got Close Message: {:?}", e);
+                                return;
                             },
                             _ => {
-                                debug!("Invalid Message: {:?}", msg);
+                                error!("Invalid Message: {:?}", msg);
                             }
                         }
                     } else {
@@ -418,29 +511,44 @@ impl ServerReadStream {
                 _ = await_termination() => {
                     return;
                 }
+                _ = async {
+                    loop {
+                        if !*run.lock().await {
+                            debug!("Server is exiting");
+                            return;
+                        } else {
+                            tokio::time::sleep(Duration::from_secs(1)).await
+                        }
+                    }
+                } => {
+                    return;
+                }
             }
         }
     }
 }
 
-pub struct Server {
+pub struct ServerConnection {
     write: SplitSink<WebSocketStream<Upgraded>, Message>,
     subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
 }
-impl Server {
+impl ServerConnection {
     pub fn new(stream: WebSocketStream<Upgraded>) -> (Self, ServerReadStream) {
         let (write, read) = stream.split();
         let subscribers = Arc::new(Mutex::new(HashMap::<Uuid, ChiaMessageHandler>::new()));
-        let server = Server {
+        let server = ServerConnection {
             write,
             subscribers: subscribers.clone(),
         };
         let stream = ServerReadStream { read, subscribers };
         (server, stream)
     }
+    pub async fn clear(&mut self) {
+        self.subscribers.lock().await.clear()
+    }
 }
 #[async_trait]
-impl Websocket for Server {
+impl Websocket for ServerConnection {
     async fn send(&mut self, msg: Message) -> Result<(), Error> {
         trace!("Sending Request: {:?}", &msg);
         self.write

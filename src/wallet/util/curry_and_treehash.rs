@@ -60,13 +60,13 @@ pub fn curry_and_treehash(
     hashed_arguments: &[Bytes32],
 ) -> Bytes32 {
     let curried_values = curried_values_tree_hash(hashed_arguments);
-    return shatree_pair(
+    shatree_pair(
         &A_KW_TREEHASH,
         &shatree_pair(
-            &hash_of_quoted_mod_hash,
+            hash_of_quoted_mod_hash,
             &shatree_pair(&curried_values, &NULL_TREEHASH),
         ),
-    );
+    )
 }
 
 pub fn calculate_hash_of_quoted_mod_hash(mod_hash: &Bytes32) -> Bytes32 {

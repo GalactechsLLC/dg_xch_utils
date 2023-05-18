@@ -3,6 +3,7 @@ use crate::wallet::puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_fo
 use bech32::{FromBase32, ToBase32, Variant};
 use bip39::Mnemonic;
 use blst::min_pk::{PublicKey, SecretKey};
+use blst::{blst_bendian_from_scalar, blst_scalar, blst_scalar_from_be_bytes, blst_sk_add_n_check};
 use hkdf::Hkdf;
 use sha2::Digest;
 use sha2::Sha256;
@@ -67,15 +68,25 @@ fn derive_child_sk(key: &SecretKey, index: u32) -> Result<SecretKey, Error> {
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
 }
 
-// fn derive_child_sk_unhardened(key: &SecretKey, index: u32) -> Result<SecretKey, Error> {
-//     let mut buf = vec![];
-//     buf.extend(key.sk_to_pk().to_bytes());
-//     buf.extend(index.to_be_bytes());
-//     let h = hash_256(&buf);
-//     //Currently based on the default curve N
-//     let N = BigInt::from_str_radix("0x73EDA753299D7D483339D80809A1D80553BDA402FFFE5BFEFFFFFFFF00000001", 16).unwrap();
-//     SecretKey::key_gen_v3(&lamport_pk, &[]).map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
-// }
+fn derive_child_sk_unhardened(key: &SecretKey, index: u32) -> Result<SecretKey, Error> {
+    let mut buf = vec![];
+    buf.extend(key.sk_to_pk().to_bytes());
+    buf.extend(index.to_be_bytes());
+    let hash = hash_256(&buf);
+    let kb = key.to_bytes();
+    let mut out = [0u8; 32];
+    let mut o = blst_scalar::default();
+    let mut h = blst_scalar::default();
+    let mut s = blst_scalar::default();
+    let agg = unsafe {
+        blst_scalar_from_be_bytes(&mut h, hash.as_ptr(), hash.len());
+        blst_scalar_from_be_bytes(&mut s, kb.as_ptr(), kb.len());
+        blst_sk_add_n_check(&mut o, &h, &s);
+        blst_bendian_from_scalar(out.as_mut_ptr(), &o);
+        out
+    };
+    SecretKey::from_bytes(&agg).map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+}
 
 pub fn derive_path(key: &SecretKey, paths: Vec<u32>) -> Result<SecretKey, Error> {
     let mut key: SecretKey = key.clone();
@@ -85,13 +96,13 @@ pub fn derive_path(key: &SecretKey, paths: Vec<u32>) -> Result<SecretKey, Error>
     Ok(key)
 }
 
-// pub fn derive_path_unhardened(key: &SecretKey, paths: Vec<u32>) -> Result<SecretKey, Error> {
-//     let mut key: SecretKey = key.clone();
-//     for index in paths {
-//         key = derive_child_sk(&key, index)?;
-//     }
-//     Ok(key)
-// }
+pub fn derive_path_unhardened(key: &SecretKey, paths: Vec<u32>) -> Result<SecretKey, Error> {
+    let mut key: SecretKey = key.clone();
+    for index in paths {
+        key = derive_child_sk_unhardened(&key, index)?;
+    }
+    Ok(key)
+}
 
 pub fn master_sk_to_farmer_sk(key: &SecretKey) -> Result<SecretKey, Error> {
     derive_path(
@@ -119,14 +130,15 @@ pub fn master_sk_to_wallet_sk(key: &SecretKey, index: u32) -> Result<SecretKey, 
     derive_path(&intermediate, vec![index])
 }
 
-// pub fn master_sk_to_wallet_sk_unhardened_intermediate(key: &SecretKey) -> Result<SecretKey, Error> {
-//     return _derive_path_unhardened(key, [12381, 8444, 2]);
-// }
-//
-// pub fn master_sk_to_wallet_sk_unhardened(key: &SecretKey, index: uint32) -> Result<SecretKey, Error> {
-//     intermediate = master_sk_to_wallet_sk_unhardened_intermediate(key)
-//     return _derive_path_unhardened(intermediate, [index]);
-// }
+pub fn master_sk_to_wallet_sk_unhardened_intermediate(key: &SecretKey) -> Result<SecretKey, Error> {
+    derive_path_unhardened(key, vec![12381, 8444, 2])
+}
+
+pub fn master_sk_to_wallet_sk_unhardened(key: &SecretKey, index: u32) -> Result<SecretKey, Error> {
+    let intermediate = master_sk_to_wallet_sk_unhardened_intermediate(key)?;
+    derive_path_unhardened(&intermediate, vec![index])
+}
+
 pub fn master_sk_to_local_sk(key: &SecretKey) -> Result<SecretKey, Error> {
     derive_path(
         key,
@@ -186,20 +198,29 @@ pub fn fingerprint(key: &PublicKey) -> u32 {
     u32::from_be_bytes(int_buf)
 }
 
-pub fn encode_puzzle_hash(puzzle_hash: Bytes32, prefix: &str) -> Result<String, Error> {
-    bech32::encode(prefix, puzzle_hash.to_bytes().to_base32(), Variant::Bech32)
+pub fn encode_puzzle_hash(puzzle_hash: &Bytes32, prefix: &str) -> Result<String, Error> {
+    bech32::encode(prefix, puzzle_hash.to_bytes().to_base32(), Variant::Bech32m)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
 }
 
 pub fn decode_puzzle_hash(address: &str) -> Result<Bytes32, Error> {
-    let (_, data, _) = bech32::decode(address)
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+    let (_, data, _) = bech32::decode(address).map_err(|e| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            format!("Error Decoding address: ({address}): {:?}", e),
+        )
+    })?;
     Ok(Bytes32::from(Vec::<u8>::from_base32(&data).map_err(
-        |e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)),
+        |e| {
+            Error::new(
+                ErrorKind::InvalidInput,
+                format!("Error Decoding address: ({address}): {:?}", e),
+            )
+        },
     )?))
 }
 pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, Error> {
     let wallet_sk = master_sk_to_wallet_sk(key, index)?;
-    let first_address_hex = puzzle_hash_for_pk(&wallet_sk.sk_to_pk().to_bytes().into())?;
-    encode_puzzle_hash(first_address_hex, prefix)
+    let address_hex = puzzle_hash_for_pk(&wallet_sk.sk_to_pk().to_bytes().into())?;
+    encode_puzzle_hash(&address_hex, prefix)
 }

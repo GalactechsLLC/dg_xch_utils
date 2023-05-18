@@ -1,9 +1,15 @@
+use crate::clvm::assemble::is_hex;
+use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
+use hex::encode;
 use lazy_static::lazy_static;
+use num_bigint::BigInt;
 use std::collections::HashMap;
+use std::fmt;
+use std::fmt::{Display, Formatter};
 use std::io::{Error, ErrorKind};
 
 lazy_static! {
-    pub static ref NULL: SExp = SExp::Atom(vec![0x80].into());
+    pub static ref NULL: SExp = SExp::Atom(vec![].into());
     pub static ref ONE: SExp = SExp::Atom(vec![1u8].into());
 }
 
@@ -173,6 +179,72 @@ impl SExp {
         match self {
             SExp::Pair(_) => true,
             SExp::Atom(b) => !b.data.is_empty(),
+        }
+    }
+}
+
+const PRINTABLE: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ#!$%&'()*+,-./:;<=>?@[\\]^_`{|}~\"\r\n";
+
+impl Display for SExp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match &self {
+            SExp::Atom(a) => {
+                let atom = &a.data;
+                if atom.is_empty() {
+                    f.write_str("()")
+                } else if atom.len() > 2 {
+                    match String::from_utf8(atom.clone()) {
+                        Ok(as_utf8) => {
+                            for s in as_utf8.chars() {
+                                if !PRINTABLE.contains(&s.to_string()) {
+                                    return f.write_str(&format!("0x{}", encode(atom)));
+                                }
+                            }
+                            if as_utf8.contains('"') && as_utf8.contains('\'') {
+                                f.write_str(&format!("0x{}", encode(atom)))
+                            } else if as_utf8.contains('"') {
+                                f.write_str(&format!("'{as_utf8}'"))
+                            } else if as_utf8.contains('\'') {
+                                f.write_str(&format!("\"{as_utf8}\""))
+                            } else if is_hex(as_utf8.as_bytes()) {
+                                f.write_str(&format!("0x{}", as_utf8))
+                            } else {
+                                f.write_str(&format!("\"{as_utf8}\""))
+                            }
+                        }
+                        Err(_) => f.write_str(&format!("0x{}", encode(atom))),
+                    }
+                } else if *atom == BigInt::from_signed_bytes_be(atom).to_signed_bytes_be() {
+                    f.write_str(&format!("{}", BigInt::from_signed_bytes_be(atom)))
+                } else {
+                    f.write_str(&format!("0x{}", encode(atom)))
+                }
+            }
+            SExp::Pair(pairbuf) => {
+                let mut buffer = String::from("(");
+                match &*pairbuf.first {
+                    SExp::Atom(a) => {
+                        if let Some(kw) = KEYWORD_FROM_ATOM.get(&a.data) {
+                            buffer += kw;
+                        } else {
+                            buffer += &format!("{}", pairbuf.first);
+                        }
+                    }
+                    SExp::Pair(_) => {
+                        buffer += &format!("{}", pairbuf.first);
+                    }
+                }
+                let mut current = &pairbuf.rest;
+                while let Ok(p) = current.pair() {
+                    buffer += &format!(" {}", &p.first.as_ref());
+                    current = &p.rest;
+                }
+                if current.non_nil() {
+                    buffer += &format!(" . {}", *current);
+                }
+                buffer += ")";
+                write!(f, "{}", buffer)
+            }
         }
     }
 }

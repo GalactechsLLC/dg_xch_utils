@@ -8,7 +8,7 @@ use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::{fmt, fs};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlotMemo {
     pub pool_public_key: Option<Bytes48>,
     pub pool_contract_puzzle_hash: Option<Bytes32>,
@@ -97,7 +97,7 @@ impl Display for PlotMemo {
         )
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlotHeader {
     pub magic: [u8; 19],
     pub id: Bytes32,

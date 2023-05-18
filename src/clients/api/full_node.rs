@@ -53,21 +53,21 @@ pub trait FullnodeAPI {
     async fn get_coin_records_by_puzzle_hash(
         &self,
         puzzle_hash: &Bytes32,
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, Error>;
     async fn get_coin_records_by_puzzle_hashes(
         &self,
-        puzzle_hashes: Vec<&Bytes32>,
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        puzzle_hashes: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, Error>;
     async fn get_coin_record_by_name(&self, name: &Bytes32) -> Result<Option<CoinRecord>, Error>;
     async fn get_coin_records_by_parent_ids(
         &self,
-        parent_ids: Vec<&Bytes32>,
+        parent_ids: &[Bytes32],
         include_spent_coins: bool,
         start_height: u32,
         end_height: u32,

@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_utils"
-version = "0.1.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Collection of Utilties for the Chia Blockchain writen in Rust"
@@ -21,13 +21,17 @@ futures-util = "0.3.25"
 hex = "0.4.3"
 hyper = {version="0.14.23", features=["full"]}
 lazy_static = "1.4.0"
+libc = "0.2.139"
 log = "0.4.17"
+nix = "0.26.2"
 num-bigint = "=0.4.0"
 num-integer = "0.1.45"
 num-traits = "=0.2.14"
 once_cell = "1.17.0"
+paperclip = { version = "0.8.0", features = ["actix4"] }
 poll-promise = "0.1"
-rayon = "1.6.1"
+rayon = "1.7.0"
+regex = "1.7.1"
 reqwest = {version="0.11.11", features=["json", "rustls-tls-webpki-roots"]}
 rustls = {version = "0.20.7", features = [] }
 rustls-pemfile = "1.0.1"
@@ -41,3 +45,6 @@ tokio-tungstenite = {version = "0.18.0", features = ["rustls-tls-webpki-roots", 
 tokio-rustls = {version = "0.23.4", features = [] }
 uuid = {version="1.2.2", features=["v4"]}
 webpki-roots = "0.22.6"
+
+[features]
+async_io = []
