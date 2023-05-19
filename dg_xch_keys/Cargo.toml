@@ -1,0 +1,15 @@
+[package]
+name = "dg_xch_keys"
+version = "1.0.1"
+edition = "2021"
+authors = ["James Hoerr"]
+description = "Key Management Utils the Chia Blockchain"
+
+[dependencies]
+bech32.workspace = true
+blst.workspace = true
+bip39.workspace = true
+dg_xch_core.workspace = true
+dg_xch_puzzles.workspace = true
+hkdf.workspace = true
+sha2.workspace = true

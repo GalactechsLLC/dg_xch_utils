@@ -1,0 +1,10 @@
+[package]
+name = "dg_xch_serialize"
+version = "1.0.1"
+edition = "2021"
+authors = ["James Hoerr"]
+description = "Low Level Support Package for dg_xch_utils"
+
+[dependencies]
+bytes.workspace = true
+sha2.workspace = true
