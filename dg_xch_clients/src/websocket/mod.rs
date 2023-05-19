@@ -111,7 +111,7 @@ pub async fn get_client_tls(
             );
         }
     }
-    let (stream, resp) = connect_async_tls_with_config(request, None, false, Some(connector))
+    let (stream, resp) = connect_async_tls_with_config(request, None, Some(connector))
         .await
         .map_err(|e| {
             Error::new(
@@ -154,7 +154,7 @@ pub async fn get_client(
             );
         }
     }
-    let (stream, resp) = connect_async_tls_with_config(request, None, false, None)
+    let (stream, resp) = connect_async_tls_with_config(request, None, None)
         .await
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
     debug!("Client Connect Resp: {:?}", resp);

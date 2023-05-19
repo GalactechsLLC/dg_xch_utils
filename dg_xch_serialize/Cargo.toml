@@ -7,4 +7,5 @@ description = "Low Level Support Package for dg_xch_utils"
 
 [dependencies]
 bytes.workspace = true
+log.workspace = true
 sha2.workspace = true

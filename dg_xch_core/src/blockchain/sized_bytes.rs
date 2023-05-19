@@ -73,7 +73,22 @@ macro_rules! impl_sized_bytes {
                 const SIZE: usize = $size;
 
                 fn new(bytes: Vec<u8>) -> Self {
-                    Self::from(bytes)
+                    if 0 != Self::SIZE && bytes.len() > Self::SIZE {
+                        Self {
+                            bytes
+                        }
+                    } else if 0 != Self::SIZE && bytes.len() < Self::SIZE {
+                        let mut m_bytes: Vec<u8> = Vec::new();
+                        m_bytes.extend(&bytes);
+                        m_bytes.append(&mut b"\x00".repeat(Self::SIZE));
+                        Self {
+                            bytes: m_bytes[..Self::SIZE].to_vec()
+                        }
+                    } else {
+                        Self {
+                            bytes
+                        }
+                    }
                 }
 
                 fn as_slice(&'a self) -> &'a [u8] {
@@ -91,6 +106,12 @@ macro_rules! impl_sized_bytes {
                     let mut sized: [u8; $size] = [0; $size];
                     sized[0..$size].clone_from_slice(&self.bytes[0..]);
                     sized
+                }
+            }
+
+            impl std::hash::Hash for $name {
+                fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                    self.bytes.hash(state);
                 }
             }
 
@@ -130,31 +151,13 @@ macro_rules! impl_sized_bytes {
 
             impl From<&[u8]> for $name {
                 fn from(bytes: &[u8]) -> Self {
-                    if 0 != Self::SIZE && bytes.len() > Self::SIZE {
-                        $name::new(bytes[..Self::SIZE].to_vec())
-                    } else if 0 != Self::SIZE && bytes.len() < Self::SIZE {
-                        let mut m_bytes: Vec<u8> = Vec::new();
-                        m_bytes.extend(bytes);
-                        m_bytes.append(&mut b"\x00".repeat(Self::SIZE));
-                        $name::new(m_bytes[..Self::SIZE].to_vec())
-                    } else {
-                        $name::new(bytes.to_vec())
-                    }
+                    $name::new(bytes.to_vec())
                 }
             }
 
             impl From<Vec<u8>> for $name {
                 fn from(bytes: Vec<u8>) -> Self {
-                    if 0 != Self::SIZE && bytes.len() > Self::SIZE {
-                        $name::new(bytes[..Self::SIZE].to_vec())
-                    } else if 0 != Self::SIZE && bytes.len() < Self::SIZE {
-                        let mut m_bytes: Vec<u8> = Vec::new();
-                        m_bytes.extend(&bytes);
-                        m_bytes.append(&mut b"\x00".repeat(Self::SIZE - bytes.len()));
-                        $name::new(m_bytes[..Self::SIZE].to_vec())
-                    } else {
-                        $name::new(bytes)
-                    }
+                    $name::new(bytes)
                 }
             }
 

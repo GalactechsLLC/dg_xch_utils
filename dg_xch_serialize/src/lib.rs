@@ -1,6 +1,7 @@
 use bytes::Buf;
 use sha2::{Digest, Sha256};
 use std::io::{Cursor, Error, ErrorKind, Read};
+use log::warn;
 
 pub fn hash_256(input: impl AsRef<[u8]>) -> Vec<u8> {
     let mut hasher = Sha256::new();
@@ -15,12 +16,6 @@ pub trait ChiaSerialize {
     fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>) -> Result<Self, Error>
     where
         Self: Sized;
-    fn hash(&self) -> Vec<u8>
-    where
-        Self: Sized,
-    {
-        hash_256(self.to_bytes())
-    }
 }
 
 impl ChiaSerialize for String {
@@ -40,6 +35,9 @@ impl ChiaSerialize for String {
         let mut u32_len_ary: [u8; 4] = [0; 4];
         bytes.read_exact(&mut u32_len_ary)?;
         let vec_len = u32::from_be_bytes(u32_len_ary) as usize;
+        if vec_len > 2048 {
+            warn!("Serializing Large Vec: {vec_len}")
+        }
         let mut buf = vec![0u8; vec_len];
         bytes.read_exact(&mut buf[0..vec_len])?;
         String::from_utf8(buf).map_err(|e| {
@@ -182,7 +180,11 @@ where
         let mut u32_buf: [u8; 4] = [0; 4];
         bytes.read_exact(&mut u32_buf)?;
         let buf: Vec<T> = Vec::new();
-        (0..u32::from_be_bytes(u32_buf)).try_fold(buf, |mut vec, _| {
+        let vec_len = u32::from_be_bytes(u32_buf);
+        if vec_len > 2048 {
+            warn!("Serializing Large Vec: {vec_len}")
+        }
+        (0..vec_len).try_fold(buf, |mut vec, _| {
             vec.push(T::from_bytes(bytes)?);
             Ok(vec)
         })
