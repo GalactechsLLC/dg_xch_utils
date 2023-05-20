@@ -10,7 +10,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use hyper::header::{HeaderName, HeaderValue};
 use hyper::upgrade::Upgraded;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use rustls::ClientConfig;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -339,33 +339,48 @@ impl ReadStream {
         loop {
             select! {
                 msg = self.read.next() => {
-                    if let Some(Ok(msg)) = msg {
-                        match msg {
-                            Message::Binary(bin_data) => {
-                                let mut cursor = Cursor::new(bin_data);
-                                match ChiaMessage::from_bytes(&mut cursor) {
-                                    Ok(chia_msg) => {
-                                        let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
-                                        for v in self.subscribers.lock().await.values() {
-                                            if v.filter.matches(msg_arc.clone()) {
-                                                let msg_arc_c = msg_arc.clone();
-                                                let v_arc_c = v.handle.clone();
-                                                tokio::spawn(async move { v_arc_c.handle(msg_arc_c).await });
+                    match msg {
+                        Some(Ok(msg)) => {
+                            match msg {
+                                Message::Binary(bin_data) => {
+                                    let mut cursor = Cursor::new(bin_data);
+                                    match ChiaMessage::from_bytes(&mut cursor) {
+                                        Ok(chia_msg) => {
+                                            let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
+                                            for v in self.subscribers.lock().await.values() {
+                                                if v.filter.matches(msg_arc.clone()) {
+                                                    let msg_arc_c = msg_arc.clone();
+                                                    let v_arc_c = v.handle.clone();
+                                                    tokio::spawn(async move {
+                                                        if let Err(e) = v_arc_c.handle(msg_arc_c.clone()).await {
+                                                            error!("Error Handling Message: {:?}, {:?}", msg_arc_c, e);
+                                                        }
+                                                    });
+                                                }
                                             }
+                                            debug!("Processed Message: {:?}", &msg_arc.msg_type);
                                         }
-                                        debug!("Processed Message: {:?}", &msg_arc.msg_type);
+                                        Err(e) => {
+                                            error!("Invalid Message: {:?}", e);
+                                        }
                                     }
-                                    Err(e) => {
-                                        error!("Invalid Message: {:?}", e);
-                                    }
+                                },
+                                Message::Close(reason) => {
+                                    info!("Received Close: {:?}", reason);
                                 }
-                            },
-                            _ => {
-                                error!("Invalid Message: {:?}", msg);
+                                _ => {
+                                    error!("Invalid Message: {:?}", msg);
+                                }
                             }
                         }
-                    } else {
-                        return;
+                        Some(Err(msg)) => {
+                            info!("Client Stream Error: {:?}", msg);
+                            return;
+                        }
+                        None => {
+                            info!("End of client read Stream");
+                            return;
+                        }
                     }
                 }
                 _ = await_termination() => {
@@ -419,6 +434,10 @@ impl Client {
     pub async fn clear(&mut self) {
         self.subscribers.lock().await.clear()
     }
+    pub async fn shutdown(&mut self) -> Result<(), Error> {
+        self.subscribers.lock().await.clear();
+        self.close(None).await
+    }
 }
 #[async_trait]
 impl Websocket for Client {
@@ -468,42 +487,50 @@ impl ServerReadStream {
         loop {
             select! {
                 msg = self.read.next() => {
-                    if let Some(Ok(msg)) = msg {
-                        match msg {
-                            Message::Binary(bin_data) => {
-                                let mut cursor = Cursor::new(bin_data);
-                                match ChiaMessage::from_bytes(&mut cursor) {
-                                    Ok(chia_msg) => {
-                                        let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
-                                        let mut matched = false;
-                                        for v in self.subscribers.lock().await.values() {
-                                            if v.filter.matches(msg_arc.clone()) {
-                                                let msg_arc_c = msg_arc.clone();
-                                                let v_arc_c = v.handle.clone();
-                                                tokio::spawn(async move { v_arc_c.handle(msg_arc_c).await });
-                                                matched = true;
+                    match msg {
+                        Some(Ok(msg)) => {
+                            match msg {
+                                Message::Binary(bin_data) => {
+                                    let mut cursor = Cursor::new(bin_data);
+                                    match ChiaMessage::from_bytes(&mut cursor) {
+                                        Ok(chia_msg) => {
+                                            let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
+                                            let mut matched = false;
+                                            for v in self.subscribers.lock().await.values() {
+                                                if v.filter.matches(msg_arc.clone()) {
+                                                    let msg_arc_c = msg_arc.clone();
+                                                    let v_arc_c = v.handle.clone();
+                                                    tokio::spawn(async move { v_arc_c.handle(msg_arc_c).await });
+                                                    matched = true;
+                                                }
                                             }
+                                            if !matched{
+                                                error!("No Matches for Message: {:?}", &msg_arc);
+                                            }
+                                            debug!("Processed Message: {:?}", &msg_arc.msg_type);
                                         }
-                                        if !matched{
-                                            error!("No Matches for Message: {:?}", &msg_arc);
+                                        Err(e) => {
+                                            error!("Invalid Message: {:?}", e);
                                         }
-                                        debug!("Processed Message: {:?}", &msg_arc.msg_type);
-                                    }
-                                    Err(e) => {
-                                        error!("Invalid Message: {:?}", e);
                                     }
                                 }
-                            }
-                            Message::Close(e) => {
-                                debug!("Server Got Close Message: {:?}", e);
-                                return;
-                            },
-                            _ => {
-                                error!("Invalid Message: {:?}", msg);
+                                Message::Close(e) => {
+                                    debug!("Server Got Close Message: {:?}", e);
+                                    return;
+                                },
+                                _ => {
+                                    error!("Invalid Message: {:?}", msg);
+                                }
                             }
                         }
-                    } else {
-                        return;
+                        Some(Err(msg)) => {
+                            info!("Server Stream Error: {:?}", msg);
+                            return;
+                        }
+                        None => {
+                            info!("End of server read Stream");
+                            return;
+                        }
                     }
                 }
                 _ = await_termination() => {

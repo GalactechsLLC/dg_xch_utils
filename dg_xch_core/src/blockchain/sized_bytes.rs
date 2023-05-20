@@ -170,32 +170,21 @@ macro_rules! impl_sized_bytes {
             impl From<String> for $name {
                 fn from(hex: String) -> Self {
                     let bytes: Vec<u8> = decode(prep_hex_str(&hex)).unwrap();
-                    if 0 != Self::SIZE && bytes.len() > Self::SIZE {
-                        $name::new(bytes[..Self::SIZE].to_vec())
-                    } else if 0 != Self::SIZE && bytes.len() < Self::SIZE {
-                        let mut m_bytes: Vec<u8> = Vec::new();
-                        m_bytes.extend(&bytes);
-                        m_bytes.append(&mut b"\x00".repeat(Self::SIZE));
-                        $name::new(m_bytes[..Self::SIZE].to_vec())
-                    } else {
-                        $name::new(bytes)
-                    }
+                    $name::new(bytes.to_vec())
+                }
+            }
+
+            impl From<&String> for $name {
+                fn from(hex: &String) -> Self {
+                    let bytes: Vec<u8> = decode(prep_hex_str(hex)).unwrap();
+                    $name::new(bytes.to_vec())
                 }
             }
 
             impl From<&str> for $name {
                 fn from(hex: &str) -> Self {
                     let bytes: Vec<u8> = decode(prep_hex_str(&hex.to_string())).unwrap();
-                    if 0 != Self::SIZE && bytes.len() > Self::SIZE {
-                        $name::new(bytes[..Self::SIZE].to_vec())
-                    } else if 0 != Self::SIZE && bytes.len() < Self::SIZE {
-                        let mut m_bytes: Vec<u8> = Vec::new();
-                        m_bytes.extend(&bytes);
-                        m_bytes.append(&mut b"\x00".repeat(Self::SIZE));
-                        $name::new(m_bytes[..Self::SIZE].to_vec())
-                    } else {
-                        $name::new(bytes)
-                    }
+                    $name::new(bytes.to_vec())
                 }
             }
 

@@ -1,7 +1,7 @@
 use bytes::Buf;
+use log::warn;
 use sha2::{Digest, Sha256};
 use std::io::{Cursor, Error, ErrorKind, Read};
-use log::warn;
 
 pub fn hash_256(input: impl AsRef<[u8]>) -> Vec<u8> {
     let mut hasher = Sha256::new();
