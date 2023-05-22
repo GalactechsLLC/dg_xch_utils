@@ -1,10 +1,10 @@
-use dg_xch_core::blockchain::coin::Coin;
-use dg_xch_core::blockchain::coin_spend::CoinSpend;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
-use dg_xch_core::blockchain::utils::atom_to_int;
-use dg_xch_core::clvm::program::{Program, SerializedProgram};
-use dg_xch_core::plots::PlotNftExtraData;
-use dg_xch_core::pool::PoolState;
+use crate::blockchain::coin::Coin;
+use crate::blockchain::coin_spend::CoinSpend;
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
+use crate::blockchain::utils::atom_to_int;
+use crate::clvm::program::{Program, SerializedProgram};
+use crate::plots::PlotNftExtraData;
+use crate::pool::PoolState;
 use lazy_static::lazy_static;
 use num_traits::{ToPrimitive, Zero};
 use std::io::{Error, ErrorKind};

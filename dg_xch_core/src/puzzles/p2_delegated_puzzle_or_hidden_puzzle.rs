@@ -1,7 +1,7 @@
 use blst::min_pk::{AggregatePublicKey, SecretKey};
-use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48};
-use dg_xch_core::clvm::program::{Program, SerializedProgram};
-use dg_xch_core::curry_and_treehash::{calculate_hash_of_quoted_mod_hash, curry_and_treehash};
+use crate::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48};
+use crate::clvm::program::{Program, SerializedProgram};
+use crate::curry_and_treehash::{calculate_hash_of_quoted_mod_hash, curry_and_treehash};
 use dg_xch_serialize::hash_256;
 use lazy_static::lazy_static;
 use num_bigint::BigInt;

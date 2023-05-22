@@ -1,8 +1,8 @@
 use bip39::Mnemonic;
 use blst::min_pk::SecretKey;
 use dg_xch_core::blockchain::sized_bytes::Bytes48;
-use dg_xch_keys::*;
-use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
+use dg_xch_core::keys::*;
+use dg_xch_core::puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
 use log::info;
 use rayon::prelude::*;
 use std::io::{Error, ErrorKind};

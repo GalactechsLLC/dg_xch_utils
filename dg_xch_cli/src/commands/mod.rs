@@ -3,7 +3,7 @@ use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::plots::PlotNft;
-use dg_xch_puzzles::clvm_puzzles::{
+use dg_xch_core::puzzles::clvm_puzzles::{
     get_most_recent_singleton_coin_from_coin_spend, launcher_coin_spend_to_extra_data,
     solution_to_pool_state, SINGLETON_LAUNCHER_HASH,
 };
