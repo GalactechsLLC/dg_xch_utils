@@ -1,6 +1,6 @@
+use crate::blockchain::spend::Spend;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
-use crate::blockchain::spend::Spend;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SpendBundleConditions {

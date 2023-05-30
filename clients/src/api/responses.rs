@@ -3,7 +3,7 @@ use dg_xch_core::blockchain::blockchain_state::BlockchainState;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
-use dg_xch_core::blockchain::mem_pool_item::MemPoolItem;
+use dg_xch_core::blockchain::mempool_item::MempoolItem;
 use dg_xch_core::blockchain::signage_point::SignagePoint;
 use dg_xch_core::blockchain::subslot_bundle::SubSlotBundle;
 use dg_xch_core::blockchain::transaction_record::TransactionRecord;
@@ -84,13 +84,13 @@ pub struct LoginResp {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MempoolItemResp {
-    pub mempool_item: MemPoolItem,
+    pub mempool_item: MempoolItem,
     pub success: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MempoolItemsResp {
-    pub mempool_items: HashMap<String, MemPoolItem>,
+    pub mempool_items: HashMap<String, MempoolItem>,
     pub success: bool,
 }
 

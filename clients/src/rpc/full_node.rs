@@ -5,7 +5,7 @@ use dg_xch_core::blockchain::blockchain_state::BlockchainState;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
-use dg_xch_core::blockchain::mem_pool_item::MemPoolItem;
+use dg_xch_core::blockchain::mempool_item::MempoolItem;
 use dg_xch_core::blockchain::network_info::NetworkInfo;
 use dg_xch_core::blockchain::signage_point_or_eos::SignagePointOrEOS;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
@@ -401,7 +401,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .tx_ids)
     }
-    async fn get_all_mempool_items(&self) -> Result<HashMap<String, MemPoolItem>, Error> {
+    async fn get_all_mempool_items(&self) -> Result<HashMap<String, MempoolItem>, Error> {
         Ok(post::<MempoolItemsResp>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_all_mempool_items"),
@@ -411,7 +411,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .mempool_items)
     }
-    async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MemPoolItem, Error> {
+    async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MempoolItem, Error> {
         let mut request_body = Map::new();
         request_body.insert("tx_id".to_string(), json!(tx_id));
         Ok(post::<MempoolItemResp>(

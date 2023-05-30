@@ -1,3 +1,5 @@
+use crate::blockchain::coin::Coin;
+use crate::blockchain::npc_result::NPCResult;
 use crate::clvm::sexp::{AtomBuf, SExp};
 use dg_xch_serialize::hash_256;
 use lazy_static::lazy_static;
@@ -244,4 +246,20 @@ pub fn int_to_bytes(value: BigInt, size: usize, signed: bool) -> Result<Vec<u8>,
         .map(|m| -> u8 { u8::from_str_radix(m.get(0).unwrap().as_str(), 2).unwrap() })
         .collect();
     Ok(bytes)
+}
+
+pub fn additions_for_npc(npc_result: NPCResult) -> Vec<Coin> {
+    let mut additions: Vec<Coin> = vec![];
+    if let Some(conds) = npc_result.conds {
+        for spend in conds.spends {
+            for (puzzle_hash, amount, _) in spend.create_coin {
+                additions.push(Coin {
+                    parent_coin_info: spend.coin_id.clone(),
+                    puzzle_hash: puzzle_hash.clone(),
+                    amount,
+                });
+            }
+        }
+    }
+    additions
 }

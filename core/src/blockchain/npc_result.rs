@@ -1,7 +1,6 @@
-use crate::blockchain::npc::NPC;
+use crate::blockchain::spend_bundle_conditions::SpendBundleConditions;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
-use crate::blockchain::spend_bundle_conditions::SpendBundleConditions;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct NPCResult {

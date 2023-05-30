@@ -1,19 +1,20 @@
+use crate::blockchain::coin::Coin;
+use crate::blockchain::coin_spend::CoinSpend;
+use crate::blockchain::npc_result::NPCResult;
+use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::blockchain::spend_bundle::SpendBundle;
+use crate::clvm::utils::additions_for_npc;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use crate::blockchain::coin::Coin;
-use crate::blockchain::npc_result::NPCResult;
-use crate::blockchain::spend_bundle::SpendBundle;
-use serde::{Deserialize, Serialize};
-use crate::blockchain::coin_spend::CoinSpend;
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
 pub struct BundleCoinSpend {
-    coin_spend: CoinSpend,
-    eligible_for_dedup: bool,
-    additions: Vec<Coin>,
-    cost: Optional<u64>,
+    pub coin_spend: CoinSpend,
+    pub eligible_for_dedup: bool,
+    pub additions: Vec<Coin>,
+    pub cost: Option<u64>,
 }
 
 #[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
@@ -29,9 +30,8 @@ pub struct MempoolItem {
     pub bundle_coin_spends: HashMap<Bytes32, BundleCoinSpend>,
 }
 impl MempoolItem {
-
     pub fn fee_per_cost(&self) -> f64 {
-        self.fee / self.cost
+        (self.fee / self.cost()) as f64
     }
     pub fn name(&self) -> Bytes32 {
         self.spend_bundle_name.clone()
@@ -50,13 +50,13 @@ impl MempoolItem {
 
 impl PartialOrd<Self> for MempoolItem {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.fee_per_cost().partial_cmp(*other.fee_per_cost())
+        self.fee_per_cost().partial_cmp(&other.fee_per_cost())
     }
 }
 
 impl Ord for MempoolItem {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.fee_per_cost().total_cmp(*other.fee_per_cost())
+        self.fee_per_cost().total_cmp(&other.fee_per_cost())
     }
 }
 impl Hash for MempoolItem {

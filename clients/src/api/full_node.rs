@@ -4,7 +4,7 @@ use dg_xch_core::blockchain::blockchain_state::BlockchainState;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
-use dg_xch_core::blockchain::mem_pool_item::MemPoolItem;
+use dg_xch_core::blockchain::mempool_item::MempoolItem;
 use dg_xch_core::blockchain::network_info::NetworkInfo;
 use dg_xch_core::blockchain::signage_point_or_eos::SignagePointOrEOS;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
@@ -80,6 +80,6 @@ pub trait FullnodeAPI {
     ) -> Result<CoinSpend, Error>;
     async fn get_coin_spend(&self, coin_record: &CoinRecord) -> Result<CoinSpend, Error>;
     async fn get_all_mempool_tx_ids(&self) -> Result<Vec<String>, Error>;
-    async fn get_all_mempool_items(&self) -> Result<HashMap<String, MemPoolItem>, Error>;
-    async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MemPoolItem, Error>;
+    async fn get_all_mempool_items(&self) -> Result<HashMap<String, MempoolItem>, Error>;
+    async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MempoolItem, Error>;
 }
