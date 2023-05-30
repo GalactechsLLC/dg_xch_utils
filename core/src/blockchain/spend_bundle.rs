@@ -1,13 +1,13 @@
-use std::collections::HashSet;
+use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
-use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
 use crate::blockchain::sized_bytes::SizedBytes;
+use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
 use crate::clvm::program::Program;
 use blst::min_pk::{AggregateSignature, Signature};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
-use crate::blockchain::coin::Coin;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SpendBundle {
@@ -77,10 +77,13 @@ impl SpendBundle {
     }
 
     pub fn net_additions(&self) -> Result<Vec<Coin>, Error> {
-        let removals: HashSet<Bytes32> = HashSet::from_iter(self.removals().into_iter().map(|c| c.name()));
-        Ok(self.additions()?.into_iter().filter(|a| {
-            !removals.contains(&a.name())
-        }).collect())
+        let removals: HashSet<Bytes32> =
+            HashSet::from_iter(self.removals().into_iter().map(|c| c.name()));
+        Ok(self
+            .additions()?
+            .into_iter()
+            .filter(|a| !removals.contains(&a.name()))
+            .collect())
     }
 
     pub fn add_signature(mut self, sig: Signature) -> Result<Self, Error> {
@@ -99,15 +102,19 @@ impl SpendBundle {
         Ok(self)
     }
 
-    pub fn sign<T: Fn(&CoinSpend) -> Result<Signature, Error>>(mut self, sig_function: T) -> Result<Self, Error> {
+    pub fn sign<T: Fn(&CoinSpend) -> Result<Signature, Error>>(
+        mut self,
+        sig_function: T,
+    ) -> Result<Self, Error> {
         let mut sigs: Vec<Signature> = vec![];
         for spend in &self.coin_spends {
-            sigs.push( (sig_function)(spend)?);
+            sigs.push((sig_function)(spend)?);
         }
-        self.aggregated_signature = AggregateSignature::aggregate(&sigs.iter().collect::<Vec<&Signature>>(), true)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?
-            .to_signature()
-            .into();
+        self.aggregated_signature =
+            AggregateSignature::aggregate(&sigs.iter().collect::<Vec<&Signature>>(), true)
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?
+                .to_signature()
+                .into();
         Ok(self)
     }
 }

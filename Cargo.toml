@@ -8,7 +8,7 @@ members = [
     "macros",
     "proof_of_space",
     "puzzles",
-    "serialize",
+    "serialize"
 ]
 
 [workspace.dependencies]
