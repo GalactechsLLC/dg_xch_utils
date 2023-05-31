@@ -4,6 +4,7 @@ use crate::finite_state_entropy::{
     fse_dtable_size_u32, fse_tablestep, FSE_MAX_TABLELOG, FSE_TABLELOG_ABSOLUTE_MAX,
 };
 use std::io::{Error, ErrorKind};
+use std::sync::Arc;
 
 #[derive(Default, Clone)]
 pub struct DTableH {
@@ -24,12 +25,12 @@ pub struct DTable {
     pub table: Vec<DTableEntry>,
 }
 
-pub struct DState<'a> {
+pub struct DState {
     pub state: usize,
-    pub table: &'a DTable,
+    pub table: Arc<DTable>,
 }
-impl<'a> DState<'a> {
-    pub fn new(bit_d: &mut BitDstream, dt: &'a DTable) -> Self {
+impl DState {
+    pub fn new(bit_d: &mut BitDstream, dt: Arc<DTable>) -> Self {
         let state = bit_d.read_bits(dt.header.table_log as u32);
         bit_d.reload();
         DState { state, table: dt }
@@ -135,16 +136,10 @@ pub fn decompress_using_dtable(
     dst_size: usize,
     src: impl AsRef<[u8]>,
     src_size: usize,
-    dt: &DTable,
+    dt: Arc<DTable>,
 ) -> Result<(), Error> {
-    fse_decompress_using_dtable_generic(
-        dst.as_mut(),
-        dst_size,
-        src.as_ref(),
-        src_size,
-        dt,
-        dt.header.fast_mode > 0,
-    )
+    let fast = dt.header.fast_mode > 0;
+    fse_decompress_using_dtable_generic(dst.as_mut(), dst_size, src.as_ref(), src_size, dt, fast)
 }
 
 trait SymbolFn {
@@ -156,7 +151,7 @@ pub fn fse_decompress_using_dtable_generic(
     dst_size: usize,
     src: &[u8],
     src_size: usize,
-    dt: &DTable,
+    dt: Arc<DTable>,
     fast: bool,
 ) -> Result<(), Error> {
     let mut bit_d = match BitDstream::new(src, src_size) {
@@ -168,7 +163,7 @@ pub fn fse_decompress_using_dtable_generic(
     /* Init */
     let mut index = 0;
     let limit = dst_size - 3;
-    let mut state1 = DState::new(&mut bit_d, dt);
+    let mut state1 = DState::new(&mut bit_d, dt.clone());
     let mut state2 = DState::new(&mut bit_d, dt);
     let symbol_fn: Box<dyn SymbolFn> = if fast {
         Box::new(FastDecodeSymbol {})

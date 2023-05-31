@@ -26,7 +26,7 @@ pub const fn highbit_32(u: u32) -> u32 {
     if u == 0 {
         return 0;
     }
-    31 - u.leading_zeros() //^ 31
+    u.ilog2()
 }
 
 const BIT_MASK: [u32; 32] = [
@@ -35,15 +35,15 @@ const BIT_MASK: [u32; 32] = [
     0x3FFFFFF, 0x7FFFFFF, 0xFFFFFFF, 0x1FFFFFFF, 0x3FFFFFFF, 0x7FFFFFFF,
 ]; /* up to 31 bits */
 
-pub struct BitDstream {
+pub struct BitDstream<'a> {
     pub bit_container: usize,
     pub index: usize,
     pub limit: usize,
-    src: Vec<u8>,
+    src: &'a [u8],
     bits_consumed: u32,
 }
-impl BitDstream {
-    pub fn new(src: &[u8], src_size: usize) -> Result<Self, Error> {
+impl<'a> BitDstream<'a> {
+    pub fn new(src: &'a [u8], src_size: usize) -> Result<Self, Error> {
         if src_size < 1 {
             return Err(Error::new(ErrorKind::InvalidInput, "src_size wrong"));
         }
@@ -118,7 +118,7 @@ impl BitDstream {
             bit_container,
             index,
             limit,
-            src: src.to_vec(),
+            src,
             bits_consumed,
         })
     }
@@ -144,18 +144,16 @@ impl BitDstream {
         }
         self.index -= nb_bytes as usize;
         self.bits_consumed -= nb_bytes * 8;
-        self.bit_container = Self::safe_create_usize(
-            &self.src.as_slice()[self.index..self.index + size_of::<usize>()],
-        );
+        self.bit_container =
+            Self::safe_create_usize(&self.src[self.index..self.index + size_of::<usize>()]);
         result
     }
 
     fn reload_fast(&mut self) -> BitDstreamStatus {
         self.index -= self.bits_consumed as usize >> 3;
         self.bits_consumed &= 7;
-        self.bit_container = Self::safe_create_usize(
-            &self.src.as_slice()[self.index..self.index + size_of::<usize>()],
-        );
+        self.bit_container =
+            Self::safe_create_usize(&self.src[self.index..self.index + size_of::<usize>()]);
         BitDstreamStatus::Unfinished
     }
 

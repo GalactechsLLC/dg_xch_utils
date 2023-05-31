@@ -1,10 +1,10 @@
-use dg_xch_utils::clvm::utils::hash_256;
-use dg_xch_utils::consensus::constants::ConsensusConstants;
-use dg_xch_utils::consensus::pot_iterations::{
+use dg_xch_core::clvm::utils::hash_256;
+use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_core::consensus::pot_iterations::{
     calculate_ip_iters, calculate_iterations_quality, calculate_sp_iters, expected_plot_size,
     is_overflow_block,
 };
-use dg_xch_utils::types::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use num_traits::abs;

@@ -98,7 +98,7 @@ fn malloc_cost(cost: u64, ptr: SExp) -> Result<(u64, SExp), Error> {
     Ok((cost + c, ptr))
 }
 
-pub fn op_unknown(o: SExp, args: SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
+pub fn op_unknown(o: SExp, args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     let op = &o.atom()?.data;
     if op.is_empty() || (op.len() >= 2 && op[0] == 0xff && op[1] == 0xff) {
         return Err(Error::new(

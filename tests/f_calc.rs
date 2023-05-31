@@ -1,9 +1,9 @@
-use dg_xch_utils::proof_of_space::bitvec::BitVec;
-use dg_xch_utils::proof_of_space::constants::{
+use dg_xch_pos::bitvec::BitVec;
+use dg_xch_pos::constants::{
     PlotEntry, K_B, K_BATCH_SIZES, K_BC, K_C, K_EXTRA_BITS, K_EXTRA_BITS_POW,
 };
-use dg_xch_utils::proof_of_space::f_calc::F1Calculator;
-use dg_xch_utils::proof_of_space::f_calc::FXCalculator;
+use dg_xch_pos::f_calc::F1Calculator;
+use dg_xch_pos::f_calc::FXCalculator;
 use std::collections::HashMap;
 
 fn check_match(yl: i64, yr: i64) -> bool {

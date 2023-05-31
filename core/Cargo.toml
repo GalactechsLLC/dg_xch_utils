@@ -1,9 +1,9 @@
 [package]
 name = "dg_xch_core"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 authors = ["James Hoerr"]
-description = "Core Library for Druid Garden Chia Libraries"
+description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
 
 [dependencies]
 bech32.workspace = true
@@ -20,7 +20,7 @@ log.workspace = true
 num-bigint.workspace = true
 num-integer.workspace = true
 num-traits.workspace = true
-openssl = "0.10.45"
+openssl.workspace = true
 paperclip = { version = "0.8.0", features = ["actix4"], optional = true }
 regex.workspace = true
 serde.workspace = true

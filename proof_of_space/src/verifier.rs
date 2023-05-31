@@ -4,7 +4,7 @@ use crate::f_calc::F1Calculator;
 use crate::f_calc::FXCalculator;
 use crate::prover::DiskProver;
 use dg_xch_serialize::hash_256;
-use log::{error, warn};
+use log::{debug, error, warn};
 use log::{info, trace};
 use sha2::{Digest, Sha256};
 use std::io::Error;
@@ -224,7 +224,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
             if duration > 5000 {
                 warn!("\tLooking up qualities took: {duration} ms. This should be below 5 seconds to minimize risk of losing rewards.");
             } else {
-                info!("\tLooking up qualities took: {duration} ms.");
+                debug!("\tLooking up qualities took: {duration} ms.");
             }
             let proof_start = Instant::now();
             let proof = prover.get_full_proof(&challenge_hash.clone().into(), index, true)?;
@@ -232,7 +232,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
             if proof_duration > 15000 {
                 warn!("\tFinding proof took: {proof_duration} ms. This should be below 15 seconds to minimize risk of losing rewards.");
             } else {
-                info!("\tFinding proof took: {proof_duration} ms");
+                debug!("\tFinding proof took: {proof_duration} ms");
             }
             total_proofs += 1;
             let v_quality = validate_proof(
@@ -252,22 +252,16 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
 
 #[test]
 pub fn test_check_plot() {
-    use log::info;
-    use simple_logger::SimpleLogger;
-    SimpleLogger::new().env().init().unwrap();
-    let path ="/mnt/5becdb53-45ce-4a0f-b0fa-f9d5154f3d9f/plot-k32-2022-07-16-06-41-2fb6752205c0b7f74e0fc9953a623a6590813e4c47775af68ed0fc513ae5f4bc.plot";
+    let path = "/mnt/96acc2b7-d09d-4d27-a09c-a8b425a59813/plot-k32-2023-05-30-23-09-003fd7e478ccf85bddf96300461963bc9543e7b9cc0360ba429c40c5f0757edf.plot";
     let (total, bad) = check_plot(path, 30).unwrap();
-    info!("Proofs Found: {total}/30, Bad Proofs: {bad}");
+    println!("Proofs Found: {total}/30, Bad Proofs: {bad}");
 }
 
 #[test]
 pub fn test_parallel_check_plots() {
     use rayon::prelude::*;
-    use simple_logger::SimpleLogger;
     use std::sync::atomic::{AtomicU64, Ordering};
-    SimpleLogger::new().env().init().unwrap();
-    use log::info;
-    let path = "/mnt/5becdb53-45ce-4a0f-b0fa-f9d5154f3d9f/";
+    let path = "/mnt/96acc2b7-d09d-4d27-a09c-a8b425a59813/";
     let mut total_plots = AtomicU64::new(0);
     let start = Instant::now();
     match Path::new(path).read_dir() {
@@ -278,21 +272,21 @@ pub fn test_parallel_check_plots() {
                     if let Some(s) = path.extension() {
                         if s == "plot" {
                             let (total, bad) = check_plot(path, 30).unwrap();
-                            info!("Proofs Found: {total}/30, Bad Proofs: {bad}");
+                            println!("Proofs Found: {total}/30, Bad Proofs: {bad}");
                             total_plots.fetch_add(1, Ordering::AcqRel);
                         }
                     }
                 }
                 Err(e) => {
-                    error!("Failed to read file {:?}", e);
+                    eprintln!("Failed to read file {:?}", e);
                 }
             });
         }
         Err(e) => {
-            error!("Failed to read Plot Directory {:?}, {:?}", path, e);
+            eprintln!("Failed to read Plot Directory {:?}, {:?}", path, e);
         }
     }
-    info!(
+    println!(
         "Checked {} Plots in {} ms",
         total_plots.get_mut(),
         start.duration_since(Instant::now()).as_millis()

@@ -1,9 +1,9 @@
 [package]
 name = "dg_xch_puzzles"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 authors = ["James Hoerr"]
-description = "Collection of Utilties for the Chia Blockchain"
+description = "Core library for working with CLVM puzzles"
 
 [dependencies]
 blst.workspace = true

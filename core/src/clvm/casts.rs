@@ -76,12 +76,12 @@ pub fn bigint_to_bytes(v_: &BigInt, signed: bool) -> Result<Vec<u8>, Error> {
         set_u32(&mut dv, pointer, setval as u32);
     }
 
-    let lastbytes = u32_digits[u32_digits.len() - 1];
+    let last_bytes = u32_digits[u32_digits.len() - 1];
     let transform = |idx| {
         if v.is_negative() {
-            (((1 << (8 * byte4_remain)) - lastbytes - dec) >> (8 * idx)) as u8
+            (((1 << (8 * byte4_remain)) - last_bytes - dec) >> (8 * idx)) as u8
         } else {
-            (lastbytes >> (8 * idx)) as u8
+            (last_bytes >> (8 * idx)) as u8
         }
     };
 

@@ -1,7 +1,7 @@
-use dg_xch_utils::clvm::utils::hash_256;
-use dg_xch_utils::proof_of_space::prover::DiskProver;
-use dg_xch_utils::proof_of_space::verifier::validate_proof;
-use dg_xch_utils::types::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::clvm::utils::hash_256;
+use dg_xch_pos::prover::DiskProver;
+use dg_xch_pos::verifier::validate_proof;
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use std::io::Error;
 use std::path::Path;
 

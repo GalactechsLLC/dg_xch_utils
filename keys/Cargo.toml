@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_keys"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Key Management Utils the Chia Blockchain"

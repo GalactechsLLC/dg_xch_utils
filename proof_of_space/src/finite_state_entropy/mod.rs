@@ -65,7 +65,7 @@ pub fn read_ncount(
         }
         return Ok(count_size);
     }
-    //assert(hbSize >= 4);
+    //assert(hbSize >= 4); //Todo convert to Error
     normalized_counter.fill(0); //memset(normalized_counter, 0, (*max_svptr +1) * sizeof(normalized_counter[0]));   /* all symbols not present in NCount have a frequency of 0 */
     let mut bit_stream: u32 = u32::from_le_bytes(
         src[index..index + size_of::<u32>()]
@@ -129,7 +129,7 @@ pub fn read_ncount(
                 charnum += 1;
             }
             if index <= src.len() - 7 || index + (bit_count >> 3) <= src.len() - 4 {
-                //assert((bit_count >> 3) <= 3); /* For first condition to work */
+                //assert((bit_count >> 3) <= 3); /* For first condition to work *///Todo convert to Error
                 index += bit_count >> 3;
                 bit_count &= 7;
                 bit_stream =

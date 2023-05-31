@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Default)]
 pub struct TMemoCache {
     ct_memo: HashMap<[u8; 8], Vec<CTable>>,
-    dt_memo: HashMap<[u8; 8], DTable>,
+    dt_memo: HashMap<[u8; 8], Arc<DTable>>,
 }
 impl TMemoCache {
     pub fn new() -> Self {
@@ -29,15 +29,15 @@ impl TMemoCache {
     }
 
     pub fn dt_assign(&mut self, r: f64, dt: DTable) {
-        self.dt_memo.insert(r.to_be_bytes(), dt);
+        self.dt_memo.insert(r.to_be_bytes(), Arc::new(dt));
     }
 
     pub fn ct_get(&self, r: f64) -> Option<&Vec<CTable>> {
         return self.ct_memo.get(&r.to_be_bytes());
     }
 
-    pub fn dt_get(&self, r: f64) -> Option<&DTable> {
-        return self.dt_memo.get(&r.to_be_bytes());
+    pub fn dt_get(&self, r: f64) -> Option<Arc<DTable>> {
+        return self.dt_memo.get(&r.to_be_bytes()).cloned();
     }
 }
 lazy_static! {
@@ -93,16 +93,16 @@ pub fn create_normalized_count(r: f64) -> Result<Vec<i16>, Error> {
     }
     let ans = Mutex::new(vec![1i16; n]);
     let sort_fn = |i: &usize, j: &usize| {
-        let mutex = ans.lock().expect("Failed to acquire lock for ");
+        let mutex = ans
+            .lock()
+            .expect("Failed to acquire lock for sort function");
         let left = dpdf[*i] * (((mutex[*i] + 1) as f64).log2() - (mutex[*i] as f64).log2());
         let right = dpdf[*j] * (((mutex[*j] + 1) as f64).log2() - (mutex[*j] as f64).log2());
         left.partial_cmp(&right)
             .expect("Failed to compare invalid values, NAN in float values")
     };
     let mut pq = vec![];
-    for i in 0..n {
-        pq.push(i);
-    }
+    pq.extend(0..n);
     pq.sort_by(sort_fn);
     for _ in 0..total_quanta - n {
         let i = pq
@@ -157,20 +157,16 @@ pub fn ans_decode_deltas(
                 build_dtable(&normalized_count, max_symbol_value as u32, table_log)?,
             );
         }
-        dt = cache
-            .dt_get(r)
-            .cloned()
-            .expect("Cache miss on expected value");
+        dt = cache.dt_get(r).expect("Cache miss on expected value");
     }
     let mut dst = vec![0u8; num_deltas];
-    match decompress_using_dtable(&mut dst, num_deltas, input, input_size, &dt) {
+    match decompress_using_dtable(&mut dst, num_deltas, input, input_size, dt) {
         Ok(_) => {
-            for d in &dst {
-                if *d == 0xff {
-                    return Err(Error::new(ErrorKind::InvalidInput, "Bad delta detected"));
-                }
+            if dst.iter().any(|d| *d == 0xff) {
+                Err(Error::new(ErrorKind::InvalidInput, "Bad delta detected"))
+            } else {
+                Ok(dst)
             }
-            Ok(dst)
         }
         Err(e) => Err(e),
     }
