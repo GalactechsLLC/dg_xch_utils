@@ -12,7 +12,7 @@ use std::fs;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::{Error, ErrorKind, Write};
 use std::ops::{Add, Sub};
-use std::path::{Path};
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CHIA_CA_CRT: &str = r"-----BEGIN CERTIFICATE-----
@@ -130,7 +130,7 @@ fn generate_ca_signed_cert_data(
                 .expect("Should be later than Epoch")
                 .as_secs() as i64,
         )?
-            .as_ref(),
+        .as_ref(),
     )?;
     cert.set_not_after(Asn1Time::from_str("21000802000000Z")?.as_ref())?;
     let ctx = cert.x509v3_context(None, None);
@@ -172,7 +172,7 @@ fn make_ca_cert_data() -> Result<(Vec<u8>, Vec<u8>), ErrorStack> {
                 .expect("Should be later than Epoch")
                 .as_secs() as i64,
         )?
-            .as_ref(),
+        .as_ref(),
     )?;
     cert.set_not_after(
         Asn1Time::from_unix(
@@ -182,7 +182,7 @@ fn make_ca_cert_data() -> Result<(Vec<u8>, Vec<u8>), ErrorStack> {
                 .expect("Should be later than Epoch")
                 .as_secs() as i64,
         )?
-            .as_ref(),
+        .as_ref(),
     )?;
     let base = BasicConstraints::new().critical().ca().build()?;
     cert.append_extension(base)?;
