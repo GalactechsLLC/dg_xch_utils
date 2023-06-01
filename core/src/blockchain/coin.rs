@@ -1,4 +1,4 @@
-use crate::blockchain::sized_bytes::{Bytes32, u64_to_bytes};
+use crate::blockchain::sized_bytes::{u64_to_bytes, Bytes32};
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::{hash_256, ChiaSerialize};
 use serde::{Deserialize, Serialize};

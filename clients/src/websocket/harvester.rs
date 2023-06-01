@@ -4,8 +4,8 @@ use crate::websocket::{
 use log::debug;
 use std::collections::HashMap;
 use std::io::Error;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::{JoinError, JoinHandle};
 
