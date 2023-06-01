@@ -1,0 +1,33 @@
+[package]
+name = "dg_xch_core"
+version = "1.0.2"
+edition = "2021"
+authors = ["James Hoerr"]
+description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
+
+[dependencies]
+bech32.workspace = true
+bip39.workspace = true
+bls12_381.workspace = true
+blst.workspace = true
+bytes.workspace = true
+dg_xch_serialize.workspace = true
+dg_xch_macros.workspace = true
+hex.workspace = true
+hkdf.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+num-bigint.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
+openssl.workspace = true
+paperclip = { version = "0.8.0", features = ["actix4"], optional = true }
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+simple_logger.workspace = true
+tokio.workspace = true
+
+[features]
+paperclip = ["dep:paperclip"]

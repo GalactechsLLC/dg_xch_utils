@@ -1,0 +1,25 @@
+[package]
+name = "dg_xch_clients"
+version = "1.0.2"
+edition = "2021"
+authors = ["James Hoerr"]
+description = "RPC and Websocket Clients the Chia Blockchain"
+
+[dependencies]
+async-trait.workspace = true
+dg_xch_core.workspace = true
+dg_xch_pos.workspace = true
+dg_xch_macros.workspace = true
+dg_xch_serialize.workspace = true
+futures-util.workspace = true
+hyper.workspace = true
+log.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+uuid.workspace = true

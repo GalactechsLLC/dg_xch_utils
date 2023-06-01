@@ -1,7 +1,7 @@
-use dg_xch_utils::clvm::utils::hash_256;
-use dg_xch_utils::proof_of_space::prover::DiskProver;
-use dg_xch_utils::proof_of_space::verifier::validate_proof;
-use dg_xch_utils::types::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::clvm::utils::hash_256;
+use dg_xch_pos::prover::DiskProver;
+use dg_xch_pos::verifier::validate_proof;
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use std::io::Error;
 use std::path::Path;
 
@@ -25,7 +25,8 @@ pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error
             if let Ok(proof) = prover.get_full_proof(&challenge, index, true) {
                 proof_data = proof.to_bytes();
                 let quality =
-                    validate_proof(&plot_id.to_sized_bytes(), k, &challenge.bytes, &proof_data)?;
+                    validate_proof(&plot_id.to_sized_bytes(), k, &challenge.bytes, &proof_data)
+                        .unwrap();
                 if quality.get_size() != 256 {
                     invalid += 1;
                     continue;
@@ -35,7 +36,8 @@ pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error
                 // Tests invalid proof
                 proof_data[0] = ((proof_data[0] as u16 + 1) % 256) as u8;
                 let quality_2 =
-                    validate_proof(&plot_id.to_sized_bytes(), k, &challenge.bytes, &proof_data)?;
+                    validate_proof(&plot_id.to_sized_bytes(), k, &challenge.bytes, &proof_data)
+                        .unwrap();
                 assert_eq!(quality_2.get_size(), 0);
             } else {
                 invalid += 1;

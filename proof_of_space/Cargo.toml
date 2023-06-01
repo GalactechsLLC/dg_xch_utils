@@ -1,0 +1,18 @@
+[package]
+name = "dg_xch_pos"
+version = "1.0.2"
+edition = "2021"
+authors = ["James Hoerr"]
+description = "Proof of Space library for the Chia Blockchain"
+
+[dependencies]
+blake3.workspace = true
+dg_xch_serialize.workspace = true
+dg_xch_core.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+nix.workspace = true
+num-traits.workspace = true
+rayon.workspace = true
+sha2.workspace = true
+simple_logger.workspace = true
