@@ -4,6 +4,7 @@ use crate::websocket::{
 use std::collections::HashMap;
 use std::io::Error;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::Mutex;
 
 pub struct WalletClient {
@@ -15,7 +16,7 @@ impl WalletClient {
         port: u16,
         network_id: &str,
         additional_headers: &Option<HashMap<String, String>>,
-        run: Arc<Mutex<bool>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client(host, port, additional_headers).await?;
         tokio::spawn(async move { stream.run(run).await });
@@ -29,7 +30,7 @@ impl WalletClient {
         ssl_info: ClientSSLConfig<'_>,
         network_id: &str,
         additional_headers: &Option<HashMap<String, String>>,
-        run: Arc<Mutex<bool>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client_tls(host, port, ssl_info, additional_headers).await?;
         tokio::spawn(async move { stream.run(run).await });

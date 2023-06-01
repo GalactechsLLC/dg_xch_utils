@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::select;
@@ -335,7 +336,7 @@ pub struct ReadStream {
     subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
 }
 impl ReadStream {
-    pub async fn run(&mut self, run: Arc<Mutex<bool>>) {
+    pub async fn run(&mut self, run: Arc<AtomicBool>) {
         loop {
             select! {
                 msg = self.read.next() => {
@@ -388,7 +389,7 @@ impl ReadStream {
                 }
                 _ = async {
                     loop {
-                        if !*run.lock().await {
+                        if !run.load(Ordering::Relaxed) {
                             debug!("Client is exiting");
                             return;
                         } else {
@@ -483,7 +484,7 @@ pub struct ServerReadStream {
     subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
 }
 impl ServerReadStream {
-    pub async fn run(&mut self, run: Arc<Mutex<bool>>) {
+    pub async fn run(&mut self, run: Arc<AtomicBool>) {
         loop {
             select! {
                 msg = self.read.next() => {
@@ -538,7 +539,7 @@ impl ServerReadStream {
                 }
                 _ = async {
                     loop {
-                        if !*run.lock().await {
+                        if !run.load(Ordering::Relaxed){
                             debug!("Server is exiting");
                             return;
                         } else {

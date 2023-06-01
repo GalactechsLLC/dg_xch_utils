@@ -5,6 +5,7 @@ use log::debug;
 use std::collections::HashMap;
 use std::io::Error;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::Mutex;
 use tokio::task::{JoinError, JoinHandle};
 
@@ -18,7 +19,7 @@ impl HarvesterClient {
         port: u16,
         network_id: &str,
         additional_headers: &Option<HashMap<String, String>>,
-        run: Arc<Mutex<bool>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client(host, port, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
@@ -32,7 +33,7 @@ impl HarvesterClient {
         ssl_info: ClientSSLConfig<'_>,
         network_id: &str,
         additional_headers: &Option<HashMap<String, String>>,
-        run: Arc<Mutex<bool>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         debug!("Starting Harvester SSL Connection");
         let (client, mut stream) = get_client_tls(host, port, ssl_info, additional_headers).await?;
