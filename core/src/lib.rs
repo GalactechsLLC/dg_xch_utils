@@ -5,6 +5,7 @@ pub mod curry_and_treehash;
 pub mod errors;
 pub mod plots;
 pub mod pool;
+pub mod ssl;
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")
