@@ -3,11 +3,11 @@ use crate::websocket::{
 };
 use log::debug;
 use std::collections::HashMap;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
 
 pub struct HarvesterClient {
     pub client: Arc<Mutex<Client>>,
@@ -46,7 +46,13 @@ impl HarvesterClient {
         Ok(HarvesterClient { client, handle })
     }
 
-    pub async fn join(self) -> Result<(), JoinError> {
-        self.handle.await
+    pub async fn join(self) -> Result<(), Error> {
+        self.handle.await.map_err(|e| {
+            Error::new(
+                ErrorKind::Other,
+                format!("Failed to join harvester: {:?}", e),
+            )
+        })?;
+        self.client.lock().await.shutdown().await
     }
 }

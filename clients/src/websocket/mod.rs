@@ -384,9 +384,6 @@ impl ReadStream {
                         }
                     }
                 }
-                _ = await_termination() => {
-                    return;
-                }
                 _ = async {
                     loop {
                         if !run.load(Ordering::Relaxed) {

@@ -2,11 +2,11 @@ use crate::websocket::{
     get_client, get_client_tls, perform_handshake, Client, ClientSSLConfig, NodeType,
 };
 use std::collections::HashMap;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
 
 pub struct FullnodeClient {
     pub client: Arc<Mutex<Client>>,
@@ -41,7 +41,13 @@ impl FullnodeClient {
         Ok(FullnodeClient { client, handle })
     }
 
-    pub async fn join(self) -> Result<(), JoinError> {
-        self.handle.await
+    pub async fn join(self) -> Result<(), Error> {
+        self.handle.await.map_err(|e| {
+            Error::new(
+                ErrorKind::Other,
+                format!("Failed to join fullnode: {:?}", e),
+            )
+        })?;
+        self.client.lock().await.shutdown().await
     }
 }

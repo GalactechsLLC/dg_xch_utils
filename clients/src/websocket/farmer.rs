@@ -2,7 +2,7 @@ use crate::websocket::{
     get_client, get_client_tls, perform_handshake, Client, ClientSSLConfig, NodeType,
 };
 use std::collections::HashMap;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -41,8 +41,11 @@ impl FarmerClient {
         Ok(FarmerClient { client, handle })
     }
 
-    pub async fn join(self) {
-        let _ = self.handle.await;
+    pub async fn join(self) -> Result<(), Error> {
+        self.handle
+            .await
+            .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {:?}", e)))?;
+        self.client.lock().await.shutdown().await
     }
 
     pub fn is_closed(&self) -> bool {
