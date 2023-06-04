@@ -68,8 +68,8 @@ impl From<Vec<u8>> for PoolState {
     fn from(bytes: Vec<u8>) -> Self {
         let version = bytes[0];
         let state = bytes[1];
-        let target_puzzle_hash: Bytes32 = bytes[2..=34].to_vec().into();
-        let owner_pubkey: Bytes48 = bytes[34..=81].to_vec().into();
+        let target_puzzle_hash: Bytes32 = bytes[2..34].to_vec().into();
+        let owner_pubkey: Bytes48 = bytes[34..82].to_vec().into();
         let has_url = bytes[82];
         let mut pool_url: String = String::new();
         let relative_lock_height: u32;
