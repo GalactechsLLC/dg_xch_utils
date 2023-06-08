@@ -194,10 +194,10 @@ pub struct ChiaMessage {
     pub data: Vec<u8>,
 }
 impl ChiaMessage {
-    pub fn new<T: ChiaSerialize>(msg_type: ProtocolMessageTypes, msg: &T) -> Self {
+    pub fn new<T: ChiaSerialize>(msg_type: ProtocolMessageTypes, msg: &T, id: Option<u16>) -> Self {
         ChiaMessage {
             msg_type,
-            id: None,
+            id,
             data: msg.to_bytes(),
         }
     }
@@ -235,17 +235,24 @@ async fn perform_handshake(
                     .map(|e| (e.0, e.1.to_string()))
                     .collect(),
             },
+            None,
         ),
         Some(ProtocolMessageTypes::Handshake),
+        None,
+        Some(15000),
     )
     .await
 }
 #[derive(Debug)]
 pub struct ChiaMessageFilter {
     pub msg_type: Option<ProtocolMessageTypes>,
+    pub id: Option<u16>,
 }
 impl ChiaMessageFilter {
     pub fn matches(&self, msg: Arc<ChiaMessage>) -> bool {
+        if self.id.is_some() && self.id != msg.id {
+            return false;
+        }
         if let Some(s) = &self.msg_type {
             if *s != msg.msg_type {
                 return false;
@@ -282,6 +289,8 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
     client: Arc<Mutex<C>>,
     msg: ChiaMessage,
     resp_type: Option<ProtocolMessageTypes>,
+    msg_id: Option<u16>,
+    timeout: Option<u64>,
 ) -> Result<R, Error> {
     let handle_uuid = Uuid::new_v4();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
@@ -293,6 +302,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
     let chia_handle = ChiaMessageHandler {
         filter: ChiaMessageFilter {
             msg_type: resp_type,
+            id: msg_id,
         },
         handle: handle.clone(),
     };
@@ -308,22 +318,34 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
             format!("Failed to parse send data: {:?}", e),
         )
     })?;
-    let res = res_handle.await?;
-    client.lock().await.unsubscribe(handle.id).await;
-    if let Some(v) = res {
-        let mut cursor = Cursor::new(v);
-        R::from_bytes(&mut cursor).map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("Failed to parse msg: {:?}", e),
-            )
-        })
-    } else {
-        Err(Error::new(
-            ErrorKind::Other,
-            "Channel Closed before response received",
-        ))
-    }
+    select!(
+        _ = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
+            client.lock().await.unsubscribe(handle.id).await;
+            Err(Error::new(
+                ErrorKind::Other,
+                "Timeout before oneshot completed",
+            ))
+        }
+        res = res_handle => {
+            let res = res?;
+            if let Some(v) = res {
+                let mut cursor = Cursor::new(v);
+                client.lock().await.unsubscribe(handle.id).await;
+                R::from_bytes(&mut cursor).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to parse msg: {:?}", e),
+                    )
+                })
+            } else {
+                client.lock().await.unsubscribe(handle.id).await;
+                Err(Error::new(
+                    ErrorKind::Other,
+                    "Channel Closed before response received",
+                ))
+            }
+        }
+    )
 }
 
 #[async_trait]
@@ -368,6 +390,7 @@ impl ReadStream {
                                 },
                                 Message::Close(reason) => {
                                     info!("Received Close: {:?}", reason);
+                                    return;
                                 }
                                 _ => {
                                     error!("Invalid Message: {:?}", msg);
@@ -580,6 +603,14 @@ impl Websocket for ServerConnection {
             .await
     }
 
+    async fn subscribe(&self, uuid: Uuid, handle: ChiaMessageHandler) {
+        self.subscribers.lock().await.insert(uuid, handle);
+    }
+
+    async fn unsubscribe(&self, uuid: Uuid) {
+        self.subscribers.lock().await.remove(&uuid);
+    }
+
     async fn close(&mut self, msg: Option<Message>) -> Result<(), Error> {
         trace!("Sending Request: {:?}", &msg);
         if let Some(msg) = msg {
@@ -598,13 +629,5 @@ impl Websocket for ServerConnection {
                 .map_err(|e| Error::new(ErrorKind::Other, e))
                 .await
         }
-    }
-
-    async fn subscribe(&self, uuid: Uuid, handle: ChiaMessageHandler) {
-        self.subscribers.lock().await.insert(uuid, handle);
-    }
-
-    async fn unsubscribe(&self, uuid: Uuid) {
-        self.subscribers.lock().await.remove(&uuid);
     }
 }

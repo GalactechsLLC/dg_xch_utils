@@ -1,4 +1,4 @@
-use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_serialize::hash_256;
 use lazy_static::lazy_static;
 
@@ -10,7 +10,7 @@ pub const A_KW: [u8; 1] = [0x02];
 pub const C_KW: [u8; 1] = [0x04];
 
 pub fn shatree_atom(atom: &[u8]) -> Bytes32 {
-    Bytes32::from(hash_256(
+    Bytes32::new(&hash_256(
         ONE.iter()
             .copied()
             .chain(atom.iter().copied())
@@ -19,7 +19,7 @@ pub fn shatree_atom(atom: &[u8]) -> Bytes32 {
 }
 
 pub fn shatree_pair(left_hash: &Bytes32, right_hash: &Bytes32) -> Bytes32 {
-    Bytes32::from(hash_256(
+    Bytes32::new(&hash_256(
         TWO.iter()
             .copied()
             .chain(

@@ -1,5 +1,5 @@
 use blst::min_pk::{AggregatePublicKey, SecretKey};
-use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48};
+use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48, SizedBytes};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
 use dg_xch_core::curry_and_treehash::{calculate_hash_of_quoted_mod_hash, curry_and_treehash};
 use dg_xch_serialize::hash_256;
@@ -62,8 +62,8 @@ pub fn calculate_synthetic_public_key(
     public_key: &Bytes48,
     hidden_puzzle_hash: &Bytes32,
 ) -> Result<Bytes48, Error> {
-    let bytes = Bytes32::from(
-        calculate_synthetic_offset(public_key, hidden_puzzle_hash).to_signed_bytes_be(),
+    let bytes = Bytes32::new(
+        &calculate_synthetic_offset(public_key, hidden_puzzle_hash).to_signed_bytes_be(),
     );
     let synthetic_offset: SecretKey = bytes.into();
     let mut agg = AggregatePublicKey::from_public_key(&public_key.into());
@@ -86,8 +86,8 @@ pub fn calculate_synthetic_secret_key(
     let synthetic_offset =
         calculate_synthetic_offset(&public_key.to_bytes().into(), hidden_puzzle_hash);
     let synthetic_secret_exponent = (secret_exponent + synthetic_offset).mod_floor(&GROUP_ORDER);
-    let blob = Bytes32::from(synthetic_secret_exponent.to_bytes_be().1);
-    SecretKey::from_bytes(&blob.to_sized_bytes()).map_err(|e| {
+    let blob = Bytes32::new(&synthetic_secret_exponent.to_bytes_be().1);
+    SecretKey::from_bytes(blob.to_sized_bytes()).map_err(|e| {
         Error::new(
             ErrorKind::InvalidInput,
             format!("Synthetic SK Error: {:?}", e),

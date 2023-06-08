@@ -4,7 +4,7 @@ use crate::protocols::pool::{
     PutFarmerRequest, PutFarmerResponse,
 };
 use async_trait::async_trait;
-use log::warn;
+use log::{warn};
 use reqwest::Client;
 
 #[async_trait]
@@ -202,26 +202,20 @@ impl PoolClient for DefaultPoolClient {
         {
             Ok(resp) => match resp.status() {
                 reqwest::StatusCode::OK => match resp.text().await {
-                    Ok(body) => match serde_json::from_str(body.as_str()) {
-                        Ok(c) => Ok(c),
+                    Ok(body) => match serde_json::from_str::<PoolError>(body.as_str()) {
+                        Ok(e) => Err(e),
                         Err(_) => match serde_json::from_str(&body) {
-                            Ok(e) => Err(e),
-                            Err(_) => match serde_json::from_str(&body) {
-                                Ok(e) => {
-                                    warn!("Failed to Put Farmer: {:?}", e);
-                                    Err(e)
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to parse farmer Error, Invalid Json: {:?}, {}",
-                                        e, body
-                                    );
-                                    Err(PoolError {
-                                        error_code: PoolErrorCode::RequestFailed as u8,
-                                        error_message: e.to_string(),
-                                    })
-                                }
-                            },
+                            Ok(r) => Ok(r),
+                            Err(e) => {
+                                warn!(
+                                    "Failed to parse farmer put response, Invalid Json: {:?}, {}",
+                                    e, body
+                                );
+                                Err(PoolError {
+                                    error_code: PoolErrorCode::RequestFailed as u8,
+                                    error_message: e.to_string(),
+                                })
+                            }
                         },
                     },
                     Err(e) => {

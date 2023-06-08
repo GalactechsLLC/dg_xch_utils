@@ -3,6 +3,7 @@ use crate::constants::*;
 use crate::f_calc::F1Calculator;
 use crate::f_calc::FXCalculator;
 use crate::prover::DiskProver;
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_serialize::hash_256;
 use log::{debug, error, warn};
 use log::{info, trace};
@@ -216,9 +217,9 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
     let mut total_proofs = 0;
     let mut bad_proofs = 0;
     for i in 0..challenges {
-        let challenge_hash = hash_256(i.to_be_bytes());
+        let challenge_hash = Bytes32::new(&hash_256(i.to_be_bytes()));
         let start = Instant::now();
-        let qualities = prover.get_qualities_for_challenge(&challenge_hash.clone().into())?;
+        let qualities = prover.get_qualities_for_challenge(&challenge_hash)?;
         let duration = Instant::now().duration_since(start).as_millis();
         for (index, quality) in qualities.iter().enumerate() {
             if duration > 5000 {
@@ -227,7 +228,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
                 debug!("\tLooking up qualities took: {duration} ms.");
             }
             let proof_start = Instant::now();
-            let proof = prover.get_full_proof(&challenge_hash.clone().into(), index, true)?;
+            let proof = prover.get_full_proof(&challenge_hash, index, true)?;
             let proof_duration = Instant::now().duration_since(proof_start).as_millis();
             if proof_duration > 15000 {
                 warn!("\tFinding proof took: {proof_duration} ms. This should be below 15 seconds to minimize risk of losing rewards.");
@@ -236,10 +237,10 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
             }
             total_proofs += 1;
             let v_quality = validate_proof(
-                &prover.header.id.to_sized_bytes(),
+                prover.header.id.to_sized_bytes(),
                 prover.header.k,
-                &challenge_hash,
-                &proof.to_bytes(),
+                &challenge_hash.bytes,
+                &proof,
             )?;
             if *quality != v_quality {
                 bad_proofs += 1;

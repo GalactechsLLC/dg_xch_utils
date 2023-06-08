@@ -226,7 +226,7 @@ pub fn decode_puzzle_hash(address: &str) -> Result<Bytes32, Error> {
             format!("Error Decoding address: ({address}): {:?}", e),
         )
     })?;
-    Ok(Bytes32::from(Vec::<u8>::from_base32(&data).map_err(
+    Ok(Bytes32::new(&Vec::<u8>::from_base32(&data).map_err(
         |e| {
             Error::new(
                 ErrorKind::InvalidInput,

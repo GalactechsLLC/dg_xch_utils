@@ -1,7 +1,7 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::ConditionWithArgs;
-use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use crate::blockchain::utils::atom_to_int;
 use crate::clvm::program::{Program, SerializedProgram};
 use crate::clvm::sexp::SExp;
@@ -61,13 +61,12 @@ pub fn created_outputs_for_conditions_dict(
     let mut output_coins = Vec::new();
     if let Some(args) = conditions_dict.get(&ConditionOpcode::CreateCoin) {
         for cvp in args {
-            let puz_hash = cvp.vars[0].clone();
             let amount = atom_to_int(&cvp.vars[1]).to_u64().ok_or_else(|| {
                 Error::new(ErrorKind::InvalidInput, "Failed to convert atom to int")
             })?;
             let coin = Coin {
                 parent_coin_info: input_coin_name.clone(),
-                puzzle_hash: puz_hash.into(),
+                puzzle_hash: Bytes32::new(&cvp.vars[0]),
                 amount,
             };
             output_coins.push(coin);

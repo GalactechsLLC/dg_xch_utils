@@ -1,6 +1,6 @@
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use dg_xch_core::blockchain::utils::atom_to_int;
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
 use dg_xch_core::plots::PlotNftExtraData;
@@ -81,7 +81,7 @@ pub fn create_waiting_room_inner_puzzle(
 ) -> Result<Program, Error> {
     let mut genesis_bytes = genesis_challenge.as_ref()[..16].to_vec();
     genesis_bytes.append(&mut b"\x00".repeat(16));
-    let pool_reward_prefix: Bytes32 = genesis_bytes.into();
+    let pool_reward_prefix: Bytes32 = Bytes32::new(&genesis_bytes);
     let p2_singleton_puzzle_hash: Bytes32 =
         launcher_id_to_p2_puzzle_hash(launcher_id, delay_time, delay_ph)?;
     let args: Vec<Program> = vec![
@@ -105,7 +105,7 @@ pub fn create_pooling_inner_puzzle(
 ) -> Result<Program, Error> {
     let mut genesis_bytes = genesis_challenge.as_ref()[..16].to_vec();
     genesis_bytes.append(&mut b"\x00".repeat(16));
-    let pool_reward_prefix: Bytes32 = genesis_bytes.into();
+    let pool_reward_prefix: Bytes32 = Bytes32::new(&genesis_bytes);
     let p2_singleton_puzzle_hash: Bytes32 =
         launcher_id_to_p2_puzzle_hash(launcher_id, delay_time, delay_ph)?;
     let args: Vec<Program> = vec![
@@ -191,11 +191,12 @@ pub fn get_seconds_and_delayed_puzhash_from_p2_singleton_puzzle(
             let seconds_delay_int: u64 = seconds_delay.try_into()?;
             Ok((
                 seconds_delay_int,
-                delayed_puzzle_hash
-                    .as_atom()
-                    .unwrap_or_else(|| Program::new(Vec::new()))
-                    .serialized
-                    .into(),
+                Bytes32::new(
+                    &delayed_puzzle_hash
+                        .as_atom()
+                        .unwrap_or_else(|| Program::new(Vec::new()))
+                        .serialized,
+                ),
             ))
         }
         Err(error) => Err(error),
@@ -316,15 +317,14 @@ pub fn uncurry_pool_waitingroom_inner_puzzle(
 pub fn get_inner_puzzle_from_puzzle(full_puzzle: &Program) -> Result<Option<Program>, Error> {
     match full_puzzle.uncurry() {
         Ok((_, args)) => {
-            let list = args.as_list();
+            let list: Vec<Program> = args.as_list();
             if list.len() < 2 {
                 return Ok(None);
             }
-            let inner_puz = &list[1];
-            if !is_pool_singleton_inner_puzzle(inner_puz)? {
+            if !is_pool_singleton_inner_puzzle(&list[1])? {
                 return Ok(None);
             }
-            Ok(Some(inner_puz.clone()))
+            Ok(Some(list[1].clone()))
         }
         Err(error) => Err(error),
     }

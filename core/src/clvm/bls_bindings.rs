@@ -1,4 +1,4 @@
-use crate::blockchain::sized_bytes::{Bytes48, Bytes96, SizedBytes};
+use crate::blockchain::sized_bytes::{Bytes48, SizedBytes};
 use blst::min_pk::{PublicKey, SecretKey, Signature};
 use blst::BLST_ERROR;
 
@@ -24,13 +24,8 @@ pub fn verify_signature(public_key: &PublicKey, msg: &[u8], signature: &Signatur
 pub fn aggregate_verify_signature(
     public_keys: &[&Bytes48],
     msgs: &Vec<&[u8]>,
-    signature: &Bytes96,
+    signature: &Signature,
 ) -> bool {
-    let sig: Signature = if let Ok(s) = signature.try_into() {
-        s
-    } else {
-        return false;
-    };
     let mut new_msgs: Vec<Vec<u8>> = Vec::new();
     let mut keys: Vec<PublicKey> = Vec::new();
     for (key, msg) in public_keys.iter().zip(msgs) {
@@ -41,7 +36,7 @@ pub fn aggregate_verify_signature(
         keys.push((*key).into());
     }
     matches!(
-        sig.aggregate_verify(
+        signature.aggregate_verify(
             true,
             &new_msgs
                 .iter()

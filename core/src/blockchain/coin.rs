@@ -1,4 +1,4 @@
-use crate::blockchain::sized_bytes::{u64_to_bytes, Bytes32};
+use crate::blockchain::sized_bytes::{u64_to_bytes, Bytes32, SizedBytes};
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::{hash_256, ChiaSerialize};
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ pub struct Coin {
 }
 impl Coin {
     pub fn name(&self) -> Bytes32 {
-        self.hash().into()
+        Bytes32::new(&self.hash())
     }
     pub fn hash(&self) -> Vec<u8>
     where

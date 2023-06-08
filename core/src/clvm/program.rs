@@ -282,7 +282,7 @@ impl Program {
                 SNULL.clone()
             }
         };
-        Bytes32::new(tree_hash(&sexp))
+        Bytes32::new(&tree_hash(&sexp))
     }
 }
 
@@ -307,7 +307,6 @@ macro_rules! impl_sized_bytes {
 }
 
 impl_sized_bytes!(
-    UnsizedBytes;
     Bytes4;
     Bytes8;
     Bytes16;
