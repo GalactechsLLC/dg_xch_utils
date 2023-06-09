@@ -4,7 +4,7 @@ use crate::protocols::pool::{
     PutFarmerRequest, PutFarmerResponse,
 };
 use async_trait::async_trait;
-use log::{warn};
+use log::warn;
 use reqwest::Client;
 
 #[async_trait]
