@@ -9,6 +9,8 @@ env:
 
 jobs:
   format:
+    runs-on:
+      - ubuntu-latest
     if: github.event_name == 'push'
 
     name: Check format
