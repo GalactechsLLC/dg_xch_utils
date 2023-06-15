@@ -62,8 +62,8 @@ impl Display for PlotMemo {
                 .as_ref()
                 .map(encode)
                 .unwrap_or_default(),
-            encode(&self.farmer_public_key),
-            encode(&self.local_master_secret_key)
+            encode(self.farmer_public_key),
+            encode(self.local_master_secret_key)
         )
     }
 }
@@ -114,7 +114,7 @@ impl Display for PlotHeader {
             \t\"memo\": {}\n\
             }}",
             String::from_utf8(self.magic.to_vec()).map_err(|_| fmt::Error)?,
-            encode(&self.id),
+            encode(self.id),
             self.k,
             self.format_desc_len,
             String::from_utf8(self.format_desc.to_vec()).map_err(|_| fmt::Error)?,

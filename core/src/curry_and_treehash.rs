@@ -43,7 +43,7 @@ lazy_static! {
 
 pub fn curried_values_tree_hash(arguments: &[Bytes32]) -> Bytes32 {
     if arguments.is_empty() {
-        ONE_TREEHASH.clone()
+        *ONE_TREEHASH
     } else {
         shatree_pair(
             &C_KW_TREEHASH,

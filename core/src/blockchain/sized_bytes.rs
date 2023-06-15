@@ -79,7 +79,7 @@ macro_rules! impl_sized_bytes {
 
     ($($name: ident, $size:expr, $visitor:ident);*) => {
         $(
-            #[derive(Clone)]
+            #[derive(Copy, Clone)]
             pub struct $name {
                 pub bytes: [u8; $size]
             }
@@ -88,7 +88,7 @@ macro_rules! impl_sized_bytes {
                     if bytes.len() > $size {
                         warn!("Too Many Bytes Sent to {}, expected {} got {}", stringify!($name), $size, bytes.len());
                         let mut buf = [0u8; $size];
-                        buf.copy_from_slice( &bytes[..$size]);
+                        buf.copy_from_slice(&bytes[..$size]);
                         Self {
                             bytes: buf
                         }

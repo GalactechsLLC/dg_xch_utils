@@ -62,7 +62,7 @@ pub async fn get_plotnft_by_launcher_id(
             }
             if let Some(singleton_coin) = singleton_coin {
                 Ok(Some(PlotNft {
-                    launcher_id: launcher_id.clone(),
+                    launcher_id: *launcher_id,
                     singleton_coin,
                     pool_state: last_not_null_state,
                     delay_time: initial_extra_data.delay_time,

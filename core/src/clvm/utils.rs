@@ -254,8 +254,8 @@ pub fn additions_for_npc(npc_result: NPCResult) -> Vec<Coin> {
         for spend in conds.spends {
             for (puzzle_hash, amount, _) in spend.create_coin {
                 additions.push(Coin {
-                    parent_coin_info: spend.coin_id.clone(),
-                    puzzle_hash: puzzle_hash.clone(),
+                    parent_coin_info: spend.coin_id,
+                    puzzle_hash,
                     amount,
                 });
             }

@@ -65,7 +65,7 @@ pub fn created_outputs_for_conditions_dict(
                 Error::new(ErrorKind::InvalidInput, "Failed to convert atom to int")
             })?;
             let coin = Coin {
-                parent_coin_info: input_coin_name.clone(),
+                parent_coin_info: input_coin_name,
                 puzzle_hash: Bytes32::new(&cvp.vars[0]),
                 amount,
             };

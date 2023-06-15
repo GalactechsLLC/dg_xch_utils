@@ -57,10 +57,10 @@ pub fn launcher_coin_spend_to_extra_data(
 pub fn puzzle_for_singleton(launcher_id: &Bytes32, inner_puz: &Program) -> Result<Program, Error> {
     let args = vec![
         (
-            SINGLETON_MOD_HASH.clone().try_into()?,
+            (*SINGLETON_MOD_HASH).try_into()?,
             (
                 launcher_id.try_into()?,
-                SINGLETON_LAUNCHER_HASH.clone().try_into()?,
+                (*SINGLETON_LAUNCHER_HASH).try_into()?,
             )
                 .try_into()?,
         )
@@ -131,7 +131,7 @@ pub fn create_p2_singleton_puzzle(
     let args: Vec<Program> = vec![
         singleton_mod_hash.try_into()?,
         launcher_id.try_into()?,
-        SINGLETON_LAUNCHER_HASH.clone().try_into()?,
+        (*SINGLETON_LAUNCHER_HASH).try_into()?,
         seconds_delay.try_into()?,
         delayed_puzzle_hash.try_into()?,
     ];
@@ -210,7 +210,7 @@ pub fn is_pool_singleton_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Er
 
 pub fn is_pool_waitingroom_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error> {
     let inner_f = get_template_singleton_inner_puzzle(inner_puzzle)?;
-    Ok(POOL_WAITING_ROOM_MOD.clone() == inner_f)
+    Ok(*POOL_WAITING_ROOM_MOD == inner_f)
 }
 
 pub fn is_pool_member_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error> {
@@ -353,7 +353,7 @@ pub fn pool_state_from_extra_data(extra_data: Program) -> Result<Option<PoolStat
 pub fn solution_to_pool_state(coin_solution: &CoinSpend) -> Result<Option<PoolState>, Error> {
     let full_solution = Program::new(coin_solution.solution.to_bytes());
     let extra_data: Program;
-    if coin_solution.coin.puzzle_hash == SINGLETON_LAUNCHER_HASH.clone() {
+    if coin_solution.coin.puzzle_hash == *SINGLETON_LAUNCHER_HASH {
         //Launcher spend
         extra_data = full_solution.rest()?.rest()?.first()?;
         return pool_state_from_extra_data(extra_data);

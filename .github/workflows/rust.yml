@@ -9,9 +9,6 @@ env:
 
 jobs:
   format:
-    runs-on:
-      - self-hosted
-      - galactechs
     if: github.event_name == 'push'
 
     name: Check format

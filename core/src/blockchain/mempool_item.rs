@@ -34,7 +34,7 @@ impl MempoolItem {
         (self.fee / self.cost()) as f64
     }
     pub fn name(&self) -> Bytes32 {
-        self.spend_bundle_name.clone()
+        self.spend_bundle_name
     }
     pub fn cost(&self) -> u64 {
         self.npc_result.cost
