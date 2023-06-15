@@ -3,10 +3,11 @@ use crate::websocket::{
 };
 use log::debug;
 use std::collections::HashMap;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
 
 pub struct HarvesterClient {
     pub client: Arc<Mutex<Client>>,
@@ -18,7 +19,7 @@ impl HarvesterClient {
         port: u16,
         network_id: &str,
         additional_headers: &Option<HashMap<String, String>>,
-        run: Arc<Mutex<bool>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client(host, port, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
@@ -32,7 +33,7 @@ impl HarvesterClient {
         ssl_info: ClientSSLConfig<'_>,
         network_id: &str,
         additional_headers: &Option<HashMap<String, String>>,
-        run: Arc<Mutex<bool>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         debug!("Starting Harvester SSL Connection");
         let (client, mut stream) = get_client_tls(host, port, ssl_info, additional_headers).await?;
@@ -45,7 +46,13 @@ impl HarvesterClient {
         Ok(HarvesterClient { client, handle })
     }
 
-    pub async fn join(self) -> Result<(), JoinError> {
-        self.handle.await
+    pub async fn join(self) -> Result<(), Error> {
+        self.handle.await.map_err(|e| {
+            Error::new(
+                ErrorKind::Other,
+                format!("Failed to join harvester: {:?}", e),
+            )
+        })?;
+        self.client.lock().await.shutdown().await
     }
 }

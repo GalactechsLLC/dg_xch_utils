@@ -73,12 +73,12 @@ pub fn verify_and_get_quality_string(
             return None;
         }
         validate_proof(
-            &plot_id.to_sized_bytes(),
+            plot_id.to_sized_bytes(),
             pos.size,
             pos.challenge.as_ref(),
             pos.proof.as_ref(),
         )
-        .map(|v| Bytes32::new(v.to_bytes()))
+        .map(|v| Bytes32::new(&v.to_bytes()))
         .ok()
     } else {
         None

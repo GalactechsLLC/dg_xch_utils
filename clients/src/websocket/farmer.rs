@@ -2,7 +2,8 @@ use crate::websocket::{
     get_client, get_client_tls, perform_handshake, Client, ClientSSLConfig, NodeType,
 };
 use std::collections::HashMap;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -18,7 +19,7 @@ impl FarmerClient {
         ssl_info: ClientSSLConfig<'_>,
         network_id: &str,
         additional_headers: &Option<HashMap<String, String>>,
-        run: Arc<Mutex<bool>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client_tls(host, port, ssl_info, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
@@ -31,7 +32,7 @@ impl FarmerClient {
         port: u16,
         network_id: &str,
         additional_headers: &Option<HashMap<String, String>>,
-        run: Arc<Mutex<bool>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client(host, port, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
@@ -40,8 +41,11 @@ impl FarmerClient {
         Ok(FarmerClient { client, handle })
     }
 
-    pub async fn join(self) {
-        let _ = self.handle.await;
+    pub async fn join(self) -> Result<(), Error> {
+        self.handle
+            .await
+            .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {:?}", e)))?;
+        self.client.lock().await.shutdown().await
     }
 
     pub fn is_closed(&self) -> bool {

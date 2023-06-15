@@ -1,5 +1,5 @@
 use crate::blockchain::coin_record::CoinRecord;
-use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use crate::clvm::program::Program;
 use crate::pool::{PoolState, DELAY_PUZZLEHASH_IDENTIFIER, DELAY_TIME_IDENTIFIER};
 use hex::encode;
@@ -22,46 +22,16 @@ impl TryFrom<Vec<u8>> for PlotMemo {
         if v.len() == 112 {
             Ok(PlotMemo {
                 pool_public_key: None,
-                pool_contract_puzzle_hash: Some(v[0..32].try_into().map_err(|_| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        "Invalid byte data for PlotMemo while reading pool_contract_puzzle_hash",
-                    )
-                })?),
-                farmer_public_key: v[32..80].try_into().map_err(|_| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        "Invalid byte data for PlotMemo while reading farmer_public_key",
-                    )
-                })?,
-                local_master_secret_key: v[80..112].try_into().map_err(|_| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        "Invalid byte data for PlotMemo while reading local_master_secret_key",
-                    )
-                })?,
+                pool_contract_puzzle_hash: Some(Bytes32::new(&v[0..32])),
+                farmer_public_key: Bytes48::new(&v[32..80]),
+                local_master_secret_key: Bytes32::new(&v[80..112]),
             })
         } else if v.len() == 128 {
             Ok(PlotMemo {
-                pool_public_key: Some(v[0..48].try_into().map_err(|_| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        "Invalid byte data for PlotMemo while reading pool_public_key",
-                    )
-                })?),
+                pool_public_key: Some(Bytes48::new(&v[0..48])),
                 pool_contract_puzzle_hash: None,
-                farmer_public_key: v[48..96].try_into().map_err(|_| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        "Invalid byte data for PlotMemo while reading farmer_public_key",
-                    )
-                })?,
-                local_master_secret_key: v[96..128].try_into().map_err(|_| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        "Invalid byte data for PlotMemo while reading local_master_secret_key",
-                    )
-                })?,
+                farmer_public_key: Bytes48::new(&v[48..96]),
+                local_master_secret_key: Bytes32::new(&v[96..128]),
             })
         } else {
             Err(Error::new(
@@ -92,8 +62,8 @@ impl Display for PlotMemo {
                 .as_ref()
                 .map(encode)
                 .unwrap_or_default(),
-            encode(&self.farmer_public_key),
-            encode(&self.local_master_secret_key)
+            encode(self.farmer_public_key),
+            encode(self.local_master_secret_key)
         )
     }
 }
@@ -144,7 +114,7 @@ impl Display for PlotHeader {
             \t\"memo\": {}\n\
             }}",
             String::from_utf8(self.magic.to_vec()).map_err(|_| fmt::Error)?,
-            encode(&self.id),
+            encode(self.id),
             self.k,
             self.format_desc_len,
             String::from_utf8(self.format_desc.to_vec()).map_err(|_| fmt::Error)?,
@@ -213,11 +183,9 @@ impl PlotNftExtraData {
         Ok(PlotNftExtraData {
             pool_state,
             delay_time: delay_time.to_i32().unwrap_or_default(),
-            delay_puzzle_hash: extra_data_programs[0]
-                .rest()?
-                .as_vec()
-                .unwrap_or_default()
-                .into(),
+            delay_puzzle_hash: Bytes32::new(
+                &extra_data_programs[0].rest()?.as_vec().unwrap_or_default(),
+            ),
         })
     }
 }

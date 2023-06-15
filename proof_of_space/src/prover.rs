@@ -254,7 +254,7 @@ impl DiskProver {
         if self.c2.is_empty() {
             return Ok(vec![]);
         }
-        let challenge_bits = BitVec::from_be_bytes(&challenge.bytes, 256 / 8, 256);
+        let challenge_bits = BitVec::from_be_bytes(challenge.bytes, 256 / 8, 256);
 
         // The first k bits determine which f7 matches with the challenge.
         let f7 = challenge_bits
@@ -471,7 +471,7 @@ impl DiskProver {
         challenge: &Bytes32,
         index: usize,
         parallel_read: bool,
-    ) -> Result<BitVec, Error> {
+    ) -> Result<Vec<u8>, Error> {
         let mut full_proof = BitVec::new(0, 0);
         let mut file = OpenOptions::new()
             .read(true)
@@ -502,7 +502,7 @@ impl DiskProver {
         for x in xs_sorted {
             full_proof += x;
         }
-        Ok(full_proof)
+        Ok(full_proof.to_bytes())
     }
 
     // Changes a proof of space (64 k bit x values) from plot ordering to proof ordering.
@@ -521,7 +521,7 @@ impl DiskProver {
     //     Where a < b is defined as:  max(b) > max(a) where a and b are lists of k bit elements
     fn reorder_proof(&self, xs_input: &[BitVec]) -> Result<Vec<BitVec>, Error> {
         let k = self.header.k;
-        let f1 = F1Calculator::new(k, &self.header.id.to_sized_bytes());
+        let f1 = F1Calculator::new(k, self.header.id.to_sized_bytes());
         let mut results = vec![];
         let mut xs = BitVec::new(0, 0);
         // Calculates f1 for each of the inputs

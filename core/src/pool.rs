@@ -1,5 +1,5 @@
 use crate::blockchain::coin_spend::CoinSpend;
-use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use crate::clvm::program::Program;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -68,8 +68,8 @@ impl From<Vec<u8>> for PoolState {
     fn from(bytes: Vec<u8>) -> Self {
         let version = bytes[0];
         let state = bytes[1];
-        let target_puzzle_hash: Bytes32 = bytes[2..=34].to_vec().into();
-        let owner_pubkey: Bytes48 = bytes[34..=81].to_vec().into();
+        let target_puzzle_hash: Bytes32 = Bytes32::new(&bytes[2..34]);
+        let owner_pubkey: Bytes48 = Bytes48::new(&bytes[34..82]);
         let has_url = bytes[82];
         let mut pool_url: String = String::new();
         let relative_lock_height: u32;

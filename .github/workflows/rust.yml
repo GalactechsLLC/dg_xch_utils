@@ -10,8 +10,7 @@ env:
 jobs:
   format:
     runs-on:
-      - self-hosted
-      - galactechs
+      - ubuntu-latest
     if: github.event_name == 'push'
 
     name: Check format
@@ -25,8 +24,7 @@ jobs:
 
   clippy:
     runs-on:
-      - self-hosted
-      - galactechs
+      - ubuntu-latest
     if: github.event_name == 'push'
 
     name: Run clippy

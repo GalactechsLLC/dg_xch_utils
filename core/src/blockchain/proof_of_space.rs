@@ -1,13 +1,95 @@
-use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes, UnsizedBytes};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use crate::consensus::constants::ConsensusConstants;
 use blst::min_pk::{AggregatePublicKey, PublicKey, SecretKey};
 use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::hash_256;
-use serde::{Deserialize, Serialize};
+use dg_xch_serialize::{hash_256, ChiaSerialize};
+use hex::{decode, encode};
+use serde::de::Visitor;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
-use std::io::{Error, ErrorKind};
+use std::fmt;
+use std::io::{Cursor, Error, ErrorKind};
 
 pub const NUMBER_ZERO_BITS_PLOT_FILTER: i32 = 9;
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ProofBytes(Vec<u8>);
+impl ChiaSerialize for ProofBytes {
+    fn to_bytes(&self) -> Vec<u8>
+    where
+        Self: Sized,
+    {
+        ChiaSerialize::to_bytes(&self.0)
+    }
+
+    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        Ok(Self(ChiaSerialize::from_bytes(bytes)?))
+    }
+}
+
+impl Serialize for ProofBytes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&encode(&self.0))
+    }
+}
+
+struct ProofBytesVisitor;
+
+impl<'de> Visitor<'de> for ProofBytesVisitor {
+    type Value = ProofBytes;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("Expecting a hex String")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(ProofBytes(
+            decode(value).map_err(|e| serde::de::Error::custom(e.to_string()))?,
+        ))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(ProofBytes(
+            decode(value).map_err(|e| serde::de::Error::custom(e.to_string()))?,
+        ))
+    }
+}
+
+impl<'a> Deserialize<'a> for ProofBytes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'a>,
+    {
+        match deserializer.deserialize_string(ProofBytesVisitor) {
+            Ok(hex) => Ok(hex),
+            Err(er) => Err(er),
+        }
+    }
+}
+
+impl AsRef<[u8]> for ProofBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl From<Vec<u8>> for ProofBytes {
+    fn from(bytes: Vec<u8>) -> ProofBytes {
+        ProofBytes(bytes)
+    }
+}
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct ProofOfSpace {
@@ -16,7 +98,7 @@ pub struct ProofOfSpace {
     pub pool_contract_puzzle_hash: Option<Bytes32>,
     pub plot_public_key: Bytes48,
     pub size: u8,
-    pub proof: UnsizedBytes,
+    pub proof: ProofBytes,
 }
 impl ProofOfSpace {
     pub fn get_plot_id(&self) -> Option<Bytes32> {
@@ -48,7 +130,7 @@ pub fn calculate_plot_id_public_key(
     to_hash.extend(plot_public_key.to_sized_bytes());
     let mut hasher: Sha256 = Sha256::new();
     hasher.update(to_hash);
-    Bytes32::new(hasher.finalize().to_vec())
+    Bytes32::new(&hasher.finalize())
 }
 
 pub fn calculate_plot_id_puzzle_hash(
@@ -60,7 +142,7 @@ pub fn calculate_plot_id_puzzle_hash(
     to_hash.extend(plot_public_key.to_sized_bytes());
     let mut hasher: Sha256 = Sha256::new();
     hasher.update(to_hash);
-    Bytes32::new(hasher.finalize().to_vec())
+    Bytes32::new(&hasher.finalize())
 }
 
 pub fn passes_plot_filter(
@@ -94,7 +176,7 @@ pub fn calculate_plot_filter_input(
     hasher.update(plot_id);
     hasher.update(challenge_hash);
     hasher.update(signage_point);
-    Bytes32::new(hasher.finalize().to_vec())
+    Bytes32::new(&hasher.finalize())
 }
 
 pub fn calculate_pos_challenge(
@@ -108,7 +190,7 @@ pub fn calculate_pos_challenge(
         challenge_hash,
         signage_point,
     ));
-    Bytes32::new(hasher.finalize().to_vec())
+    Bytes32::new(&hasher.finalize())
 }
 
 pub fn generate_taproot_sk(
