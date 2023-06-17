@@ -9,7 +9,7 @@ description = "Key Management Utils the Chia Blockchain"
 bech32 = "0.9.1"
 blst = "0.3.7"
 bip39 = {version= "2.0.0", features=["rand"] }
-dg_xch_core = {path = "../core", features = ["paperclip"] }
-dg_xch_puzzles = {path = "../puzzles"}
+dg_xch_core = {version = "1.0.3", features = ["paperclip"] }
+dg_xch_puzzles = "1.0.3"
 hkdf = "0.12.3"
 sha2 = "0.10.6"
