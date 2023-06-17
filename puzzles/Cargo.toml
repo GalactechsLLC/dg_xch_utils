@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_puzzles"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library for working with CLVM puzzles"
