@@ -6,16 +6,16 @@ authors = ["James Hoerr"]
 description = "CLI Utilities for the Chia Blockchain"
 
 [dependencies]
-bip39.workspace = true
-blst.workspace = true
-clap.workspace = true
-dg_xch_clients.workspace = true
-dg_xch_core.workspace = true
-dg_xch_pos.workspace = true
-dg_xch_puzzles.workspace = true
-dg_xch_keys.workspace = true
-lazy_static.workspace = true
-log.workspace = true
-rayon.workspace = true
-simple_logger.workspace = true
-tokio.workspace = true
+bip39 = {version= "2.0.0", features=["rand"] }
+blst = "0.3.7"
+clap = { version = "4.1.1", features = ["derive"] }
+dg_xch_clients = {path = "../clients"}
+dg_xch_core = {path = "../core", features = ["paperclip"] }
+dg_xch_keys = {path="../keys"}
+dg_xch_pos = {path = "../proof_of_space"}
+dg_xch_puzzles = {path = "../puzzles"}
+lazy_static = "1.4.0"
+log = "0.4.17"
+rayon = "1.7.0"
+simple_logger = "4.0.0"
+tokio = {version = "1.21.2", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

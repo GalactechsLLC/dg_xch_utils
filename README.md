@@ -26,5 +26,5 @@ Rust Proof of Space library for reading and working with plots on the Chia Block
 ### puzzles
 Core library for working with CLVM puzzles
 
-### puzzles
+### serialize
 Core library defining ChiaSerialize and creating Impl for base types

@@ -4,6 +4,7 @@ pub mod harvester;
 pub mod wallet;
 
 use async_trait::async_trait;
+use dg_xch_core::ssl::{generate_ca_signed_cert_data, CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::ChiaSerialize;
 use futures_util::stream::{SplitSink, SplitStream};
@@ -48,8 +49,8 @@ pub async fn await_termination() -> Result<(), Error> {
 }
 
 use crate::protocols::shared::{
-    load_certs, load_private_key, Handshake, NoCertificateVerification, CAPABILITIES,
-    PROTOCOL_VERSION, SOFTWARE_VERSION,
+    load_certs, load_certs_from_bytes, load_private_key, load_private_key_from_bytes, Handshake,
+    NoCertificateVerification, CAPABILITIES, PROTOCOL_VERSION, SOFTWARE_VERSION,
 };
 use crate::protocols::ProtocolMessageTypes;
 
@@ -85,6 +86,62 @@ pub async fn get_client_tls(
             .map_err(|e| Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e)))?,
     );
 
+    let connector = Connector::Rustls(cfg.clone());
+    let mut request = format!("wss://{}:{}/ws", host, port)
+        .into_client_request()
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Request: {}", e),
+            )
+        })?;
+    if let Some(m) = additional_headers {
+        for (k, v) in m {
+            request.headers_mut().insert(
+                HeaderName::from_str(k).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header Name {},\r\n {}", k, e),
+                    )
+                })?,
+                HeaderValue::from_str(v).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Failed to Parse Header value {},\r\n {}", v, e),
+                    )
+                })?,
+            );
+        }
+    }
+    let (stream, resp) = connect_async_tls_with_config(request, None, Some(connector))
+        .await
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::Other,
+                format!("Error Connecting Client: {:?}", e),
+            )
+        })?;
+    debug!("Client Connect Resp: {:?}", resp);
+    Ok(Client::new(stream))
+}
+
+pub async fn get_client_generated_tls(
+    host: &str,
+    port: u16,
+    additional_headers: &Option<HashMap<String, String>>,
+) -> Result<(Client, ReadStream), Error> {
+    let (cert_bytes, key_bytes) =
+        generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
+            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+    let certs = load_certs_from_bytes(&cert_bytes)?;
+    let key = load_private_key_from_bytes(&key_bytes)?;
+    let cfg = Arc::new(
+        ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+            .with_single_cert(certs, key)
+            .map_err(|e| Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e)))?,
+    );
     let connector = Connector::Rustls(cfg.clone());
     let mut request = format!("wss://{}:{}/ws", host, port)
         .into_client_request()
