@@ -4,6 +4,9 @@ version = "1.0.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
+license = "Apache-2.0"
+homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils/macros"
 
 [dependencies]
 bech32 = "0.9.1"
@@ -11,8 +14,8 @@ bip39 = {version= "2.0.0", features=["rand"] }
 bls12_381 = "0.8.0"
 blst = "0.3.7"
 bytes = "1.4.0"
-dg_xch_macros = {path = "../macros"}
-dg_xch_serialize = {path = "../serialize"}
+dg_xch_macros = "1.0.2"
+dg_xch_serialize = "1.0.2"
 hex = "0.4.3"
 hkdf = "0.12.3"
 lazy_static = "1.4.0"
