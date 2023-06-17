@@ -7,10 +7,10 @@ description = "RPC and Websocket Clients the Chia Blockchain"
 
 [dependencies]
 async-trait = "0.1.58"
-dg_xch_core = {path = "../core", features = ["paperclip"] }
-dg_xch_macros = {path = "../macros"}
-dg_xch_pos = {path = "../proof_of_space"}
-dg_xch_serialize = {path = "../serialize"}
+dg_xch_core = {version = "1.0.3", features = ["paperclip"] }
+dg_xch_macros = "1.0.2"
+dg_xch_pos = "1.0.2"
+dg_xch_serialize = "1.0.2"
 futures-util = "0.3.25"
 hyper = {version="0.14.23", features=["full"]}
 log = "0.4.17"
