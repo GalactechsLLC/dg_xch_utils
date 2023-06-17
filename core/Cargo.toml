@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_core"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
