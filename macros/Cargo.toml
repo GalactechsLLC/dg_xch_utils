@@ -2,6 +2,10 @@
 name = "dg_xch_macros"
 version = "1.0.2"
 edition = "2021"
+description = "Derive Marcos for Chia Serialization"
+license = "Apache-2.0"
+homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils/macros"
 
 [lib]
 proc-macro = true
