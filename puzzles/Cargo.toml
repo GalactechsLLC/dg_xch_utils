@@ -4,11 +4,14 @@ version = "1.0.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library for working with CLVM puzzles"
+license = "Apache-2.0"
+homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils/macros"
 
 [dependencies]
 blst = "0.3.7"
-dg_xch_core = {path = "../core", features = ["paperclip"] }
-dg_xch_serialize = {path = "../serialize"}
+dg_xch_core = {version = "1.0.2", features = ["paperclip"] }
+dg_xch_serialize = "1.0.2"
 lazy_static = "1.4.0"
 num-bigint = "=0.4.0"
 num-integer = "0.1.45"
