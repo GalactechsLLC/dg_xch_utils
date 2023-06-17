@@ -8,6 +8,7 @@ use openssl::pkey::PKey;
 use openssl::rsa::Rsa;
 use openssl::x509::extension::{BasicConstraints, SubjectAlternativeName};
 use openssl::x509::{X509Builder, X509NameBuilder, X509};
+use std::collections::HashMap;
 use std::fs;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::{Error, ErrorKind, Write};
@@ -15,7 +16,7 @@ use std::ops::{Add, Sub};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const CHIA_CA_CRT: &str = r"-----BEGIN CERTIFICATE-----
+pub const CHIA_CA_CRT: &str = r"-----BEGIN CERTIFICATE-----
 MIIDKTCCAhGgAwIBAgIUXIpxI5MoZQ65/vhc7DK/d5ymoMUwDQYJKoZIhvcNAQEL
 BQAwRDENMAsGA1UECgwEQ2hpYTEQMA4GA1UEAwwHQ2hpYSBDQTEhMB8GA1UECwwY
 T3JnYW5pYyBGYXJtaW5nIERpdmlzaW9uMB4XDTIxMDEyMzA4NTEwNloXDTMxMDEy
@@ -35,7 +36,7 @@ hvSyoNSYmfvh7vplRKS1wYeA119LL5fRXvOQNW6pSsts17auu38HWQGagSIAd1UP
 1r1R9mf4iMIUv1zc2sHVc1omxnCw9+7U4GMWLtL5OgyJyfNyoxk3tC+D3KNU
 -----END CERTIFICATE-----";
 
-const CHIA_CA_KEY: &str = r"-----BEGIN RSA PRIVATE KEY-----
+pub const CHIA_CA_KEY: &str = r"-----BEGIN RSA PRIVATE KEY-----
 MIIEowIBAAKCAQEAzz/L219Zjb5CIKnUkpd2julGC+j3E97KUiuOalCH9wdqgpJi
 9nBqLccwPCSFXFew6CNBIBM+CW2jT3UVwgzjdXJ7pgtu8gWj0NQ6NqSLiXV2WbpZ
 ovfrVh3x7Z4bjPgI3ouWjyehUfmK1GPIld4BfUSQtPlUJ53+XT32GRizUy+b0CcJ
@@ -102,7 +103,7 @@ fn write_ssl_cert_and_key(
     key.flush()
 }
 
-fn generate_ca_signed_cert_data(
+pub fn generate_ca_signed_cert_data(
     cert_data: &[u8],
     key_data: &[u8],
 ) -> Result<(Vec<u8>, Vec<u8>), ErrorStack> {
@@ -212,6 +213,53 @@ const ALL_PUBLIC_NODE_NAMES: [&str; 6] = [
     "data_layer",
 ];
 
+pub struct MemorySSL {
+    pub public: HashMap<String, MemoryNodeSSL>,
+    pub private: HashMap<String, MemoryNodeSSL>,
+}
+
+pub struct MemoryNodeSSL {
+    pub cert: Vec<u8>,
+    pub key: Vec<u8>,
+}
+
+pub fn create_all_ssl_memory() -> Result<MemorySSL, Error> {
+    info!("Generating CA Certs");
+    let mut public_map = HashMap::new();
+    let mut private_map = HashMap::new();
+    let (ca_cert_data, ca_key_data) = make_ca_cert_data()
+        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+    info!("Generating Private Certs");
+    let private_certs =
+        generate_ssl_for_nodes_in_memory(&ca_cert_data, &ca_key_data, &ALL_PRIVATE_NODE_NAMES)?;
+    private_map.insert(
+        "ca".to_string(),
+        MemoryNodeSSL {
+            cert: ca_cert_data,
+            key: ca_key_data,
+        },
+    );
+    private_map.extend(private_certs.into_iter());
+    info!("Generating Public Certs");
+    let public_certs = generate_ssl_for_nodes_in_memory(
+        CHIA_CA_CRT.as_bytes(),
+        CHIA_CA_KEY.as_bytes(),
+        &ALL_PUBLIC_NODE_NAMES,
+    )?;
+    public_map.insert(
+        "ca".to_string(),
+        MemoryNodeSSL {
+            cert: CHIA_CA_CRT.as_bytes().to_vec(),
+            key: CHIA_CA_KEY.as_bytes().to_vec(),
+        },
+    );
+    public_map.extend(public_certs.into_iter());
+    Ok(MemorySSL {
+        public: public_map,
+        private: private_map,
+    })
+}
+
 pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
     let ca_dir = ssl_dir.join(Path::new("ca"));
     create_dir_all(&ca_dir)?;
@@ -277,6 +325,20 @@ fn generate_ssl_for_nodes(
         }
     }
     Ok(())
+}
+
+pub fn generate_ssl_for_nodes_in_memory(
+    crt: &[u8],
+    key: &[u8],
+    nodes: &[&str],
+) -> Result<HashMap<String, MemoryNodeSSL>, Error> {
+    let mut map = HashMap::new();
+    for node_name in nodes {
+        let (cert, key) = generate_ca_signed_cert_data(crt, key)
+            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+        map.insert(node_name.to_string(), MemoryNodeSSL { cert, key });
+    }
+    Ok(map)
 }
 
 #[test]

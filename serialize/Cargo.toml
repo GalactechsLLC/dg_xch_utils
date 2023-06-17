@@ -4,8 +4,11 @@ version = "1.0.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Low Level Support Package for dg_xch_utils"
+license = "Apache-2.0"
+homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils/serialize"
 
 [dependencies]
-bytes.workspace = true
-log.workspace = true
-sha2.workspace = true
+bytes = "1.4.0"
+log = "0.4.17"
+sha2 = "0.10.6"

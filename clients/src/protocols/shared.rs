@@ -77,9 +77,35 @@ pub fn load_certs(filename: &str) -> Result<Vec<Certificate>, Error> {
     Ok(certs.into_iter().map(Certificate).collect())
 }
 
+pub fn load_certs_from_bytes(bytes: &[u8]) -> Result<Vec<Certificate>, Error> {
+    let mut reader = BufReader::new(bytes);
+    let certs = certs(&mut reader)?;
+    Ok(certs.into_iter().map(Certificate).collect())
+}
+
 pub fn load_private_key(filename: &str) -> Result<PrivateKey, Error> {
     let keyfile = File::open(filename)?;
     let mut reader = BufReader::new(keyfile);
+    for item in iter::from_fn(|| read_one(&mut reader).transpose()) {
+        match item? {
+            Item::X509Certificate(_) => error!("Found Certificate, not Private Key"),
+            Item::RSAKey(key) => {
+                return Ok(PrivateKey(key));
+            }
+            Item::PKCS8Key(key) => {
+                return Ok(PrivateKey(key));
+            }
+            Item::ECKey(key) => {
+                return Ok(PrivateKey(key));
+            }
+            _ => error!("Unknown Item while loading private key"),
+        }
+    }
+    Err(Error::new(ErrorKind::NotFound, "Private Key Not Found"))
+}
+
+pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKey, Error> {
+    let mut reader = BufReader::new(bytes);
     for item in iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item? {
             Item::X509Certificate(_) => error!("Found Certificate, not Private Key"),
