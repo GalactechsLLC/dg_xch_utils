@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_bls"
-version = "1.0.2"
+version = "1.0.4"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "IN DEVELOPMENT - BLS12-381 Rust Implementation for dg_xch_utils"
