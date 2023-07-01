@@ -63,7 +63,9 @@ pub fn calculate_synthetic_public_key(
     hidden_puzzle_hash: &Bytes32,
 ) -> Result<Bytes48, Error> {
     let bytes = Bytes32::new(
-        &calculate_synthetic_offset(public_key, hidden_puzzle_hash).to_signed_bytes_be(),
+        &calculate_synthetic_offset(public_key, hidden_puzzle_hash)
+            .to_bytes_be()
+            .1,
     );
     let synthetic_offset: SecretKey = bytes.into();
     let mut agg = AggregatePublicKey::from_public_key(&public_key.into());
