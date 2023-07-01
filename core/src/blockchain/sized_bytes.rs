@@ -92,6 +92,15 @@ macro_rules! impl_sized_bytes {
                         Self {
                             bytes: buf
                         }
+                    } else if bytes.len() < $size{
+                        let mut buf = [0u8; $size];
+                        let offset = $size - bytes.len();
+                        for (i, v) in bytes.iter().enumerate() {
+                            buf[offset + i] = *v;
+                        }
+                        Self {
+                            bytes: buf
+                        }
                     } else {
                         let mut buf = [0u8; $size];
                         for (i, v) in bytes.iter().enumerate() {
