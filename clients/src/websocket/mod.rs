@@ -82,7 +82,7 @@ pub async fn get_client_tls(
         ClientConfig::builder()
             .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-            .with_single_cert(certs, key)
+            .with_client_auth_cert(certs, key)
             .map_err(|e| Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e)))?,
     );
 
@@ -113,7 +113,7 @@ pub async fn get_client_tls(
             );
         }
     }
-    let (stream, resp) = connect_async_tls_with_config(request, None, Some(connector))
+    let (stream, resp) = connect_async_tls_with_config(request, None, false, Some(connector))
         .await
         .map_err(|e| {
             Error::new(
@@ -139,7 +139,7 @@ pub async fn get_client_generated_tls(
         ClientConfig::builder()
             .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-            .with_single_cert(certs, key)
+            .with_client_auth_cert(certs, key)
             .map_err(|e| Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e)))?,
     );
     let connector = Connector::Rustls(cfg.clone());
@@ -169,7 +169,7 @@ pub async fn get_client_generated_tls(
             );
         }
     }
-    let (stream, resp) = connect_async_tls_with_config(request, None, Some(connector))
+    let (stream, resp) = connect_async_tls_with_config(request, None, false, Some(connector))
         .await
         .map_err(|e| {
             Error::new(
@@ -212,7 +212,7 @@ pub async fn get_client(
             );
         }
     }
-    let (stream, resp) = connect_async_tls_with_config(request, None, None)
+    let (stream, resp) = connect_async_tls_with_config(request, None, false, None)
         .await
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
     debug!("Client Connect Resp: {:?}", resp);

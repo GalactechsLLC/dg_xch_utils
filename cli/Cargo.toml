@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_cli"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "CLI Utilities for the Chia Blockchain"
@@ -12,11 +12,11 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/cli"
 bip39 = {version= "2.0.0", features=["rand"] }
 blst = "0.3.7"
 clap = { version = "4.1.1", features = ["derive"] }
-dg_xch_clients = {path = "../clients", version="1.0.4"}
-dg_xch_core = {path = "../core", version = "1.0.4", features = ["paperclip"] }
-dg_xch_keys = {path = "../keys", version="1.0.4"}
-dg_xch_pos = {path = "../proof_of_space", version="1.0.4"}
-dg_xch_puzzles = {path = "../puzzles", version="1.0.4"}
+dg_xch_clients = {path = "../clients", version="1.0.5"}
+dg_xch_core = {path = "../core", version = "1.0.5", features = ["paperclip"] }
+dg_xch_keys = {path = "../keys", version="1.0.5"}
+dg_xch_pos = {path = "../proof_of_space", version="1.0.5"}
+dg_xch_puzzles = {path = "../puzzles", version="1.0.5"}
 lazy_static = "1.4.0"
 log = "0.4.17"
 rayon = "1.7.0"
