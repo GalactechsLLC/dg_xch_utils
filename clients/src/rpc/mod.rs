@@ -46,7 +46,7 @@ pub fn get_client(ssl_path: Option<String>) -> Result<Client, Error> {
         let config = ClientConfig::builder()
             .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-            .with_single_cert(certs, key)
+            .with_client_auth_cert(certs, key)
             .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
         ClientBuilder::new()
             .use_preconfigured_tls(config)
