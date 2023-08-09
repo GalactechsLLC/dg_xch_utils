@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio::select;
+use tokio::{fs, select};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
@@ -114,6 +114,21 @@ pub async fn get_client_tls(
             );
         }
     }
+    request.headers_mut().insert(
+        HeaderName::from_str("chia-client-cert").map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
+            )
+        })?,
+        HeaderValue::from_str(encode(&fs::read_to_string(ssl_info.ssl_crt_path).await.unwrap_or_default()).as_ref())
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::InvalidData,
+                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+                )
+            })?,
+    );
     let (stream, resp) = connect_async_tls_with_config(request, None, false, Some(connector))
         .await
         .map_err(|e| {
@@ -228,6 +243,24 @@ pub async fn get_client(
             );
         }
     }
+    let (cert_bytes, _) =
+        generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
+            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+    request.headers_mut().insert(
+        HeaderName::from_str("chia-client-cert").map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
+            )
+        })?,
+        HeaderValue::from_str(encode(&String::from_utf8(cert_bytes).unwrap_or_default()).as_ref())
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::InvalidData,
+                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+                )
+            })?,
+    );
     let (stream, resp) = connect_async_tls_with_config(request, None, false, None)
         .await
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
