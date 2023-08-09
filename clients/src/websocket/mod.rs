@@ -21,10 +21,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio::{fs, select};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
+use tokio::{fs, select};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{
@@ -121,13 +121,20 @@ pub async fn get_client_tls(
                 format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
             )
         })?,
-        HeaderValue::from_str(encode(&fs::read_to_string(ssl_info.ssl_crt_path).await.unwrap_or_default()).as_ref())
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::InvalidData,
-                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
-                )
-            })?,
+        HeaderValue::from_str(
+            encode(
+                &fs::read_to_string(ssl_info.ssl_crt_path)
+                    .await
+                    .unwrap_or_default(),
+            )
+            .as_ref(),
+        )
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+            )
+        })?,
     );
     let (stream, resp) = connect_async_tls_with_config(request, None, false, Some(connector))
         .await
