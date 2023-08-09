@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_clients"
-version = "1.0.5"
+version = "1.0.6"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "RPC and Websocket Clients the Chia Blockchain"
