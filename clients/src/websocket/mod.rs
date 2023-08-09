@@ -30,6 +30,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{
     connect_async_tls_with_config, Connector, MaybeTlsStream, WebSocketStream,
 };
+use urlencoding::encode;
 use uuid::Uuid;
 
 pub async fn await_termination() -> Result<(), Error> {
@@ -151,6 +152,21 @@ pub async fn get_client_generated_tls(
                 format!("Failed to Parse Request: {}", e),
             )
         })?;
+    request.headers_mut().insert(
+        HeaderName::from_str("chia-client-cert").map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
+            )
+        })?,
+        HeaderValue::from_str(encode(&String::from_utf8(cert_bytes).unwrap_or_default()).as_ref())
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::InvalidData,
+                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+                )
+            })?,
+    );
     if let Some(m) = additional_headers {
         for (k, v) in m {
             request.headers_mut().insert(

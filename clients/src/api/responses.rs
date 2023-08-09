@@ -12,108 +12,108 @@ use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
 use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AdditionsAndRemovalsResp {
     pub additions: Vec<CoinRecord>,
     pub removals: Vec<CoinRecord>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockchainStateResp {
     pub blockchain_state: BlockchainState,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockRecordResp {
     pub block_record: BlockRecord,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockRecordAryResp {
     pub block_records: Vec<BlockRecord>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CoinRecordResp {
     pub coin_record: Option<CoinRecord>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CoinRecordAryResp {
     pub coin_records: Vec<CoinRecord>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CoinSpendResp {
     pub coin_solution: CoinSpend,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FullBlockResp {
     pub block: FullBlock,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FullBlockAryResp {
     pub blocks: Vec<FullBlock>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InitialFreezePeriodResp {
     pub initial_freeze_end_timestamp: u64,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoginResp {
     pub fingerprint: u32,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MempoolItemResp {
     pub mempool_item: MempoolItem,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MempoolItemsResp {
     pub mempool_items: HashMap<String, MempoolItem>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MempoolTXResp {
     pub tx_ids: Vec<String>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NetworkInfoResp {
     pub network_name: String,
     pub network_prefix: String,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NetSpaceResp {
     pub space: u64,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SignagePointOrEOSResp {
     pub signage_point: Option<SignagePoint>,
     pub eos: Option<SubSlotBundle>,
@@ -122,43 +122,43 @@ pub struct SignagePointOrEOSResp {
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SignedTransactionRecordResp {
     pub signed_tx: TransactionRecord,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TXResp {
     pub status: TXStatus,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TransactionRecordResp {
     pub transaction: TransactionRecord,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UnfinishedBlockAryResp {
     pub headers: Vec<UnfinishedBlock>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WalletBalanceResp {
     pub wallets: Vec<WalletBalance>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WalletInfoResp {
     pub wallets: Vec<WalletInfo>,
     pub success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WalletSyncResp {
     pub genesis_initialized: bool,
     pub synced: bool,
