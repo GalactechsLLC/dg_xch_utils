@@ -159,12 +159,13 @@ pub async fn get_client_generated_tls(
                 format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
             )
         })?,
-        HeaderValue::from_str(encode(&String::from_utf8(cert_bytes).unwrap_or_default()).as_ref()).map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
-            )
-        })?,
+        HeaderValue::from_str(encode(&String::from_utf8(cert_bytes).unwrap_or_default()).as_ref())
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::InvalidData,
+                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+                )
+            })?,
     );
     if let Some(m) = additional_headers {
         for (k, v) in m {
