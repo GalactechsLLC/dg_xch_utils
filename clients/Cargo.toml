@@ -10,10 +10,10 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/clients"
 
 [dependencies]
 async-trait = "0.1.58"
-dg_xch_core = {path = "../core", version = "1.0.5", features = ["paperclip"] }
-dg_xch_macros = {path = "../macros", version="1.0.5"}
-dg_xch_pos = {path = "../proof_of_space", version="1.0.5"}
-dg_xch_serialize = {path = "../serialize", version="1.0.5"}
+dg_xch_core = {path = "../core", version = "1.0.7", features = ["paperclip"] }
+dg_xch_macros = {path = "../macros", version="1.0.7"}
+dg_xch_pos = {path = "../proof_of_space", version="1.0.7"}
+dg_xch_serialize = {path = "../serialize", version="1.0.7"}
 futures-util = "0.3.25"
 hyper = {version="0.14.23", features=["full"]}
 log = "0.4.17"

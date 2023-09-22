@@ -205,7 +205,7 @@ pub fn get_seconds_and_delayed_puzhash_from_p2_singleton_puzzle(
 
 pub fn is_pool_singleton_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error> {
     let inner_f = get_template_singleton_inner_puzzle(inner_puzzle)?;
-    Ok(vec![POOL_WAITING_ROOM_MOD.clone(), POOL_MEMBER_MOD.clone()].contains(&inner_f))
+    Ok([POOL_WAITING_ROOM_MOD.clone(), POOL_MEMBER_MOD.clone()].contains(&inner_f))
 }
 
 pub fn is_pool_waitingroom_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error> {
