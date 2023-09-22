@@ -26,6 +26,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use tokio::{fs, select};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{
     connect_async_tls_with_config, Connector, MaybeTlsStream, WebSocketStream,
@@ -511,7 +512,14 @@ impl ReadStream {
                             }
                         }
                         Some(Err(msg)) => {
-                            info!("Client Stream Error: {:?}", msg);
+                            match msg {
+                                tokio_tungstenite::tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake) => {
+                                    debug!("Client Stream Closed without Handshake");
+                                },
+                                others => {
+                                    error!("Client Stream Error: {:?}", others);
+                                }
+                            }
                             return;
                         }
                         None => {
@@ -658,7 +666,14 @@ impl ServerReadStream {
                             }
                         }
                         Some(Err(msg)) => {
-                            info!("Server Stream Error: {:?}", msg);
+                            match msg {
+                                tokio_tungstenite::tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake) => {
+                                    debug!("Server Stream Closed without Handshake");
+                                },
+                                others => {
+                                    error!("Server Stream Error: {:?}", others);
+                                }
+                            }
                             return;
                         }
                         None => {

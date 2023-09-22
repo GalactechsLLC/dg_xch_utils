@@ -15,7 +15,7 @@ impl EntrySizes {
                 }
             }
             // Represents f1, x
-            2 | 3 | 4 | 5 | 6 => {
+            2..=6 => {
                 if phase_1_size {
                     // If we are in phase 1, use the max size, with metadata.
                     // Represents f, pos, offset, and metadata

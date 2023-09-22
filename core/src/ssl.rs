@@ -239,7 +239,7 @@ pub fn create_all_ssl_memory() -> Result<MemorySSL, Error> {
             key: ca_key_data,
         },
     );
-    private_map.extend(private_certs.into_iter());
+    private_map.extend(private_certs);
     info!("Generating Public Certs");
     let public_certs = generate_ssl_for_nodes_in_memory(
         CHIA_CA_CRT.as_bytes(),
@@ -253,7 +253,7 @@ pub fn create_all_ssl_memory() -> Result<MemorySSL, Error> {
             key: CHIA_CA_KEY.as_bytes().to_vec(),
         },
     );
-    public_map.extend(public_certs.into_iter());
+    public_map.extend(public_certs);
     Ok(MemorySSL {
         public: public_map,
         private: private_map,
