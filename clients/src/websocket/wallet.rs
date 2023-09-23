@@ -5,10 +5,9 @@ use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub struct WalletClient {
-    pub client: Arc<Mutex<Client>>,
+    pub client: Client,
 }
 impl WalletClient {
     pub async fn new(
@@ -20,8 +19,7 @@ impl WalletClient {
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client(host, port, additional_headers).await?;
         tokio::spawn(async move { stream.run(run).await });
-        let client = Arc::new(Mutex::new(client));
-        let _ = perform_handshake(client.clone(), network_id, port, NodeType::Wallet).await;
+        let _ = perform_handshake(&client, network_id, port, NodeType::Wallet).await;
         Ok(WalletClient { client })
     }
     pub async fn new_ssl(
@@ -34,8 +32,7 @@ impl WalletClient {
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client_tls(host, port, ssl_info, additional_headers).await?;
         tokio::spawn(async move { stream.run(run).await });
-        let client = Arc::new(Mutex::new(client));
-        let _ = perform_handshake(client.clone(), network_id, port, NodeType::Wallet).await;
+        let _ = perform_handshake(&client, network_id, port, NodeType::Wallet).await;
         Ok(WalletClient { client })
     }
 }

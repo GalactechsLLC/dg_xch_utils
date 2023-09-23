@@ -4,6 +4,7 @@ pub mod harvester;
 pub mod wallet;
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use dg_xch_core::ssl::{generate_ca_signed_cert_data, CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::ChiaSerialize;
@@ -329,7 +330,7 @@ pub struct HandshakeResp {
 }
 
 async fn perform_handshake(
-    client: Arc<Mutex<Client>>,
+    client: &Client,
     network_id: &str,
     port: u16,
     node_type: NodeType,
@@ -400,7 +401,7 @@ impl MessageHandler for OneShotHandler {
 }
 
 pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
-    client: Arc<Mutex<C>>,
+    client: &C,
     msg: ChiaMessage,
     resp_type: Option<ProtocolMessageTypes>,
     msg_id: Option<u16>,
@@ -420,13 +421,13 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
         },
         handle: handle.clone(),
     };
-    client.lock().await.subscribe(handle.id, chia_handle).await;
+    client.subscribe(handle.id, chia_handle).await;
     let res_handle = tokio::spawn(async move {
         let res = rx.recv().await;
         rx.close();
         res
     });
-    client.lock().await.send(msg.into()).await.map_err(|e| {
+    client.send(msg.into()).await.map_err(|e| {
         Error::new(
             ErrorKind::InvalidData,
             format!("Failed to parse send data: {:?}", e),
@@ -434,7 +435,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
     })?;
     select!(
         _ = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
-            client.lock().await.unsubscribe(handle.id).await;
+            client.unsubscribe(handle.id).await;
             Err(Error::new(
                 ErrorKind::Other,
                 "Timeout before oneshot completed",
@@ -444,7 +445,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
             let res = res?;
             if let Some(v) = res {
                 let mut cursor = Cursor::new(v);
-                client.lock().await.unsubscribe(handle.id).await;
+                client.unsubscribe(handle.id).await;
                 R::from_bytes(&mut cursor).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
@@ -452,7 +453,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
                     )
                 })
             } else {
-                client.lock().await.unsubscribe(handle.id).await;
+                client.unsubscribe(handle.id).await;
                 Err(Error::new(
                     ErrorKind::Other,
                     "Channel Closed before response received",
@@ -469,7 +470,7 @@ pub trait MessageHandler {
 
 pub struct ReadStream {
     read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
+    subscribers: Arc<DashMap<Uuid, ChiaMessageHandler>>,
 }
 impl ReadStream {
     pub async fn run(&mut self, run: Arc<AtomicBool>) {
@@ -484,7 +485,7 @@ impl ReadStream {
                                     match ChiaMessage::from_bytes(&mut cursor) {
                                         Ok(chia_msg) => {
                                             let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
-                                            for v in self.subscribers.lock().await.values() {
+                                            for v in self.subscribers.as_ref() {
                                                 if v.filter.matches(msg_arc.clone()) {
                                                     let msg_arc_c = msg_arc.clone();
                                                     let v_arc_c = v.handle.clone();
@@ -547,10 +548,10 @@ impl ReadStream {
 
 #[async_trait]
 pub trait Websocket {
-    async fn send(&mut self, msg: Message) -> Result<(), Error>;
+    async fn send(&self, msg: Message) -> Result<(), Error>;
     async fn subscribe(&self, uuid: Uuid, handle: ChiaMessageHandler);
     async fn unsubscribe(&self, uuid: Uuid);
-    async fn close(&mut self, msg: Option<Message>) -> Result<(), Error>;
+    async fn close(&self, msg: Option<Message>) -> Result<(), Error>;
 }
 
 pub struct ClientSSLConfig<'a> {
@@ -559,60 +560,68 @@ pub struct ClientSSLConfig<'a> {
     pub ssl_ca_crt_path: &'a str,
 }
 pub struct Client {
-    write: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
+    write: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>,
+    subscribers: Arc<DashMap<Uuid, ChiaMessageHandler>>,
 }
 impl Client {
     pub fn new(stream: WebSocketStream<MaybeTlsStream<TcpStream>>) -> (Self, ReadStream) {
         let (write, read) = stream.split();
-        let subscribers = Arc::new(Mutex::new(HashMap::<Uuid, ChiaMessageHandler>::new()));
+        let subscribers = Arc::new(DashMap::<Uuid, ChiaMessageHandler>::new());
         let client = Client {
-            write,
+            write: Arc::new(Mutex::new(write)),
             subscribers: subscribers.clone(),
         };
         let stream = ReadStream { read, subscribers };
         (client, stream)
     }
     pub async fn clear(&mut self) {
-        self.subscribers.lock().await.clear()
+        self.subscribers.clear()
     }
     pub async fn shutdown(&mut self) -> Result<(), Error> {
-        self.subscribers.lock().await.clear();
+        self.subscribers.clear();
         self.close(None).await
     }
 }
 #[async_trait]
 impl Websocket for Client {
-    async fn send(&mut self, msg: Message) -> Result<(), Error> {
+    async fn send(&self, msg: Message) -> Result<(), Error> {
         trace!("Sending Request: {:?}", &msg);
         self.write
+            .lock()
+            .await
             .send(msg)
             .map_err(|e| Error::new(ErrorKind::Other, e))
             .await
     }
 
     async fn subscribe(&self, uuid: Uuid, handle: ChiaMessageHandler) {
-        self.subscribers.lock().await.insert(uuid, handle);
+        self.subscribers.insert(uuid, handle);
     }
 
     async fn unsubscribe(&self, uuid: Uuid) {
-        self.subscribers.lock().await.remove(&uuid);
+        self.subscribers.remove(&uuid);
     }
 
-    async fn close(&mut self, msg: Option<Message>) -> Result<(), Error> {
+    async fn close(&self, msg: Option<Message>) -> Result<(), Error> {
         trace!("Sending Request: {:?}", &msg);
         if let Some(msg) = msg {
             let _ = self
                 .write
+                .lock()
+                .await
                 .send(msg)
                 .map_err(|e| Error::new(ErrorKind::Other, e))
                 .await;
             self.write
+                .lock()
+                .await
                 .close()
                 .map_err(|e| Error::new(ErrorKind::Other, e))
                 .await
         } else {
             self.write
+                .lock()
+                .await
                 .close()
                 .map_err(|e| Error::new(ErrorKind::Other, e))
                 .await
@@ -622,7 +631,7 @@ impl Websocket for Client {
 
 pub struct ServerReadStream {
     read: SplitStream<WebSocketStream<Upgraded>>,
-    subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
+    subscribers: Arc<DashMap<Uuid, ChiaMessageHandler>>,
 }
 impl ServerReadStream {
     pub async fn run(&mut self, run: Arc<AtomicBool>) {
@@ -638,7 +647,7 @@ impl ServerReadStream {
                                         Ok(chia_msg) => {
                                             let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
                                             let mut matched = false;
-                                            for v in self.subscribers.lock().await.values() {
+                                            for v in self.subscribers.iter() {
                                                 if v.filter.matches(msg_arc.clone()) {
                                                     let msg_arc_c = msg_arc.clone();
                                                     let v_arc_c = v.handle.clone();
@@ -703,56 +712,64 @@ impl ServerReadStream {
 }
 
 pub struct ServerConnection {
-    write: SplitSink<WebSocketStream<Upgraded>, Message>,
-    subscribers: Arc<Mutex<HashMap<Uuid, ChiaMessageHandler>>>,
+    write: Arc<Mutex<SplitSink<WebSocketStream<Upgraded>, Message>>>,
+    subscribers: Arc<DashMap<Uuid, ChiaMessageHandler>>,
 }
 impl ServerConnection {
     pub fn new(stream: WebSocketStream<Upgraded>) -> (Self, ServerReadStream) {
         let (write, read) = stream.split();
-        let subscribers = Arc::new(Mutex::new(HashMap::<Uuid, ChiaMessageHandler>::new()));
+        let subscribers = Arc::new(DashMap::<Uuid, ChiaMessageHandler>::new());
         let server = ServerConnection {
-            write,
+            write: Arc::new(Mutex::new(write)),
             subscribers: subscribers.clone(),
         };
         let stream = ServerReadStream { read, subscribers };
         (server, stream)
     }
     pub async fn clear(&mut self) {
-        self.subscribers.lock().await.clear()
+        self.subscribers.clear()
     }
 }
 #[async_trait]
 impl Websocket for ServerConnection {
-    async fn send(&mut self, msg: Message) -> Result<(), Error> {
+    async fn send(&self, msg: Message) -> Result<(), Error> {
         trace!("Sending Request: {:?}", &msg);
         self.write
+            .lock()
+            .await
             .send(msg)
             .map_err(|e| Error::new(ErrorKind::Other, e))
             .await
     }
 
     async fn subscribe(&self, uuid: Uuid, handle: ChiaMessageHandler) {
-        self.subscribers.lock().await.insert(uuid, handle);
+        self.subscribers.insert(uuid, handle);
     }
 
     async fn unsubscribe(&self, uuid: Uuid) {
-        self.subscribers.lock().await.remove(&uuid);
+        self.subscribers.remove(&uuid);
     }
 
-    async fn close(&mut self, msg: Option<Message>) -> Result<(), Error> {
+    async fn close(&self, msg: Option<Message>) -> Result<(), Error> {
         trace!("Sending Request: {:?}", &msg);
         if let Some(msg) = msg {
             let _ = self
                 .write
+                .lock()
+                .await
                 .send(msg)
                 .map_err(|e| Error::new(ErrorKind::Other, e))
                 .await;
             self.write
+                .lock()
+                .await
                 .close()
                 .map_err(|e| Error::new(ErrorKind::Other, e))
                 .await
         } else {
             self.write
+                .lock()
+                .await
                 .close()
                 .map_err(|e| Error::new(ErrorKind::Other, e))
                 .await
