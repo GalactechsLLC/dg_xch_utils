@@ -6,11 +6,10 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 pub struct FarmerClient {
-    pub client: Arc<Mutex<Client>>,
+    pub client: Client,
     handle: JoinHandle<()>,
 }
 impl FarmerClient {
@@ -23,8 +22,7 @@ impl FarmerClient {
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client_generated_tls(host, port, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
-        let client = Arc::new(Mutex::new(client));
-        perform_handshake(client.clone(), network_id, port, NodeType::Farmer).await?;
+        perform_handshake(&client, network_id, port, NodeType::Farmer).await?;
         Ok(FarmerClient { client, handle })
     }
     pub async fn new_ssl(
@@ -37,8 +35,7 @@ impl FarmerClient {
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client_tls(host, port, ssl_info, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
-        let client = Arc::new(Mutex::new(client));
-        perform_handshake(client.clone(), network_id, port, NodeType::Farmer).await?;
+        perform_handshake(&client, network_id, port, NodeType::Farmer).await?;
         Ok(FarmerClient { client, handle })
     }
     pub async fn new(
@@ -50,16 +47,15 @@ impl FarmerClient {
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client(host, port, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
-        let client = Arc::new(Mutex::new(client));
-        perform_handshake(client.clone(), network_id, port, NodeType::Farmer).await?;
+        perform_handshake(&client, network_id, port, NodeType::Farmer).await?;
         Ok(FarmerClient { client, handle })
     }
 
-    pub async fn join(self) -> Result<(), Error> {
+    pub async fn join(mut self) -> Result<(), Error> {
         self.handle
             .await
             .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {:?}", e)))?;
-        self.client.lock().await.shutdown().await
+        self.client.shutdown().await
     }
 
     pub fn is_closed(&self) -> bool {
