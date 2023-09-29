@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::ConditionOpcode;
-use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use crate::clvm::condition_utils::conditions_dict_for_solution;
 use crate::clvm::condition_utils::created_outputs_for_conditions_dict;
 use crate::clvm::program::SerializedProgram;
 use num_bigint::BigInt;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
+use crate::blockchain::condition_with_args::ConditionWithArgs;
 
 pub fn additions_for_solution(
     coin_name: Bytes32,
@@ -47,5 +49,44 @@ pub fn atom_to_int(bytes: &Vec<u8>) -> BigInt {
         0.into()
     } else {
         BigInt::from_signed_bytes_be(bytes)
+    }
+}
+
+pub fn pkm_pairs_for_conditions_dict(
+    conditions_dict: HashMap<ConditionOpcode, Vec<ConditionWithArgs>>,
+    coin_name: Bytes32,
+    additional_data: &[u8]
+) -> Result<Vec<(Bytes48, Vec<u8>)>, Error> {
+    let mut ret = vec![];
+    if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigUnsafe) {
+        for cwa in v{
+            // assert len(cwa.vars) == 2
+            // assert len(cwa.vars[0]) == 48 and len(cwa.vars[1]) <= 1024
+            // assert cwa.vars[0] is not None and cwa.vars[1] is not None
+            if ends_with(&cwa.vars[1],additional_data) {
+                return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+            }
+            ret.push((Bytes48::new(&cwa.vars[0]), cwa.vars[1].clone()));
+        }
+    }
+    if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigMe) {
+        for cwa in v {
+            // assert len(cwa.vars) == 2;
+            // assert len(cwa.vars[0]) == 48 and len(cwa.vars[1]) <= 1024;
+            // assert cwa.vars[0] is not None and cwa.vars[1] is not None;
+            let mut buf = cwa.vars[1].clone();
+            buf.extend(coin_name.as_slice());
+            buf.extend(additional_data);
+            ret.push((Bytes48::new(&cwa.vars[0]), buf));
+        }
+    }
+    Ok(ret)
+}
+
+fn ends_with(buf: &[u8], sufix: &[u8]) -> bool {
+    if buf.len() < sufix.len() {
+        false
+    } else {
+        &buf[buf.len() - sufix.len()..] == sufix
     }
 }

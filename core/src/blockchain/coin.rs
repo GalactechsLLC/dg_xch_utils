@@ -1,7 +1,8 @@
-use crate::blockchain::sized_bytes::{u64_to_bytes, Bytes32, SizedBytes};
+use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::{hash_256, ChiaSerialize};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+use sha2::Digest;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Coin {
@@ -11,16 +12,24 @@ pub struct Coin {
 }
 impl Coin {
     pub fn name(&self) -> Bytes32 {
-        Bytes32::new(&self.hash())
+       self.coin_id()
     }
-    pub fn hash(&self) -> Vec<u8>
-    where
-        Self: Sized,
-    {
-        let mut to_hash: Vec<u8> = Vec::new();
-        to_hash.extend(&self.parent_coin_info.to_bytes());
-        to_hash.extend(&self.puzzle_hash.to_bytes());
-        to_hash.extend(u64_to_bytes(self.amount));
-        hash_256(&to_hash)
+    pub fn coin_id(&self) -> Bytes32 {
+        let mut hasher = Sha256::new();
+        hasher.update(self.parent_coin_info);
+        hasher.update(self.puzzle_hash);
+        let amount_bytes = self.amount.to_be_bytes();
+        if self.amount >= 0x8000000000000000_u64 {
+            hasher.update([0_u8]);
+            hasher.update(amount_bytes);
+        } else {
+            let start = if self.amount == 0 {
+                8
+            } else {
+                ((self.amount.leading_zeros() + 7) / 8).saturating_sub(1) as usize
+            };
+            hasher.update(&amount_bytes[start..]);
+        }
+        Bytes32::new(hasher.finalize().as_slice())
     }
 }

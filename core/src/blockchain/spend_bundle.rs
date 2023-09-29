@@ -8,6 +8,7 @@ use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
+use dg_xch_serialize::{ChiaSerialize, hash_256};
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SpendBundle {
@@ -15,6 +16,9 @@ pub struct SpendBundle {
     pub aggregated_signature: Bytes96,
 }
 impl SpendBundle {
+    pub fn name(&self) -> Bytes32 {
+        Bytes32::new(&hash_256(self.to_bytes()))
+    }
     pub fn aggregate(bundles: Vec<SpendBundle>) -> Result<Self, Error> {
         let mut rtn = Self::empty();
         for bundle in bundles {

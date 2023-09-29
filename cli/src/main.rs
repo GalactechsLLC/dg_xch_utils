@@ -1,6 +1,6 @@
-mod cli;
+pub mod cli;
 pub mod commands;
-mod wallet_commands;
+pub mod wallet_commands;
 
 use clap::Parser;
 use cli::*;

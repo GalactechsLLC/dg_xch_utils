@@ -1,17 +1,17 @@
-use dg_xch_core::clvm::utils::hash_256;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::consensus::pot_iterations::{
     calculate_ip_iters, calculate_iterations_quality, calculate_sp_iters, expected_plot_size,
     is_overflow_block,
 };
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use num_traits::abs;
 use std::collections::HashMap;
+use dg_xch_serialize::hash_256;
 
 lazy_static! {
-    static ref TEST_CONSTANTS: ConsensusConstants = ConsensusConstants { //.replace(**{"NUM_SPS_SUB_SLOT": 32, "SUB_SLOT_TIME_TARGET": 300})
+    static ref TEST_CONSTANTS: ConsensusConstants = ConsensusConstants {
         num_sps_sub_slot: 32,
         sub_slot_time_target: BigInt::from(300),
         ..Default::default()
@@ -133,7 +133,7 @@ async fn test_win_percentage() {
                     .chain(sp_index.to_be_bytes().into_iter())
                     .collect::<Vec<u8>>(),
             );
-            let sp_hash = Bytes32::from(sp_hash);
+            let sp_hash = Bytes32::new(&sp_hash);
             for (k, count) in farmer_ks.iter() {
                 for farmer_index in 0i32..*count {
                     let quality = hash_256(
@@ -144,7 +144,7 @@ async fn test_win_percentage() {
                             .chain(farmer_index.to_be_bytes().into_iter())
                             .collect::<Vec<u8>>(),
                     );
-                    let quality = Bytes32::from(quality);
+                    let quality = Bytes32::new(&quality);
                     let required_iters = calculate_iterations_quality(
                         2u128.pow(25),
                         &quality,

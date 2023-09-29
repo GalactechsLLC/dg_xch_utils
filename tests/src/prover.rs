@@ -1,9 +1,9 @@
-use dg_xch_core::clvm::utils::hash_256;
 use dg_xch_pos::prover::DiskProver;
 use dg_xch_pos::verifier::validate_proof;
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use std::io::Error;
 use std::path::Path;
+use dg_xch_serialize::{ChiaSerialize, hash_256};
 
 pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error> {
     let prover = DiskProver::new(Path::new(filename)).unwrap();
@@ -19,7 +19,7 @@ pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error
     for i in 0u32..iterations {
         let hash_input = i.to_be_bytes();
         let hash = hash_256(hash_input.as_slice());
-        let challenge = Bytes32::from(hash);
+        let challenge = Bytes32::new(&hash);
         let qualities = prover.get_qualities_for_challenge(&challenge)?;
         for (index, vec) in qualities.iter().enumerate() {
             if let Ok(proof) = prover.get_full_proof(&challenge, index, true) {
@@ -66,7 +66,7 @@ fn test_prover() {
     let path_str = "/mnt/1ee4f490-0fd0-4fb4-9dd2-9df897b628a7/chia_plots/plot-k25-2022-12-09-17-18-0afc8becaf6a6c761e18c682b1a52e0da0cefa50e157ee1963ee983d6c6738d9.plot";
     let path = Path::new(path_str);
     let prover = DiskProver::new(path).unwrap();
-    let challenge = Bytes32::from(vec![24; 32]);
+    let challenge = Bytes32::from([24; 32]);
     let res = prover.get_qualities_for_challenge(&challenge).unwrap();
-    println!("Found {} qualities for {}", res.len(), &challenge.as_str);
+    println!("Found {} qualities for {}", res.len(), &challenge);
 }

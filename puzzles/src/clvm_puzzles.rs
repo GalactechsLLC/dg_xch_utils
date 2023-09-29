@@ -7,7 +7,10 @@ use dg_xch_core::plots::PlotNftExtraData;
 use dg_xch_core::pool::PoolState;
 use lazy_static::lazy_static;
 use num_traits::{ToPrimitive, Zero};
-use std::io::{Error, ErrorKind};
+use std::io::{Cursor, Error, ErrorKind};
+use dg_xch_core::clvm::sexp::{AtomBuf, IntoSExp, SExp};
+use dg_xch_serialize::ChiaSerialize;
+use log::{debug, info};
 
 const SINGLETON_LAUNCHER_HEX: &str = "ff02ffff01ff04ffff04ff04ffff04ff05ffff04ff0bff80808080ffff04ffff04ff0affff04ffff02ff0effff04ff02ffff04ffff04ff05ffff04ff0bffff04ff17ff80808080ff80808080ff808080ff808080ffff04ffff01ff33ff3cff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff0effff04ff02ffff04ff09ff80808080ffff02ff0effff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080";
 const SINGLETON_MOD_HEX: &str = "ff02ffff01ff02ffff03ffff18ff2fffff010180ffff01ff02ff36ffff04ff02ffff04ff05ffff04ff17ffff04ffff02ff26ffff04ff02ffff04ff0bff80808080ffff04ff2fffff04ff0bffff04ff5fff808080808080808080ffff01ff088080ff0180ffff04ffff01ffffffff4602ff3304ffff0101ff02ffff02ffff03ff05ffff01ff02ff5cffff04ff02ffff04ff0dffff04ffff0bff2cffff0bff24ff3880ffff0bff2cffff0bff2cffff0bff24ff3480ff0980ffff0bff2cff0bffff0bff24ff8080808080ff8080808080ffff010b80ff0180ff02ffff03ff0bffff01ff02ff32ffff04ff02ffff04ff05ffff04ff0bffff04ff17ffff04ffff02ff2affff04ff02ffff04ffff02ffff03ffff09ff23ff2880ffff0181b3ff8080ff0180ff80808080ff80808080808080ffff01ff02ffff03ff17ff80ffff01ff088080ff018080ff0180ffffffff0bffff0bff17ffff02ff3affff04ff02ffff04ff09ffff04ff2fffff04ffff02ff26ffff04ff02ffff04ff05ff80808080ff808080808080ff5f80ff0bff81bf80ff02ffff03ffff20ffff22ff4fff178080ffff01ff02ff7effff04ff02ffff04ff6fffff04ffff04ffff02ffff03ff4fffff01ff04ff23ffff04ffff02ff3affff04ff02ffff04ff09ffff04ff53ffff04ffff02ff26ffff04ff02ffff04ff05ff80808080ff808080808080ffff04ff81b3ff80808080ffff011380ff0180ffff02ff7cffff04ff02ffff04ff05ffff04ff1bffff04ffff21ff4fff1780ff80808080808080ff8080808080ffff01ff088080ff0180ffff04ffff09ffff18ff05ffff010180ffff010180ffff09ff05ffff01818f8080ff0bff2cffff0bff24ff3080ffff0bff2cffff0bff2cffff0bff24ff3480ff0580ffff0bff2cffff02ff5cffff04ff02ffff04ff07ffff04ffff0bff24ff2480ff8080808080ffff0bff24ff8080808080ffffff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff26ffff04ff02ffff04ff09ff80808080ffff02ff26ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff02ff5effff04ff02ffff04ff05ffff04ff0bffff04ffff02ff3affff04ff02ffff04ff09ffff04ff17ffff04ffff02ff26ffff04ff02ffff04ff05ff80808080ff808080808080ffff04ff17ffff04ff2fffff04ff5fffff04ff81bfff80808080808080808080ffff04ffff04ff20ffff04ff17ff808080ffff02ff7cffff04ff02ffff04ff05ffff04ffff02ff82017fffff04ffff04ffff04ff17ff2f80ffff04ffff04ff5fff81bf80ffff04ff0bff05808080ff8202ff8080ffff01ff80808080808080ffff02ff2effff04ff02ffff04ff05ffff04ff0bffff04ffff02ffff03ff3bffff01ff02ff22ffff04ff02ffff04ff05ffff04ff17ffff04ff13ffff04ff2bffff04ff5bffff04ff5fff808080808080808080ffff01ff02ffff03ffff09ff15ffff0bff13ff1dff2b8080ffff01ff0bff15ff17ff5f80ffff01ff088080ff018080ff0180ffff04ff17ffff04ff2fffff04ff5fffff04ff81bfffff04ff82017fff8080808080808080808080ff02ffff03ff05ffff011bffff010b80ff0180ff018080";
@@ -95,7 +98,7 @@ pub fn create_waiting_room_inner_puzzle(
 }
 
 pub fn create_pooling_inner_puzzle(
-    target_puzzle_hash: &[u8],
+    target_puzzle_hash: &Bytes32,
     pool_waiting_room_inner_hash: &Bytes32,
     owner_pubkey: &Bytes48,
     launcher_id: &Bytes32,
@@ -218,6 +221,59 @@ pub fn is_pool_member_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error
     Ok(POOL_MEMBER_MOD.clone() == inner_f)
 }
 
+pub fn create_travel_spend(
+    last_coin_spend: &CoinSpend,
+    launcher_coin: &Coin,
+    current: &PoolState,
+    target: &PoolState,
+    genesis_challenge: &Bytes32,
+    delay_time: u64,
+    delay_ph: &Bytes32,
+) -> Result<(CoinSpend, Program), Error>{
+    let inner_puzzle = pool_state_to_inner_puzzle(
+        current,
+        &launcher_coin.name(),
+        genesis_challenge,
+        delay_time,
+        delay_ph
+    )?;
+    let inner_solution = if is_pool_member_inner_puzzle(&inner_puzzle)? {
+        Program::to(vec![vec![("p".to_sexp(), SExp::Atom(AtomBuf::new(target.to_bytes())))].to_sexp(), 0.to_sexp()])
+    } else if is_pool_waitingroom_inner_puzzle(&inner_puzzle)? {
+        let destination_inner = pool_state_to_inner_puzzle(
+            target, &launcher_coin.name(), genesis_challenge, delay_time, delay_ph
+        )?;
+        debug!("create_travel_spend: waitingroom: target PoolState bytes:\n{:?}\nhash:{}",  target, Program::to(target.to_bytes()).tree_hash());
+        Program::to(vec![1.to_sexp(), vec![("p".to_sexp(), target.to_bytes().to_sexp())].to_sexp(), destination_inner.tree_hash().to_sexp()])  // current or target
+    } else {
+        return Err(Error::new(ErrorKind::InvalidInput, "Invalid Inner Puzzle"));
+    };
+    let current_singleton = get_most_recent_singleton_coin_from_coin_spend(last_coin_spend)?.ok_or(Error::new(ErrorKind::InvalidInput, "Failed to find singleton"))?;
+    let parent_info_list = if current_singleton.parent_coin_info == launcher_coin.name() {
+        Program::to(vec![launcher_coin.parent_coin_info.to_sexp(), launcher_coin.amount.to_sexp()])
+    } else{
+        let p = last_coin_spend.puzzle_reveal.to_program()?;
+        let last_coin_spend_inner_puzzle = get_inner_puzzle_from_puzzle(&p)?.ok_or(Error::new(ErrorKind::InvalidInput, "Failed to get inner puzzle for last_coin_spend_inner_puzzle"))?;
+        Program::to(
+            vec![
+                last_coin_spend.coin.parent_coin_info.to_sexp(),
+                last_coin_spend_inner_puzzle.tree_hash().to_sexp(),
+                last_coin_spend.coin.amount.to_sexp(),
+            ]
+        )
+    };
+    let full_solution = Program::to(vec![parent_info_list.to_sexp(), current_singleton.amount.to_sexp(), inner_solution.to_sexp()]);
+    let full_puzzle = create_full_puzzle(&inner_puzzle, &launcher_coin.name())?;
+    Ok((
+        CoinSpend {
+            coin: current_singleton,
+            puzzle_reveal: SerializedProgram::from_bytes(&full_puzzle.serialized),
+            solution: SerializedProgram::from_bytes(&full_solution.serialized),
+        },
+        inner_puzzle,
+    ))
+}
+
 pub fn get_most_recent_singleton_coin_from_coin_spend(
     coin_solution: &CoinSpend,
 ) -> Result<Option<Coin>, Error> {
@@ -245,18 +301,18 @@ pub fn uncurry_pool_member_inner_puzzle(
     match is_pool_member_inner_puzzle(inner_puzzle)? {
         true => match inner_puzzle.uncurry() {
             Ok((inner_f, args)) => {
-                let as_list = args.as_list();
+                let mut as_list: Vec<Program> = args.as_list().into_iter().take(5).collect();
                 if as_list.len() < 5 {
                     return Err(Error::new(
                         ErrorKind::Other,
                         "Failed to unpack inner puzzle",
                     ));
                 }
-                let target_puzzle_hash = as_list[0].clone();
-                let p2_singleton_hash = as_list[1].clone();
-                let owner_pubkey = as_list[2].clone();
-                let pool_reward_prefix = as_list[3].clone();
-                let escape_puzzlehash = as_list[4].clone();
+                let escape_puzzlehash = as_list.remove(4);
+                let pool_reward_prefix = as_list.remove(3);
+                let owner_pubkey = as_list.remove(2);
+                let p2_singleton_hash = as_list.remove(1);
+                let target_puzzle_hash = as_list.remove(0);
                 Ok((
                     inner_f,
                     target_puzzle_hash,
@@ -315,6 +371,7 @@ pub fn uncurry_pool_waitingroom_inner_puzzle(
 }
 
 pub fn get_inner_puzzle_from_puzzle(full_puzzle: &Program) -> Result<Option<Program>, Error> {
+    info!("Full Puz: {}", hex::encode(&full_puzzle.serialized));
     match full_puzzle.uncurry() {
         Ok((_, args)) => {
             let list: Vec<Program> = args.as_list();
@@ -342,7 +399,10 @@ pub fn pool_state_from_extra_data(extra_data: Program) -> Result<Option<PoolStat
                 }
             }
             match state_bytes {
-                Some(byte_data) => Ok(Some(byte_data.into())),
+                Some(byte_data) => {
+                    let mut cursor = Cursor::new(byte_data);
+                    Ok(Some(PoolState::from_bytes(&mut cursor)?))
+                },
                 None => Ok(None),
             }
         }
@@ -370,7 +430,6 @@ pub fn solution_to_pool_state(coin_solution: &CoinSpend) -> Result<Option<PoolSt
             return Ok(None);
         }
         extra_data = inner_solution.first()?;
-        //isinstance(extra_data.as_python(), bytes) {
         if extra_data.is_atom() {
             // Absorbing
             return Ok(None);
@@ -411,7 +470,7 @@ pub fn pool_state_to_inner_puzzle(
         2 => Ok(escaping_inner_puzzle),
         //Pooling
         _ => create_pooling_inner_puzzle(
-            pool_state.target_puzzle_hash.as_ref(),
+            &pool_state.target_puzzle_hash,
             &escaping_inner_puzzle.tree_hash(),
             &pool_state.owner_pubkey,
             launcher_id,

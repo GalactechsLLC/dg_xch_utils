@@ -5,6 +5,27 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 pub const POOL_PROTOCOL_VERSION: u8 = 1;
+pub const SELF_POOLING: u8 = 1;
+pub const LEAVING_POOL: u8 = 2;
+pub const FARMING_TO_POOL: u8 = 3;
+
+#[derive(ChiaSerial, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PoolSingletonState {
+    SelfPooling = SELF_POOLING as isize,
+    LeavingPool = LEAVING_POOL as isize,
+    FarmingToPool = FARMING_TO_POOL as isize,
+    Unknown = 0,
+}
+impl From<u8> for PoolSingletonState {
+    fn from(byte: u8) -> Self {
+        match byte {
+            SELF_POOLING => PoolSingletonState::SelfPooling,
+            LEAVING_POOL => PoolSingletonState::LeavingPool,
+            FARMING_TO_POOL => PoolSingletonState::FarmingToPool,
+            _ => PoolSingletonState::Unknown,
+        }
+    }
+}
 
 #[derive(ChiaSerial, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PoolErrorCode {
@@ -158,17 +179,17 @@ pub struct ErrorResponse {
     pub error_message: Option<String>,
 }
 
-pub fn get_current_authentication_token(timeout: u8) -> u64 {
+pub fn get_current_authentication_token(timeout: u64) -> u64 {
     let now: u64 = OffsetDateTime::now_utc().unix_timestamp() as u64;
-    now / 60 / timeout as u64
+    now / 60 / timeout
 }
 
-pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
+pub fn validate_authentication_token(token: u64, timeout: u64) -> bool {
     let cur_token = get_current_authentication_token(timeout);
     let dif = if token > cur_token {
         token - cur_token
     } else {
         cur_token - token
     };
-    dif <= timeout as u64
+    dif <= timeout
 }

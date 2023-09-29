@@ -8,6 +8,12 @@ license = "Apache-2.0"
 homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
 repository = "https://github.com/GalactechsLLC/dg_xch_utils/cli"
 
+[lib]
+name = "dg_xch_cli"
+
+[[bin]]
+name = "dg_xch_cli"
+
 [dependencies]
 bip39 = {version= "2.0.0", features=["rand"] }
 blst = "0.3.7"
@@ -17,8 +23,10 @@ dg_xch_core = {path = "../core", version = "1.0.7", features = ["paperclip"] }
 dg_xch_keys = {path = "../keys", version="1.0.7"}
 dg_xch_pos = {path = "../proof_of_space", version="1.0.7"}
 dg_xch_puzzles = {path = "../puzzles", version="1.0.7"}
+hex = "0.4.3"
 lazy_static = "1.4.0"
 log = "0.4.17"
+num-traits = "0.2.14"
 rayon = "1.7.0"
 simple_logger = "4.0.0"
 tokio = {version = "1.21.2", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

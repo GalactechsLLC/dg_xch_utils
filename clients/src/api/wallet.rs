@@ -6,6 +6,7 @@ use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
 use dg_xch_core::blockchain::wallet_sync::WalletSync;
 use std::io::Error;
+use dg_xch_core::blockchain::announcement::Announcement;
 
 #[async_trait]
 pub trait WalletAPI {
@@ -37,6 +38,8 @@ pub trait WalletAPI {
         wallet_id: u32,
         additions: Vec<Coin>,
         coins: Vec<Coin>,
+        coin_announcements: Vec<Announcement>,
+        puzzle_announcements: Vec<Announcement>,
         fee: u64,
     ) -> Result<TransactionRecord, Error>;
 }

@@ -4,7 +4,7 @@ use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use crate::blockchain::utils::atom_to_int;
 use crate::clvm::program::{Program, SerializedProgram};
-use crate::clvm::sexp::SExp;
+use crate::clvm::sexp::{IntoSExp, SExp};
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};

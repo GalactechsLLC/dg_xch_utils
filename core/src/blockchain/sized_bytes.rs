@@ -13,6 +13,8 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Read};
+use std::ops::{Index, IndexMut, Range};
+use num_traits::AsPrimitive;
 
 pub fn prep_hex_str(to_fix: &str) -> String {
     let lc = to_fix.to_lowercase();
@@ -148,6 +150,18 @@ macro_rules! impl_sized_bytes {
                     S: Serializer,
                 {
                     serializer.serialize_str(self.to_string().as_str())
+                }
+            }
+
+            impl<N: AsPrimitive<usize>> Index<Range<N>> for $name {
+                type Output = [u8];
+                fn index(&self, index: Range<N>) -> &Self::Output {
+                    &self.bytes[index.start.as_()..index.end.as_()]
+                }
+            }
+            impl<N: AsPrimitive<usize>> IndexMut<Range<N>> for $name {
+                fn index_mut(&mut self, index: Range<N>) -> &mut Self::Output {
+                    &mut self.bytes[index.start.as_()..index.end.as_()]
                 }
             }
 
@@ -328,6 +342,16 @@ impl From<&Bytes48> for PublicKey {
 impl From<Bytes48> for PublicKey {
     fn from(val: Bytes48) -> Self {
         PublicKey::from_bytes(val.to_sized_bytes()).unwrap_or_default()
+    }
+}
+impl From<&PublicKey> for Bytes48 {
+    fn from(val: &PublicKey) -> Self {
+        Bytes48::from_sized_bytes(val.to_bytes())
+    }
+}
+impl From<PublicKey> for Bytes48 {
+    fn from(val: PublicKey) -> Self {
+        (&val).into()
     }
 }
 
