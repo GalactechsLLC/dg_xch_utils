@@ -1,12 +1,12 @@
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::clvm::program::Program;
+use dg_xch_macros::ChiaSerial;
+use dg_xch_serialize::ChiaSerialize;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Error, ErrorKind};
 use std::string::String;
-use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::ChiaSerialize;
 
 pub const POOL_STATE_IDENTIFIER: char = 'p';
 pub const DELAY_TIME_IDENTIFIER: char = 't';
@@ -58,10 +58,12 @@ impl PoolState {
         if extra_data_cons_boxes.is_empty() || extra_data_cons_boxes.len() > 1 {
             return Err(Error::new(ErrorKind::InvalidInput, "Invalid PlotNFT"));
         }
-        let mut cursor = Cursor::new(extra_data_cons_boxes[0]
-            .rest()?
-            .as_vec()
-            .unwrap_or_default());
+        let mut cursor = Cursor::new(
+            extra_data_cons_boxes[0]
+                .rest()?
+                .as_vec()
+                .unwrap_or_default(),
+        );
         Self::from_bytes(&mut cursor)
     }
 }

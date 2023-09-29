@@ -1,11 +1,11 @@
+use crate::clvm::program::Program;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
-use crate::clvm::program::Program;
 
 pub enum ConditionCost {
     AggSig = 1200000, // the cost of one G1 subgroup check + aggregated signature validation
     CreateCoin = 1800000,
-    Unknown = 0
+    Unknown = 0,
 }
 impl From<u64> for ConditionCost {
     fn from(value: u64) -> Self {
@@ -83,12 +83,16 @@ impl From<u8> for ConditionOpcode {
 
 impl From<&Program> for ConditionOpcode {
     fn from(value: &Program) -> Self {
-        value.sexp.atom().map(|a| {
-            if let Some(v) = a.data.first() {
-                ConditionOpcode::from(*v)
-            } else {
-                ConditionOpcode::Unknown
-            }
-        }).unwrap_or(ConditionOpcode::Unknown)
+        value
+            .sexp
+            .atom()
+            .map(|a| {
+                if let Some(v) = a.data.first() {
+                    ConditionOpcode::from(*v)
+                } else {
+                    ConditionOpcode::Unknown
+                }
+            })
+            .unwrap_or(ConditionOpcode::Unknown)
     }
 }

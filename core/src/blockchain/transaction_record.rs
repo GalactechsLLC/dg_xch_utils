@@ -1,8 +1,8 @@
 use crate::blockchain::coin::Coin;
+use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::spend_bundle::SpendBundle;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
-use crate::blockchain::sized_bytes::Bytes32;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct TransactionRecord {
@@ -22,7 +22,7 @@ pub struct TransactionRecord {
     #[serde(alias = "type")]
     pub transaction_type: u32,
     pub name: Bytes32,
-    pub memos: Vec<(Bytes32, Vec<Vec<u8>>)>
+    pub memos: Vec<(Bytes32, Vec<Vec<u8>>)>,
 }
 
 pub enum TransactionType {

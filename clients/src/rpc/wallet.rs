@@ -1,5 +1,6 @@
 use crate::api::wallet::WalletAPI;
 use async_trait::async_trait;
+use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::transaction_record::TransactionRecord;
@@ -10,7 +11,6 @@ use reqwest::Client;
 use serde_json::{json, Map};
 use std::collections::HashMap;
 use std::io::Error;
-use dg_xch_core::blockchain::announcement::Announcement;
 
 use crate::api::responses::{
     LoginResp, SignedTransactionRecordResp, TransactionRecordResp, WalletBalanceResp,
@@ -172,7 +172,10 @@ impl WalletAPI for WalletClient {
         request_body.insert("additions".to_string(), json!(additions));
         request_body.insert("coins".to_string(), json!(coins));
         request_body.insert("coin_announcements".to_string(), json!(coin_announcements));
-        request_body.insert("puzzle_announcements".to_string(), json!(puzzle_announcements));
+        request_body.insert(
+            "puzzle_announcements".to_string(),
+            json!(puzzle_announcements),
+        );
         request_body.insert("fee".to_string(), json!(fee));
         Ok(post::<SignedTransactionRecordResp>(
             &self.client,

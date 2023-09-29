@@ -1,6 +1,9 @@
+use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::sized_bytes::*;
 use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
+use crate::clvm::program::Program;
+use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
@@ -9,9 +12,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
-use dg_xch_serialize::ChiaSerialize;
-use crate::blockchain::condition_opcode::ConditionOpcode;
-use crate::clvm::program::Program;
 
 lazy_static! {
     pub static ref NULL: SExp = SExp::Atom(vec![].into());
@@ -203,7 +203,6 @@ impl Display for SExp {
     }
 }
 
-
 impl Debug for SExp {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self {
@@ -321,7 +320,6 @@ pub struct PairBuf {
     pub rest: Box<SExp>,
 }
 
-
 impl Display for PairBuf {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut buffer = String::from("(");
@@ -349,7 +347,6 @@ impl Display for PairBuf {
         write!(f, "{}", buffer)
     }
 }
-
 
 impl Debug for PairBuf {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -393,7 +390,6 @@ impl From<(SExp, SExp)> for PairBuf {
     }
 }
 
-
 pub trait IntoSExp {
     fn to_sexp(self) -> SExp;
 }
@@ -420,13 +416,20 @@ impl IntoSExp for Vec<SExp> {
 
 impl<T: IntoSExp + Clone> IntoSExp for &[T] {
     fn to_sexp(self) -> SExp {
-        self.iter().cloned().map(|v| v.to_sexp()).collect::<Vec<SExp>>().to_sexp()
+        self.iter()
+            .cloned()
+            .map(|v| v.to_sexp())
+            .collect::<Vec<SExp>>()
+            .to_sexp()
     }
 }
 
 impl<T: IntoSExp> IntoSExp for Vec<T> {
     fn to_sexp(self) -> SExp {
-        self.into_iter().map(|v| v.to_sexp()).collect::<Vec<SExp>>().to_sexp()
+        self.into_iter()
+            .map(|v| v.to_sexp())
+            .collect::<Vec<SExp>>()
+            .to_sexp()
     }
 }
 

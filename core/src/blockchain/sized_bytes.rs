@@ -5,6 +5,7 @@ use dg_xch_serialize::ChiaSerialize;
 use hex::FromHexError;
 use hex::{decode, encode};
 use log::warn;
+use num_traits::AsPrimitive;
 #[cfg(feature = "paperclip")]
 use paperclip::v2::models::{DataType, DataTypeFormat};
 #[cfg(feature = "paperclip")]
@@ -14,7 +15,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::ops::{Index, IndexMut, Range};
-use num_traits::AsPrimitive;
 
 pub fn prep_hex_str(to_fix: &str) -> String {
     let lc = to_fix.to_lowercase();

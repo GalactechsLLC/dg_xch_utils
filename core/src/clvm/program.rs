@@ -1,5 +1,5 @@
 use crate::blockchain::sized_bytes::*;
-use crate::clvm::curry_utils::{curry};
+use crate::clvm::curry_utils::curry;
 use crate::clvm::dialect::ChiaDialect;
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
 use crate::clvm::run_program::run_program;
@@ -74,10 +74,7 @@ impl Program {
             Ok(bytes) => bytes,
             Err(_) => vec![],
         };
-        Program {
-            serialized,
-            sexp
-        }
+        Program { serialized, sexp }
     }
     pub fn first(&self) -> Result<Self, Error> {
         let first = self.sexp.first()?;
@@ -87,7 +84,7 @@ impl Program {
         };
         Ok(Program {
             serialized,
-            sexp: first.clone()
+            sexp: first.clone(),
         })
     }
     pub fn rest(&self) -> Result<Self, Error> {
@@ -98,7 +95,7 @@ impl Program {
         };
         Ok(Program {
             serialized,
-            sexp: rest.clone()
+            sexp: rest.clone(),
         })
     }
     pub fn at(&self, path: &str) -> Result<Program, Error> {
@@ -106,19 +103,19 @@ impl Program {
         for c in path.chars() {
             if c == 'f' || c == 'F' {
                 rtn = rtn.first()?;
-            } else if c == 'r' || c == 'R'{
+            } else if c == 'r' || c == 'R' {
                 rtn = rtn.rest()?;
             } else {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("`at` got illegal character `{c}`. Only `f` & `r` allowed")
+                    format!("`at` got illegal character `{c}`. Only `f` & `r` allowed"),
                 ));
             }
         }
         let serialized = sexp_to_bytes(rtn)?;
         Ok(Program {
             serialized,
-            sexp: rtn.clone()
+            sexp: rtn.clone(),
         })
     }
 
@@ -139,7 +136,10 @@ impl Program {
     pub fn uncurry(&self) -> Result<(Program, Program), Error> {
         fn inner_match(o: SExp, expected: &[u8]) -> Result<(), Error> {
             if o.atom()? != expected {
-                Err(Error::new(ErrorKind::InvalidData, format!("expected: {}", encode(expected))))
+                Err(Error::new(
+                    ErrorKind::InvalidData,
+                    format!("expected: {}", encode(expected)),
+                ))
             } else {
                 Ok(())
             }
@@ -148,8 +148,12 @@ impl Program {
             //(2 (1 . <mod>) <args>)
             let as_list = self.as_list();
             inner_match(as_list[0].clone().to_sexp() /*ev*/, b"\x02")?;
-            let q_pair = as_list[1].as_pair().ok_or_else(|| { //quoted_inner
-                Error::new(ErrorKind::InvalidData, format!("expected pair found atom: {}", as_list[1]))
+            let q_pair = as_list[1].as_pair().ok_or_else(|| {
+                //quoted_inner
+                Error::new(
+                    ErrorKind::InvalidData,
+                    format!("expected pair found atom: {}", as_list[1]),
+                )
             })?;
             inner_match(q_pair.0.to_sexp(), b"\x01")?;
             let mut args = vec![];
@@ -158,18 +162,21 @@ impl Program {
                 //(4(1. < arg >) < rest >)
                 let as_list = args_list.as_list();
                 inner_match(as_list[0].clone().to_sexp(), b"\x04")?;
-                let q_pair = as_list[1].as_pair().ok_or_else(|| { //quoted_inner
-                    Error::new(ErrorKind::InvalidData, format!("expected pair found atom: {}", as_list[1]))
+                let q_pair = as_list[1].as_pair().ok_or_else(|| {
+                    //quoted_inner
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("expected pair found atom: {}", as_list[1]),
+                    )
                 })?;
                 inner_match(q_pair.0.to_sexp(), b"\x01")?;
                 args.push(q_pair.1.to_sexp());
                 args_list = as_list[2].clone();
             }
-            inner_match (args_list.to_sexp(), b"\x01")?;
-            Ok((Program::to( q_pair.1 ), Program::to(args)))
-        }.or_else(|_: Error| {
-            Ok((self.clone(), Program::to(0)))
-        })
+            inner_match(args_list.to_sexp(), b"\x01")?;
+            Ok((Program::to(q_pair.1), Program::to(args)))
+        }
+        .or_else(|_: Error| Ok((self.clone(), Program::to(0))))
     }
 
     pub fn as_list(&self) -> Vec<Program> {

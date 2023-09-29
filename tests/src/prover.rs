@@ -1,9 +1,9 @@
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_pos::prover::DiskProver;
 use dg_xch_pos::verifier::validate_proof;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_serialize::{hash_256, ChiaSerialize};
 use std::io::Error;
 use std::path::Path;
-use dg_xch_serialize::{ChiaSerialize, hash_256};
 
 pub fn test_proof_of_space(filename: &str, iterations: u32) -> Result<u32, Error> {
     let prover = DiskProver::new(Path::new(filename)).unwrap();

@@ -1,14 +1,14 @@
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::consensus::pot_iterations::{
     calculate_ip_iters, calculate_iterations_quality, calculate_sp_iters, expected_plot_size,
     is_overflow_block,
 };
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_serialize::hash_256;
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use num_traits::abs;
 use std::collections::HashMap;
-use dg_xch_serialize::hash_256;
 
 lazy_static! {
     static ref TEST_CONSTANTS: ConsensusConstants = ConsensusConstants {

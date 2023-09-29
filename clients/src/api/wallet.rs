@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::transaction_record::TransactionRecord;
@@ -6,7 +7,6 @@ use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
 use dg_xch_core::blockchain::wallet_sync::WalletSync;
 use std::io::Error;
-use dg_xch_core::blockchain::announcement::Announcement;
 
 #[async_trait]
 pub trait WalletAPI {

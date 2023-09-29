@@ -1,48 +1,52 @@
+use crate::wallet_commands::{find_owner_key, generate_fee_transaction};
+use blst::min_pk::{AggregateSignature, PublicKey, SecretKey, Signature};
 use dg_xch_clients::api::full_node::FullnodeAPI;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
+use dg_xch_core::blockchain::coin_spend::{compute_additions_with_cost, CoinSpend};
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96, SizedBytes};
-use dg_xch_core::plots::PlotNft;
-use dg_xch_puzzles::clvm_puzzles::{get_most_recent_singleton_coin_from_coin_spend, launcher_coin_spend_to_extra_data, solution_to_pool_state, SINGLETON_LAUNCHER_HASH, get_delay_puzzle_info_from_launcher_spend, pool_state_to_inner_puzzle, create_full_puzzle, create_travel_spend};
-use std::io::{Error, ErrorKind};
-use std::time::{SystemTime, UNIX_EPOCH};
-use blst::min_pk::{AggregateSignature, PublicKey, SecretKey, Signature};
-use dg_xch_core::blockchain::coin_spend::{CoinSpend, compute_additions_with_cost};
-use dg_xch_core::consensus::constants::ConsensusConstants;
-use dg_xch_core::pool::PoolState;
-use dg_xch_keys::{master_sk_to_wallet_sk_unhardened};
-use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
-use num_traits::cast::ToPrimitive;
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
 use dg_xch_core::blockchain::utils::pkm_pairs_for_conditions_dict;
 use dg_xch_core::clvm::bls_bindings;
 use dg_xch_core::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
 use dg_xch_core::clvm::condition_utils::conditions_dict_for_solution;
-use crate::wallet_commands::{find_owner_key, generate_fee_transaction};
+use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_core::plots::PlotNft;
+use dg_xch_core::pool::PoolState;
+use dg_xch_keys::master_sk_to_wallet_sk_unhardened;
+use dg_xch_puzzles::clvm_puzzles::{
+    create_full_puzzle, create_travel_spend, get_delay_puzzle_info_from_launcher_spend,
+    get_most_recent_singleton_coin_from_coin_spend, launcher_coin_spend_to_extra_data,
+    pool_state_to_inner_puzzle, solution_to_pool_state, SINGLETON_LAUNCHER_HASH,
+};
+use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
+use num_traits::cast::ToPrimitive;
+use std::io::{Error, ErrorKind};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub async fn scrounge_for_plotnft_by_key(
     client: &FullnodeClient,
-    master_secret_key: &SecretKey
+    master_secret_key: &SecretKey,
 ) -> Result<Vec<PlotNft>, Error> {
-
     let mut page = 0;
     let mut plotnfs = vec![];
     while page < 15 && plotnfs.is_empty() {
         let mut puzzle_hashes = vec![];
-        for index in page*50..(page+1)*50 {
-            let wallet_sk = master_sk_to_wallet_sk_unhardened(master_secret_key, index).map_err(|e| {
-                Error::new(
-                    ErrorKind::InvalidInput,
-                    format!("Failed to parse Wallet SK: {:?}", e),
-                )
-            })?;
+        for index in page * 50..(page + 1) * 50 {
+            let wallet_sk =
+                master_sk_to_wallet_sk_unhardened(master_secret_key, index).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidInput,
+                        format!("Failed to parse Wallet SK: {:?}", e),
+                    )
+                })?;
             let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
             let ph = puzzle_hash_for_pk(&pub_key)?;
             puzzle_hashes.push(ph);
         }
         plotnfs.extend(scrounge_for_plotnfts(client, &puzzle_hashes).await?);
-        page+=1;
+        page += 1;
     }
     Ok(plotnfs)
 }
@@ -77,7 +81,10 @@ pub async fn get_pool_state(
     if let Some(plotnft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
         Ok(plotnft.pool_state)
     } else {
-        Err(Error::new(ErrorKind::NotFound, format!("Failed to find pool state for launcher_id {}", launcher_id)))
+        Err(Error::new(
+            ErrorKind::NotFound,
+            format!("Failed to find pool state for launcher_id {}", launcher_id),
+        ))
     }
 }
 
@@ -128,21 +135,25 @@ pub async fn get_plotnft_by_launcher_id(
     }
 }
 
-pub async fn generate_travel_transaction(client: &FullnodeClient, plot_nft: &PlotNft, master_secret_key: &SecretKey, target_pool_state: &PoolState, fee: u64, constants: &ConsensusConstants) -> Result<(TransactionRecord, Option<TransactionRecord>), Error> {
-    let launcher_coin = client.get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info).await?.ok_or_else(|| {
-        Error::new(
-            ErrorKind::Other,
-            "Failed to load launcher_coin",
-        )
-    })?;
-    let last_record = client.get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info).await?.ok_or_else(|| {
-        Error::new(
-            ErrorKind::Other,
-            "Failed to load last spend record:",
-        )
-    })?;
+pub async fn generate_travel_transaction(
+    client: &FullnodeClient,
+    plot_nft: &PlotNft,
+    master_secret_key: &SecretKey,
+    target_pool_state: &PoolState,
+    fee: u64,
+    constants: &ConsensusConstants,
+) -> Result<(TransactionRecord, Option<TransactionRecord>), Error> {
+    let launcher_coin = client
+        .get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info)
+        .await?
+        .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load launcher_coin"))?;
+    let last_record = client
+        .get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info)
+        .await?
+        .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load last spend record:"))?;
     let last_coin_spend = client.get_coin_spend(&last_record).await?;
-    let (delayed_seconds, delayed_puzhash) = get_delay_puzzle_info_from_launcher_spend(&last_coin_spend)?;
+    let (delayed_seconds, delayed_puzhash) =
+        get_delay_puzzle_info_from_launcher_spend(&last_coin_spend)?;
     let new_inner_puzzle = pool_state_to_inner_puzzle(
         target_pool_state,
         &launcher_coin.coin.name(),
@@ -160,27 +171,42 @@ pub async fn generate_travel_transaction(client: &FullnodeClient, plot_nft: &Plo
         delayed_seconds,
         &delayed_puzhash,
     )?;
-    let (additions, _cost) = compute_additions_with_cost(&last_coin_spend, constants.max_block_cost_clvm.to_u64().unwrap())?;
+    let (additions, _cost) = compute_additions_with_cost(
+        &last_coin_spend,
+        constants.max_block_cost_clvm.to_u64().unwrap(),
+    )?;
     let singleton = &additions[0];
     let singleton_id = singleton.name();
-    assert_eq!(outgoing_coin_spend.coin.parent_coin_info, last_coin_spend.coin.name());
+    assert_eq!(
+        outgoing_coin_spend.coin.parent_coin_info,
+        last_coin_spend.coin.name()
+    );
     assert_eq!(outgoing_coin_spend.coin.name(), singleton_id);
     assert_ne!(new_inner_puzzle, inner_puzzle);
-    let mut signed_spend_bundle = sign(outgoing_coin_spend, |_| {
-        find_owner_key(master_secret_key, &plot_nft.pool_state.owner_pubkey, 500)
-    } , constants).await?;
-    assert_eq!(signed_spend_bundle.removals()[0].puzzle_hash, singleton.puzzle_hash);
+    let mut signed_spend_bundle = sign(
+        outgoing_coin_spend,
+        |_| find_owner_key(master_secret_key, &plot_nft.pool_state.owner_pubkey, 500),
+        constants,
+    )
+    .await?;
+    assert_eq!(
+        signed_spend_bundle.removals()[0].puzzle_hash,
+        singleton.puzzle_hash
+    );
     assert_eq!(signed_spend_bundle.removals()[0].name(), singleton.name());
     let fee_tx: Option<TransactionRecord> = None;
     if fee > 0 {
-        let fee_tx =  generate_fee_transaction(master_secret_key, fee, &Default::default(), None, constants).await?;
-        if let Some(fee_bundle) = fee_tx.spend_bundle{
-            signed_spend_bundle = SpendBundle::aggregate(vec![signed_spend_bundle, fee_bundle]).map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!("Failed to parse Public key: {:?}", e),
-                )
-            })?;
+        let fee_tx =
+            generate_fee_transaction(master_secret_key, fee, &Default::default(), None, constants)
+                .await?;
+        if let Some(fee_bundle) = fee_tx.spend_bundle {
+            signed_spend_bundle = SpendBundle::aggregate(vec![signed_spend_bundle, fee_bundle])
+                .map_err(|e| {
+                    Error::new(
+                        ErrorKind::Other,
+                        format!("Failed to parse Public key: {:?}", e),
+                    )
+                })?;
         }
     }
     let additions = signed_spend_bundle.additions()?;
@@ -188,7 +214,10 @@ pub async fn generate_travel_transaction(client: &FullnodeClient, plot_nft: &Plo
     let name = signed_spend_bundle.name();
     let tx_record = TransactionRecord {
         confirmed_at_height: 0,
-        created_at_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        created_at_time: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
         to_puzzle_hash: new_full_puzzle.tree_hash(),
         amount: 1,
         fee_amount: fee,
@@ -202,35 +231,60 @@ pub async fn generate_travel_transaction(client: &FullnodeClient, plot_nft: &Plo
         trade_id: None,
         memos: vec![],
         transaction_type: TransactionType::OutgoingTx as u32,
-        name
+        name,
     };
     Ok((tx_record, fee_tx))
 }
 
-pub async fn sign<F>(coin_spend: CoinSpend, key_fn: F, constants: &ConsensusConstants) -> Result<SpendBundle, Error>
-where F: Fn(&Bytes48) -> Result<SecretKey, Error> {
+pub async fn sign<F>(
+    coin_spend: CoinSpend,
+    key_fn: F,
+    constants: &ConsensusConstants,
+) -> Result<SpendBundle, Error>
+where
+    F: Fn(&Bytes48) -> Result<SecretKey, Error>,
+{
     sign_coin_spends(
         vec![coin_spend],
         key_fn,
         &constants.agg_sig_me_additional_data,
         constants.max_block_cost_clvm.to_u64().unwrap(),
-    ).await
+    )
+    .await
 }
 
-pub async fn sign_coin_spends<F>(coin_spends: Vec<CoinSpend>, key_fn: F, additional_data: &[u8], max_cost: u64) -> Result<SpendBundle, Error>
-where F: Fn(&Bytes48) -> Result<SecretKey, Error> {
+pub async fn sign_coin_spends<F>(
+    coin_spends: Vec<CoinSpend>,
+    key_fn: F,
+    additional_data: &[u8],
+    max_cost: u64,
+) -> Result<SpendBundle, Error>
+where
+    F: Fn(&Bytes48) -> Result<SecretKey, Error>,
+{
     let mut signatures: Vec<Signature> = vec![];
     let mut pk_list: Vec<Bytes48> = vec![];
     let mut msg_list: Vec<Vec<u8>> = vec![];
     for coin_spend in &coin_spends {
         //Get AGG_SIG conditions
-        let conditions_dict = conditions_dict_for_solution(&coin_spend.puzzle_reveal, &coin_spend.solution, max_cost)?.0;
+        let conditions_dict = conditions_dict_for_solution(
+            &coin_spend.puzzle_reveal,
+            &coin_spend.solution,
+            max_cost,
+        )?
+        .0;
         //Create signature
-        for (pk_bytes, msg) in pkm_pairs_for_conditions_dict(conditions_dict, coin_spend.coin.name(), additional_data)? {
+        for (pk_bytes, msg) in
+            pkm_pairs_for_conditions_dict(conditions_dict, coin_spend.coin.name(), additional_data)?
+        {
             let pk = PublicKey::from_bytes(pk_bytes.as_slice()).map_err(|e| {
                 Error::new(
                     ErrorKind::Other,
-                    format!("Failed to parse Public key: {}, {:?}", hex::encode(pk_bytes), e),
+                    format!(
+                        "Failed to parse Public key: {}, {:?}",
+                        hex::encode(pk_bytes),
+                        e
+                    ),
                 )
             })?;
             let secret_key = (key_fn)(&pk_bytes)?;
@@ -252,8 +306,12 @@ where F: Fn(&Bytes48) -> Result<SecretKey, Error> {
             format!("Failed to aggregate signatures: {:?}", e),
         )
     })?;
-    assert!(aggregate_verify_signature(&pk_list, &msg_list, &aggsig.to_signature()));
-    Ok(SpendBundle{
+    assert!(aggregate_verify_signature(
+        &pk_list,
+        &msg_list,
+        &aggsig.to_signature()
+    ));
+    Ok(SpendBundle {
         coin_spends,
         aggregated_signature: Bytes96::from(aggsig.to_signature()),
     })
