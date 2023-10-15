@@ -50,7 +50,7 @@ impl MempoolItem {
 
 impl PartialOrd<Self> for MempoolItem {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.fee_per_cost().partial_cmp(&other.fee_per_cost())
+        Some(self.cmp(other))
     }
 }
 

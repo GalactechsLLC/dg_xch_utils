@@ -295,6 +295,22 @@ impl Program {
             }
         }
     }
+
+
+    pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
+        let program = sexp_from_bytes(&self.serialized)?;
+        let args = sexp_from_bytes(&args.serialized)?;
+        let dialect = ChiaDialect::new(flags);
+        let (cost, result) = match run_program(dialect, &program, &args, max_cost, None) {
+            Ok(reduct) => reduct,
+            Err(e) => {
+                return Err(e);
+            }
+        };
+        let serialized = sexp_to_bytes(&result)?;
+        let sexp = sexp_from_bytes(&serialized)?;
+        Ok((cost, Program { serialized, sexp }))
+    }
 }
 
 impl TryFrom<Vec<u8>> for Program {
@@ -493,7 +509,7 @@ impl SerializedProgram {
         Ok(Program::new(self.buffer.clone()))
     }
 
-    fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
+    pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
         let program = sexp_from_bytes(&self.buffer)?;
         let args = sexp_from_bytes(&args.serialized)?;
         let dialect = ChiaDialect::new(flags);

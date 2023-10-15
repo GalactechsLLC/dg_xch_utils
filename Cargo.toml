@@ -8,6 +8,5 @@ members = [
     "macros",
     "proof_of_space",
     "puzzles",
-    "serialize",
-    "tests"
+    "serialize"
 ]

@@ -15,18 +15,21 @@ name = "dg_xch_cli"
 name = "dg_xch_cli"
 
 [dependencies]
+async-trait = "0.1.74"
 bip39 = {version= "2.0.0", features=["rand"] }
-blst = "0.3.7"
-clap = { version = "4.1.1", features = ["derive"] }
+blst = "0.3.11"
+clap = { version = "4.4.6", features = ["derive"] }
 dg_xch_clients = {path = "../clients", version="1.0.8"}
 dg_xch_core = {path = "../core", version = "1.0.7", features = ["paperclip"] }
 dg_xch_keys = {path = "../keys", version="1.0.7"}
 dg_xch_pos = {path = "../proof_of_space", version="1.0.7"}
 dg_xch_puzzles = {path = "../puzzles", version="1.0.7"}
+dg_xch_serialize= {path = "../serialize", version="1.0.7"}
 hex = "0.4.3"
 lazy_static = "1.4.0"
-log = "0.4.17"
-num-traits = "0.2.14"
-rayon = "1.7.0"
-simple_logger = "4.0.0"
-tokio = {version = "1.21.2", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+log = "0.4.20"
+num-traits = "0.2.17"
+rayon = "1.8.0"
+serde = "1.0.189"
+simple_logger = "4.2.0"
+tokio = {version = "1.33.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

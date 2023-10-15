@@ -128,8 +128,7 @@ fn decode_size(stream: &mut dyn Read, initial_b: u8) -> Result<u64, Error> {
         b &= 0xff ^ bit_mask;
         bit_mask >>= 1;
     }
-    let mut size_blob: Vec<u8> = Vec::new();
-    size_blob.resize(bit_count, 0);
+    let mut size_blob: Vec<u8> = vec![0; bit_count];
     size_blob[0] = b;
     if bit_count > 1 {
         stream.read_exact(&mut size_blob[1..])?;
