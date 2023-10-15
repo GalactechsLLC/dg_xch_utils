@@ -4,6 +4,8 @@ mod bitstream;
 pub mod compress;
 pub mod decompress;
 
+use crate::finite_state_entropy::compress::CTable;
+use crate::finite_state_entropy::decompress::DTable;
 use std::io::{Error, ErrorKind};
 use std::mem::size_of;
 
@@ -23,13 +25,18 @@ pub const FSE_MIN_TABLELOG: u32 = 5;
 // const fn fse_blockbound(size: usize) -> usize {size + (size>>7) + 4 + size_of::<usize>()}
 // const fn fse_compressbound(size: usize) -> usize {FSE_NCOUNTBOUND + fse_blockbound(size)}
 //
-// const fn fse_ctable_size_u32(max_table_log: u32, max_symbol_value: u32) -> u32 {1 + (1<<((max_table_log)-1)) + (((max_symbol_value)+1)*2)}
+pub const fn fse_ctable_size_u32(max_table_log: u32, max_symbol_value: u32) -> u32 {
+    1 + (1 << ((max_table_log) - 1)) + (((max_symbol_value) + 1) * 2)
+}
 pub const fn fse_dtable_size_u32(max_table_log: u32) -> u32 {
     1 + (1 << max_table_log)
 }
-//
-// const fn fse_ctable_size(max_table_log: u32, max_symbol_value: u32) -> u32 {fse_ctable_size_u32(max_table_log, max_symbol_value) * size_of::<CTable>() as u32}
-// const fn fse_dtable_size(max_table_log: u32) -> u32 {fse_dtable_size_u32(max_table_log) * size_of::<DTable>() as u32}
+pub const fn fse_ctable_size(max_table_log: u32, max_symbol_value: u32) -> u32 {
+    fse_ctable_size_u32(max_table_log, max_symbol_value) * size_of::<CTable>() as u32
+}
+pub const fn fse_dtable_size(max_table_log: u32) -> u32 {
+    fse_dtable_size_u32(max_table_log) * size_of::<DTable>() as u32
+}
 //
 // const fn fse_wksp_size_u32(max_table_log: u32, max_symbol_value: u32) -> u32 {fse_ctable_size_u32(max_table_log, max_symbol_value) + if max_table_log > 12 { 1 << (max_table_log - 2) } else { 1024 }}
 

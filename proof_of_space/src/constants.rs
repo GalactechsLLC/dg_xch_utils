@@ -1,3 +1,6 @@
+use once_cell::sync::Lazy;
+use std::ops::IndexMut;
+
 // Unique plot id which will be used as a ChaCha8 key, and determines the PoSpace.
 pub const K_ID_LEN: u32 = 32;
 
@@ -63,6 +66,33 @@ pub const K_C3R: f64 = 1.0;
 // be incremented.
 pub const K_FORMAT_DESCRIPTION: &str = "v1.0";
 
+/// Div With modifications to affect rounding
+///
+/// # Examples
+///
+/// ```
+/// let result = dg_xch_pos::constants::cdiv(11, 2);
+/// assert_eq!(result, 6);
+/// ```
+///
+/// ```
+/// let result = dg_xch_pos::constants::cdiv(10, 2);
+/// assert_eq!(result, 5);
+/// ```
+///
+/// ```
+/// let result = dg_xch_pos::constants::cdiv(9, 2);
+/// assert_eq!(result, 5);
+/// ```
+///
+/// # Panics
+///
+/// The function panics if the second argument is zero.
+///
+/// ```rust,should_panic
+/// // panics on division by zero
+/// dg_xch_pos::constants::cdiv(10, 0);
+/// ```
 pub const fn cdiv(a: i32, b: i32) -> i32 {
     (a + b - 1) / b
 }
@@ -72,13 +102,17 @@ pub const fn ucdiv(a: u32, b: u32) -> u32 {
 pub const fn ucdiv64(a: u64, b: u64) -> u64 {
     (a + b - 1) / b
 }
-
+pub const fn ucdiv_t(a: usize, b: usize) -> usize {
+    (a + b - 1) / b
+}
 pub const fn byte_align(num_bits: u32) -> u32 {
     num_bits + (8 - ((num_bits) % 8)) % 8
 }
-
-// ChaCha8 block size
+pub const BITS_PER_INTERVAL: u32 = 24000; //K_C3BITS_PER_ENTRY * K_CHECKPOINT1INTERVAL as f64 no const float math
+                                          // ChaCha8 block size
 pub const K_F1_BLOCK_SIZE_BITS: u16 = 512;
+// ChaCha8 block size
+pub const K_F1_BLOCK_SIZE: u16 = K_F1_BLOCK_SIZE_BITS / 8;
 
 // Extra bits of output from the f functions. Instead of being a function from k -> k bits,
 // it's a function from k -> k + kExtraBits bits. This allows less collisions in matches.
@@ -90,9 +124,10 @@ pub const K_EXTRA_BITS_POW: u8 = 1 << K_EXTRA_BITS;
 
 // B and C groups which constitute a bucket, or BC group. These groups determine how
 // elements match with each other. Two elements must be in adjacent buckets to match.
-pub const K_B: u16 = 119;
-pub const K_C: u16 = 127;
-pub const K_BC: u16 = K_B * K_C;
+pub const K_B: usize = 119;
+pub const K_C: usize = 127;
+pub const K_BC: usize = K_B * K_C;
+
 pub const FSE_MAX_SYMBOL_VALUE: u32 = 255;
 pub const K_VECTOR_LENS: [u8; 8] = [0, 0, 1, 2, 4, 4, 3, 2];
 
@@ -103,6 +138,8 @@ pub const HEADER_MAGIC: [u8; 19] = [
     0x6c, 0x6f, 0x74,
 ];
 
+pub const HEADER_V2_MAGIC: [u8; 4] = [0x50, 0x4c, 0x4f, 0x54];
+
 pub struct PlotEntry {
     pub y: u64,
     pub pos: u64,
@@ -111,4 +148,28 @@ pub struct PlotEntry {
     pub right_metadata: u128, // fit in 128 bits.
     pub used: bool,          // Whether the entry was used in the next table of matches
     pub read_posoffset: u64, // The combined pos and offset that this entry points to
+}
+pub static L_TARGETS: Lazy<Vec<Vec<Vec<u16>>>> = Lazy::new(gen_l_targets);
+
+fn gen_l_targets() -> Vec<Vec<Vec<u16>>> {
+    let mut targets = vec![vec![vec![0u16; K_EXTRA_BITS_POW as usize]; K_BC]; 2];
+    let mut parity = 0;
+    while parity < 2 {
+        let mut i: usize = 0;
+        while i < K_BC {
+            let j = i / K_C;
+            let mut m = 0;
+            while m < K_EXTRA_BITS_POW as u16 {
+                *targets
+                    .index_mut(parity as usize)
+                    .index_mut(i)
+                    .index_mut(m as usize) = ((j as u16 + m) % K_B as u16) * K_C as u16
+                    + (((2 * m + parity) * (2 * m + parity) + i as u16) % K_C as u16);
+                m += 1;
+            }
+            i += 1;
+        }
+        parity += 1;
+    }
+    targets
 }

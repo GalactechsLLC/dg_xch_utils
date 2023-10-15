@@ -171,6 +171,12 @@ macro_rules! impl_sized_bytes {
                 }
             }
 
+            impl AsRef<[u8; $size]> for $name {
+                fn as_ref(&self) -> &[u8; $size] {
+                    &self.bytes
+                }
+            }
+
             impl From<[u8; $size]> for $name {
                 fn from(bytes: [u8; $size]) -> Self {
                     $name::from_sized_bytes(bytes)

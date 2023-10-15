@@ -1,40 +1,326 @@
-use crate::bitvec::BitVec;
-use crate::constants::*;
-use crate::f_calc::F1Calculator;
-use crate::f_calc::FXCalculator;
-use crate::prover::DiskProver;
+use crate::constants::{K_CHECKPOINT1INTERVAL, K_ENTRIES_PER_PARK, K_EXTRA_BITS};
+use crate::plots::decompressor::DecompressorPool;
+use crate::plots::disk_plot::DiskPlot;
+use crate::plots::fx_generator::{forward_prop_f1_to_f7, get_proof_f1_and_meta};
+use crate::plots::plot_reader::PlotReader;
+use crate::plots::PROOF_X_COUNT;
+use crate::utils::bit_reader::BitReader;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::plots::{PlotFile, PlotHeader, PlotTable};
 use dg_xch_serialize::hash_256;
-use log::{debug, error, warn};
-use log::{info, trace};
-use sha2::{Digest, Sha256};
-use std::io::Error;
-use std::io::ErrorKind;
+use futures_util::future::join_all;
+use log::{debug, error, info, warn};
+use std::cmp::{max, min};
+use std::io::{Error, ErrorKind};
+use std::mem::size_of;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread;
 use std::time::Instant;
+use tokio::io::{AsyncRead, AsyncSeek};
+
+#[tokio::test]
+pub async fn test_validate_plot() -> Result<(), Error> {
+    use simple_logger::SimpleLogger;
+    SimpleLogger::new().env().init().unwrap();
+    let path = Path::new("/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot");
+    // let mut plot_reader = PlotReader::new(DiskPlot::new(path)?)?;
+    // let mut challenge =
+    //     hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a").unwrap();
+    // let f7 = 0;
+    // let proofs = validate_proof(&mut plot_reader, &mut challenge, f7)?;
+    // for proof in proofs {
+    //     info!("Proof Found: {}", proof);
+    // }
+    // let qualities = plot_reader.fetch_qualities_for_challenge(&challenge)?;
+    // for quality in qualities {
+    //     info!("Quality Found: {}", quality);
+    // }
+    validate_plot(
+        path,
+        ValidatePlotOptions {
+            thread_count: 1,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    Ok(())
+}
+
+pub struct ValidatePlotOptions {
+    pub in_ram: bool,
+    pub unpacked: bool,
+    pub thread_count: usize,
+    pub start_offset: f64,
+    pub use_cuda: bool,
+    pub f7: i64,
+}
+impl Default for ValidatePlotOptions {
+    fn default() -> Self {
+        Self {
+            in_ram: false,
+            unpacked: false,
+            thread_count: 0,
+            start_offset: 0.0,
+            use_cuda: false,
+            f7: -1,
+        }
+    }
+}
+
+pub async fn validate_plot(path: &Path, options: ValidatePlotOptions) -> Result<(), Error> {
+    let count = thread::available_parallelism()?.get();
+    let thread_count = max(min(options.thread_count, count), 1);
+    let mut plot_files = vec![];
+    for _ in 0..thread_count {
+        plot_files.push(DiskPlot::new(path).await?);
+    }
+    info!("Validating Plot: {:?}", path);
+    info!("Mode: {}", if options.in_ram { "Ram" } else { "Disk" });
+    info!("K Size: {}", plot_files[0].k());
+    info!("Unpacked: {}", options.unpacked);
+    let plot_c3park_count =
+        plot_files[0].table_size(&PlotTable::C1) as usize / size_of::<u32>() - 1;
+    info!("Maximum C3 Parks: {}", plot_c3park_count);
+    if options.unpacked {
+        todo!()
+    } else {
+        let fail_count = Arc::new(AtomicU64::new(0));
+        let mut tasks = vec![];
+        for (index, plot_file) in plot_files.into_iter().enumerate() {
+            let fail_count = fail_count.clone();
+            tasks.push(tokio::task::spawn(async move {
+                validate_disk(
+                    index,
+                    thread_count,
+                    plot_file,
+                    fail_count,
+                    options.start_offset,
+                )
+                .await
+            }));
+        }
+        for results in join_all(&mut tasks).await {
+            match results {
+                Ok(res) => match res {
+                    Ok(_) => {
+                        info!("Validator Thread Finished");
+                    }
+                    Err(e) => {
+                        error!("Error in Validator: {:?}", e);
+                    }
+                },
+                Err(e) => {
+                    error!("Join Error for Plot Read Thread: {:?}", e);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
+    index: usize,
+    thread_count: usize,
+    plot_file: DiskPlot<F>,
+    fail_counter: Arc<AtomicU64>,
+    start_offset: f64,
+) -> Result<(), Error> {
+    let plot_c3park_count = plot_file.table_size(&PlotTable::C1) as usize / size_of::<u32>() - 1;
+    let mut c3park_count = plot_c3park_count / thread_count;
+    let mut start_c3park = index * c3park_count;
+    let trailing_parks = plot_c3park_count - c3park_count * thread_count;
+    if index < trailing_parks {
+        c3park_count += 1;
+    }
+    start_c3park += min(trailing_parks, index);
+    let c3park_end = start_c3park + c3park_count;
+    if start_offset > 0.0f64 {
+        start_c3park += min(c3park_count, (c3park_count as f64 * start_offset) as usize);
+        c3park_count = c3park_end - start_c3park;
+    }
+    info!(
+        "Index: {} Park range: {}..{}  Park count: {}",
+        index, start_c3park, c3park_end, c3park_count
+    );
+    let mut f7_entries;
+    let mut fx: [u64; PROOF_X_COUNT] = [0; PROOF_X_COUNT];
+    let mut meta: Vec<BitReader> = Vec::with_capacity(PROOF_X_COUNT);
+    let mut cur_park7 = 0usize;
+    let pool = Arc::new(DecompressorPool::new(1, thread_count as u8));
+    let reader = PlotReader::new(plot_file, Some(pool.clone()), Some(pool)).await?;
+    if index == 0 {
+        reader.read_p7entries(0).await?;
+    }
+    let mut total_proofs = 0u128;
+    let mut total_millis = 0u128;
+    for c3_park_index in start_c3park..c3park_end {
+        let c3_start = Instant::now();
+        f7_entries = reader.read_c3park(c3_park_index as u64).await?;
+        assert!(f7_entries.len() <= K_CHECKPOINT1INTERVAL as usize);
+        let f7idx_base = c3_park_index * K_CHECKPOINT1INTERVAL as usize;
+        let entry_count = f7_entries.len();
+        let mut threshold = 0;
+        info!("Validating c3 Park: {}", c3_park_index);
+        for (index, f7) in f7_entries.iter().enumerate() {
+            if index / entry_count > threshold {
+                info!(
+                    "Progress: {}% ({}/{}), Avg Proof Lookup: {} millis",
+                    index as f64 / entry_count as f64 * 100.0,
+                    index,
+                    entry_count,
+                    if index > 0 {
+                        total_proofs / total_millis
+                    } else {
+                        0
+                    }
+                );
+                threshold += entry_count / 20;
+            }
+            let p_start = Instant::now();
+            let f7idx = f7idx_base + index;
+            let p7park_index = f7idx / K_ENTRIES_PER_PARK as usize;
+            if p7park_index != cur_park7 {
+                cur_park7 = p7park_index;
+                reader.read_p7entries(p7park_index).await?;
+            }
+            let p7local_idx = f7idx - p7park_index * K_ENTRIES_PER_PARK as usize;
+            let t6index = reader.p7_entries.lock().await[p7local_idx];
+            match reader.fetch_proof(t6index).await {
+                Ok(proof) => {
+                    // Now we can validate the proof
+                    match get_f7_from_proof(
+                        *reader.plot_file().k() as u32,
+                        reader.plot_id().to_sized_bytes(),
+                        &proof,
+                        &mut fx,
+                        &mut meta,
+                    ) {
+                        Ok(v_f7) => {
+                            if v_f7 != *f7 {
+                                error!("Failed to validate F7 v_f7({}) != f7({})", v_f7, f7);
+                                fail_counter.fetch_add(1, Ordering::SeqCst);
+                            }
+                        }
+                        Err(err) => {
+                            error!("Error Validating Proof: {:?}", err);
+                            fail_counter.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                }
+                Err(err) => {
+                    error!(
+                        "Park [{}][{index}] proof fetch failed for f7[{}] local({}) = {}: {:?}, {:?}",
+                        c3_park_index, f7idx, index, f7, index, err
+                    );
+                    fail_counter.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+            let p_elapsed = Instant::now().duration_since(p_start).as_millis();
+            total_proofs += 1;
+            total_millis += p_elapsed;
+        }
+        let c3_elapsed = Instant::now().duration_since(c3_start).as_millis();
+        info!(
+            "{}..{} ( {} ) C3 Park Validated in {} seconds | Proofs Failed: {}",
+            c3_park_index,
+            c3park_end - 1,
+            (c3_park_index - start_c3park) as f64 / c3park_count as f64 * 100.0,
+            c3_elapsed as f64 / 1000.0,
+            fail_counter.load(Ordering::Relaxed)
+        );
+    }
+    Ok(())
+}
+
+pub fn validate_proof(
+    id: &[u8; 32],
+    k: u8,
+    proof: &[u64],
+    challenge: &[u8],
+) -> Result<(Bytes32, Vec<u64>), Error> {
+    let mut fx = vec![0; PROOF_X_COUNT];
+    let mut meta: Vec<BitReader> = Vec::with_capacity(PROOF_X_COUNT);
+    let (f7, reordered_proof) =
+        get_f7_from_proof_and_reorder(k as u32, id, proof, &mut fx, &mut meta)?;
+    let challenge_bits = BitReader::from_bytes_be(challenge, challenge.len() * 8);
+    let index = (challenge_bits
+        .range(256 - 5, challenge_bits.get_size())
+        .read_u64(5)?
+        << 1) as u16;
+    if challenge_bits.range(0, k as usize).first_u64() == f7 {
+        let quality_string =
+            get_quality_string(k, &proof_to_bytes(&reordered_proof), index, challenge)?;
+        Ok((Bytes32::new(&quality_string), reordered_proof))
+    } else {
+        Ok((Bytes32::default(), reordered_proof))
+    }
+}
+
+pub fn get_f7_from_proof(
+    k: u32,
+    plot_id: &[u8; 32],
+    proof: &[u64],
+    fx: &mut [u64; 64],
+    meta: &mut Vec<BitReader>,
+) -> Result<u64, Error> {
+    get_proof_f1_and_meta(k, plot_id, proof, fx, meta)?;
+    // Forward propagate f1 values to get the final f7
+    forward_prop_f1_to_f7(None, fx, meta, k)?;
+    Ok(fx[0] >> K_EXTRA_BITS)
+}
+
+pub fn get_f7_from_proof_and_reorder(
+    k: u32,
+    plot_id: &[u8; 32],
+    proof: &[u64],
+    fx: &mut [u64],
+    meta: &mut Vec<BitReader>,
+) -> Result<(u64, Vec<u64>), Error> {
+    meta.clear();
+    let mut new_proof = proof.to_vec();
+    get_proof_f1_and_meta(k, plot_id, proof, fx, meta)?;
+    // Forward propagate f1 values to get the final f7
+    forward_prop_f1_to_f7(Some(&mut new_proof), fx, meta, k)?;
+    let mut bits = BitReader::default();
+    for v in new_proof {
+        bits.append_value(v, k as usize);
+    }
+    let mut compacted_proof = vec![0u64; k as usize];
+    for (i, b) in bits
+        .values()
+        .into_iter()
+        .enumerate()
+        .take(PROOF_X_COUNT / 2)
+    {
+        compacted_proof[i] = b;
+    }
+    Ok((fx[0] >> K_EXTRA_BITS, compacted_proof))
+}
 
 pub fn get_quality_string(
     k: u8,
-    proof: &Vec<u8>,
+    proof: &[u8],
     quality_index: u16,
     challenge: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    let mut proof_bits =
-        BitVec::from_be_bytes(proof.clone(), proof.len() as u32, (proof.len() * 8) as u32);
+    let mut proof_bits = BitReader::from_bytes_be(proof, proof.len() * 8);
     let mut table_index: u8 = 1;
     while table_index < 7 {
-        let mut new_proof: BitVec = BitVec::new(0, 0);
+        let mut new_proof: BitReader = BitReader::default();
         let size: u16 = k as u16 * (1 << (table_index - 1)) as u16;
         let mut j = 0;
         while j < (1 << (7 - table_index)) {
-            let mut left = proof_bits.range((j * size) as u32, ((j + 1) * size) as u32);
-            let mut right = proof_bits.range(((j + 1) * size) as u32, ((j + 2) * size) as u32);
+            let mut left = proof_bits.range((j * size) as usize, ((j + 1) * size) as usize);
+            let mut right = proof_bits.range(((j + 1) * size) as usize, ((j + 2) * size) as usize);
             if compare_proof_bits(&left, &right, k)? {
-                left += right;
-                new_proof += left;
+                left += &right;
+                new_proof += &left;
             } else {
-                right += left;
-                new_proof += right;
+                right += &left;
+                new_proof += &right;
             }
             j += 2;
         }
@@ -46,189 +332,52 @@ pub fn get_quality_string(
     to_hash.extend(
         proof_bits
             .range(
-                (k as u16 * quality_index) as u32,
-                (k as u16 * (quality_index + 2)) as u32,
+                (k as u16 * quality_index) as usize,
+                (k as u16 * (quality_index + 2)) as usize,
             )
             .to_bytes(),
     );
-    let mut hasher: Sha256 = Sha256::new();
-    hasher.update(to_hash);
-    Ok(hasher.finalize().to_vec())
+    Ok(hash_256(to_hash))
 }
 
-pub fn validate_proof(
-    id: &[u8; 32],
-    k: u8,
-    challenge: &[u8],
-    proof_bytes: &[u8],
-) -> Result<BitVec, Error> {
-    let proof_bits = BitVec::from_be_bytes(
-        proof_bytes,
-        proof_bytes.len() as u32,
-        (proof_bytes.len() * 8) as u32,
-    );
-    if k as usize * 64 != proof_bits.get_size() as usize {
-        return Ok(BitVec::new(0, 0));
+pub async fn check_plot<T: AsRef<Path>>(
+    path: T,
+    challenges: usize,
+) -> Result<(usize, usize), Error> {
+    debug!("Testing plot {:?}", path.as_ref());
+    let reader = PlotReader::new(DiskPlot::new(path.as_ref()).await?, None, None).await?;
+    if *reader.plot_file().compression_level() > 0 {
+        warn!(
+            "Plot Check skipped for plot at compression level {}",
+            reader.plot_file().compression_level()
+        );
+        return Ok((challenges, 0));
     }
-    let mut proof: Vec<BitVec> = Vec::new();
-    let mut ys: Vec<BitVec> = Vec::new();
-    let mut metadata: Vec<BitVec> = Vec::new();
-    let f1 = F1Calculator::new(k, id);
-
-    let mut index: u8 = 0;
-    while index < 64 {
-        let as_int =
-            proof_bits.slice_to_int(k as u32 * index as u32, k as u32 * (index as u32 + 1));
-        proof.push(BitVec::new(as_int as u128, k as u32));
-        index += 1;
-    }
-
-    // Calculates f1 for each of the given xs. Note that the proof is in proof order.
-    index = 0;
-    while index < 64 {
-        let proof_slice = &proof[index as usize];
-        let results = f1.calculate_bucket(proof_slice)?;
-        ys.push(results.0);
-        metadata.push(results.1);
-        index += 1;
-    }
-
-    // Calculates fx for each table from 2..7, making sure everything matches on the way.
-    let mut depth = 2;
-    while depth < 8 {
-        let mut f = FXCalculator::new(k, depth);
-        let mut new_ys: Vec<BitVec> = Default::default();
-        let mut new_metadata: Vec<BitVec> = Default::default();
-        index = 0;
-        while index < (1 << (8 - depth)) {
-            let mut l_plot_entry = PlotEntry {
-                y: 0,
-                pos: 0,
-                offset: 0,
-                left_metadata: 0,
-                right_metadata: 0,
-                used: false,
-                read_posoffset: 0,
-            };
-            let mut r_plot_entry = PlotEntry {
-                y: 0,
-                pos: 0,
-                offset: 0,
-                left_metadata: 0,
-                right_metadata: 0,
-                used: false,
-                read_posoffset: 0,
-            };
-
-            l_plot_entry.y = ys[index as usize]
-                .get_value()
-                .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Invalid L Plot Entry"))?;
-            r_plot_entry.y = ys[index as usize + 1]
-                .get_value()
-                .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Invalid R Plot Entry"))?;
-
-            // If there is no match, fails.
-            let r_diff = r_plot_entry.y / K_BC as u64;
-            let l_diff = l_plot_entry.y / K_BC as u64;
-            let cdiff = r_diff.wrapping_sub(l_diff);
-            let bucket_l: Vec<PlotEntry> = vec![l_plot_entry];
-            let bucket_r: Vec<PlotEntry> = vec![r_plot_entry];
-            if cdiff != 1 || f.find_matches(&bucket_l, &bucket_r, None, None) != 1 {
-                return Ok(BitVec::new(0, 0));
-            }
-            let results = f.calculate_bucket(
-                &ys[index as usize],
-                &metadata[index as usize],
-                &metadata[index as usize + 1],
-            );
-            new_ys.push(results.0);
-            new_metadata.push(results.1);
-            index += 2;
-        }
-
-        for new_y in &new_ys {
-            if new_y.get_size() == 0 {
-                return Ok(BitVec::new(0, 0));
-            }
-        }
-        ys = new_ys;
-        metadata = new_metadata;
-        depth += 1;
-    }
-
-    let challenge_bits = BitVec::from_be_bytes(
-        challenge,
-        challenge.len() as u32,
-        (challenge.len() * 8) as u32,
-    );
-    let quality_index = (challenge_bits
-        .range(256 - 5, challenge_bits.get_size())
-        .get_value()
-        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Invalid u64 for Challenge Bits"))?
-        << 1) as u16;
-
-    // Makes sure the output is equal to the first k bits of the challenge
-    match get_quality_string(k, &proof_bits.to_bytes(), quality_index, challenge) {
-        Ok(qs) => {
-            if challenge_bits.range(0, k as u32) == ys[0].range(0, k as u32) {
-                // Returns quality string, which requires changing proof to plot ordering
-                Ok(BitVec::from_be_bytes(qs, 32, 256))
-            } else {
-                Ok(BitVec::new(0, 0))
-            }
-        }
-        Err(e) => {
-            trace!("Error in get_quality_string: {}", e);
-            Ok(BitVec::new(0, 0))
-        }
-    }
-}
-
-fn compare_proof_bits(left: &BitVec, right: &BitVec, k: u8) -> Result<bool, Error> {
-    let size = left.get_size() / k as u32;
-    if left.get_size() != right.get_size() {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "Right and Left are not Equal",
-        ));
-    }
-    let mut i: i32 = size as i32 - 1;
-    while i >= 0 {
-        let left_val = left.range(k as u32 * i as u32, k as u32 * (i + 1) as u32);
-        let right_val = right.range(k as u32 * i as u32, k as u32 * (i + 1) as u32);
-        if left_val < right_val {
-            return Ok(true);
-        }
-        if left_val > right_val {
-            return Ok(false);
-        }
-
-        if i == 0 {
-            break;
-        }
-        i -= 1;
-    }
-    Ok(false)
-}
-
-pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, usize), Error> {
-    info!("Testing plot {:?}", path.as_ref());
-    let prover = DiskProver::new(path.as_ref())?;
+    let k = match reader.header() {
+        PlotHeader::V1(h) => h.k,
+        PlotHeader::V2(h) => h.k,
+    };
+    let id = match reader.header() {
+        PlotHeader::V1(h) => h.id,
+        PlotHeader::V2(h) => h.id,
+    };
     let mut total_proofs = 0;
     let mut bad_proofs = 0;
     for i in 0..challenges {
         let challenge_hash = Bytes32::new(&hash_256(i.to_be_bytes()));
         let start = Instant::now();
-        let qualities = prover.get_qualities_for_challenge(&challenge_hash)?;
+        let qualities = reader
+            .fetch_qualities_for_challenge(challenge_hash.as_ref())
+            .await?;
         let duration = Instant::now().duration_since(start).as_millis();
-        for (index, quality) in qualities.iter().enumerate() {
+        for (index, _quality) in qualities.iter() {
             if duration > 5000 {
                 warn!("\tLooking up qualities took: {duration} ms. This should be below 5 seconds to minimize risk of losing rewards.");
             } else {
                 debug!("\tLooking up qualities took: {duration} ms.");
             }
             let proof_start = Instant::now();
-            let proof = prover.get_full_proof(&challenge_hash, index, true)?;
+            let proof = reader.fetch_proof(*index).await?;
             let proof_duration = Instant::now().duration_since(proof_start).as_millis();
             if proof_duration > 15000 {
                 warn!("\tFinding proof took: {proof_duration} ms. This should be below 15 seconds to minimize risk of losing rewards.");
@@ -236,13 +385,7 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
                 debug!("\tFinding proof took: {proof_duration} ms");
             }
             total_proofs += 1;
-            let v_quality = validate_proof(
-                prover.header.id.to_sized_bytes(),
-                prover.header.k,
-                &challenge_hash.bytes,
-                &proof,
-            )?;
-            if *quality != v_quality {
+            if validate_proof(id.to_sized_bytes(), k, &proof, challenge_hash.as_ref()).is_err() {
                 bad_proofs += 1;
                 error!("Error Proving Plot: {:?}", path.as_ref());
             }
@@ -251,45 +394,33 @@ pub fn check_plot<T: AsRef<Path>>(path: T, challenges: usize) -> Result<(usize, 
     Ok((total_proofs, bad_proofs))
 }
 
-#[test]
-pub fn test_check_plot() {
-    let path = "/mnt/96acc2b7-d09d-4d27-a09c-a8b425a59813/plot-k32-2023-05-30-23-09-003fd7e478ccf85bddf96300461963bc9543e7b9cc0360ba429c40c5f0757edf.plot";
-    let (total, bad) = check_plot(path, 30).unwrap();
-    println!("Proofs Found: {total}/30, Bad Proofs: {bad}");
+fn compare_proof_bits(left: &BitReader, right: &BitReader, k: u8) -> Result<bool, Error> {
+    let size = left.get_size() / k as usize;
+    if left.get_size() != right.get_size() {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "Right and Left are not Equal",
+        ));
+    }
+    let mut i = size as isize - 1;
+    while i >= 0 {
+        let _i = i as usize;
+        let left_val = left.range(k as usize * _i, k as usize * (_i + 1));
+        let right_val = right.range(k as usize * _i, k as usize * (_i + 1));
+        if left_val < right_val {
+            return Ok(true);
+        }
+        if left_val > right_val {
+            return Ok(false);
+        }
+        i -= 1;
+    }
+    Ok(false)
 }
 
-#[test]
-pub fn test_parallel_check_plots() {
-    use rayon::prelude::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    let path = "/mnt/96acc2b7-d09d-4d27-a09c-a8b425a59813/";
-    let mut total_plots = AtomicU64::new(0);
-    let start = Instant::now();
-    match Path::new(path).read_dir() {
-        Ok(dir) => {
-            dir.par_bridge().for_each(|entry| match entry {
-                Ok(file) => {
-                    let path = file.path();
-                    if let Some(s) = path.extension() {
-                        if s == "plot" {
-                            let (total, bad) = check_plot(path, 30).unwrap();
-                            println!("Proofs Found: {total}/30, Bad Proofs: {bad}");
-                            total_plots.fetch_add(1, Ordering::AcqRel);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to read file {:?}", e);
-                }
-            });
-        }
-        Err(e) => {
-            eprintln!("Failed to read Plot Directory {:?}, {:?}", path, e);
-        }
-    }
-    println!(
-        "Checked {} Plots in {} ms",
-        total_plots.get_mut(),
-        start.duration_since(Instant::now()).as_millis()
-    );
+pub fn proof_to_bytes(src: &[u64]) -> Vec<u8> {
+    src.iter()
+        .map(|b| b.to_be_bytes())
+        .collect::<Vec<[u8; size_of::<u64>()]>>()
+        .concat()
 }

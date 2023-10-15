@@ -1,4 +1,5 @@
 use crate::constants::*;
+use dg_xch_core::plots::PlotTable;
 use std::cmp::max;
 
 pub struct EntrySizes {}
@@ -47,24 +48,29 @@ impl EntrySizes {
     // Calculates the size of one C3 park. This will store bits for each f7 between
     // two C1 checkpoints, depending on how many times that f7 is present. For low
     // values of k, we need extra space to account for the additional variability.
-    pub fn calculate_c3size(k: u8) -> u32 {
+    pub fn calculate_c3size(k: u32) -> u32 {
         if k < 20 {
-            byte_align(8 * K_CHECKPOINT1INTERVAL) / 8
+            ucdiv(8 * K_CHECKPOINT1INTERVAL, 8)
         } else {
-            byte_align((K_C3BITS_PER_ENTRY * K_CHECKPOINT1INTERVAL as f64) as u32) / 8
+            ucdiv(BITS_PER_INTERVAL, 8)
         }
     }
-
-    pub fn calculate_line_point_size(k: u8) -> u32 {
-        byte_align(2 * k as u32) / 8
+    pub fn calculate_park7_size(k: u32) -> u32 {
+        ucdiv((k + 1) * K_ENTRIES_PER_PARK, 8)
     }
-
     // This is the full size of the deltas section in a park. However, it will not be fully filled
-    pub fn calculate_max_deltas_size(table_index: u8) -> u32 {
-        if table_index == 1 {
-            byte_align(((K_ENTRIES_PER_PARK - 1) as f64 * K_MAX_AVERAGE_DELTA_TABLE1) as u32) / 8
+    pub fn calculate_max_deltas_size(table: &PlotTable) -> u32 {
+        assert!(*table < PlotTable::Table7);
+        if *table == PlotTable::Table1 {
+            ucdiv(
+                ((K_ENTRIES_PER_PARK - 1) as f64 * K_MAX_AVERAGE_DELTA_TABLE1) as u32,
+                8,
+            )
         } else {
-            byte_align(((K_ENTRIES_PER_PARK - 1) as f64 * K_MAX_AVERAGE_DELTA) as u32) / 8
+            ucdiv(
+                ((K_ENTRIES_PER_PARK - 1) as f64 * K_MAX_AVERAGE_DELTA) as u32,
+                8,
+            )
         }
     }
 
@@ -72,9 +78,18 @@ impl EntrySizes {
         byte_align((K_ENTRIES_PER_PARK - 1) * (k - K_STUB_MINUS_BITS as u32)) / 8
     }
 
-    pub fn calculate_park_size(k: u8, table_index: u8) -> u32 {
-        Self::calculate_line_point_size(k)
-            + Self::calculate_stubs_size(k as u32)
-            + Self::calculate_max_deltas_size(table_index)
+    pub fn calculate_park_size(table: &PlotTable, k: u32) -> u32 {
+        Self::line_point_size_bytes(k)
+            + ucdiv((K_ENTRIES_PER_PARK - 1) * (k - K_STUB_MINUS_BITS as u32), 8)
+            + Self::calculate_max_deltas_size(table)
+    }
+    pub fn line_point_size_bits(k: u32) -> u32 {
+        k * 2
+    }
+    pub fn line_point_size_bytes(k: u32) -> u32 {
+        ucdiv(Self::line_point_size_bits(k), 8)
+    }
+    pub fn round_up_to_next_boundary(value: usize, boundary: usize) -> usize {
+        value + (boundary - (value % boundary)) % boundary
     }
 }

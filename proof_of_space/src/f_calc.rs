@@ -1,36 +1,9 @@
-use crate::bitvec::BitVec;
 use crate::chacha8::{chacha8_get_keystream, chacha8_keysetup, ChachaContext};
 use crate::constants::*;
-use crate::util::slice_u64from_bytes;
-use lazy_static::lazy_static;
+use crate::utils::bit_reader::BitReader;
+use crate::utils::slice_u64from_bytes;
 use std::cmp::min;
-use std::io::{Error, ErrorKind};
-
-fn load_tables() -> Vec<Vec<Vec<u16>>> {
-    let mut table: Vec<Vec<Vec<u16>>> =
-        vec![vec![vec![0; K_EXTRA_BITS_POW as usize]; K_BC as usize]; 2];
-    let mut parity = 0;
-    while parity < 2 {
-        let mut i = 0;
-        while i < K_BC {
-            let ind_j = i / K_C;
-            let mut m = 0u16;
-            while m < K_EXTRA_BITS_POW as u16 {
-                let yr =
-                    ((ind_j + m) % K_B) * K_C + (((2 * m + parity) * (2 * m + parity) + i) % K_C);
-                table[parity as usize][i as usize][m as usize] = yr;
-                m += 1;
-            }
-            i += 1;
-        }
-        parity += 1;
-    }
-    table
-}
-
-lazy_static! {
-    static ref L_TARGETS: Vec<Vec<Vec<u16>>> = load_tables();
-}
+use std::io::Error;
 
 pub struct F1Calculator {
     k: u8,
@@ -53,17 +26,14 @@ impl F1Calculator {
         // Setup ChaCha8 context with zero-filled IV
         chacha8_keysetup(&mut self.enc_ctx_, &enc_key, None);
     }
-    pub fn calculate_f(&self, l: &BitVec) -> Result<BitVec, Error> {
+    pub fn calculate_f(&self, l: &BitReader) -> Result<BitReader, Error> {
         let num_output_bits = self.k as u16;
         let block_size_bits = K_F1_BLOCK_SIZE_BITS;
 
         // Calculates the counter that will be used to get ChaCha8 keystream.
         // Since k < block_size_bits, we can fit several k bit blocks into one
         // ChaCha8 block.
-        let counter_bit: u128 = l.get_value().ok_or_else(|| {
-            Error::new(ErrorKind::InvalidInput, "Failed to convert bitvec to u128")
-        })? as u128
-            * num_output_bits as u128;
+        let counter_bit: u128 = l.first_u64() as u128 * num_output_bits as u128;
         let mut counter: u64 = (counter_bit / block_size_bits as u128) as u64;
 
         // How many bits are before L, in the current block
@@ -79,45 +49,41 @@ impl F1Calculator {
         // keystream blocks will be generated.
         let spans_two_blocks: bool = bits_of_l < num_output_bits;
 
-        let mut ciphertext_bytes: Vec<u8> = Vec::new();
-        let mut output_bits: BitVec;
+        let mut ciphertext_bytes: Vec<u8> = vec![0; 64];
+        let mut output_bits: BitReader;
 
         // This counter is used to initialize words 12 and 13 of ChaCha8
         // initial state (4x4 matrix of 32-bit words). This is similar to
         // encrypting plaintext at a given offset, but we have no
         // plaintext, so no XORing at the end.
         chacha8_get_keystream(&self.enc_ctx_, counter, 1, &mut ciphertext_bytes);
-        let ciphertext0: BitVec = BitVec::from_be_bytes(
-            &ciphertext_bytes,
-            (block_size_bits / 8) as u32,
-            block_size_bits as u32,
-        );
+        let ciphertext0 = BitReader::from_bytes_be(&ciphertext_bytes, block_size_bits as usize);
 
         if spans_two_blocks {
             // Performs another encryption if necessary
             counter += 1;
             ciphertext_bytes.clear();
             chacha8_get_keystream(&self.enc_ctx_, counter, 1, &mut ciphertext_bytes);
-            let ciphertext1: BitVec = BitVec::from_be_bytes(
-                &ciphertext_bytes,
-                (block_size_bits / 8) as u32,
-                block_size_bits as u32,
-            );
-            output_bits = ciphertext0.slice(bits_before_l)
+            let ciphertext1: BitReader =
+                BitReader::from_bytes_be(&ciphertext_bytes, block_size_bits as usize);
+            output_bits = ciphertext0.slice(bits_before_l as usize)
                 + ciphertext1.range(0, (num_output_bits - bits_of_l).into());
         } else {
-            output_bits = ciphertext0.range(bits_before_l, bits_before_l + num_output_bits as u32);
+            output_bits = ciphertext0.range(
+                bits_before_l as usize,
+                (bits_before_l + num_output_bits as u32) as usize,
+            );
         }
 
         // Adds the first few bits of L to the end of the output, production k + kExtraBits of output
         let mut extra_data = l.range(0, K_EXTRA_BITS.into());
-        if extra_data.get_size() < K_EXTRA_BITS.into() {
-            extra_data += BitVec::new(0, K_EXTRA_BITS as u32 - extra_data.get_size());
+        if extra_data.get_size() < K_EXTRA_BITS as usize {
+            extra_data += &BitReader::new(0, K_EXTRA_BITS as usize - extra_data.get_size());
         }
-        output_bits += extra_data;
+        output_bits += &extra_data;
         Ok(output_bits)
     }
-    pub fn calculate_bucket(&self, l: &BitVec) -> Result<(BitVec, BitVec), Error> {
+    pub fn calculate_bucket(&self, l: &BitReader) -> Result<(BitReader, BitReader), Error> {
         Ok((self.calculate_f(l)?, l.clone()))
     }
 
@@ -168,24 +134,29 @@ impl FXCalculator {
         FXCalculator {
             k,
             table_index,
-            rmap: vec![RmapItem { count: 0, pos: 0 }; K_BC as usize],
+            rmap: vec![RmapItem { count: 0, pos: 0 }; K_BC],
             rmap_clean: vec![],
         }
     }
-    pub fn calculate_bucket(&self, y1: &BitVec, l: &BitVec, r: &BitVec) -> (BitVec, BitVec) {
-        let input: BitVec;
-        let mut c: BitVec;
+    pub fn calculate_bucket(
+        &self,
+        y1: &BitReader,
+        l: &BitReader,
+        r: &BitReader,
+    ) -> (BitReader, BitReader) {
+        let input: BitReader;
+        let mut c: BitReader;
         if self.table_index < 4 {
             c = l.clone() + r;
             input = y1.clone() + &c;
         } else {
-            c = BitVec::new(0, 0);
+            c = BitReader::new(0, 0);
             input = y1.clone() + l + r;
         }
 
         let mut hasher = blake3::Hasher::new();
         let input_bytes = input.to_bytes();
-        let byte_len = ucdiv(input.get_size(), 8);
+        let byte_len = ucdiv(input.get_size() as u32, 8);
         hasher.update(&input_bytes[0..byte_len as usize]);
         let hash = hasher.finalize();
         let hash_bytes = hash.as_bytes();
@@ -199,17 +170,16 @@ impl FXCalculator {
             let start_byte = ((self.k + K_EXTRA_BITS) / 8) as usize;
             let end_bit = (self.k + K_EXTRA_BITS + self.k * len) as usize;
             let end_byte = cdiv(end_bit as i32, 8i32) as usize;
-            c = BitVec::from_be_bytes(
+            c = BitReader::from_bytes_be(
                 &hash_bytes[start_byte..end_byte],
-                (end_byte - start_byte) as u32,
-                ((end_byte - start_byte) * 8) as u32,
+                (end_byte - start_byte) * 8,
             );
             c = c.range(
-                ((self.k + K_EXTRA_BITS) % 8) as u32,
-                (end_bit - start_byte * 8) as u32,
+                ((self.k + K_EXTRA_BITS) % 8) as usize,
+                end_bit - start_byte * 8,
             );
         }
-        (BitVec::new(f as u128, (self.k + K_EXTRA_BITS) as u32), c)
+        (BitReader::new(f, (self.k + K_EXTRA_BITS) as usize), c)
     }
     pub fn find_matches(
         &mut self,

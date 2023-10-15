@@ -34,6 +34,11 @@ use tokio_tungstenite::{
 };
 use urlencoding::encode;
 use uuid::Uuid;
+use crate::protocols::shared::{
+    load_certs, load_certs_from_bytes, load_private_key, load_private_key_from_bytes, Handshake,
+    NoCertificateVerification, CAPABILITIES, PROTOCOL_VERSION, SOFTWARE_VERSION,
+};
+use crate::protocols::ProtocolMessageTypes;
 
 pub async fn await_termination() -> Result<(), Error> {
     let mut term_signal = signal(SignalKind::terminate())?;
@@ -50,12 +55,6 @@ pub async fn await_termination() -> Result<(), Error> {
     }
     Ok(())
 }
-
-use crate::protocols::shared::{
-    load_certs, load_certs_from_bytes, load_private_key, load_private_key_from_bytes, Handshake,
-    NoCertificateVerification, CAPABILITIES, PROTOCOL_VERSION, SOFTWARE_VERSION,
-};
-use crate::protocols::ProtocolMessageTypes;
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")

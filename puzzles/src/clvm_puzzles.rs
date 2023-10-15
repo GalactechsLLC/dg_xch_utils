@@ -82,7 +82,7 @@ pub fn create_waiting_room_inner_puzzle(
     delay_time: u64,
     delay_ph: &Bytes32,
 ) -> Result<Program, Error> {
-    let mut genesis_bytes = genesis_challenge.as_ref()[..16].to_vec();
+    let mut genesis_bytes = genesis_challenge.as_slice()[..16].to_vec();
     genesis_bytes.append(&mut b"\x00".repeat(16));
     let pool_reward_prefix: Bytes32 = Bytes32::new(&genesis_bytes);
     let p2_singleton_puzzle_hash: Bytes32 =
@@ -106,7 +106,7 @@ pub fn create_pooling_inner_puzzle(
     delay_time: u64,
     delay_ph: &Bytes32,
 ) -> Result<Program, Error> {
-    let mut genesis_bytes = genesis_challenge.as_ref()[..16].to_vec();
+    let mut genesis_bytes = genesis_challenge.as_slice()[..16].to_vec();
     genesis_bytes.append(&mut b"\x00".repeat(16));
     let pool_reward_prefix: Bytes32 = Bytes32::new(&genesis_bytes);
     let p2_singleton_puzzle_hash: Bytes32 =
@@ -462,7 +462,7 @@ pub fn solution_to_pool_state(coin_solution: &CoinSpend) -> Result<Option<PoolSt
             return Ok(None);
         }
         pool_state_from_extra_data(extra_data)
-    } else {
+    } else if num_args == 3{
         let first = inner_solution.first()?;
         let rest = inner_solution.rest()?;
         if first.as_int()? == Zero::zero() {
@@ -471,6 +471,8 @@ pub fn solution_to_pool_state(coin_solution: &CoinSpend) -> Result<Option<PoolSt
         }
         extra_data = rest.first()?;
         pool_state_from_extra_data(extra_data)
+    } else {
+        return Err(Error::new(ErrorKind::InvalidInput, format!("Invalid Arg Length {num_args}, expected 2 or 3")));
     }
 }
 
