@@ -27,9 +27,10 @@ use crate::rpc::{get_client, get_url, post};
 
 pub struct FullnodeClient {
     client: Client,
-    host: String,
-    port: u16,
-    additional_headers: Option<HashMap<String, String>>,
+    pub host: String,
+    pub port: u16,
+    pub ssl_path: Option<String>,
+    pub additional_headers: Option<HashMap<String, String>>,
 }
 
 impl FullnodeClient {
@@ -40,9 +41,10 @@ impl FullnodeClient {
         additional_headers: &Option<HashMap<String, String>>,
     ) -> Self {
         FullnodeClient {
-            client: get_client(ssl_path).unwrap_or_default(),
+            client: get_client(ssl_path.clone()).unwrap_or_default(),
             host: host.to_string(),
             port,
+            ssl_path,
             additional_headers: additional_headers.clone(),
         }
     }

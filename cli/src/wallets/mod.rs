@@ -20,11 +20,27 @@ use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{puzzle_for_pk, soluti
 use dg_xch_puzzles::utils::{make_assert_absolute_seconds_exceeds_condition, make_assert_coin_announcement, make_assert_puzzle_announcement, make_create_coin_announcement, make_create_coin_condition, make_create_puzzle_announcement, make_reserve_fee_condition};
 use dg_xch_serialize::{ChiaSerialize, hash_256};
 use async_trait::async_trait;
+use dashmap::DashMap;
+use dashmap::mapref::one::Ref;
+use tokio::sync::Mutex;
 use crate::wallets::common::{DerivationRecord, sign_coin_spends};
 
 pub mod plotnft_utils;
 pub mod common;
 pub mod memory_wallet;
+
+#[derive(Default)]
+pub struct SecretKeyStore {
+    keys: DashMap<Bytes48, Bytes32>
+}
+impl SecretKeyStore {
+    pub fn save_secret_key(&self, secret_key: &SecretKey) -> Option<Bytes32> {
+        self.keys.insert(Bytes48::from(secret_key.sk_to_pk()), Bytes32::from(secret_key.to_bytes()))
+    }
+    pub fn secret_key_for_public_key(&self, pub_key: &Bytes48) -> Option<Ref<Bytes48, Bytes32>>{
+        self.keys.get(pub_key)
+    }
+}
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy)]
 struct Primary {
@@ -37,7 +53,8 @@ pub struct WalletInfo<T: WalletStore> {
     pub name: String,
     pub wallet_type: WalletType,
     pub constants: ConsensusConstants,
-    pub wallet_store: Arc<T>,
+    pub master_sk: SecretKey,
+    pub wallet_store: Arc<Mutex<T>>,
     pub data: String //JSON String to Store Extra Data for Wallets
 }
 
@@ -49,19 +66,19 @@ pub trait WalletStore {
     async fn get_unconfirmed_balance(&self) -> u128;
     async fn get_spendable_balance(&self) -> u128;
     async fn get_pending_change_balance(&self) -> u128;
-    async fn get_unused_derivation_record(&self) -> Result<DerivationRecord, Error>;
-    async fn get_derivation_record(&self) -> Result<DerivationRecord, Error>;
-    async fn get_derivation_record_at_index(&self, index: u64) -> Result<DerivationRecord, Error>;
+    async fn get_unused_derivation_record(&self, hardened: bool) -> Result<DerivationRecord, Error>;
+    async fn get_derivation_record(&self, hardened: bool) -> Result<DerivationRecord, Error>;
+    async fn get_derivation_record_at_index(&self, index: u32, hardened: bool) -> Result<DerivationRecord, Error>;
     async fn select_coins(
         &self,
         amount: u64,
         exclude: Option<&[Coin]>,
         min_coin_amount: Option<u64>,
-        max_coin_amount: Option<u64>,
+        max_coin_amount: u64,
         exclude_coin_amounts: Option<&[u64]>,
     ) -> Result<HashSet<Coin>, Error>;
-    async fn populate_secret_key_for_puzzle_hash(&self, puz_hash: &Bytes32) -> Bytes48;
-    async fn populate_secret_keys_for_coin_spends(&self) -> Bytes48;
+    async fn populate_secret_key_for_puzzle_hash(&self, puz_hash: &Bytes32) -> Result<Bytes48, Error>;
+    async fn populate_secret_keys_for_coin_spends(&self, coin_spends: &[CoinSpend]) -> Result<(), Error>;
     async fn secret_key_for_public_key(&self, public_key: &Bytes48) -> Result<SecretKey, Error>;
     fn mapping_function<'a, F>(&'a self, public_key: &'a Bytes48) -> Box<dyn Future<Output = Result<SecretKey, Error>> + Send + '_> {
         Box::new(self.secret_key_for_public_key(public_key))
@@ -70,10 +87,12 @@ pub trait WalletStore {
 
 #[async_trait]
 pub trait Wallet<T: WalletStore + Send + Sync, C> {
-    fn create(name: &str, info: WalletInfo<T>, config: C) -> Self;
+    fn create(info: WalletInfo<T>, config: C) -> Self;
     fn name(&self) -> &str;
+    async fn sync(&self) -> Result<bool, Error>;
+    fn is_synced(&self) -> bool;
     fn wallet_info(&self) -> &WalletInfo<T>;
-    fn wallet_store(&self) -> Arc<T>;
+    fn wallet_store(&self) -> Arc<Mutex<T>>;
     fn require_derivation_paths(&self) -> bool {
         true
     }
@@ -135,29 +154,26 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         todo!()
     }
     async fn puzzle_for_puzzle_hash(&self, puz_hash: &Bytes32) -> Result<Program, Error> {
-        let public_key = self.wallet_store().populate_secret_key_for_puzzle_hash(puz_hash).await;
+        let public_key = self.wallet_store().lock().await.populate_secret_key_for_puzzle_hash(puz_hash).await?;
         puzzle_for_pk(&public_key)
     }
     async fn get_new_puzzle(&self) -> Result<Program, Error> {
-        let wallet_store = self.wallet_store().clone();
-        let dr = wallet_store.get_unused_derivation_record().await?;
+        let dr = self.wallet_store().lock().await.get_unused_derivation_record(false).await?;
         let puzzle= puzzle_for_pk(&dr.pubkey)?;
-        wallet_store.populate_secret_key_for_puzzle_hash(&puzzle.tree_hash()).await;
+        self.wallet_store().lock().await.populate_secret_key_for_puzzle_hash(&puzzle.tree_hash()).await;
         Ok(puzzle)
     }
     async fn get_puzzle_hash(&self, new: bool) -> Result<Bytes32, Error> {
         Ok(if new {
             self.get_new_puzzlehash().await?
         } else {
-            let wallet_store =  self.wallet_store().clone();
-            let dr = wallet_store.get_unused_derivation_record().await?;
+            let dr = self.wallet_store().lock().await.get_unused_derivation_record(false).await?;
             dr.puzzle_hash
         })
     }
     async fn get_new_puzzlehash(&self) -> Result<Bytes32, Error> {
-        let wallet_store = self.wallet_store().clone();
-        let dr = wallet_store.get_unused_derivation_record().await?;
-        wallet_store.populate_secret_key_for_puzzle_hash(&dr.puzzle_hash).await;
+        let dr = self.wallet_store().lock().await.get_unused_derivation_record(false).await?;
+        self.wallet_store().lock().await.populate_secret_key_for_puzzle_hash(&dr.puzzle_hash).await;
         Ok(dr.puzzle_hash)
     }
     async fn convert_puzzle_hash(&self, puzzle_hash: Bytes32) -> Bytes32 {
@@ -218,7 +234,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 let pub_key = *pub_key;
                 let wallet_store = wallet_store.clone();
                 async move {
-                    wallet_store.secret_key_for_public_key(&pub_key).await
+                    wallet_store.lock().await.secret_key_for_public_key(&pub_key).await
                 }
             },
             &self.wallet_info().constants.agg_sig_me_additional_data,
@@ -288,9 +304,9 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             total_amount = amount as u128 + fee as u128
         }
         let reuse_puzhash = reuse_puzhash.unwrap_or(true);
-        let total_balance = self.wallet_store().get_spendable_balance().await;
+        let total_balance = self.wallet_store().lock().await.get_spendable_balance().await;
         if !ignore_max_send_amount {
-            let max_send = self.wallet_store().get_max_send_amount().await;
+            let max_send = self.wallet_store().lock().await.get_max_send_amount().await;
             if total_amount > max_send {
                 return Err(Error::new(ErrorKind::InvalidInput, format!("Can't send more than {max_send} mojos in a single transaction, got {total_amount}")));
             }
@@ -301,11 +317,11 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             if total_amount > total_balance {
                 return Err(Error::new(ErrorKind::InvalidInput, format!("Can't spend more than wallet balance: {total_balance} mojos, tried to spend: {total_amount} mojos")));
             }
-            coins_set = self.wallet_store().select_coins(
+            coins_set = self.wallet_store().lock().await.select_coins(
                 total_amount as u64,
                 exclude_coins,
                 min_coin_amount,
-                max_coin_amount,
+                max_coin_amount.unwrap_or(self.wallet_info().constants.max_coin_amount.to_u64().unwrap_or_default()),
                 exclude_coin_amounts,
             ).await?;
         } else if exclude_coins.is_some() {
