@@ -1,28 +1,35 @@
-use blst::min_pk::{SecretKey};
+use crate::wallets::common::sign_coin_spend;
+use crate::wallets::memory_wallet::{MemoryWalletConfig, MemoryWalletStore};
+use crate::wallets::{Wallet, WalletInfo};
+use async_trait::async_trait;
+use blst::min_pk::SecretKey;
 use dg_xch_clients::api::full_node::FullnodeAPI;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
+use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
-use dg_xch_core::blockchain::coin_spend::{CoinSpend, compute_additions_with_cost};
+use dg_xch_core::blockchain::coin_spend::{compute_additions_with_cost, CoinSpend};
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
-use dg_xch_core::consensus::constants::{ConsensusConstants,};
+use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
-use dg_xch_keys::{master_sk_to_singleton_owner_sk, master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened};
-use dg_xch_puzzles::clvm_puzzles::{create_full_puzzle, create_travel_spend, get_delay_puzzle_info_from_launcher_spend, get_most_recent_singleton_coin_from_coin_spend, launcher_coin_spend_to_extra_data, pool_state_to_inner_puzzle, solution_to_pool_state, SINGLETON_LAUNCHER_HASH};
+use dg_xch_keys::{
+    master_sk_to_singleton_owner_sk, master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened,
+};
+use dg_xch_puzzles::clvm_puzzles::{
+    create_full_puzzle, create_travel_spend, get_delay_puzzle_info_from_launcher_spend,
+    get_most_recent_singleton_coin_from_coin_spend, launcher_coin_spend_to_extra_data,
+    pool_state_to_inner_puzzle, solution_to_pool_state, SINGLETON_LAUNCHER_HASH,
+};
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
+use log::info;
 use num_traits::cast::ToPrimitive;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use async_trait::async_trait;
-use log::info;
 use tokio::sync::Mutex;
-use dg_xch_core::blockchain::announcement::Announcement;
-use crate::wallets::common::{sign_coin_spend};
-use crate::wallets::memory_wallet::{MemoryWalletConfig, MemoryWalletStore};
-use crate::wallets::{Wallet, WalletInfo};
+use dg_xch_clients::protocols::pool::{FARMING_TO_POOL, LEAVING_POOL, POOL_PROTOCOL_VERSION};
 
 pub struct PlotNFTWallet {
     info: WalletInfo<MemoryWalletStore>,
@@ -33,9 +40,14 @@ pub struct PlotNFTWallet {
 impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     fn create(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Self {
         Self {
-            fullnode_client: FullnodeClient::new(&config.fullnode_host, config.fullnode_port, config.fullnode_ssl_path.clone(), &config.additional_headers),
+            fullnode_client: FullnodeClient::new(
+                &config.fullnode_host,
+                config.fullnode_port,
+                config.fullnode_ssl_path.clone(),
+                &config.additional_headers,
+            ),
             info,
-            config
+            config,
         }
     }
 
@@ -46,18 +58,17 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     async fn sync(&self) -> Result<bool, Error> {
         let mut puzzle_hashes = vec![];
         for index in 0..50 {
-            let wallet_sk =
-                master_sk_to_wallet_sk(&self.info.master_sk, index).map_err(|e| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        format!("Failed to parse Wallet SK: {:?}", e),
-                    )
-                })?;
+            let wallet_sk = master_sk_to_wallet_sk(&self.info.master_sk, index).map_err(|e| {
+                Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("Failed to parse Wallet SK: {:?}", e),
+                )
+            })?;
             let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
             let ph = puzzle_hash_for_pk(&pub_key)?;
             puzzle_hashes.push(ph);
-            let wallet_sk =
-                master_sk_to_wallet_sk_unhardened(&self.info.master_sk, index).map_err(|e| {
+            let wallet_sk = master_sk_to_wallet_sk_unhardened(&self.info.master_sk, index)
+                .map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidInput,
                         format!("Failed to parse Wallet SK: {:?}", e),
@@ -67,21 +78,15 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
             let ph = puzzle_hash_for_pk(&pub_key)?;
             puzzle_hashes.push(ph);
         }
-        let (spend, unspent) = scrounge_for_standard_coins(
-            &self.fullnode_client,
-            &puzzle_hashes
-        ).await?;
+        let (spend, unspent) =
+            scrounge_for_standard_coins(&self.fullnode_client, &puzzle_hashes).await?;
         let mut store = self.info.wallet_store.lock().await;
-        store.spent_coins.extend(
-            spend.into_iter().map(|v| {
-                (v.coin.name(), v)
-            })
-        );
-        store.unspent_coins.extend(
-            unspent.into_iter().map(|v| {
-                (v.coin.name(), v)
-            })
-        );
+        store
+            .spent_coins
+            .extend(spend.into_iter().map(|v| (v.coin.name(), v)));
+        store
+            .unspent_coins
+            .extend(unspent.into_iter().map(|v| (v.coin.name(), v)));
         Ok(true)
     }
 
@@ -98,12 +103,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     }
 }
 impl PlotNFTWallet {
-
-    pub fn find_owner_key(
-        &self,
-        key_to_find: &Bytes48,
-        limit: u32,
-    ) -> Result<SecretKey, Error> {
+    pub fn find_owner_key(&self, key_to_find: &Bytes48, limit: u32) -> Result<SecretKey, Error> {
         for i in 0..limit {
             let key = master_sk_to_singleton_owner_sk(&self.wallet_info().master_sk, i)?;
             if &key.sk_to_pk().to_bytes() == key_to_find.to_sized_bytes() {
@@ -134,30 +134,40 @@ impl PlotNFTWallet {
             None,
             None,
             None,
-            None
-        ).await
+            None,
+        )
+        .await
     }
 
     pub async fn generate_travel_transaction(
         &self,
         plot_nft: &PlotNft,
-        target_pool_state: &PoolState,
+        target_pool_state: PoolState,
         fee: u64,
         constants: &ConsensusConstants,
     ) -> Result<(TransactionRecord, Option<TransactionRecord>), Error> {
-        let launcher_coin = self.fullnode_client
+        let launcher_coin = self
+            .fullnode_client
             .get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info)
             .await?
             .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load launcher_coin"))?;
-        let last_record = self.fullnode_client
-            .get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info)
-            .await?
-            .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load last spend record:"))?;
-        let last_coin_spend = self.fullnode_client.get_coin_spend(&last_record).await?;
+        let last_coin_spend = self.fullnode_client.get_coin_spend(&launcher_coin).await?;
         let (delayed_seconds, delayed_puzhash) =
             get_delay_puzzle_info_from_launcher_spend(&last_coin_spend)?;
+        let next_state = if plot_nft.pool_state.state == FARMING_TO_POOL {
+            PoolState {
+                version: POOL_PROTOCOL_VERSION,
+                state: LEAVING_POOL,
+                target_puzzle_hash: plot_nft.pool_state.target_puzzle_hash,
+                owner_pubkey: plot_nft.pool_state.owner_pubkey,
+                pool_url: plot_nft.pool_state.pool_url.clone(),
+                relative_lock_height: plot_nft.pool_state.relative_lock_height,
+            }
+        } else {
+            target_pool_state
+        };
         let new_inner_puzzle = pool_state_to_inner_puzzle(
-            target_pool_state,
+            &next_state,
             &launcher_coin.coin.name(),
             &constants.genesis_challenge,
             delayed_seconds,
@@ -168,7 +178,7 @@ impl PlotNFTWallet {
             &last_coin_spend,
             &launcher_coin.coin,
             &plot_nft.pool_state,
-            target_pool_state,
+            &next_state,
             &constants.genesis_challenge,
             delayed_seconds,
             &delayed_puzhash,
@@ -183,18 +193,17 @@ impl PlotNFTWallet {
             outgoing_coin_spend.coin.parent_coin_info,
             last_coin_spend.coin.name()
         );
+        assert_eq!(outgoing_coin_spend.coin.parent_coin_info, last_coin_spend.coin.name());
         assert_eq!(outgoing_coin_spend.coin.name(), singleton_id);
         assert_ne!(new_inner_puzzle, inner_puzzle);
         let mut signed_spend_bundle = sign_coin_spend(
             outgoing_coin_spend,
-            |_| {
-                async {
-                    self.find_owner_key(&plot_nft.pool_state.owner_pubkey, 500)
-                }
+            |_| async {
+                self.find_owner_key(&plot_nft.pool_state.owner_pubkey, 500)
             },
             constants,
         )
-            .await?;
+        .await?;
         assert_eq!(
             signed_spend_bundle.removals()[0].puzzle_hash,
             singleton.puzzle_hash
@@ -202,9 +211,7 @@ impl PlotNFTWallet {
         assert_eq!(signed_spend_bundle.removals()[0].name(), singleton.name());
         let fee_tx: Option<TransactionRecord> = None;
         if fee > 0 {
-            let fee_tx =
-                self.generate_fee_transaction(fee, None)
-                    .await?;
+            let fee_tx = self.generate_fee_transaction(fee, None).await?;
             if let Some(fee_bundle) = fee_tx.spend_bundle {
                 signed_spend_bundle = SpendBundle::aggregate(vec![signed_spend_bundle, fee_bundle])
                     .map_err(|e| {

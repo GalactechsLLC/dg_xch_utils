@@ -8,6 +8,7 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncSeek};
 use tokio::sync::Mutex;
 
@@ -260,7 +261,7 @@ impl Display for PlotHeaderV1 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PlotNft {
     pub launcher_id: Bytes32,
     pub singleton_coin: CoinRecord,

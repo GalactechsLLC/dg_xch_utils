@@ -38,7 +38,12 @@ pub enum RootCommands {
         #[arg(short, long)]
         launcher_id: String,
         #[arg(short, long)]
-        mnemonic: String
+        mnemonic: String,
+    },
+    #[command(about = "Gets plotnft state for launcher_id", long_about = None)]
+    GetPlotnftState {
+        #[arg(short, long)]
+        launcher_id: String
     },
     #[command(about = "Create a cold wallet or a PlotNFT wallet", long_about = None)]
     CreateWallet {

@@ -8,6 +8,7 @@ use crate::clvm::program::SerializedProgram;
 use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
+use log::info;
 
 pub fn additions_for_solution(
     coin_name: Bytes32,
@@ -74,6 +75,9 @@ pub fn pkm_pairs_for_conditions_dict(
             // assert len(cwa.vars) == 2;
             // assert len(cwa.vars[0]) == 48 and len(cwa.vars[1]) <= 1024;
             // assert cwa.vars[0] is not None and cwa.vars[1] is not None;
+            info!("0: {}", hex::encode(cwa.vars[0].as_slice()));
+            info!("1: {}", hex::encode(cwa.vars[1].as_slice()));
+            info!("cn: {}", hex::encode(coin_name.as_slice()));
             let mut buf = cwa.vars[1].clone();
             buf.extend(coin_name.as_slice());
             buf.extend(additional_data);

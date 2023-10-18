@@ -1,9 +1,9 @@
-use std::hash::{Hash, Hasher};
 use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use sha2::Sha256;
+use std::hash::{Hash, Hasher};
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Coin {

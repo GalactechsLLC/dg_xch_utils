@@ -1,7 +1,16 @@
+use crate::wallets::memory_wallet::{MemoryWalletConfig, MemoryWalletStore};
+use crate::wallets::plotnft_utils::{scrounge_for_plotnft_by_key, PlotNFTWallet, get_plotnft_by_launcher_id};
+use crate::wallets::{Wallet, WalletInfo};
 use bip39::Mnemonic;
 use blst::min_pk::SecretKey;
+use dg_xch_clients::api::pool::{DefaultPoolClient, PoolClient};
+use dg_xch_clients::protocols::pool::{FARMING_TO_POOL, POOL_PROTOCOL_VERSION};
+use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
+use dg_xch_core::blockchain::wallet_type::WalletType;
+use dg_xch_core::consensus::constants::MAINNET;
+use dg_xch_core::pool::PoolState;
 use dg_xch_keys::*;
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     calculate_synthetic_secret_key, puzzle_hash_for_pk, DEFAULT_HIDDEN_PUZZLE_HASH,
@@ -10,16 +19,10 @@ use log::{error, info};
 use std::collections::{HashMap, HashSet};
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
-use crate::wallets::plotnft_utils::{PlotNFTWallet, scrounge_for_plotnft_by_key};
-use crate::wallets::{Wallet, WalletInfo};
-use crate::wallets::memory_wallet::{MemoryWalletConfig, MemoryWalletStore};
-use dg_xch_clients::api::pool::{DefaultPoolClient, PoolClient};
-use dg_xch_clients::protocols::pool::{FARMING_TO_POOL, POOL_PROTOCOL_VERSION};
-use dg_xch_clients::rpc::full_node::FullnodeClient;
-use dg_xch_core::blockchain::wallet_type::WalletType;
-use dg_xch_core::consensus::constants::MAINNET;
-use dg_xch_core::pool::PoolState;
+use dg_xch_clients::api::full_node::FullnodeAPI;
+use dg_xch_core::plots::PlotNft;
 
 pub fn create_cold_wallet() -> Result<(), Error> {
     let mnemonic = Mnemonic::generate(24)
@@ -96,10 +99,10 @@ pub fn keys_for_coinspends(
 }
 
 pub async fn migrate_plot_nft(
-    client: FullnodeClient,
-    target_pool: String,
-    launcher_id: String,
-    mnemonic: String,
+    client: &FullnodeClient,
+    target_pool: &str,
+    launcher_id: &str,
+    mnemonic: &str,
 ) -> Result<(), Error> {
     let pool_client = DefaultPoolClient::new();
     let master_secret_key = key_from_mnemonic(&mnemonic)?;
@@ -124,12 +127,15 @@ pub async fn migrate_plot_nft(
     if pool_info.relative_lock_height > 1000 {
         let error_message = "Relative lock height too high for this pool, cannot join";
         error!("{}", error_message);
-        return Err(Error::new(ErrorKind::InvalidData, error_message))
+        return Err(Error::new(ErrorKind::InvalidData, error_message));
     }
     if pool_info.protocol_version != POOL_PROTOCOL_VERSION {
-        let error_message = format!("Incorrect version: {}, should be {POOL_PROTOCOL_VERSION}", pool_info.protocol_version);
+        let error_message = format!(
+            "Incorrect version: {}, should be {POOL_PROTOCOL_VERSION}",
+            pool_info.protocol_version
+        );
         error!("{}", error_message);
-        return Err(Error::new(ErrorKind::InvalidData, error_message))
+        return Err(Error::new(ErrorKind::InvalidData, error_message));
     }
     let pool_wallet = PlotNFTWallet::create(
         WalletInfo {
@@ -138,10 +144,7 @@ pub async fn migrate_plot_nft(
             wallet_type: WalletType::PoolingWallet,
             constants: Default::default(),
             master_sk: master_secret_key.clone(),
-            wallet_store: Arc::new(Mutex::new(MemoryWalletStore::new(
-                master_secret_key,
-                0
-            ))),
+            wallet_store: Arc::new(Mutex::new(MemoryWalletStore::new(master_secret_key, 0))),
             data: "".to_string(),
         },
         MemoryWalletConfig {
@@ -149,7 +152,7 @@ pub async fn migrate_plot_nft(
             fullnode_port: client.port,
             fullnode_ssl_path: client.ssl_path.clone(),
             additional_headers: client.additional_headers.clone(),
-        }
+        },
     );
     let launcher_to_find = Bytes32::from(launcher_id);
     if !pool_wallet.sync().await? {
@@ -167,25 +170,57 @@ pub async fn migrate_plot_nft(
             owner_pubkey: Bytes48::from_sized_bytes(owner_sk.sk_to_pk().to_bytes()),
             pool_url: Some(pool_url.to_string()),
             relative_lock_height: pool_info.relative_lock_height,
-            state: FARMING_TO_POOL,  //# Farming to Pool
+            state: FARMING_TO_POOL, //# Farming to Pool
             target_puzzle_hash: pool_info.target_puzzle_hash,
             version: 1,
         };
         if plot_nft.pool_state == target_pool_state {
-            let error_message = format!("Current State equal to Target State: {:?}", &target_pool_state);
+            let error_message = format!(
+                "Current State equal to Target State: {:?}",
+                &target_pool_state
+            );
             error!("{}", error_message);
-            return Err(Error::new(ErrorKind::InvalidData, error_message))
+            return Err(Error::new(ErrorKind::InvalidData, error_message));
         }
-        let fee = 40;
-        let (travel_record, fee_record) = pool_wallet.generate_travel_transaction(
-            &plot_nft,
-            &target_pool_state,
-            fee,
-            &MAINNET
-        ).await?;
+        let fee = 0;
+        let (travel_record, fee_record) = pool_wallet
+            .generate_travel_transaction(&plot_nft, target_pool_state, fee, &MAINNET)
+            .await?;
         info!("{:?}", travel_record);
         info!("{:?}", fee_record);
+        let coin_to_find = travel_record.additions.iter().find(|c| c.amount == 1).expect("Failed to find NFT coin");
+        let result = client.push_tx(&travel_record.spend_bundle.expect("Expected Transaction record to have Spend bundle")).await?;
+        info!("{:?}", result);
+        loop {
+            let record = client.get_coin_record_by_name(&coin_to_find.name()).await;
+            if let Ok(Some(record)) = record {
+                let parent = client.get_coin_record_by_name(&record.coin.parent_coin_info).await;
+                if let Ok(Some(record)) = parent {
+                    info!("Found spent parent coin, Parent Coin was spent at {}", record.spent_block_index);
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            info!("Waiting for coin record for plotnft move to appear");
+        }
         break;
+    }
+    Ok(())
+}
+
+
+pub async fn get_plotnft_state(
+    client: &FullnodeClient,
+    launcher_id: &str
+) -> Result<(), Error> {
+    let launcher_to_find = Bytes32::from(launcher_id);
+    match get_plotnft_by_launcher_id(&client, &launcher_to_find).await? {
+        None => {
+            error!("Failed to find PlotNFT with LauncherID: {}", launcher_id);
+        }
+        Some(plotnft) => {
+            info!("Found PlotNFT: {}", serde_json::to_string_pretty(&plotnft).unwrap_or_default());
+        }
     }
     Ok(())
 }

@@ -85,7 +85,7 @@ lazy_static! {
         max_future_time: BigInt::from(5 * 60),
         number_of_timestamps: BigInt::from(11),
         genesis_challenge: Bytes32::from(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb"
         ),
         agg_sig_me_additional_data: hex::decode(
             "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb"
@@ -100,7 +100,7 @@ lazy_static! {
         max_vdf_witness_size: BigInt::from(64),
         mempool_block_buffer: BigInt::from(50),
         max_coin_amount: BigInt::from(u64::MAX),
-        max_block_cost_clvm: BigInt::from(11000000000i64),
+        max_block_cost_clvm: BigInt::from(11000000000u64),
         cost_per_byte: BigInt::from(12000),
         weight_proof_threshold: 2,
         weight_proof_recent_blocks: 1000,

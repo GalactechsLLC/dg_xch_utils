@@ -1,15 +1,16 @@
+use crate::p2_conditions::puzzle_for_conditions;
 use blst::min_pk::{AggregatePublicKey, SecretKey};
 use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48, SizedBytes};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
+use dg_xch_core::clvm::sexp;
+use dg_xch_core::clvm::sexp::IntoSExp;
 use dg_xch_core::curry_and_treehash::{calculate_hash_of_quoted_mod_hash, curry_and_treehash};
 use dg_xch_serialize::hash_256;
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use num_integer::Integer;
 use std::io::{Error, ErrorKind};
-use dg_xch_core::clvm::sexp;
-use dg_xch_core::clvm::sexp::{IntoSExp};
-use crate::p2_conditions::puzzle_for_conditions;
+use log::info;
 
 const P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE_HEX: &str = "ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080";
 
@@ -151,19 +152,30 @@ pub async fn test_puzzle_hash_for_pk() {
     assert_eq!(expected_puzzlehash, result)
 }
 
-pub fn solution_for_delegated_puzzle(delegated_puzzle: Program, solution: Program) -> Program{
-    Program::to(vec![sexp::NULL.clone(), delegated_puzzle.to_sexp(), solution.to_sexp()])
+pub fn solution_for_delegated_puzzle(delegated_puzzle: Program, solution: Program) -> Program {
+    Program::to(vec![
+        sexp::NULL.clone(),
+        delegated_puzzle.to_sexp(),
+        solution.to_sexp(),
+    ])
 }
 
 pub fn solution_for_hidden_puzzle(
     hidden_public_key: Bytes48,
     hidden_puzzle: Program,
     solution_to_hidden_puzzle: Program,
-) -> Program{
-    Program::to(vec![hidden_public_key.to_sexp(), hidden_puzzle.to_sexp(), solution_to_hidden_puzzle.to_sexp()])
+) -> Program {
+    Program::to(vec![
+        hidden_public_key.to_sexp(),
+        hidden_puzzle.to_sexp(),
+        solution_to_hidden_puzzle.to_sexp(),
+    ])
 }
 
 pub fn solution_for_conditions<T: IntoSExp>(conditions: T) -> Result<Program, Error> {
     let delegated_puzzle = puzzle_for_conditions(conditions)?;
-    Ok(solution_for_delegated_puzzle(delegated_puzzle, Program::to(0)))
+    Ok(solution_for_delegated_puzzle(
+        delegated_puzzle,
+        Program::to(0),
+    ))
 }

@@ -266,7 +266,7 @@ macro_rules! impl_sized_bytes {
 
             impl fmt::Display for $name {
                 fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    write!(f, "{}", encode(&self.bytes))
+                    write!(f, "0x{}", encode(&self.bytes))
                 }
             }
 
@@ -278,7 +278,7 @@ macro_rules! impl_sized_bytes {
 
             impl fmt::Debug for $name {
                 fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    write!(f, "{}", encode(&self.bytes))
+                    write!(f, "0x{}", encode(&self.bytes))
                 }
             }
 
@@ -340,6 +340,17 @@ impl From<Bytes32> for SecretKey {
     }
 }
 
+impl From<&SecretKey> for Bytes32 {
+    fn from(val: &SecretKey) -> Self {
+        Bytes32::from_sized_bytes(val.to_bytes())
+    }
+}
+impl From<SecretKey> for Bytes32 {
+    fn from(val: SecretKey) -> Self {
+        Bytes32::from_sized_bytes(val.to_bytes())
+    }
+}
+
 impl From<&Bytes48> for PublicKey {
     fn from(val: &Bytes48) -> Self {
         PublicKey::from_bytes(val.to_sized_bytes()).unwrap_or_default()
@@ -360,7 +371,6 @@ impl From<PublicKey> for Bytes48 {
         (&val).into()
     }
 }
-
 impl TryFrom<&Bytes96> for Signature {
     type Error = Error;
 
@@ -369,6 +379,7 @@ impl TryFrom<&Bytes96> for Signature {
             .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
     }
 }
+
 impl TryFrom<Bytes96> for Signature {
     type Error = Error;
 

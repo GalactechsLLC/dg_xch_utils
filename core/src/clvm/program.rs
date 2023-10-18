@@ -192,24 +192,6 @@ impl Program {
         }
     }
 
-    pub fn as_atom_list(&self) -> Vec<Vec<u8>> {
-        match self.as_pair() {
-            None => {
-                vec![]
-            }
-            Some((first, rest)) => match first.as_vec() {
-                None => {
-                    vec![]
-                }
-                Some(atom) => {
-                    let mut rtn: Vec<Vec<u8>> = vec![atom];
-                    rtn.extend(rest.as_atom_list());
-                    rtn
-                }
-            },
-        }
-    }
-
     pub fn to_map(self) -> Result<HashMap<Program, Program>, Error> {
         Ok(self
             .sexp
@@ -295,7 +277,6 @@ impl Program {
             }
         }
     }
-
 
     pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
         let program = sexp_from_bytes(&self.serialized)?;
@@ -458,13 +439,18 @@ impl_ints!(
     i128, 16
 );
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Debug)]
+#[derive(ChiaSerial, Clone, PartialEq, Eq)]
 pub struct SerializedProgram {
     buffer: Vec<u8>,
 }
 impl Display for SerializedProgram {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&encode(&self.buffer))
+        write!(f, "0x{}", encode(&self.buffer))
+    }
+}
+impl Debug for SerializedProgram {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "0x{}", encode(&self.buffer))
     }
 }
 impl SerializedProgram {
