@@ -8,10 +8,10 @@ use dg_xch_core::clvm::bls_bindings;
 use dg_xch_core::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
 use dg_xch_core::clvm::condition_utils::conditions_dict_for_solution;
 use dg_xch_core::consensus::constants::ConsensusConstants;
+use log::info;
 use num_traits::cast::ToPrimitive;
 use std::future::Future;
 use std::io::{Error, ErrorKind};
-use log::info;
 
 pub struct DerivationRecord {
     pub index: u32,
@@ -91,18 +91,16 @@ where
     let sig_refs: Vec<&Signature> = signatures.iter().collect();
     let pk_list: Vec<&Bytes48> = pk_list.iter().collect();
     let msg_list: Vec<&[u8]> = msg_list.iter().map(|v| v.as_slice()).collect();
-    let aggsig = AggregateSignature::aggregate(&sig_refs, true).map_err(|e| {
-        Error::new(
-            ErrorKind::Other,
-            format!("Failed to aggregate signatures: {:?}", e),
-        )
-    })?.to_signature();
+    let aggsig = AggregateSignature::aggregate(&sig_refs, true)
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::Other,
+                format!("Failed to aggregate signatures: {:?}", e),
+            )
+        })?
+        .to_signature();
     info!("AggSig Hex: {}", hex::encode(aggsig.to_bytes().as_slice()));
-    assert!(aggregate_verify_signature(
-        &pk_list,
-        &msg_list,
-        &aggsig
-    ));
+    assert!(aggregate_verify_signature(&pk_list, &msg_list, &aggsig));
     Ok(SpendBundle {
         coin_spends,
         aggregated_signature: Bytes96::from(aggsig),

@@ -43,7 +43,7 @@ pub enum RootCommands {
     #[command(about = "Gets plotnft state for launcher_id", long_about = None)]
     GetPlotnftState {
         #[arg(short, long)]
-        launcher_id: String
+        launcher_id: String,
     },
     #[command(about = "Create a cold wallet or a PlotNFT wallet", long_about = None)]
     CreateWallet {

@@ -4,6 +4,7 @@ use crate::wallets::{Wallet, WalletInfo};
 use async_trait::async_trait;
 use blst::min_pk::SecretKey;
 use dg_xch_clients::api::full_node::FullnodeAPI;
+use dg_xch_clients::protocols::pool::{FARMING_TO_POOL, LEAVING_POOL, POOL_PROTOCOL_VERSION};
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
@@ -29,7 +30,6 @@ use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use dg_xch_clients::protocols::pool::{FARMING_TO_POOL, LEAVING_POOL, POOL_PROTOCOL_VERSION};
 
 pub struct PlotNFTWallet {
     info: WalletInfo<MemoryWalletStore>,
@@ -193,14 +193,15 @@ impl PlotNFTWallet {
             outgoing_coin_spend.coin.parent_coin_info,
             last_coin_spend.coin.name()
         );
-        assert_eq!(outgoing_coin_spend.coin.parent_coin_info, last_coin_spend.coin.name());
+        assert_eq!(
+            outgoing_coin_spend.coin.parent_coin_info,
+            last_coin_spend.coin.name()
+        );
         assert_eq!(outgoing_coin_spend.coin.name(), singleton_id);
         assert_ne!(new_inner_puzzle, inner_puzzle);
         let mut signed_spend_bundle = sign_coin_spend(
             outgoing_coin_spend,
-            |_| async {
-                self.find_owner_key(&plot_nft.pool_state.owner_pubkey, 500)
-            },
+            |_| async { self.find_owner_key(&plot_nft.pool_state.owner_pubkey, 500) },
             constants,
         )
         .await?;

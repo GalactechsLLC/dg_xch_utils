@@ -1,8 +1,11 @@
 use crate::wallets::memory_wallet::{MemoryWalletConfig, MemoryWalletStore};
-use crate::wallets::plotnft_utils::{scrounge_for_plotnft_by_key, PlotNFTWallet, get_plotnft_by_launcher_id};
+use crate::wallets::plotnft_utils::{
+    get_plotnft_by_launcher_id, scrounge_for_plotnft_by_key, PlotNFTWallet,
+};
 use crate::wallets::{Wallet, WalletInfo};
 use bip39::Mnemonic;
 use blst::min_pk::SecretKey;
+use dg_xch_clients::api::full_node::FullnodeAPI;
 use dg_xch_clients::api::pool::{DefaultPoolClient, PoolClient};
 use dg_xch_clients::protocols::pool::{FARMING_TO_POOL, POOL_PROTOCOL_VERSION};
 use dg_xch_clients::rpc::full_node::FullnodeClient;
@@ -21,8 +24,6 @@ use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use dg_xch_clients::api::full_node::FullnodeAPI;
-use dg_xch_core::plots::PlotNft;
 
 pub fn create_cold_wallet() -> Result<(), Error> {
     let mnemonic = Mnemonic::generate(24)
@@ -105,7 +106,7 @@ pub async fn migrate_plot_nft(
     mnemonic: &str,
 ) -> Result<(), Error> {
     let pool_client = DefaultPoolClient::new();
-    let master_secret_key = key_from_mnemonic(&mnemonic)?;
+    let master_secret_key = key_from_mnemonic(mnemonic)?;
     let wallet_sk = master_sk_to_wallet_sk_unhardened(&master_secret_key, 1).map_err(|e| {
         Error::new(
             ErrorKind::InvalidInput,
@@ -115,7 +116,7 @@ pub async fn migrate_plot_nft(
     let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
     let starting_ph = puzzle_hash_for_pk(&pub_key)?;
     info!("{}", encode_puzzle_hash(&starting_ph, "xch").unwrap());
-    let plot_nfts = scrounge_for_plotnft_by_key(&client, &master_secret_key).await?;
+    let plot_nfts = scrounge_for_plotnft_by_key(client, &master_secret_key).await?;
     info!("Found {} plot_nfts", plot_nfts.len());
     let pool_url = format!("https://{}", target_pool);
     let pool_info = pool_client.get_pool_info(&pool_url).await.map_err(|e| {
@@ -188,15 +189,30 @@ pub async fn migrate_plot_nft(
             .await?;
         info!("{:?}", travel_record);
         info!("{:?}", fee_record);
-        let coin_to_find = travel_record.additions.iter().find(|c| c.amount == 1).expect("Failed to find NFT coin");
-        let result = client.push_tx(&travel_record.spend_bundle.expect("Expected Transaction record to have Spend bundle")).await?;
+        let coin_to_find = travel_record
+            .additions
+            .iter()
+            .find(|c| c.amount == 1)
+            .expect("Failed to find NFT coin");
+        let result = client
+            .push_tx(
+                &travel_record
+                    .spend_bundle
+                    .expect("Expected Transaction record to have Spend bundle"),
+            )
+            .await?;
         info!("{:?}", result);
         loop {
             let record = client.get_coin_record_by_name(&coin_to_find.name()).await;
             if let Ok(Some(record)) = record {
-                let parent = client.get_coin_record_by_name(&record.coin.parent_coin_info).await;
+                let parent = client
+                    .get_coin_record_by_name(&record.coin.parent_coin_info)
+                    .await;
                 if let Ok(Some(record)) = parent {
-                    info!("Found spent parent coin, Parent Coin was spent at {}", record.spent_block_index);
+                    info!(
+                        "Found spent parent coin, Parent Coin was spent at {}",
+                        record.spent_block_index
+                    );
                     break;
                 }
             }
@@ -208,18 +224,17 @@ pub async fn migrate_plot_nft(
     Ok(())
 }
 
-
-pub async fn get_plotnft_state(
-    client: &FullnodeClient,
-    launcher_id: &str
-) -> Result<(), Error> {
+pub async fn get_plotnft_state(client: &FullnodeClient, launcher_id: &str) -> Result<(), Error> {
     let launcher_to_find = Bytes32::from(launcher_id);
-    match get_plotnft_by_launcher_id(&client, &launcher_to_find).await? {
+    match get_plotnft_by_launcher_id(client, &launcher_to_find).await? {
         None => {
             error!("Failed to find PlotNFT with LauncherID: {}", launcher_id);
         }
         Some(plotnft) => {
-            info!("Found PlotNFT: {}", serde_json::to_string_pretty(&plotnft).unwrap_or_default());
+            info!(
+                "Found PlotNFT: {}",
+                serde_json::to_string_pretty(&plotnft).unwrap_or_default()
+            );
         }
     }
     Ok(())

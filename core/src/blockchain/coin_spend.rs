@@ -5,7 +5,6 @@ use crate::blockchain::utils::{additions_for_solution, fee_for_solution};
 use crate::clvm::program::{Program, SerializedProgram};
 use crate::clvm::utils::INFINITE_COST;
 use dg_xch_macros::ChiaSerial;
-use log::info;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -68,11 +67,12 @@ pub fn compute_additions_with_cost(
             }
             let puzzle_hash = Bytes32::new(&atoms[1].as_vec().unwrap_or_default());
             let amount = atoms[2].as_int()?;
-            info!("amount: {}", amount);
             ret.push(Coin {
                 parent_coin_info,
                 puzzle_hash,
-                amount: amount.to_u64().unwrap(),
+                amount: amount
+                    .to_u64()
+                    .expect("Expected a positive amount when computing additions"),
             });
         }
     }

@@ -29,9 +29,7 @@ async fn main() -> Result<(), Error> {
             );
             migrate_plot_nft(&client, &target_pool, &launcher_id, &mnemonic).await?
         }
-        RootCommands::GetPlotnftState {
-            launcher_id,
-        } => {
+        RootCommands::GetPlotnftState { launcher_id } => {
             let host = cli.fullnode_host.unwrap_or("localhost".to_string());
             let client = FullnodeClient::new(
                 &host,

@@ -8,7 +8,6 @@ use crate::clvm::program::SerializedProgram;
 use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
-use log::info;
 
 pub fn additions_for_solution(
     coin_name: Bytes32,
@@ -61,9 +60,7 @@ pub fn pkm_pairs_for_conditions_dict(
     let mut ret = vec![];
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigUnsafe) {
         for cwa in v {
-            // assert len(cwa.vars) == 2
-            // assert len(cwa.vars[0]) == 48 and len(cwa.vars[1]) <= 1024
-            // assert cwa.vars[0] is not None and cwa.vars[1] is not None
+            validate_cwa(cwa)?;
             if ends_with(&cwa.vars[1], additional_data) {
                 return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
             }
@@ -72,12 +69,7 @@ pub fn pkm_pairs_for_conditions_dict(
     }
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigMe) {
         for cwa in v {
-            // assert len(cwa.vars) == 2;
-            // assert len(cwa.vars[0]) == 48 and len(cwa.vars[1]) <= 1024;
-            // assert cwa.vars[0] is not None and cwa.vars[1] is not None;
-            info!("0: {}", hex::encode(cwa.vars[0].as_slice()));
-            info!("1: {}", hex::encode(cwa.vars[1].as_slice()));
-            info!("cn: {}", hex::encode(coin_name.as_slice()));
+            validate_cwa(cwa)?;
             let mut buf = cwa.vars[1].clone();
             buf.extend(coin_name.as_slice());
             buf.extend(additional_data);
@@ -85,6 +77,16 @@ pub fn pkm_pairs_for_conditions_dict(
         }
     }
     Ok(ret)
+}
+
+fn validate_cwa(cwa: &ConditionWithArgs) -> Result<(), Error> {
+    if cwa.vars.len() != 2 {
+        return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+    }
+    if !(cwa.vars[0].len() == 48 && cwa.vars[1].len() <= 1024) {
+        return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+    }
+    Ok(())
 }
 
 fn ends_with(buf: &[u8], sufix: &[u8]) -> bool {

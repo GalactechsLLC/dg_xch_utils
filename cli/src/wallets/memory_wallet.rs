@@ -98,7 +98,8 @@ impl WalletStore for MemoryWalletStore {
         };
         let pubkey = Bytes48::from(wallet_sk.sk_to_pk().to_bytes());
         let puzzle_hash = puzzle_hash_for_pk(&pubkey)?;
-        self.keys_for_ph.insert(puzzle_hash, (Bytes32::from(wallet_sk), Bytes48::from(pubkey)));
+        self.keys_for_ph
+            .insert(puzzle_hash, (Bytes32::from(wallet_sk), pubkey));
         Ok(DerivationRecord {
             index: new_index,
             puzzle_hash,
@@ -120,7 +121,8 @@ impl WalletStore for MemoryWalletStore {
         };
         let pubkey = Bytes48::from(wallet_sk.sk_to_pk().to_bytes());
         let puzzle_hash = puzzle_hash_for_pk(&pubkey)?;
-        self.keys_for_ph.insert(puzzle_hash, (Bytes32::from(wallet_sk), Bytes48::from(pubkey)));
+        self.keys_for_ph
+            .insert(puzzle_hash, (Bytes32::from(wallet_sk), pubkey));
         Ok(DerivationRecord {
             index,
             puzzle_hash,
@@ -145,7 +147,8 @@ impl WalletStore for MemoryWalletStore {
         };
         let pubkey = Bytes48::from(wallet_sk.sk_to_pk().to_bytes());
         let puzzle_hash = puzzle_hash_for_pk(&pubkey)?;
-        self.keys_for_ph.insert(puzzle_hash, (Bytes32::from(wallet_sk), Bytes48::from(pubkey)));
+        self.keys_for_ph
+            .insert(puzzle_hash, (Bytes32::from(wallet_sk), pubkey));
         Ok(DerivationRecord {
             index,
             puzzle_hash,
@@ -397,16 +400,18 @@ fn knapsack_coin_algorithm(
                     }
                     selected_coins_sum += coin.amount;
                     selected_coins.insert(coin.clone());
-                    if selected_coins_sum == target {
-                        return Some(selected_coins);
-                    } else if selected_coins_sum > target {
-                        target_reached = true;
-                        if selected_coins_sum < best_set_sum {
-                            best_set_of_coins = Some(selected_coins.clone());
-                            best_set_sum = selected_coins_sum;
-                            selected_coins_sum -= coin.amount;
-                            selected_coins.remove(coin);
+                    match selected_coins_sum.cmp(&target) {
+                        std::cmp::Ordering::Greater => {
+                            target_reached = true;
+                            if selected_coins_sum < best_set_sum {
+                                best_set_of_coins = Some(selected_coins.clone());
+                                best_set_sum = selected_coins_sum;
+                                selected_coins_sum -= coin.amount;
+                                selected_coins.remove(coin);
+                            }
                         }
+                        std::cmp::Ordering::Less => {}
+                        std::cmp::Ordering::Equal => return Some(selected_coins),
                     }
                 }
             }

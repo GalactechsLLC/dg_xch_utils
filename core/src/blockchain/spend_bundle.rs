@@ -34,9 +34,9 @@ impl SpendBundle {
                 .to_signature()
                 .into()
         };
-        Ok(SpendBundle{
+        Ok(SpendBundle {
             coin_spends,
-            aggregated_signature
+            aggregated_signature,
         })
     }
 

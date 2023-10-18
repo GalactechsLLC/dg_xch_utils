@@ -6,11 +6,13 @@ use dashmap::DashMap;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
+use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
 use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzlehash, WalletType};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
+use dg_xch_core::clvm::utils::INFINITE_COST;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     puzzle_for_pk, solution_for_conditions,
@@ -30,8 +32,6 @@ use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
-use dg_xch_core::clvm::utils::INFINITE_COST;
 
 pub mod common;
 pub mod memory_wallet;
@@ -127,6 +127,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     fn puzzle_hash_for_pk(&self, public_key: &Bytes48) -> Result<Bytes32, Error> {
         dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk(public_key)
     }
+    #[allow(clippy::too_many_arguments)]
     fn make_solution(
         &self,
         primaries: &[AmountWithPuzzlehash],
@@ -187,7 +188,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 match memos.remove(&coin_name) {
                     Some(mut existing_memos) => {
                         existing_memos.extend(coin_memos);
-                        memos.insert(coin_name,existing_memos);
+                        memos.insert(coin_name, existing_memos);
                     }
                     None => {
                         memos.insert(coin_name, coin_memos);
@@ -251,6 +252,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     async fn convert_puzzle_hash(&self, puzzle_hash: Bytes32) -> Bytes32 {
         puzzle_hash
     }
+    #[allow(clippy::too_many_arguments)]
     async fn generate_signed_transaction(
         &self,
         amount: u64,
@@ -337,9 +339,10 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             assert_eq!(output_amount, input_amount);
         }
         let memos = self.compute_memos(&spend_bundle)?;
-        let memos = memos.into_iter().map(|v| {
-            (v.0, v.1)
-        }).collect::<Vec<(Bytes32, Vec<Vec<u8>>)>>();
+        let memos = memos
+            .into_iter()
+            .map(|v| (v.0, v.1))
+            .collect::<Vec<(Bytes32, Vec<Vec<u8>>)>>();
         let name = spend_bundle.name();
         Ok(TransactionRecord {
             confirmed_at_height: 0,
@@ -360,6 +363,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             memos,
         })
     }
+    #[allow(clippy::too_many_arguments)]
     async fn generate_unsigned_transaction(
         &self,
         amount: u64,
@@ -539,11 +543,21 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 let coin_announcements_to_assert = HashSet::from_iter(coin_announcements_bytes);
                 let puzzle_announcements_to_assert = HashSet::from_iter(puzzle_announcements_bytes);
                 info!("Primaries: {:?}", primaries);
-                info!("coin_announcements: {:?}", coin_announcements.iter().map(|v| {
-                    hex::encode(v)
-                }).collect::<Vec<String>>());
-                info!("coin_announcements_to_assert: {:?}", coin_announcements_to_assert);
-                info!("puzzle_announcements_to_assert: {:?}", puzzle_announcements_to_assert);
+                info!(
+                    "coin_announcements: {:?}",
+                    coin_announcements
+                        .iter()
+                        .map(|v| { hex::encode(v) })
+                        .collect::<Vec<String>>()
+                );
+                info!(
+                    "coin_announcements_to_assert: {:?}",
+                    coin_announcements_to_assert
+                );
+                info!(
+                    "puzzle_announcements_to_assert: {:?}",
+                    puzzle_announcements_to_assert
+                );
                 let puzzle = self.puzzle_for_puzzle_hash(&coin.puzzle_hash).await?;
                 let solution = self.make_solution(
                     &primaries,
@@ -611,13 +625,19 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     }
 }
 
-fn compute_memos_for_spend(coin_spend: &CoinSpend) -> Result<HashMap<Bytes32, Vec<Vec<u8>>>, Error> {
-    let (_, result) = coin_spend.puzzle_reveal.run_with_cost(INFINITE_COST, &coin_spend.solution.to_program()?)?;
+fn compute_memos_for_spend(
+    coin_spend: &CoinSpend,
+) -> Result<HashMap<Bytes32, Vec<Vec<u8>>>, Error> {
+    let (_, result) = coin_spend
+        .puzzle_reveal
+        .run_with_cost(INFINITE_COST, &coin_spend.solution.to_program()?)?;
     let mut memos = HashMap::default();
     let result_list = result.as_list();
     for condition in result_list {
         let mut conditions: Vec<Program> = condition.as_list();
-        if ConditionOpcode::from(&conditions[0]) == ConditionOpcode::CreateCoin && conditions.len() >= 4 {
+        if ConditionOpcode::from(&conditions[0]) == ConditionOpcode::CreateCoin
+            && conditions.len() >= 4
+        {
             let memo_list = conditions.remove(3);
             let amount = conditions.remove(2);
             let puzzle_hash = conditions.remove(1);
@@ -625,11 +645,18 @@ fn compute_memos_for_spend(coin_spend: &CoinSpend) -> Result<HashMap<Bytes32, Ve
             let coin_added = Coin {
                 parent_coin_info: coin_spend.coin.name(),
                 puzzle_hash: Bytes32::try_from(puzzle_hash)?,
-                amount: amount.as_int()?.to_u64().ok_or(Error::new(ErrorKind::InvalidInput, "invalid amount"))?,
+                amount: amount
+                    .as_int()?
+                    .to_u64()
+                    .ok_or(Error::new(ErrorKind::InvalidInput, "invalid amount"))?,
             };
-            let memo_list = memo_list.as_list().into_iter().map(|v| v.serialized).collect::<Vec<Vec<u8>>>();
-            memos.insert(coin_added.name(),memo_list);
+            let memo_list = memo_list
+                .as_list()
+                .into_iter()
+                .map(|v| v.serialized)
+                .collect::<Vec<Vec<u8>>>();
+            memos.insert(coin_added.name(), memo_list);
         }
     }
-    return Ok(memos);
+    Ok(memos)
 }
