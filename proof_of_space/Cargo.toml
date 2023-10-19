@@ -26,4 +26,4 @@ rayon = "1.8.0"
 rustc-hash = "1.1.0"
 sha2 = "0.10.8"
 simple_logger = "4.2.0"
-tokio = {version = "1.33.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+tokio = {version = "1.33.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
