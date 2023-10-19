@@ -85,8 +85,8 @@ impl SExp {
 
     pub fn as_atom_list(&self) -> Vec<Vec<u8>> {
         match self {
-            SExp::Atom(a) => {
-                vec![a.data.clone()]
+            SExp::Atom(_) => {
+                vec![]
             }
             SExp::Pair(pair) => match pair.first.as_ref() {
                 SExp::Atom(buf) => {

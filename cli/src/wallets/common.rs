@@ -8,7 +8,6 @@ use dg_xch_core::clvm::bls_bindings;
 use dg_xch_core::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
 use dg_xch_core::clvm::condition_utils::conditions_dict_for_solution;
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use log::info;
 use num_traits::cast::ToPrimitive;
 use std::future::Future;
 use std::io::{Error, ErrorKind};
@@ -79,9 +78,6 @@ where
             assert_eq!(&secret_key.sk_to_pk(), &pk);
             let signature = bls_bindings::sign(&secret_key, &msg);
             assert!(verify_signature(&pk, &msg, &signature));
-            info!("Sec Key: {}", hex::encode(secret_key.to_bytes().as_slice()));
-            info!("Msg Hex: {}", hex::encode(&msg));
-            info!("Sig Hex: {}", hex::encode(signature.to_bytes().as_slice()));
             pk_list.push(pk_bytes);
             msg_list.push(msg);
             signatures.push(signature);
@@ -99,7 +95,6 @@ where
             )
         })?
         .to_signature();
-    info!("AggSig Hex: {}", hex::encode(aggsig.to_bytes().as_slice()));
     assert!(aggregate_verify_signature(&pk_list, &msg_list, &aggsig));
     Ok(SpendBundle {
         coin_spends,

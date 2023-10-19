@@ -8,7 +8,7 @@ use dg_xch_core::plots::PlotNftExtraData;
 use dg_xch_core::pool::PoolState;
 use dg_xch_serialize::ChiaSerialize;
 use lazy_static::lazy_static;
-use log::{debug, info};
+use log::debug;
 use num_traits::{ToPrimitive, Zero};
 use std::io::{Cursor, Error, ErrorKind};
 
@@ -257,7 +257,7 @@ pub fn create_travel_spend(
         );
         Program::to(vec![
             1.to_sexp(),
-            vec![("p".to_sexp(), target.to_bytes().to_sexp())].to_sexp(),
+            vec![("p".to_sexp(), SExp::Atom(AtomBuf::new(target.to_bytes())))].to_sexp(),
             destination_inner.tree_hash().to_sexp(),
         ]) // current or target
     } else {
@@ -398,7 +398,6 @@ pub fn uncurry_pool_waitingroom_inner_puzzle(
 }
 
 pub fn get_inner_puzzle_from_puzzle(full_puzzle: &Program) -> Result<Option<Program>, Error> {
-    info!("Full Puz: {}", hex::encode(&full_puzzle.serialized));
     match full_puzzle.uncurry() {
         Ok((_, args)) => {
             let list: Vec<Program> = args.as_list();

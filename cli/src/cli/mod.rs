@@ -39,6 +39,8 @@ pub enum RootCommands {
         launcher_id: String,
         #[arg(short, long)]
         mnemonic: String,
+        #[arg(short, long)]
+        fee: Option<u64>,
     },
     #[command(about = "Gets plotnft state for launcher_id", long_about = None)]
     GetPlotnftState {
