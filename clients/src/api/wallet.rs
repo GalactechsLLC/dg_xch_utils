@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::transaction_record::TransactionRecord;
@@ -37,6 +38,8 @@ pub trait WalletAPI {
         wallet_id: u32,
         additions: Vec<Coin>,
         coins: Vec<Coin>,
+        coin_announcements: Vec<Announcement>,
+        puzzle_announcements: Vec<Announcement>,
         fee: u64,
     ) -> Result<TransactionRecord, Error>;
 }

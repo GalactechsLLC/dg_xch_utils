@@ -1,12 +1,16 @@
+use crate::blockchain::condition_opcode::ConditionOpcode;
+use crate::blockchain::sized_bytes::*;
 use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
+use crate::clvm::program::Program;
+use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
 
 lazy_static! {
@@ -14,7 +18,7 @@ lazy_static! {
     pub static ref ONE: SExp = SExp::Atom(vec![1u8].into());
 }
 
-#[derive(Clone, Hash, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SExp {
     Atom(AtomBuf),
     Pair(PairBuf),
@@ -56,11 +60,11 @@ impl SExp {
             SExp::Pair(p) => Ok(&p.rest),
         }
     }
-    pub fn cons(self, other: SExp) -> Result<SExp, Error> {
-        Ok(SExp::Pair(PairBuf {
+    pub fn cons(self, other: SExp) -> SExp {
+        SExp::Pair(PairBuf {
             first: Box::new(self),
             rest: Box::new(other),
-        }))
+        })
     }
     pub fn split(self) -> Result<(SExp, SExp), Error> {
         match self {
@@ -190,61 +194,23 @@ impl Display for SExp {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self {
             SExp::Atom(a) => {
-                let atom = &a.data;
-                if atom.is_empty() {
-                    f.write_str("()")
-                } else if atom.len() > 2 {
-                    match String::from_utf8(atom.clone()) {
-                        Ok(as_utf8) => {
-                            for s in as_utf8.chars() {
-                                if !PRINTABLE.contains(&s.to_string()) {
-                                    return f.write_str(&format!("0x{}", encode(atom)));
-                                }
-                            }
-                            if as_utf8.contains('"') && as_utf8.contains('\'') {
-                                f.write_str(&format!("0x{}", encode(atom)))
-                            } else if as_utf8.contains('"') {
-                                f.write_str(&format!("'{as_utf8}'"))
-                            } else if as_utf8.contains('\'') {
-                                f.write_str(&format!("\"{as_utf8}\""))
-                            } else if is_hex(as_utf8.as_bytes()) {
-                                f.write_str(&format!("0x{}", as_utf8))
-                            } else {
-                                f.write_str(&format!("\"{as_utf8}\""))
-                            }
-                        }
-                        Err(_) => f.write_str(&format!("0x{}", encode(atom))),
-                    }
-                } else if *atom == BigInt::from_signed_bytes_be(atom).to_signed_bytes_be() {
-                    f.write_str(&format!("{}", BigInt::from_signed_bytes_be(atom)))
-                } else {
-                    f.write_str(&format!("0x{}", encode(atom)))
-                }
+                write!(f, "{}", a)
             }
-            SExp::Pair(pairbuf) => {
-                let mut buffer = String::from("(");
-                match &*pairbuf.first {
-                    SExp::Atom(a) => {
-                        if let Some(kw) = KEYWORD_FROM_ATOM.get(&a.data) {
-                            buffer += kw;
-                        } else {
-                            buffer += &format!("{}", pairbuf.first);
-                        }
-                    }
-                    SExp::Pair(_) => {
-                        buffer += &format!("{}", pairbuf.first);
-                    }
-                }
-                let mut current = &pairbuf.rest;
-                while let Ok(p) = current.pair() {
-                    buffer += &format!(" {}", &p.first.as_ref());
-                    current = &p.rest;
-                }
-                if current.non_nil() {
-                    buffer += &format!(" . {}", *current);
-                }
-                buffer += ")";
-                write!(f, "{}", buffer)
+            SExp::Pair(p) => {
+                write!(f, "{}", p)
+            }
+        }
+    }
+}
+
+impl Debug for SExp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match &self {
+            SExp::Atom(a) => {
+                write!(f, "{}", a)
+            }
+            SExp::Pair(p) => {
+                write!(f, "{:?}", p)
             }
         }
     }
@@ -273,6 +239,40 @@ pub struct AtomBuf {
     pub data: Vec<u8>,
 }
 
+impl Display for AtomBuf {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if self.data.is_empty() {
+            f.write_str("()")
+        } else if self.data.len() > 2 {
+            match String::from_utf8(self.data.clone()) {
+                Ok(as_utf8) => {
+                    for s in as_utf8.chars() {
+                        if !PRINTABLE.contains(&s.to_string()) {
+                            return f.write_str(&format!("0x{}", encode(&self.data)));
+                        }
+                    }
+                    if as_utf8.contains('"') && as_utf8.contains('\'') {
+                        f.write_str(&format!("0x{}", encode(&self.data)))
+                    } else if as_utf8.contains('"') {
+                        f.write_str(&format!("'{as_utf8}'"))
+                    } else if as_utf8.contains('\'') {
+                        f.write_str(&format!("\"{as_utf8}\""))
+                    } else if is_hex(as_utf8.as_bytes()) {
+                        f.write_str(&format!("0x{}", as_utf8))
+                    } else {
+                        f.write_str(&format!("\"{as_utf8}\""))
+                    }
+                }
+                Err(_) => f.write_str(&format!("0x{}", encode(&self.data))),
+            }
+        } else if *self.data == BigInt::from_signed_bytes_be(&self.data).to_signed_bytes_be() {
+            f.write_str(&format!("{}", BigInt::from_signed_bytes_be(&self.data)))
+        } else {
+            f.write_str(&format!("0x{}", encode(&self.data)))
+        }
+    }
+}
+
 impl AtomBuf {
     pub fn new(v: Vec<u8>) -> Self {
         AtomBuf { data: v }
@@ -296,11 +296,80 @@ impl From<&Vec<u8>> for AtomBuf {
         Self::from(v.clone())
     }
 }
+impl PartialEq<&[u8]> for AtomBuf {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.data == *other
+    }
+}
 
-#[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+impl PartialEq<[u8]> for AtomBuf {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.data == other
+    }
+}
+
+impl PartialEq<Vec<u8>> for AtomBuf {
+    fn eq(&self, other: &Vec<u8>) -> bool {
+        &self.data == other
+    }
+}
+
+#[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairBuf {
     pub first: Box<SExp>,
     pub rest: Box<SExp>,
+}
+
+impl Display for PairBuf {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut buffer = String::from("(");
+        match &*self.first {
+            SExp::Atom(a) => {
+                if let Some(kw) = KEYWORD_FROM_ATOM.get(&a.data) {
+                    buffer += kw;
+                } else {
+                    buffer += &format!("{}", self.first);
+                }
+            }
+            SExp::Pair(_) => {
+                buffer += &format!("{}", self.first);
+            }
+        }
+        let mut current = &self.rest;
+        while let Ok(p) = current.pair() {
+            buffer += &format!(" {}", &p.first.as_ref());
+            current = &p.rest;
+        }
+        if current.non_nil() {
+            buffer += &format!(" . {}", *current);
+        }
+        buffer += ")";
+        write!(f, "{}", buffer)
+    }
+}
+
+impl Debug for PairBuf {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut buffer = String::from("(");
+        match &*self.first {
+            SExp::Atom(a) => {
+                buffer += &format!("{}", a);
+            }
+            SExp::Pair(p) => {
+                buffer += &format!("{:?}", p);
+            }
+        }
+        let mut current = &self.rest;
+        while let Ok(p) = current.pair() {
+            buffer += &format!(" {}", &p.first.as_ref());
+            current = &p.rest;
+        }
+        if current.non_nil() {
+            buffer += &format!(" . {}", *current);
+        }
+        buffer += ")";
+        write!(f, "{}", buffer)
+    }
 }
 
 impl From<(&SExp, &SExp)> for PairBuf {
@@ -320,3 +389,139 @@ impl From<(SExp, SExp)> for PairBuf {
         }
     }
 }
+
+pub trait IntoSExp {
+    fn to_sexp(self) -> SExp;
+}
+
+pub trait TryIntoSExp {
+    fn try_to_sexp(self) -> Result<SExp, Error>;
+}
+
+impl IntoSExp for Vec<SExp> {
+    fn to_sexp(self) -> SExp {
+        if let Some(sexp) = self.first().cloned() {
+            let mut end = NULL.clone();
+            if self.len() > 1 {
+                for other in self[1..].iter().rev() {
+                    end = other.clone().cons(end);
+                }
+            }
+            sexp.cons(end)
+        } else {
+            NULL.clone()
+        }
+    }
+}
+
+impl<T: IntoSExp + Clone> IntoSExp for &[T] {
+    fn to_sexp(self) -> SExp {
+        self.iter()
+            .cloned()
+            .map(|v| v.to_sexp())
+            .collect::<Vec<SExp>>()
+            .to_sexp()
+    }
+}
+
+impl<T: IntoSExp> IntoSExp for Vec<T> {
+    fn to_sexp(self) -> SExp {
+        self.into_iter()
+            .map(|v| v.to_sexp())
+            .collect::<Vec<SExp>>()
+            .to_sexp()
+    }
+}
+
+impl<T: IntoSExp> IntoSExp for (T, T) {
+    fn to_sexp(self) -> SExp {
+        self.0.to_sexp().cons(self.1.to_sexp().cons(NULL.clone()))
+    }
+}
+
+impl IntoSExp for (SExp, SExp) {
+    fn to_sexp(self) -> SExp {
+        self.0.cons(self.1)
+    }
+}
+
+impl IntoSExp for &str {
+    fn to_sexp(self) -> SExp {
+        SExp::Atom(AtomBuf::new(self.as_bytes().to_vec()))
+    }
+}
+
+impl IntoSExp for String {
+    fn to_sexp(self) -> SExp {
+        SExp::Atom(AtomBuf::new(self.as_bytes().to_vec()))
+    }
+}
+
+impl IntoSExp for Program {
+    fn to_sexp(self) -> SExp {
+        self.sexp.clone()
+    }
+}
+
+impl IntoSExp for ConditionOpcode {
+    fn to_sexp(self) -> SExp {
+        SExp::Atom(AtomBuf::new(self.to_bytes()))
+    }
+}
+
+macro_rules! impl_to_sexp_sized_bytes {
+    ($($name: ident);*) => {
+        $(
+            impl IntoSExp for $name {
+                fn to_sexp(self) -> SExp {
+                    SExp::Atom(AtomBuf::new(self.as_slice().to_vec()))
+                }
+            }
+        )*
+    };
+    ()=>{};
+}
+
+impl_to_sexp_sized_bytes!(
+    Bytes4;
+    Bytes8;
+    Bytes16;
+    Bytes32;
+    Bytes48;
+    Bytes96;
+    Bytes192
+);
+
+macro_rules! impl_ints {
+    ($($name: ident);*) => {
+        $(
+            impl IntoSExp for $name {
+                fn to_sexp(self) -> SExp {
+                    if self == 0 {
+                        return SExp::Atom(AtomBuf::new(vec![]));
+                    }
+                    let as_ary = self.to_be_bytes();
+                    let mut as_bytes = as_ary.as_slice();
+                    while as_bytes.len() > 1 && as_bytes[0] == ( if as_bytes[1] & 0x80 > 0{0xFF} else {0}) {
+                        as_bytes = &as_bytes[1..];
+                    }
+                    SExp::Atom(AtomBuf::new(as_bytes.to_vec()))
+                }
+            }
+        )*
+    };
+    ()=>{};
+}
+
+impl_ints!(
+    u8;
+    u16;
+    u32;
+    u64;
+    u128;
+    i8;
+    i16;
+    i32;
+    i64;
+    i128
+);

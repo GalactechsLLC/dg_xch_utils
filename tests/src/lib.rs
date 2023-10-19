@@ -1,12 +1,14 @@
+mod clvm;
 mod consensus;
 mod f_calc;
 mod prover;
 
-
 #[test]
 pub fn speed_test_check_plot() {
+    use dg_xch_pos::verifier::check_plot;
     use log::info;
     use simple_logger::SimpleLogger;
+    use std::time::Instant;
     SimpleLogger::new().env().init().unwrap();
     let run_amt = 500;
     let start = Instant::now();

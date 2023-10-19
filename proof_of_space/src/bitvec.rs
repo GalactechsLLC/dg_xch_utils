@@ -378,9 +378,6 @@ impl Eq for BitVec {}
 
 impl PartialOrd for BitVec {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.get_size() != other.get_size() {
-            return None;
-        }
         Some(self.cmp(other))
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_cli"
-version = "1.0.8"
+version = "1.0.9"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "CLI Utilities for the Chia Blockchain"
@@ -8,17 +8,31 @@ license = "Apache-2.0"
 homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
 repository = "https://github.com/GalactechsLLC/dg_xch_utils/cli"
 
+[lib]
+name = "dg_xch_cli"
+
+[[bin]]
+name = "dg_xch_cli"
+
 [dependencies]
+async-trait = "0.1.74"
 bip39 = {version= "2.0.0", features=["rand"] }
-blst = "0.3.7"
-clap = { version = "4.1.1", features = ["derive"] }
-dg_xch_clients = {path = "../clients", version="1.0.8"}
-dg_xch_core = {path = "../core", version = "1.0.7", features = ["paperclip"] }
-dg_xch_keys = {path = "../keys", version="1.0.7"}
-dg_xch_pos = {path = "../proof_of_space", version="1.0.7"}
-dg_xch_puzzles = {path = "../puzzles", version="1.0.7"}
+blst = "0.3.11"
+clap = { version = "4.4.6", features = ["derive"] }
+dashmap = "5.5.3"
+dg_xch_clients = {path = "../clients", version="1.0.9"}
+dg_xch_core = {path = "../core", version = "1.0.9", features = ["paperclip"] }
+dg_xch_keys = {path = "../keys", version="1.0.9"}
+dg_xch_pos = {path = "../proof_of_space", version="1.0.9"}
+dg_xch_puzzles = {path = "../puzzles", version="1.0.9"}
+dg_xch_serialize= {path = "../serialize", version="1.0.9"}
+hex = "0.4.3"
 lazy_static = "1.4.0"
-log = "0.4.17"
-rayon = "1.7.0"
-simple_logger = "4.0.0"
-tokio = {version = "1.21.2", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+log = "0.4.20"
+num-traits = "0.2.17"
+rand = "0.8.5"
+rayon = "1.8.0"
+serde = "1.0.189"
+serde_json = "1.0.107"
+simple_logger = "4.2.0"
+tokio = {version = "1.33.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

@@ -5,6 +5,7 @@ use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
 use crate::clvm::program::Program;
 use blst::min_pk::{AggregateSignature, Signature};
 use dg_xch_macros::ChiaSerial;
+use dg_xch_serialize::{hash_256, ChiaSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
@@ -15,32 +16,28 @@ pub struct SpendBundle {
     pub aggregated_signature: Bytes96,
 }
 impl SpendBundle {
-    pub fn aggregate(bundles: Vec<SpendBundle>) -> Result<Self, Error> {
-        let mut rtn = Self::empty();
-        for bundle in bundles {
-            rtn._aggregate(bundle)?;
-        }
-        Ok(rtn)
+    pub fn name(&self) -> Bytes32 {
+        Bytes32::new(&hash_256(self.to_bytes()))
     }
-
-    fn _aggregate(&mut self, other: Self) -> Result<(), Error> {
-        let mut sigs: Vec<Signature> = vec![];
-        if !self.aggregated_signature.is_null() {
-            sigs.push((&self.aggregated_signature).try_into()?);
+    pub fn aggregate(bundles: Vec<SpendBundle>) -> Result<Self, Error> {
+        let mut coin_spends = vec![];
+        let mut signatures = vec![];
+        for bundle in bundles {
+            coin_spends.extend(bundle.coin_spends);
+            signatures.push(bundle.aggregated_signature.try_into()?);
         }
-        if !other.aggregated_signature.is_null() {
-            sigs.push((&other.aggregated_signature).try_into()?);
-        }
-        self.coin_spends.extend(other.coin_spends);
-        self.aggregated_signature = if sigs.is_empty() {
+        let aggregated_signature = if signatures.is_empty() {
             Default::default()
         } else {
-            AggregateSignature::aggregate(&sigs.iter().collect::<Vec<&Signature>>(), true)
+            AggregateSignature::aggregate(&signatures.iter().collect::<Vec<&Signature>>(), true)
                 .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?
                 .to_signature()
                 .into()
         };
-        Ok(())
+        Ok(SpendBundle {
+            coin_spends,
+            aggregated_signature,
+        })
     }
 
     pub fn empty() -> Self {

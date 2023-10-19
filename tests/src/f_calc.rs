@@ -27,7 +27,7 @@ fn check_match(yl: i64, yr: i64) -> bool {
             }
         }
     }
-    return false;
+    false
 }
 
 //https://github.com/Chia-Network/chiapos/blob/0dd1c1c180d25c351abc48b2f35edf22a0b3dfea/tests/test.cpp#L335

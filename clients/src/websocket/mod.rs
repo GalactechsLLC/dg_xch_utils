@@ -3,6 +3,11 @@ pub mod full_node;
 pub mod harvester;
 pub mod wallet;
 
+use crate::protocols::shared::{
+    load_certs, load_certs_from_bytes, load_private_key, load_private_key_from_bytes, Handshake,
+    NoCertificateVerification, CAPABILITIES, PROTOCOL_VERSION, SOFTWARE_VERSION,
+};
+use crate::protocols::ProtocolMessageTypes;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use dg_xch_core::ssl::{generate_ca_signed_cert_data, CHIA_CA_CRT, CHIA_CA_KEY};
@@ -50,12 +55,6 @@ pub async fn await_termination() -> Result<(), Error> {
     }
     Ok(())
 }
-
-use crate::protocols::shared::{
-    load_certs, load_certs_from_bytes, load_private_key, load_private_key_from_bytes, Handshake,
-    NoCertificateVerification, CAPABILITIES, PROTOCOL_VERSION, SOFTWARE_VERSION,
-};
-use crate::protocols::ProtocolMessageTypes;
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")

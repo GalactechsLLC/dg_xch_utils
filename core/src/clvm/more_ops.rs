@@ -307,7 +307,7 @@ pub fn op_divmod(args: SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
         let r1 = ptr_from_number(&r)?;
 
         let c = (q1.atom()?.data.len() + r1.atom()?.data.len()) as u64 * MALLOC_COST_PER_BYTE;
-        let r: SExp = q1.cons(r1)?;
+        let r: SExp = q1.cons(r1);
         Ok((cost + c, r))
     }
 }

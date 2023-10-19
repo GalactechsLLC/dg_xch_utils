@@ -1,6 +1,9 @@
+use crate::p2_conditions::puzzle_for_conditions;
 use blst::min_pk::{AggregatePublicKey, SecretKey};
 use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48, SizedBytes};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
+use dg_xch_core::clvm::sexp;
+use dg_xch_core::clvm::sexp::IntoSExp;
 use dg_xch_core::curry_and_treehash::{calculate_hash_of_quoted_mod_hash, curry_and_treehash};
 use dg_xch_serialize::hash_256;
 use lazy_static::lazy_static;
@@ -148,20 +151,30 @@ pub async fn test_puzzle_hash_for_pk() {
     assert_eq!(expected_puzzlehash, result)
 }
 
-// Todo
-// pub fn solution_for_delegated_puzzle(delegated_puzzle: Program, solution: Program) -> Program{
-//     Program.to([[], delegated_puzzle, solution])
-// }
-//
-// pub fn solution_for_hidden_puzzle(
-//     hidden_public_key: G1Element,
-//     hidden_puzzle: Program,
-//     solution_to_hidden_puzzle: Program,
-// ) -> Program{
-//     Program.to([hidden_public_key, hidden_puzzle, solution_to_hidden_puzzle])
-// }
-//
-// pub fn solution_for_conditions(conditions) -> Program{
-//     delegated_puzzle = puzzle_for_conditions(conditions)
-//     solution_for_delegated_puzzle(delegated_puzzle, Program.to(0))
-// }
+pub fn solution_for_delegated_puzzle(delegated_puzzle: Program, solution: Program) -> Program {
+    Program::to(vec![
+        sexp::NULL.clone(),
+        delegated_puzzle.to_sexp(),
+        solution.to_sexp(),
+    ])
+}
+
+pub fn solution_for_hidden_puzzle(
+    hidden_public_key: Bytes48,
+    hidden_puzzle: Program,
+    solution_to_hidden_puzzle: Program,
+) -> Program {
+    Program::to(vec![
+        hidden_public_key.to_sexp(),
+        hidden_puzzle.to_sexp(),
+        solution_to_hidden_puzzle.to_sexp(),
+    ])
+}
+
+pub fn solution_for_conditions<T: IntoSExp>(conditions: T) -> Result<Program, Error> {
+    let delegated_puzzle = puzzle_for_conditions(conditions)?;
+    Ok(solution_for_delegated_puzzle(
+        delegated_puzzle,
+        Program::to(0),
+    ))
+}

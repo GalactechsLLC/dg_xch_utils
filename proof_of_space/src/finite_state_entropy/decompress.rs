@@ -3,7 +3,7 @@ use crate::finite_state_entropy::bitstream::{highbit_32, BitDstream, BitDstreamS
 use crate::finite_state_entropy::{
     fse_dtable_size_u32, fse_tablestep, FSE_MAX_TABLELOG, FSE_TABLELOG_ABSOLUTE_MAX,
 };
-use std::io::{Error, ErrorKind};
+use std::io::{Cursor, Error, ErrorKind, Read};
 use std::sync::Arc;
 
 #[derive(Default, Clone)]
@@ -24,6 +24,43 @@ pub struct DTable {
     pub header: DTableH,
     pub table: Vec<DTableEntry>,
 }
+pub fn parse_d_table(bytes: &[u8]) -> DTable {
+    let mut cursor = Cursor::new(bytes);
+    let mut u16_buf: [u8; 2] = [0; 2];
+    let mut u8_buf: [u8; 1] = [0; 1];
+    cursor.read_exact(&mut u16_buf).unwrap();
+    let table_log = u16::from_le_bytes(u16_buf);
+    cursor.read_exact(&mut u16_buf).unwrap();
+    let fast_mode = u16::from_le_bytes(u16_buf);
+    let mut table = vec![];
+    let max_size = fse_dtable_size_u32(table_log as u32);
+    for _ in 0..max_size {
+        let new_state = match cursor.read_exact(&mut u16_buf) {
+            Ok(_) => u16::from_le_bytes(u16_buf),
+            Err(_) => 0,
+        };
+        let symbol = match cursor.read_exact(&mut u8_buf) {
+            Ok(_) => u8::from_le_bytes(u8_buf),
+            Err(_) => 0,
+        };
+        let nb_bits = match cursor.read_exact(&mut u8_buf) {
+            Ok(_) => u8::from_le_bytes(u8_buf),
+            Err(_) => 0,
+        };
+        table.push(DTableEntry {
+            new_state,
+            symbol,
+            nb_bits,
+        });
+    }
+    DTable {
+        header: DTableH {
+            table_log,
+            fast_mode,
+        },
+        table,
+    }
+}
 
 pub struct DState {
     pub state: usize,
@@ -38,17 +75,17 @@ impl DState {
 }
 
 fn create_dtable(table_log: u32) -> DTable {
-    let mut table_log = table_log;
-    if table_log > FSE_TABLELOG_ABSOLUTE_MAX as u32 {
-        table_log = FSE_TABLELOG_ABSOLUTE_MAX as u32;
-    }
-    let size = fse_dtable_size_u32(table_log);
+    let size = if table_log > FSE_TABLELOG_ABSOLUTE_MAX as u32 {
+        fse_dtable_size_u32(FSE_TABLELOG_ABSOLUTE_MAX as u32)
+    } else {
+        fse_dtable_size_u32(table_log)
+    } as usize;
     DTable {
         header: DTableH {
             table_log: 0,
             fast_mode: 0,
         },
-        table: vec![DTableEntry::default(); size as usize],
+        table: vec![DTableEntry::default(); size],
     }
 }
 
@@ -60,8 +97,7 @@ pub fn build_dtable(
     let mut dt = create_dtable(table_log);
     let mut symbol_next = vec![0u16; (FSE_MAX_SYMBOL_VALUE + 1) as usize];
     let max_sv1 = max_symbol_value + 1;
-    let table_size: u32 = 1 << table_log;
-    let mut high_threshold = table_size - 1;
+    let table_size = 1 << table_log;
 
     /* Sanity Checks */
     if max_symbol_value > FSE_MAX_SYMBOL_VALUE {
@@ -75,58 +111,54 @@ pub fn build_dtable(
     }
 
     /* Init, lay down lowprob symbols */
+    dt.header.table_log = table_log as u16;
+    dt.header.fast_mode = 1;
+    let large_limit = (1 << (table_log - 1)) as i16;
+    let mut high_threshold = table_size - 1;
+    for (index, (normalize, symbol_next)) in normalized_counter
+        .iter()
+        .zip(symbol_next.iter_mut())
+        .enumerate()
+        .take(max_sv1 as usize)
     {
-        dt.header.table_log = table_log as u16;
-        dt.header.fast_mode = 1;
-        {
-            let large_limit = (1 << (table_log - 1)) as i16;
-            for s in 0..max_sv1 {
-                if normalized_counter[s as usize] == -1 {
-                    dt.table[high_threshold as usize].symbol = s as u8;
-                    high_threshold -= 1;
-                    symbol_next[s as usize] = 1;
-                } else {
-                    if normalized_counter[s as usize] >= large_limit {
-                        dt.header.fast_mode = 0;
-                    }
-                    symbol_next[s as usize] = normalized_counter[s as usize] as u16;
-                }
+        if *normalize == -1 {
+            dt.table[high_threshold as usize].symbol = index as u8;
+            high_threshold -= 1;
+            *symbol_next = 1;
+        } else {
+            if *normalize >= large_limit {
+                dt.header.fast_mode = 0;
             }
+            *symbol_next = *normalize as u16;
         }
     }
     /* Spread symbols */
-    {
-        let table_mask = table_size - 1;
-        let step = fse_tablestep(table_size);
-        let mut position: u32 = 0;
-        for s in 0..max_sv1 {
-            for _ in 0..normalized_counter[s as usize] {
-                dt.table[position as usize].symbol = s as u8;
+    let table_mask = table_size - 1;
+    let step = fse_tablestep(table_size);
+    let mut position: u32 = 0;
+    for s in 0..max_sv1 {
+        for _ in 0..normalized_counter[s as usize] {
+            dt.table[position as usize].symbol = s as u8;
+            position = (position + step) & table_mask;
+            while position > high_threshold {
+                /* lowprob area */
                 position = (position + step) & table_mask;
-                while position > high_threshold {
-                    /* lowprob area */
-                    position = (position + step) & table_mask;
-                }
             }
         }
-        if position != 0 {
-            /* position must reach all cells once, otherwise normalizedCounter is incorrect */
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "normalized_counter is incorrect",
-            ));
-        }
+    }
+    if position != 0 {
+        /* position must reach all cells once, otherwise normalizedCounter is incorrect */
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "normalized_counter is incorrect",
+        ));
     }
     /* Build Decoding table */
-    {
-        for u in 0..table_size {
-            let symbol = dt.table[u as usize].symbol;
-            let next_state = symbol_next[symbol as usize];
-            symbol_next[symbol as usize] += 1;
-            dt.table[u as usize].nb_bits = (table_log - highbit_32(next_state as u32)) as u8;
-            dt.table[u as usize].new_state =
-                ((next_state << dt.table[u as usize].nb_bits) as u32 - table_size) as u16;
-        }
+    for table in &mut dt.table[0..(table_size as usize)] {
+        let next_state = symbol_next[table.symbol as usize];
+        symbol_next[table.symbol as usize] += 1;
+        table.nb_bits = (table_log - highbit_32(next_state as u32)) as u8;
+        table.new_state = ((next_state << table.nb_bits) as u32 - table_size) as u16;
     }
     Ok(dt)
 }
@@ -137,7 +169,7 @@ pub fn decompress_using_dtable(
     src: impl AsRef<[u8]>,
     src_size: usize,
     dt: Arc<DTable>,
-) -> Result<(), Error> {
+) -> Result<usize, Error> {
     let fast = dt.header.fast_mode > 0;
     fse_decompress_using_dtable_generic(dst.as_mut(), dst_size, src.as_ref(), src_size, dt, fast)
 }
@@ -153,7 +185,7 @@ pub fn fse_decompress_using_dtable_generic(
     src_size: usize,
     dt: Arc<DTable>,
     fast: bool,
-) -> Result<(), Error> {
+) -> Result<usize, Error> {
     let mut bit_d = match BitDstream::new(src, src_size) {
         Ok(b) => b,
         Err(e) => {
@@ -209,7 +241,7 @@ pub fn fse_decompress_using_dtable_generic(
             break;
         }
     }
-    Ok(())
+    Ok(index)
 }
 
 pub struct DecodeSymbol {}

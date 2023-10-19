@@ -1,6 +1,5 @@
 use crate::clvm::assemble::assemble_text;
 use crate::clvm::assemble::keywords::KEYWORD_TO_ATOM;
-use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
 use crate::clvm::program::SerializedProgram;
 use crate::clvm::program::{Program, NULL};
 use crate::clvm::sexp::AtomBuf;
@@ -18,62 +17,8 @@ lazy_static! {
         assemble_text("(c (q . (: . parm)) (: . core))").expect("Static Assemble Should not fail.");
 }
 
-const BYTE_MATCH: [u8; 1] = [81u8];
 const ATOM_MATCH: [u8; 1] = [b'$'];
 const SEXP_MATCH: [u8; 1] = [b':'];
-
-pub fn uncurry(
-    curried_program: &SerializedProgram,
-) -> Result<Option<(SerializedProgram, SerializedProgram)>, Error> {
-    let pattern_func = sexp_from_bytes(UNCURRY_PATTERN_FUNCTION.to_bytes())?;
-    let pattern_core = sexp_from_bytes(UNCURRY_PATTERN_CORE.to_bytes())?;
-    let sexp = sexp_from_bytes(curried_program.to_bytes())?;
-    match match_sexp(&pattern_func, &sexp, HashMap::new()) {
-        Some(mut func_results) => {
-            let func = func_results.remove("function").ok_or_else(|| {
-                Error::new(
-                    ErrorKind::InvalidInput,
-                    "Failed to find function in curried program",
-                )
-            })?;
-            let mut core = func_results.remove("core").ok_or_else(|| {
-                Error::new(
-                    ErrorKind::InvalidInput,
-                    "Failed to find core in curried program",
-                )
-            })?;
-            let mut args: Vec<SExp> = Vec::new();
-            while let Some(mut core_results) = match_sexp(&pattern_core, &core, HashMap::new()) {
-                args.push(core_results.remove("parm").ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        "Failed to find parm in curried program",
-                    )
-                })?);
-                core = core_results.remove("core").ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::InvalidInput,
-                        "Failed to find core in curried program",
-                    )
-                })?;
-            }
-            match core {
-                SExp::Atom(buf) => {
-                    if buf.data == BYTE_MATCH {
-                        Ok(Some((
-                            SerializedProgram::from_bytes(&sexp_to_bytes(&func)?),
-                            SerializedProgram::from_bytes(&sexp_to_bytes(&concat(&args)?)?),
-                        )))
-                    } else {
-                        Ok(None)
-                    }
-                }
-                _ => Ok(None),
-            }
-        }
-        None => Ok(None),
-    }
-}
 
 pub fn concat(sexps: &[SExp]) -> Result<SExp, Error> {
     let mut buf = AtomBuf::new(vec![]);

@@ -1,3 +1,4 @@
+use crate::blockchain::sized_bytes::Bytes32;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 
@@ -31,4 +32,11 @@ impl From<u8> for WalletType {
             _ => WalletType::Unknown,
         }
     }
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct AmountWithPuzzlehash {
+    pub amount: u64,
+    pub puzzlehash: Bytes32,
+    pub memos: Vec<Vec<u8>>,
 }

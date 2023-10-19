@@ -5,6 +5,7 @@ use dg_xch_serialize::ChiaSerialize;
 use hex::FromHexError;
 use hex::{decode, encode};
 use log::warn;
+use num_traits::AsPrimitive;
 #[cfg(feature = "paperclip")]
 use paperclip::v2::models::{DataType, DataTypeFormat};
 #[cfg(feature = "paperclip")]
@@ -13,6 +14,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Read};
+use std::ops::{Index, IndexMut, Range};
 
 pub fn prep_hex_str(to_fix: &str) -> String {
     let lc = to_fix.to_lowercase();
@@ -151,8 +153,26 @@ macro_rules! impl_sized_bytes {
                 }
             }
 
+            impl<N: AsPrimitive<usize>> Index<Range<N>> for $name {
+                type Output = [u8];
+                fn index(&self, index: Range<N>) -> &Self::Output {
+                    &self.bytes[index.start.as_()..index.end.as_()]
+                }
+            }
+            impl<N: AsPrimitive<usize>> IndexMut<Range<N>> for $name {
+                fn index_mut(&mut self, index: Range<N>) -> &mut Self::Output {
+                    &mut self.bytes[index.start.as_()..index.end.as_()]
+                }
+            }
+
             impl AsRef<[u8]> for $name {
                 fn as_ref(&self) -> &[u8] {
+                    &self.bytes
+                }
+            }
+
+            impl AsRef<[u8; $size]> for $name {
+                fn as_ref(&self) -> &[u8; $size] {
                     &self.bytes
                 }
             }
@@ -246,7 +266,7 @@ macro_rules! impl_sized_bytes {
 
             impl fmt::Display for $name {
                 fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    write!(f, "{}", encode(&self.bytes))
+                    write!(f, "0x{}", encode(&self.bytes))
                 }
             }
 
@@ -258,7 +278,7 @@ macro_rules! impl_sized_bytes {
 
             impl fmt::Debug for $name {
                 fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    write!(f, "{}", encode(&self.bytes))
+                    write!(f, "0x{}", encode(&self.bytes))
                 }
             }
 
@@ -320,6 +340,17 @@ impl From<Bytes32> for SecretKey {
     }
 }
 
+impl From<&SecretKey> for Bytes32 {
+    fn from(val: &SecretKey) -> Self {
+        Bytes32::from_sized_bytes(val.to_bytes())
+    }
+}
+impl From<SecretKey> for Bytes32 {
+    fn from(val: SecretKey) -> Self {
+        Bytes32::from_sized_bytes(val.to_bytes())
+    }
+}
+
 impl From<&Bytes48> for PublicKey {
     fn from(val: &Bytes48) -> Self {
         PublicKey::from_bytes(val.to_sized_bytes()).unwrap_or_default()
@@ -330,7 +361,16 @@ impl From<Bytes48> for PublicKey {
         PublicKey::from_bytes(val.to_sized_bytes()).unwrap_or_default()
     }
 }
-
+impl From<&PublicKey> for Bytes48 {
+    fn from(val: &PublicKey) -> Self {
+        Bytes48::from_sized_bytes(val.to_bytes())
+    }
+}
+impl From<PublicKey> for Bytes48 {
+    fn from(val: PublicKey) -> Self {
+        (&val).into()
+    }
+}
 impl TryFrom<&Bytes96> for Signature {
     type Error = Error;
 
@@ -339,6 +379,7 @@ impl TryFrom<&Bytes96> for Signature {
             .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
     }
 }
+
 impl TryFrom<Bytes96> for Signature {
     type Error = Error;
 

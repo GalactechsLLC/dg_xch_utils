@@ -4,7 +4,7 @@ pub mod wallet;
 use crate::protocols::shared::NoCertificateVerification;
 use crate::protocols::shared::{load_certs, load_private_key};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Client, ClientBuilder};
+use reqwest::{header, Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -72,6 +72,7 @@ where
     T: DeserializeOwned,
 {
     let mut header_map = HeaderMap::new();
+    header_map.insert(header::CONTENT_TYPE, HeaderValue::from_static("json"));
     if let Some(m) = additional_headers {
         for (k, v) in m {
             header_map.insert(

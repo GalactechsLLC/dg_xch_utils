@@ -1,5 +1,6 @@
 use crate::api::wallet::WalletAPI;
 use async_trait::async_trait;
+use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::transaction_record::TransactionRecord;
@@ -162,12 +163,19 @@ impl WalletAPI for WalletClient {
         wallet_id: u32,
         additions: Vec<Coin>,
         coins: Vec<Coin>,
+        coin_announcements: Vec<Announcement>,
+        puzzle_announcements: Vec<Announcement>,
         fee: u64,
     ) -> Result<TransactionRecord, Error> {
         let mut request_body = Map::new();
         request_body.insert("wallet_id".to_string(), json!(wallet_id));
         request_body.insert("additions".to_string(), json!(additions));
         request_body.insert("coins".to_string(), json!(coins));
+        request_body.insert("coin_announcements".to_string(), json!(coin_announcements));
+        request_body.insert(
+            "puzzle_announcements".to_string(),
+            json!(puzzle_announcements),
+        );
         request_body.insert("fee".to_string(), json!(fee));
         Ok(post::<SignedTransactionRecordResp>(
             &self.client,

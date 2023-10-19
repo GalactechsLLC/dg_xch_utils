@@ -3,8 +3,8 @@ use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use crate::blockchain::utils::atom_to_int;
-use crate::clvm::program::{Program, SerializedProgram};
-use crate::clvm::sexp::SExp;
+use crate::clvm::program::SerializedProgram;
+use crate::clvm::sexp::{IntoSExp, SExp};
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
@@ -91,7 +91,7 @@ pub fn conditions_for_solution(
     solution: &SerializedProgram,
     max_cost: u64,
 ) -> Result<(Vec<ConditionWithArgs>, u64), Error> {
-    match puzzle_reveal.run_with_cost(max_cost, &Program::new(solution.to_bytes())) {
+    match puzzle_reveal.run_with_cost(max_cost, &solution.to_program()?) {
         Ok((cost, r)) => match parse_sexp_to_conditions(r.to_sexp()) {
             Ok(conditions) => Ok((conditions, cost)),
             Err(error) => Err(error),

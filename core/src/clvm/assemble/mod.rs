@@ -54,7 +54,7 @@ pub fn handle_cons(token: Token, tokens: &mut Reader) -> Result<SExp, Error> {
                             format!("Illegal dot expression at position: {}", token.index),
                         ))
                     } else {
-                        Ok(first.cons(rest)?)
+                        Ok(first.cons(rest))
                     }
                 } else {
                     Err(Error::new(
@@ -67,7 +67,7 @@ pub fn handle_cons(token: Token, tokens: &mut Reader) -> Result<SExp, Error> {
                 }
             } else {
                 rest = handle_cons(token, tokens)?;
-                Ok(first.cons(rest)?)
+                Ok(first.cons(rest))
             }
         } else {
             Err(Error::new(

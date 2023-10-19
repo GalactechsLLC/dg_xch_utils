@@ -1,9 +1,9 @@
 use crate::blockchain::sized_bytes::*;
-use crate::clvm::curry_utils::{curry, uncurry};
+use crate::clvm::curry_utils::curry;
 use crate::clvm::dialect::ChiaDialect;
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
 use crate::clvm::run_program::run_program;
-use crate::clvm::sexp::AtomBuf;
+use crate::clvm::sexp::{AtomBuf, IntoSExp};
 use crate::clvm::sexp::{SExp, NULL as SNULL};
 use crate::clvm::utils::{tree_hash, MEMPOOL_MODE};
 use dg_xch_macros::ChiaSerial;
@@ -13,7 +13,7 @@ use num_bigint::BigInt;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::io::{Error, ErrorKind};
@@ -27,10 +27,10 @@ lazy_static! {
     };
 }
 
-#[derive(Eq, Serialize, Deserialize, Debug)]
+#[derive(Eq, Serialize, Deserialize)]
 pub struct Program {
     pub serialized: Vec<u8>,
-    sexp: SExp,
+    pub sexp: SExp,
 }
 
 impl Display for Program {
@@ -39,17 +39,144 @@ impl Display for Program {
     }
 }
 
+impl Debug for Program {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", &self.sexp)
+    }
+}
+
 impl Program {
+    pub fn new(serialized: Vec<u8>) -> Self {
+        match sexp_from_bytes(&serialized) {
+            Ok(sexp) => Program { serialized, sexp },
+            Err(e) => {
+                println!("Error building Program: {:?}", e);
+                Program {
+                    serialized: vec![],
+                    sexp: SNULL.clone(),
+                }
+            }
+        }
+    }
+    pub fn null() -> Self {
+        let serial = match sexp_to_bytes(&SNULL) {
+            Ok(bytes) => bytes,
+            Err(_) => vec![],
+        };
+        Program {
+            serialized: serial,
+            sexp: SNULL.clone(),
+        }
+    }
+    pub fn to<T: IntoSExp>(vals: T) -> Self {
+        let sexp = vals.to_sexp();
+        let serialized = match sexp_to_bytes(&sexp) {
+            Ok(bytes) => bytes,
+            Err(_) => vec![],
+        };
+        Program { serialized, sexp }
+    }
+    pub fn first(&self) -> Result<Self, Error> {
+        let first = self.sexp.first()?;
+        let serialized = match sexp_to_bytes(first) {
+            Ok(bytes) => bytes,
+            Err(_) => vec![],
+        };
+        Ok(Program {
+            serialized,
+            sexp: first.clone(),
+        })
+    }
+    pub fn rest(&self) -> Result<Self, Error> {
+        let rest = self.sexp.rest()?;
+        let serialized = match sexp_to_bytes(rest) {
+            Ok(bytes) => bytes,
+            Err(_) => vec![],
+        };
+        Ok(Program {
+            serialized,
+            sexp: rest.clone(),
+        })
+    }
+    pub fn at(&self, path: &str) -> Result<Program, Error> {
+        let mut rtn = &self.sexp;
+        for c in path.chars() {
+            if c == 'f' || c == 'F' {
+                rtn = rtn.first()?;
+            } else if c == 'r' || c == 'R' {
+                rtn = rtn.rest()?;
+            } else {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("`at` got illegal character `{c}`. Only `f` & `r` allowed"),
+                ));
+            }
+        }
+        let serialized = sexp_to_bytes(rtn)?;
+        Ok(Program {
+            serialized,
+            sexp: rtn.clone(),
+        })
+    }
+
+    pub fn tree_hash(&self) -> Bytes32 {
+        let sexp = match sexp_from_bytes(&self.serialized) {
+            Ok(node) => node,
+            Err(e) => {
+                println!("ERROR: {:?}", e);
+                SNULL.clone()
+            }
+        };
+        Bytes32::new(&tree_hash(&sexp))
+    }
     pub fn curry(&self, args: &[Program]) -> Result<Program, Error> {
         curry(self, args)
     }
 
     pub fn uncurry(&self) -> Result<(Program, Program), Error> {
-        let serial_program = SerializedProgram::from_bytes(&self.serialized);
-        match uncurry(&serial_program)? {
-            Some((program, args)) => Ok((program.to_program()?, args.to_program()?)),
-            None => Ok((serial_program.to_program()?, 0.try_into()?)),
+        fn inner_match(o: SExp, expected: &[u8]) -> Result<(), Error> {
+            if o.atom()? != expected {
+                Err(Error::new(
+                    ErrorKind::InvalidData,
+                    format!("expected: {}", encode(expected)),
+                ))
+            } else {
+                Ok(())
+            }
         }
+        {
+            //(2 (1 . <mod>) <args>)
+            let as_list = self.as_list();
+            inner_match(as_list[0].clone().to_sexp() /*ev*/, b"\x02")?;
+            let q_pair = as_list[1].as_pair().ok_or_else(|| {
+                //quoted_inner
+                Error::new(
+                    ErrorKind::InvalidData,
+                    format!("expected pair found atom: {}", as_list[1]),
+                )
+            })?;
+            inner_match(q_pair.0.to_sexp(), b"\x01")?;
+            let mut args = vec![];
+            let mut args_list = as_list[2].clone();
+            while args_list.is_pair() {
+                //(4(1. < arg >) < rest >)
+                let as_list = args_list.as_list();
+                inner_match(as_list[0].clone().to_sexp(), b"\x04")?;
+                let q_pair = as_list[1].as_pair().ok_or_else(|| {
+                    //quoted_inner
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("expected pair found atom: {}", as_list[1]),
+                    )
+                })?;
+                inner_match(q_pair.0.to_sexp(), b"\x01")?;
+                args.push(q_pair.1.to_sexp());
+                args_list = as_list[2].clone();
+            }
+            inner_match(args_list.to_sexp(), b"\x01")?;
+            Ok((Program::to(q_pair.1), Program::to(args)))
+        }
+        .or_else(|_: Error| Ok((self.clone(), Program::to(0))))
     }
 
     pub fn as_list(&self) -> Vec<Program> {
@@ -62,24 +189,6 @@ impl Program {
                 rtn.extend(rest.as_list());
                 rtn
             }
-        }
-    }
-
-    pub fn as_atom_list(&self) -> Vec<Vec<u8>> {
-        match self.as_pair() {
-            None => {
-                vec![]
-            }
-            Some((first, rest)) => match first.as_vec() {
-                None => {
-                    vec![]
-                }
-                Some(atom) => {
-                    let mut rtn: Vec<Vec<u8>> = vec![atom];
-                    rtn.extend(rest.as_atom_list());
-                    rtn
-                }
-            },
         }
     }
 
@@ -96,10 +205,6 @@ impl Program {
                 }
             })
             .collect())
-    }
-
-    pub fn to_sexp(&self) -> SExp {
-        self.sexp.clone()
     }
 
     pub fn is_atom(&self) -> bool {
@@ -128,7 +233,7 @@ impl Program {
     }
 
     pub fn as_pair(&self) -> Option<(Program, Program)> {
-        match self.to_sexp() {
+        match &self.sexp {
             SExp::Pair(pair) => {
                 let left = match sexp_to_bytes(&pair.first) {
                     Ok(serial_data) => Program::new(serial_data),
@@ -173,18 +278,19 @@ impl Program {
         }
     }
 
-    pub fn first(&self) -> Result<Program, Error> {
-        match self.as_pair() {
-            Some((p1, _)) => Ok(p1),
-            _ => Err(Error::new(ErrorKind::Unsupported, "first of non-cons")),
-        }
-    }
-
-    pub fn rest(&self) -> Result<Program, Error> {
-        match self.as_pair() {
-            Some((_, p2)) => Ok(p2),
-            _ => Err(Error::new(ErrorKind::Unsupported, "rest of non-cons")),
-        }
+    pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
+        let program = sexp_from_bytes(&self.serialized)?;
+        let args = sexp_from_bytes(&args.serialized)?;
+        let dialect = ChiaDialect::new(flags);
+        let (cost, result) = match run_program(dialect, &program, &args, max_cost, None) {
+            Ok(reduct) => reduct,
+            Err(e) => {
+                return Err(e);
+            }
+        };
+        let serialized = sexp_to_bytes(&result)?;
+        let sexp = sexp_from_bytes(&serialized)?;
+        Ok((cost, Program { serialized, sexp }))
     }
 }
 
@@ -247,42 +353,6 @@ impl Hash for Program {
 impl PartialEq for Program {
     fn eq(&self, other: &Self) -> bool {
         self.serialized == other.serialized
-    }
-}
-
-impl Program {
-    pub fn new(serialized: Vec<u8>) -> Self {
-        match sexp_from_bytes(&serialized) {
-            Ok(sexp) => Program { serialized, sexp },
-            Err(e) => {
-                println!("Error building Program: {:?}", e);
-                Program {
-                    serialized: vec![],
-                    sexp: SNULL.clone(),
-                }
-            }
-        }
-    }
-    pub fn null() -> Self {
-        let serial = match sexp_to_bytes(&SNULL) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
-        Program {
-            serialized: serial,
-            sexp: SNULL.clone(),
-        }
-    }
-
-    pub fn tree_hash(&self) -> Bytes32 {
-        let sexp = match sexp_from_bytes(&self.serialized) {
-            Ok(node) => node,
-            Err(e) => {
-                println!("ERROR: {:?}", e);
-                SNULL.clone()
-            }
-        };
-        Bytes32::new(&tree_hash(&sexp))
     }
 }
 
@@ -369,13 +439,18 @@ impl_ints!(
     i128, 16
 );
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Debug)]
+#[derive(ChiaSerial, Clone, PartialEq, Eq)]
 pub struct SerializedProgram {
     buffer: Vec<u8>,
 }
 impl Display for SerializedProgram {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&encode(&self.buffer))
+        write!(f, "0x{}", encode(&self.buffer))
+    }
+}
+impl Debug for SerializedProgram {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "0x{}", encode(&self.buffer))
     }
 }
 impl SerializedProgram {
@@ -420,7 +495,7 @@ impl SerializedProgram {
         Ok(Program::new(self.buffer.clone()))
     }
 
-    fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
+    pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
         let program = sexp_from_bytes(&self.buffer)?;
         let args = sexp_from_bytes(&args.serialized)?;
         let dialect = ChiaDialect::new(flags);
