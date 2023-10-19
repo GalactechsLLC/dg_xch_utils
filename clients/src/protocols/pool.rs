@@ -179,17 +179,17 @@ pub struct ErrorResponse {
     pub error_message: Option<String>,
 }
 
-pub fn get_current_authentication_token(timeout: u64) -> u64 {
+pub fn get_current_authentication_token(timeout: u8) -> u64 {
     let now: u64 = OffsetDateTime::now_utc().unix_timestamp() as u64;
-    now / 60 / timeout
+    now / 60 / timeout as u64
 }
 
-pub fn validate_authentication_token(token: u64, timeout: u64) -> bool {
+pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
     let cur_token = get_current_authentication_token(timeout);
     let dif = if token > cur_token {
         token - cur_token
     } else {
         cur_token - token
     };
-    dif <= timeout
+    dif <= timeout as u64
 }

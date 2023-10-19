@@ -329,7 +329,7 @@ pub struct HandshakeResp {
 }
 
 async fn perform_handshake(
-    client: &Client,
+    client: Arc<Mutex<Client>>,
     network_id: &str,
     port: u16,
     node_type: NodeType,
@@ -400,7 +400,7 @@ impl MessageHandler for OneShotHandler {
 }
 
 pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
-    client: &C,
+    client: Arc<Mutex<C>>,
     msg: ChiaMessage,
     resp_type: Option<ProtocolMessageTypes>,
     msg_id: Option<u16>,
@@ -420,13 +420,13 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
         },
         handle: handle.clone(),
     };
-    client.subscribe(handle.id, chia_handle).await;
+    client.lock().await.subscribe(handle.id, chia_handle).await;
     let res_handle = tokio::spawn(async move {
         let res = rx.recv().await;
         rx.close();
         res
     });
-    client.send(msg.into()).await.map_err(|e| {
+    client.lock().await.send(msg.into()).await.map_err(|e| {
         Error::new(
             ErrorKind::InvalidData,
             format!("Failed to parse send data: {:?}", e),
@@ -434,7 +434,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
     })?;
     select!(
         _ = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
-            client.unsubscribe(handle.id).await;
+            client.lock().await.unsubscribe(handle.id).await;
             Err(Error::new(
                 ErrorKind::Other,
                 "Timeout before oneshot completed",
@@ -444,7 +444,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
             let res = res?;
             if let Some(v) = res {
                 let mut cursor = Cursor::new(v);
-                client.unsubscribe(handle.id).await;
+                client.lock().await.unsubscribe(handle.id).await;
                 R::from_bytes(&mut cursor).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
@@ -452,7 +452,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
                     )
                 })
             } else {
-                client.unsubscribe(handle.id).await;
+                client.lock().await.unsubscribe(handle.id).await;
                 Err(Error::new(
                     ErrorKind::Other,
                     "Channel Closed before response received",

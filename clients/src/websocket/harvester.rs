@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 pub struct HarvesterClient {
-    pub client: Client,
+    pub client: Arc<Mutex<Client>>,
     handle: JoinHandle<()>,
 }
 impl HarvesterClient {
@@ -22,7 +23,8 @@ impl HarvesterClient {
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client(host, port, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
-        perform_handshake(&client, network_id, port, NodeType::Harvester).await?;
+        let client = Arc::new(Mutex::new(client));
+        perform_handshake(client.clone(), network_id, port, NodeType::Harvester).await?;
         Ok(HarvesterClient { client, handle })
     }
     pub async fn new_ssl(
@@ -38,18 +40,19 @@ impl HarvesterClient {
         debug!("Spawning Stream Handler for Harvester SSL Connection");
         let handle = tokio::spawn(async move { stream.run(run).await });
         debug!("Performing Handshake");
-        perform_handshake(&client, network_id, port, NodeType::Harvester).await?;
+        let client = Arc::new(Mutex::new(client));
+        perform_handshake(client.clone(), network_id, port, NodeType::Harvester).await?;
         debug!("Harvester Handshake Complete");
         Ok(HarvesterClient { client, handle })
     }
 
-    pub async fn join(mut self) -> Result<(), Error> {
+    pub async fn join(self) -> Result<(), Error> {
         self.handle.await.map_err(|e| {
             Error::new(
                 ErrorKind::Other,
                 format!("Failed to join harvester: {:?}", e),
             )
         })?;
-        self.client.shutdown().await
+        self.client.lock().await.shutdown().await
     }
 }

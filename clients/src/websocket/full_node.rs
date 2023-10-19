@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 pub struct FullnodeClient {
-    pub client: Client,
+    pub client: Arc<Mutex<Client>>,
     handle: JoinHandle<()>,
 }
 impl FullnodeClient {
@@ -21,7 +22,8 @@ impl FullnodeClient {
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client(host, port, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
-        perform_handshake(&client, network_id, port, NodeType::FullNode).await?;
+        let client = Arc::new(Mutex::new(client));
+        perform_handshake(client.clone(), network_id, port, NodeType::FullNode).await?;
         Ok(FullnodeClient { client, handle })
     }
     pub async fn new_ssl(
@@ -34,17 +36,18 @@ impl FullnodeClient {
     ) -> Result<Self, Error> {
         let (client, mut stream) = get_client_tls(host, port, ssl_info, additional_headers).await?;
         let handle = tokio::spawn(async move { stream.run(run).await });
-        perform_handshake(&client, network_id, port, NodeType::FullNode).await?;
+        let client = Arc::new(Mutex::new(client));
+        perform_handshake(client.clone(), network_id, port, NodeType::FullNode).await?;
         Ok(FullnodeClient { client, handle })
     }
 
-    pub async fn join(mut self) -> Result<(), Error> {
+    pub async fn join(self) -> Result<(), Error> {
         self.handle.await.map_err(|e| {
             Error::new(
                 ErrorKind::Other,
                 format!("Failed to join fullnode: {:?}", e),
             )
         })?;
-        self.client.shutdown().await
+        self.client.lock().await.shutdown().await
     }
 }
