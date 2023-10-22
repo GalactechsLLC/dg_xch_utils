@@ -8,7 +8,8 @@ members = [
     "macros",
     "proof_of_space",
     "puzzles",
-    "serialize"
+    "serialize",
+    "tests"
 ]
 
 [workspace.dependencies]
@@ -30,6 +31,7 @@ dg_xch_macros = {path= "macros" }
 dg_xch_pos = {path= "proof_of_space" }
 dg_xch_puzzles = {path= "puzzles" }
 dg_xch_serialize = {path= "serialize" }
+dg_xch_tests = {path= "tests" }
 hkdf = "0.12.3"
 futures-util = "0.3.25"
 hex = "0.4.3"

@@ -1,7 +1,8 @@
-mod consensus;
+use tokio::time::Instant;
+use dg_xch_pos::verifier::check_plot;
+
 mod f_calc;
 mod prover;
-
 
 #[test]
 pub fn speed_test_check_plot() {
@@ -17,3 +18,4 @@ pub fn speed_test_check_plot() {
     let avg = seconds / run_amt as f64;
     info!("Proofs Found: {total}/{run_amt}, Bad Proofs: {bad}, took {seconds} seconds, avg: {avg}");
 }
+

@@ -63,6 +63,33 @@ pub const K_C3R: f64 = 1.0;
 // be incremented.
 pub const K_FORMAT_DESCRIPTION: &str = "v1.0";
 
+/// Div With modifications to affect rounding
+///
+/// # Examples
+///
+/// ```
+/// let result = dg_xch_pos::constants::cdiv(11, 2);
+/// assert_eq!(result, 6);
+/// ```
+///
+/// ```
+/// let result = dg_xch_pos::constants::cdiv(10, 2);
+/// assert_eq!(result, 5);
+/// ```
+///
+/// ```
+/// let result = dg_xch_pos::constants::cdiv(9, 2);
+/// assert_eq!(result, 5);
+/// ```
+///
+/// # Panics
+///
+/// The function panics if the second argument is zero.
+///
+/// ```rust,should_panic
+/// // panics on division by zero
+/// dg_xch_pos::constants::cdiv(10, 0);
+/// ```
 pub const fn cdiv(a: i32, b: i32) -> i32 {
     (a + b - 1) / b
 }
