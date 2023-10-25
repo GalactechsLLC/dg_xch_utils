@@ -6,6 +6,7 @@ use crate::protocols::pool::{
 use async_trait::async_trait;
 use log::warn;
 use reqwest::Client;
+use std::collections::HashMap;
 
 #[async_trait]
 pub trait PoolClient {
@@ -13,21 +14,25 @@ pub trait PoolClient {
         &self,
         url: &str,
         request: GetFarmerRequest,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<GetFarmerResponse, PoolError>;
     async fn post_farmer(
         &self,
         url: &str,
         request: PostFarmerRequest,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<PostFarmerResponse, PoolError>;
     async fn put_farmer(
         &self,
         url: &str,
         request: PutFarmerRequest,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<PutFarmerResponse, PoolError>;
     async fn post_partial(
         &self,
         url: &str,
         request: PostPartialRequest,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<PostPartialResponse, PoolError>;
     async fn get_pool_info(&self, pool_url: &str) -> Result<GetPoolInfoResponse, PoolError>;
 }
@@ -52,14 +57,15 @@ impl PoolClient for DefaultPoolClient {
         &self,
         url: &str,
         request: GetFarmerRequest,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<GetFarmerResponse, PoolError> {
-        match self
-            .client
-            .get(format!("{}/farmer", url))
-            .query(&request)
-            .send()
-            .await
-        {
+        let mut request_builder = self.client.get(format!("{}/farmer", url));
+        if let Some(headers) = headers {
+            for (k, v) in headers {
+                request_builder = request_builder.header(k, v);
+            }
+        }
+        match request_builder.query(&request).send().await {
             Ok(resp) => match resp.status() {
                 reqwest::StatusCode::OK => match resp.text().await {
                     Ok(body) => {
@@ -122,14 +128,15 @@ impl PoolClient for DefaultPoolClient {
         &self,
         url: &str,
         request: PostFarmerRequest,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<PostFarmerResponse, PoolError> {
-        match self
-            .client
-            .post(format!("{}/farmer", url))
-            .json(&request)
-            .send()
-            .await
-        {
+        let mut request_builder = self.client.post(format!("{}/farmer", url));
+        if let Some(headers) = headers {
+            for (k, v) in headers {
+                request_builder = request_builder.header(k, v);
+            }
+        }
+        match request_builder.json(&request).send().await {
             Ok(resp) => match resp.status() {
                 reqwest::StatusCode::OK => match resp.text().await {
                     Ok(body) => match serde_json::from_str(body.as_str()) {
@@ -192,14 +199,15 @@ impl PoolClient for DefaultPoolClient {
         &self,
         url: &str,
         request: PutFarmerRequest,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<PutFarmerResponse, PoolError> {
-        match self
-            .client
-            .put(format!("{}/farmer", url))
-            .json(&request)
-            .send()
-            .await
-        {
+        let mut request_builder = self.client.put(format!("{}/farmer", url));
+        if let Some(headers) = headers {
+            for (k, v) in headers {
+                request_builder = request_builder.header(k, v);
+            }
+        }
+        match request_builder.json(&request).send().await {
             Ok(resp) => match resp.status() {
                 reqwest::StatusCode::OK => match resp.text().await {
                     Ok(body) => match serde_json::from_str::<PoolError>(body.as_str()) {
@@ -255,14 +263,15 @@ impl PoolClient for DefaultPoolClient {
         &self,
         url: &str,
         request: PostPartialRequest,
+        headers: &Option<HashMap<String, String>>,
     ) -> Result<PostPartialResponse, PoolError> {
-        match self
-            .client
-            .post(format!("{}/partial", url))
-            .json(&request)
-            .send()
-            .await
-        {
+        let mut request_builder = self.client.post(format!("{}/partial", url));
+        if let Some(headers) = headers {
+            for (k, v) in headers {
+                request_builder = request_builder.header(k, v);
+            }
+        }
+        match request_builder.json(&request).send().await {
             Ok(resp) => match resp.status() {
                 reqwest::StatusCode::OK => match resp.text().await {
                     Ok(body) => match serde_json::from_str(body.as_str()) {

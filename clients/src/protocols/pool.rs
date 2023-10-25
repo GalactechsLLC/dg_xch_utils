@@ -199,7 +199,6 @@ pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
     dif <= timeout as u64
 }
 
-
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct PoolLoginParts {
     pub auth_token: u64,

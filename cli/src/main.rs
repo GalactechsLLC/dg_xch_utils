@@ -1,7 +1,10 @@
 pub mod cli;
+use blst::min_pk::SecretKey;
 use clap::Parser;
 use cli::*;
-use dg_xch_cli::wallet_commands::{create_cold_wallet, get_plotnft_ready_state, migrate_plot_nft};
+use dg_xch_cli::wallet_commands::{
+    create_cold_wallet, get_plotnft_ready_state, migrate_plot_nft, migrate_plot_nft_with_owner_key,
+};
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use simple_logger::SimpleLogger;
@@ -37,6 +40,28 @@ async fn main() -> Result<(), Error> {
                 &Bytes32::from(launcher_id),
                 &mnemonic,
                 fee.unwrap_or_default(),
+            )
+            .await?
+        }
+        RootCommands::MovePlotNFTWithOwnerKey {
+            target_pool,
+            launcher_id,
+            owner_key,
+        } => {
+            let host = cli.fullnode_host.unwrap_or("localhost".to_string());
+            let client = FullnodeClient::new(
+                &host,
+                cli.fullnode_port.unwrap_or(8444),
+                cli.ssl_path,
+                &None,
+            );
+            let owner_key = SecretKey::from_bytes(Bytes32::from(&owner_key).as_ref())
+                .expect("Failed to Parse Owner Secret Key");
+            migrate_plot_nft_with_owner_key(
+                &client,
+                &target_pool,
+                &Bytes32::from(launcher_id),
+                &owner_key,
             )
             .await?
         }

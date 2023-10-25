@@ -10,9 +10,11 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/cli"
 
 [lib]
 name = "dg_xch_cli"
+path = "src/lib.rs"
 
 [[bin]]
 name = "dg_xch_cli"
+path = "src/main.rs"
 
 [dependencies]
 async-trait = "0.1.74"
