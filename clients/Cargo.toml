@@ -18,6 +18,7 @@ dg_xch_serialize = {path = "../serialize", version="1.0.9"}
 futures-util = "0.3.28"
 hyper = {version="0.14.27", features=["full"]}
 log = "0.4.20"
+openssl = {version = "0.10.57", features = ["vendored"]}
 reqwest = {version="0.11.22", features=["json", "rustls-tls-webpki-roots"]}
 rustls = {version = "0.21.7", features = ["dangerous_configuration"] }
 rustls-pemfile = "1.0.3"

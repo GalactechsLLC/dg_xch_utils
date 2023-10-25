@@ -31,7 +31,7 @@ pub enum RootCommands {
         #[arg(short, long)]
         include_spent_coins: bool,
     },
-    #[command(about = "Gets coin records for a given address or puzzlehash", long_about = None)]
+    #[command(about = "Migrates a PlotNFT using a mnemonic", long_about = None)]
     MovePlotNFT {
         #[arg(short, long)]
         target_pool: String,
@@ -41,6 +41,15 @@ pub enum RootCommands {
         mnemonic: String,
         #[arg(short, long)]
         fee: Option<u64>,
+    },
+    #[command(about = "Migrates a PlotNFT using an owner_secrey_key", long_about = None)]
+    MovePlotNFTWithOwnerKey {
+        #[arg(short, long)]
+        target_pool: String,
+        #[arg(short, long)]
+        launcher_id: String,
+        #[arg(short, long)]
+        owner_key: String,
     },
     #[command(about = "Gets plotnft state for launcher_id", long_about = None)]
     GetPlotnftState {
