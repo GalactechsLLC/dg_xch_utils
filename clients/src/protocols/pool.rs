@@ -1,13 +1,13 @@
-use std::io::{Error, ErrorKind};
+use crate::api::pool::{DefaultPoolClient, PoolClient};
 use blst::min_pk::{AggregateSignature, SecretKey, Signature};
 use dg_xch_core::blockchain::proof_of_space::ProofOfSpace;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96, SizedBytes};
-use dg_xch_macros::ChiaSerial;
-use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 use dg_xch_core::clvm::bls_bindings::sign;
-use dg_xch_serialize::{ChiaSerialize, hash_256};
-use crate::api::pool::{DefaultPoolClient, PoolClient};
+use dg_xch_macros::ChiaSerial;
+use dg_xch_serialize::{hash_256, ChiaSerialize};
+use serde::{Deserialize, Serialize};
+use std::io::{Error, ErrorKind};
+use time::OffsetDateTime;
 
 pub const POOL_PROTOCOL_VERSION: u8 = 1;
 pub const SELF_POOLING: u8 = 1;
@@ -205,19 +205,28 @@ pub struct PoolLoginParts {
     pub aggregate_signature: String,
 }
 
-pub async fn create_pool_login_url(target_pool: &str, keys_and_launcher_ids: &[(SecretKey, Bytes32)] ) -> Result<String, Error> {
+pub async fn create_pool_login_url(
+    target_pool: &str,
+    keys_and_launcher_ids: &[(SecretKey, Bytes32)],
+) -> Result<String, Error> {
     let parts = create_pool_login_parts(target_pool, keys_and_launcher_ids).await?;
     let mut ids = String::new();
     for (index, (_, launcher_id)) in keys_and_launcher_ids.iter().enumerate() {
         if index != 0 {
             ids.push(',')
         }
-        ids.extend(hex::encode(launcher_id.as_slice()).chars());
+        ids.push_str(&hex::encode(launcher_id.as_slice()));
     }
-    Ok(format!("{target_pool}/login?launcher_id={ids}&authentication_token={}&signature={})", parts.auth_token, parts.aggregate_signature))
+    Ok(format!(
+        "{target_pool}/login?launcher_id={ids}&authentication_token={}&signature={})",
+        parts.auth_token, parts.aggregate_signature
+    ))
 }
 
-pub async fn create_pool_login_parts(target_pool: &str, keys_and_launcher_ids: &[(SecretKey, Bytes32)]) -> Result<PoolLoginParts, Error> {
+pub async fn create_pool_login_parts(
+    target_pool: &str,
+    keys_and_launcher_ids: &[(SecretKey, Bytes32)],
+) -> Result<PoolLoginParts, Error> {
     let pool_client = DefaultPoolClient::new();
     let pool_info = pool_client
         .get_pool_info(target_pool)
@@ -234,17 +243,17 @@ pub async fn create_pool_login_parts(target_pool: &str, keys_and_launcher_ids: &
             authentication_token: current_auth_token,
         };
         let to_sign = hash_256(payload.to_bytes());
-        let sig = sign(&sec_key, &to_sign);
+        let sig = sign(sec_key, &to_sign);
         sigs.push(sig);
     }
     if !sigs.is_empty() {
         let aggregate_signature =
             AggregateSignature::aggregate(sigs.iter().collect::<Vec<&Signature>>().as_ref(), true)
                 .map_err(|e| {
-                    Error::from(std::io::Error::new(
+                    Error::new(
                         ErrorKind::InvalidInput,
                         format!("Failed to calculate signature: {:?}", e),
-                    ))
+                    )
                 })?;
         Ok(PoolLoginParts {
             auth_token: current_auth_token,

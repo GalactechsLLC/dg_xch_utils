@@ -5,12 +5,11 @@ use cli::*;
 use dg_xch_cli::wallet_commands::{
     create_cold_wallet, get_plotnft_ready_state, migrate_plot_nft, migrate_plot_nft_with_owner_key,
 };
+use dg_xch_clients::protocols::pool::create_pool_login_url;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use simple_logger::SimpleLogger;
 use std::io::Error;
-use blst::min_pk::SecretKey;
-use dg_xch_clients::protocols::pool::create_pool_login_url;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -77,13 +76,24 @@ async fn main() -> Result<(), Error> {
                 .await
                 .map(|_| ())?
         }
-        RootCommands::CreatePoolLoginLink { target_pool, launcher_ids, auth_keys } => {
-            let url = create_pool_login_url(&target_pool, auth_keys.iter().map(|v| {
-                SecretKey::from_bytes(Bytes32::from(v).as_ref()).expect("Failed to parse Auth Key")
-            }).zip(launcher_ids.iter().map(|v| {
-                Bytes32::from(v)
-            })).collect::<Vec<(SecretKey, Bytes32)>>().as_slice())
-                .await?;
+        RootCommands::CreatePoolLoginLink {
+            target_pool,
+            launcher_ids,
+            auth_keys,
+        } => {
+            let url = create_pool_login_url(
+                &target_pool,
+                auth_keys
+                    .iter()
+                    .map(|v| {
+                        SecretKey::from_bytes(Bytes32::from(v).as_ref())
+                            .expect("Failed to parse Auth Key")
+                    })
+                    .zip(launcher_ids.iter().map(Bytes32::from))
+                    .collect::<Vec<(SecretKey, Bytes32)>>()
+                    .as_slice(),
+            )
+            .await?;
             println!("{}", url);
         }
         RootCommands::CreateWallet { action } => match action {
