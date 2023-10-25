@@ -47,6 +47,15 @@ pub enum RootCommands {
         #[arg(short, long)]
         launcher_id: String,
     },
+    #[command(about = "Create Login link for Pool", long_about = None)]
+    CreatePoolLoginLink {
+        #[arg(short, long)]
+        target_pool: String,
+        #[arg(short, long, num_args = 1.., value_delimiter = ',')]
+        launcher_ids: Vec<String>,
+        #[arg(short, long, num_args = 1.., value_delimiter = ',')]
+        auth_keys: Vec<String>,
+    },
     #[command(about = "Create a cold wallet or a PlotNFT wallet", long_about = None)]
     CreateWallet {
         #[command(subcommand)]
