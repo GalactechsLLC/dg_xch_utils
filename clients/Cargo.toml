@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_clients"
-version = "1.0.9"
+version = "1.1.0"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "RPC and Websocket Clients the Chia Blockchain"
@@ -12,10 +12,10 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/clients"
 async-trait = "0.1.73"
 blst = "0.3.11"
 dashmap = "5.5.3"
-dg_xch_core = {path = "../core", version = "1.0.9", features = ["paperclip"] }
-dg_xch_macros = {path = "../macros", version="1.0.9"}
-dg_xch_pos = {path = "../proof_of_space", version="1.0.9"}
-dg_xch_serialize = {path = "../serialize", version="1.0.9"}
+dg_xch_core = {path = "../core", version = "1.1.0", features = ["paperclip"] }
+dg_xch_macros = {path = "../macros", version="1.1.0"}
+dg_xch_pos = {path = "../proof_of_space", version="1.1.0"}
+dg_xch_serialize = {path = "../serialize", version="1.1.0"}
 futures-util = "0.3.28"
 hyper = {version="0.14.27", features=["full"]}
 log = "0.4.20"
