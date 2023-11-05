@@ -5,18 +5,16 @@ use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
 use crate::clvm::program::Program;
 use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
-use lazy_static::lazy_static;
 use num_bigint::BigInt;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
 
-lazy_static! {
-    pub static ref NULL: SExp = SExp::Atom(vec![].into());
-    pub static ref ONE: SExp = SExp::Atom(vec![1u8].into());
-}
+pub static NULL: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![].into()));
+pub static ONE: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![1u8].into()));
 
 #[derive(Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SExp {
@@ -485,11 +483,11 @@ macro_rules! impl_to_sexp_sized_bytes {
 impl_to_sexp_sized_bytes!(
     Bytes4;
     Bytes8;
-    Bytes16;
     Bytes32;
     Bytes48;
     Bytes96;
-    Bytes192
+    Bytes100;
+    Bytes480
 );
 
 macro_rules! impl_ints {

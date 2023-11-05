@@ -212,24 +212,22 @@ impl RadixSorter {
 pub fn sort_test() -> Result<(), std::io::Error> {
     use rand::prelude::*;
     use rayon::prelude::*;
-    use std::thread::available_parallelism;
     use std::time::Instant;
-    let count = 10_000_000;
-    let mut sorter = RadixSorter::new(available_parallelism().map(|u| u.get()).unwrap_or(8), count);
+    let count = 2_097_152;
+    let mut sorter = RadixSorter::new(1, count);
     let mut times = vec![];
     let mut input = vec![0u64; count];
     let mut output = vec![0u64; count];
     let mut key_input = vec![0u32; count];
     let mut key_output = vec![0u32; count];
-    let test_count = 1000;
+    let test_count = 10;
     let mut start;
+    println!("Starting Sort of {count} entries {test_count} times");
     for i in 0..test_count {
-        println!("Generating Random Data");
         input.par_iter_mut().for_each(|v| {
             let mut rng = thread_rng();
             *v = rng.gen::<u64>();
         });
-        println!("Starting Sort {i}");
         start = Instant::now();
         sorter.sort_keyed(8, &mut input, &mut output, &mut key_input, &mut key_output);
         let elapsed = start.elapsed().as_millis();
@@ -245,7 +243,7 @@ pub fn sort_test() -> Result<(), std::io::Error> {
         }
     }
     println!(
-        "Avg Sort of took {} millis",
+        "Avg Sort took {} millis",
         times.iter().sum::<u128>() / test_count
     );
     Ok(())

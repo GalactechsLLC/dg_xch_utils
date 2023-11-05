@@ -1,7 +1,12 @@
+use crate::api::pool::{DefaultPoolClient, PoolClient};
+use blst::min_pk::{AggregateSignature, SecretKey, Signature};
 use dg_xch_core::blockchain::proof_of_space::ProofOfSpace;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96, SizedBytes};
+use dg_xch_core::clvm::bls_bindings::sign;
 use dg_xch_macros::ChiaSerial;
+use dg_xch_serialize::{hash_256, ChiaSerialize};
 use serde::{Deserialize, Serialize};
+use std::io::{Error, ErrorKind};
 use time::OffsetDateTime;
 
 pub const POOL_PROTOCOL_VERSION: u8 = 1;
@@ -9,7 +14,7 @@ pub const SELF_POOLING: u8 = 1;
 pub const LEAVING_POOL: u8 = 2;
 pub const FARMING_TO_POOL: u8 = 3;
 
-#[derive(ChiaSerial, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(ChiaSerial, Copy, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum PoolSingletonState {
     SelfPooling = SELF_POOLING as isize,
     LeavingPool = LEAVING_POOL as isize,
@@ -27,7 +32,7 @@ impl From<u8> for PoolSingletonState {
     }
 }
 
-#[derive(ChiaSerial, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(ChiaSerial, Copy, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum PoolErrorCode {
     RevertedSignagePoint = 1,
     TooLate = 2,
@@ -69,20 +74,20 @@ impl From<u8> for PoolErrorCode {
         }
     }
 }
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PoolError {
     pub error_code: u8,
     pub error_message: String,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct AuthenticationPayload {
     pub method_name: String,
     pub launcher_id: Bytes32,
     pub target_puzzle_hash: Bytes32,
     pub authentication_token: u64,
 }
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct GetPoolInfoResponse {
     pub name: String,
     pub logo_url: String,
@@ -95,7 +100,7 @@ pub struct GetPoolInfoResponse {
     pub authentication_token_timeout: u8,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostPartialPayload {
     pub launcher_id: Bytes32,
     pub authentication_token: u64,
@@ -105,25 +110,25 @@ pub struct PostPartialPayload {
     pub harvester_id: Bytes32,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostPartialRequest {
     pub payload: PostPartialPayload,
     pub aggregate_signature: Bytes96,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostPartialResponse {
     pub new_difficulty: u64,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct GetFarmerRequest {
     pub launcher_id: Bytes32,
     pub authentication_token: u64,
     pub signature: Bytes96,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct GetFarmerResponse {
     pub authentication_public_key: Bytes48,
     pub payout_instructions: String,
@@ -131,7 +136,7 @@ pub struct GetFarmerResponse {
     pub current_points: u64,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostFarmerPayload {
     pub launcher_id: Bytes32,
     pub authentication_token: u64,
@@ -140,18 +145,18 @@ pub struct PostFarmerPayload {
     pub suggested_difficulty: Option<u64>,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostFarmerRequest {
     pub payload: PostFarmerPayload,
     pub signature: Bytes96,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostFarmerResponse {
     pub welcome_message: String,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PutFarmerPayload {
     pub launcher_id: Bytes32,
     pub authentication_token: u64,
@@ -160,36 +165,104 @@ pub struct PutFarmerPayload {
     pub suggested_difficulty: Option<u64>,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PutFarmerRequest {
     pub payload: PutFarmerPayload,
     pub signature: Bytes96,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PutFarmerResponse {
     pub authentication_public_key: Option<bool>,
     pub payout_instructions: Option<bool>,
     pub suggested_difficulty: Option<bool>,
 }
 
-#[derive(ChiaSerial, Clone, Debug, Serialize, Deserialize)]
+#[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error_code: u16,
     pub error_message: Option<String>,
 }
 
-pub fn get_current_authentication_token(timeout: u64) -> u64 {
+pub fn get_current_authentication_token(timeout: u8) -> u64 {
     let now: u64 = OffsetDateTime::now_utc().unix_timestamp() as u64;
-    now / 60 / timeout
+    now / 60 / timeout as u64
 }
 
-pub fn validate_authentication_token(token: u64, timeout: u64) -> bool {
+pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
     let cur_token = get_current_authentication_token(timeout);
     let dif = if token > cur_token {
         token - cur_token
     } else {
         cur_token - token
     };
-    dif <= timeout
+    dif <= timeout as u64
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct PoolLoginParts {
+    pub auth_token: u64,
+    pub aggregate_signature: String,
+}
+
+pub async fn create_pool_login_url(
+    target_pool: &str,
+    keys_and_launcher_ids: &[(SecretKey, Bytes32)],
+) -> Result<String, Error> {
+    let parts = create_pool_login_parts(target_pool, keys_and_launcher_ids).await?;
+    let mut ids = String::new();
+    for (index, (_, launcher_id)) in keys_and_launcher_ids.iter().enumerate() {
+        if index != 0 {
+            ids.push(',')
+        }
+        ids.push_str(&hex::encode(launcher_id.as_slice()));
+    }
+    Ok(format!(
+        "{target_pool}/login?launcher_id={ids}&authentication_token={}&signature={})",
+        parts.auth_token, parts.aggregate_signature
+    ))
+}
+
+pub async fn create_pool_login_parts(
+    target_pool: &str,
+    keys_and_launcher_ids: &[(SecretKey, Bytes32)],
+) -> Result<PoolLoginParts, Error> {
+    let pool_client = DefaultPoolClient::new();
+    let pool_info = pool_client
+        .get_pool_info(target_pool)
+        .await
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
+    let current_auth_token =
+        get_current_authentication_token(pool_info.authentication_token_timeout);
+    let mut sigs = vec![];
+    for (sec_key, launcher_id) in keys_and_launcher_ids {
+        let payload = AuthenticationPayload {
+            method_name: String::from("get_login"),
+            launcher_id: *launcher_id,
+            target_puzzle_hash: pool_info.target_puzzle_hash,
+            authentication_token: current_auth_token,
+        };
+        let to_sign = hash_256(payload.to_bytes());
+        let sig = sign(sec_key, &to_sign);
+        sigs.push(sig);
+    }
+    if !sigs.is_empty() {
+        let aggregate_signature =
+            AggregateSignature::aggregate(sigs.iter().collect::<Vec<&Signature>>().as_ref(), true)
+                .map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidInput,
+                        format!("Failed to calculate signature: {:?}", e),
+                    )
+                })?;
+        Ok(PoolLoginParts {
+            auth_token: current_auth_token,
+            aggregate_signature: hex::encode(aggregate_signature.to_signature().to_bytes()),
+        })
+    } else {
+        Err(Error::new(
+            ErrorKind::NotFound,
+            "No Launcher IDs with Keys found",
+        ))
+    }
 }

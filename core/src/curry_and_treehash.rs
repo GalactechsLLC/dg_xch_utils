@@ -1,6 +1,6 @@
 use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_serialize::hash_256;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 
 pub const NULL: [u8; 0] = [];
 pub const ONE: [u8; 1] = [0x01];
@@ -33,13 +33,11 @@ pub fn shatree_pair(left_hash: &Bytes32, right_hash: &Bytes32) -> Bytes32 {
     ))
 }
 
-lazy_static! {
-    pub static ref Q_KW_TREEHASH: Bytes32 = shatree_atom(&Q_KW);
-    pub static ref A_KW_TREEHASH: Bytes32 = shatree_atom(&A_KW);
-    pub static ref C_KW_TREEHASH: Bytes32 = shatree_atom(&C_KW);
-    pub static ref ONE_TREEHASH: Bytes32 = shatree_atom(&ONE);
-    pub static ref NULL_TREEHASH: Bytes32 = shatree_atom(&NULL);
-}
+pub static Q_KW_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&Q_KW));
+pub static A_KW_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&A_KW));
+pub static C_KW_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&C_KW));
+pub static ONE_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&ONE));
+pub static NULL_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&NULL));
 
 pub fn curried_values_tree_hash(arguments: &[Bytes32]) -> Bytes32 {
     if arguments.is_empty() {

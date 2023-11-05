@@ -1,10 +1,57 @@
 use num_traits::One;
+use std::io::Error;
 use std::mem::size_of;
 use std::ops::{Add, AddAssign, Div, Mul, Sub};
+use std::path::Path;
 
 pub mod bit_reader;
 pub mod radix_sort;
 pub mod span;
+
+#[cfg(target_os = "linux")]
+use libc::{O_DIRECT, O_SYNC};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::fs::OpenOptionsExt;
+#[cfg(target_os = "windows")]
+use winapi::um::winbase::FILE_FLAG_NO_BUFFERING;
+#[cfg(target_os = "windows")]
+use winapi::um::winbase::FILE_FLAG_WRITE_THROUGH;
+pub async fn open_read_only_async(filename: &Path) -> Result<tokio::fs::File, Error> {
+    #[cfg(target_os = "linux")]
+    {
+        tokio::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(O_DIRECT & O_SYNC)
+            .open(filename)
+            .await
+    }
+    #[cfg(target_os = "windows")]
+    {
+        tokio::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_NO_BUFFERING & FILE_FLAG_WRITE_THROUGH)
+            .open(filename)
+            .await
+    }
+}
+pub fn open_read_only(filename: &Path) -> Result<std::fs::File, Error> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(O_DIRECT & O_SYNC)
+            .open(filename)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_NO_BUFFERING & FILE_FLAG_WRITE_THROUGH)
+            .open(filename)
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct ThreadVars<

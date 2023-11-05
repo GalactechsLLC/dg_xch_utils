@@ -1,14 +1,12 @@
-use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use num_traits::{pow, Signed};
+use once_cell::sync::Lazy;
 use std::io::Error;
 use std::io::ErrorKind;
 
-lazy_static! {
-    pub static ref BIG_ZERO: BigInt = BigInt::from(0);
-    pub static ref BIG_ONE: BigInt = BigInt::from(1);
-    pub static ref BIG_TWO: BigInt = BigInt::from(2);
-}
+pub static BIG_ZERO: Lazy<BigInt> = Lazy::new(|| BigInt::from(0));
+pub static BIG_ONE: Lazy<BigInt> = Lazy::new(|| BigInt::from(1));
+pub static BIG_TWO: Lazy<BigInt> = Lazy::new(|| BigInt::from(2));
 
 pub fn bigint_to_bytes(v_: &BigInt, signed: bool) -> Result<Vec<u8>, Error> {
     let v = v_.clone();

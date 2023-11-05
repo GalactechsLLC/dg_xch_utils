@@ -60,6 +60,13 @@ pub struct RejectBlock {
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct BlockCountMetrics {
+    pub compact_blocks: u64,
+    pub uncompact_blocks: u64,
+    pub hint_count: u64,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RequestBlocks {
     pub start_height: u32,
     pub end_height: u32,
@@ -164,4 +171,23 @@ pub struct RequestPeers {}
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RespondPeers {
     pub peer_list: Vec<TimestampedPeerInfo>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct FeeEstimate {
+    estimates: Vec<u64>,
+    target_times: Vec<u64>,
+    current_fee_rate: f64,
+    mempool_size: u64,
+    mempool_fees: u64,
+    num_spends: u64,
+    mempool_max_size: u64,
+    full_node_synced: bool,
+    peak_height: u64,
+    last_peak_timestamp: u64,
+    node_time_utc: u64,
+    last_block_cost: u64,
+    fees_last_block: Option<u64>,
+    fee_rate_last_block: f64,
+    last_tx_block_height: u32,
 }

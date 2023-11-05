@@ -1,14 +1,6 @@
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use dg_xch_core::consensus::pot_iterations::{
-    calculate_ip_iters, calculate_iterations_quality, calculate_sp_iters, expected_plot_size,
-    is_overflow_block,
-};
-use dg_xch_serialize::hash_256;
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
-use num_traits::abs;
-use std::collections::HashMap;
 
 lazy_static! {
     static ref TEST_CONSTANTS: ConsensusConstants = ConsensusConstants {
@@ -20,6 +12,7 @@ lazy_static! {
 
 #[tokio::test]
 async fn test_pot_iterations() {
+    use dg_xch_core::consensus::pot_iterations::is_overflow_block;
     assert!(!is_overflow_block(&TEST_CONSTANTS, 27).unwrap());
     assert!(!is_overflow_block(&TEST_CONSTANTS, 28).unwrap());
     assert!(is_overflow_block(&TEST_CONSTANTS, 29).unwrap());
@@ -30,6 +23,7 @@ async fn test_pot_iterations() {
 
 #[tokio::test]
 async fn test_calculate_sp_iters() {
+    use dg_xch_core::consensus::pot_iterations::calculate_sp_iters;
     let ssi: u64 = 100001 * 64 * 4;
     assert!(calculate_sp_iters(&TEST_CONSTANTS, ssi, 32).is_err());
     assert!(calculate_sp_iters(&TEST_CONSTANTS, ssi, 31).is_ok());
@@ -37,6 +31,7 @@ async fn test_calculate_sp_iters() {
 
 #[tokio::test]
 async fn test_calculate_ip_iters() {
+    use dg_xch_core::consensus::pot_iterations::calculate_ip_iters;
     let ssi: u64 = 100001 * 64 * 4;
     let sp_interval_iters = ssi / TEST_CONSTANTS.num_sps_sub_slot as u64;
     //Invalid signage point index
@@ -65,21 +60,21 @@ async fn test_calculate_ip_iters() {
     let mut ip_iters = calculate_ip_iters(&TEST_CONSTANTS, ssi, 13, required_iters).unwrap();
     assert_eq!(
         ip_iters,
-        sp_iters + &TEST_CONSTANTS.num_sp_intervals_extra * sp_interval_iters + required_iters
+        sp_iters + TEST_CONSTANTS.num_sp_intervals_extra * sp_interval_iters + required_iters
     );
 
     required_iters = 1;
     ip_iters = calculate_ip_iters(&TEST_CONSTANTS, ssi, 13, required_iters).unwrap();
     assert_eq!(
         ip_iters,
-        sp_iters + &TEST_CONSTANTS.num_sp_intervals_extra * sp_interval_iters + required_iters
+        sp_iters + TEST_CONSTANTS.num_sp_intervals_extra * sp_interval_iters + required_iters
     );
 
     required_iters = ssi * 4 / 300;
     ip_iters = calculate_ip_iters(&TEST_CONSTANTS, ssi, 13, required_iters).unwrap();
     assert_eq!(
         ip_iters,
-        sp_iters + &TEST_CONSTANTS.num_sp_intervals_extra * sp_interval_iters + required_iters
+        sp_iters + TEST_CONSTANTS.num_sp_intervals_extra * sp_interval_iters + required_iters
     );
     assert!(sp_iters < ip_iters);
 
@@ -102,6 +97,13 @@ async fn test_calculate_ip_iters() {
 
 #[tokio::test]
 async fn test_win_percentage() {
+    use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+    use dg_xch_core::consensus::pot_iterations::{
+        calculate_iterations_quality, expected_plot_size,
+    };
+    use dg_xch_serialize::hash_256;
+    use num_traits::abs;
+    use std::collections::HashMap;
     /*
     Tests that the percentage of blocks won is proportional to the space of each farmer,
     with the assumption that all farmers have access to the same VDF speed.

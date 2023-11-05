@@ -1,4 +1,7 @@
 use crate::api::full_node::FullnodeAPI;
+use crate::api::responses::{BlockCountMetricsResp, FeeEstimateResp, MempoolItemAryResp};
+use crate::protocols::full_node::BlockCountMetrics;
+use crate::protocols::full_node::FeeEstimate;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
@@ -74,11 +77,22 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .block)
     }
+    async fn get_block_count_metrics(&self) -> Result<BlockCountMetrics, Error> {
+        Ok(post::<BlockCountMetricsResp>(
+            &self.client,
+            &get_url(self.host.as_str(), self.port, "get_block_count_metrics"),
+            &Map::new(),
+            &self.additional_headers,
+        )
+        .await?
+        .metrics)
+    }
     async fn get_blocks(
         &self,
         start: u32,
         end: u32,
         exclude_header_hash: bool,
+        exclude_reorged: bool,
     ) -> Result<Vec<FullBlock>, Error> {
         let mut request_body = Map::new();
         request_body.insert("start".to_string(), json!(start));
@@ -86,6 +100,10 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert(
             "exclude_header_hash".to_string(),
             json!(if exclude_header_hash { "True" } else { "False" }),
+        );
+        request_body.insert(
+            "exclude_reorged".to_string(),
+            json!(if exclude_reorged { "True" } else { "False" }),
         );
         Ok(post::<FullBlockAryResp>(
             &self.client,
@@ -97,7 +115,7 @@ impl FullnodeAPI for FullnodeClient {
         .blocks)
     }
     async fn get_all_blocks(&self, start: u32, end: u32) -> Result<Vec<FullBlock>, Error> {
-        self.get_blocks(start, end, true).await
+        self.get_blocks(start, end, true, false).await
     }
     async fn get_block_record_by_height(&self, height: u32) -> Result<BlockRecord, Error> {
         let mut request_body = Map::new();
@@ -319,7 +337,6 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .coin_records)
     }
-
     async fn get_coin_record_by_name(&self, name: &Bytes32) -> Result<Option<CoinRecord>, Error> {
         let mut request_body = Map::new();
         request_body.insert("name".to_string(), json!(name));
@@ -331,6 +348,30 @@ impl FullnodeAPI for FullnodeClient {
         )
         .await?
         .coin_record)
+    }
+    async fn get_coin_record_by_names(
+        &self,
+        name: &[Bytes32],
+        include_spent_coins: bool,
+        start_height: u32,
+        end_height: u32,
+    ) -> Result<Vec<CoinRecord>, Error> {
+        let mut request_body = Map::new();
+        request_body.insert("names".to_string(), json!(name));
+        request_body.insert(
+            "include_spent_coins".to_string(),
+            json!(include_spent_coins),
+        );
+        request_body.insert("start_height".to_string(), json!(start_height));
+        request_body.insert("end_height".to_string(), json!(end_height));
+        Ok(post::<CoinRecordAryResp>(
+            &self.client,
+            &get_url(self.host.as_str(), self.port, "get_coin_record_by_names"),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?
+        .coin_records)
     }
     async fn get_coin_records_by_parent_ids(
         &self,
@@ -354,6 +395,30 @@ impl FullnodeAPI for FullnodeClient {
                 self.port,
                 "get_coin_records_by_parent_ids",
             ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?
+        .coin_records)
+    }
+    async fn get_coin_records_by_hint(
+        &self,
+        hint: &Bytes32,
+        include_spent_coins: bool,
+        start_height: u32,
+        end_height: u32,
+    ) -> Result<Vec<CoinRecord>, Error> {
+        let mut request_body = Map::new();
+        request_body.insert("hint".to_string(), json!(hint));
+        request_body.insert(
+            "include_spent_coins".to_string(),
+            json!(include_spent_coins),
+        );
+        request_body.insert("start_height".to_string(), json!(start_height));
+        request_body.insert("end_height".to_string(), json!(end_height));
+        Ok(post::<CoinRecordAryResp>(
+            &self.client,
+            &get_url(self.host.as_str(), self.port, "get_coin_records_by_hint"),
             &request_body,
             &self.additional_headers,
         )
@@ -424,5 +489,45 @@ impl FullnodeAPI for FullnodeClient {
         )
         .await?
         .mempool_item)
+    }
+    async fn get_mempool_items_by_coin_name(
+        &self,
+        coin_name: &Bytes32,
+    ) -> Result<Vec<MempoolItem>, Error> {
+        let mut request_body = Map::new();
+        request_body.insert("coin_name".to_string(), json!(coin_name));
+        Ok(post::<MempoolItemAryResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_mempool_items_by_coin_name",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?
+        .mempool_items)
+    }
+    async fn get_fee_estimate(
+        &self,
+        cost: Option<u64>,
+        target_times: &[u64],
+    ) -> Result<FeeEstimate, Error> {
+        let mut request_body = Map::new();
+        request_body.insert("target_times".to_string(), json!(target_times));
+        request_body.insert("cost".to_string(), json!(cost));
+        Ok(post::<FeeEstimateResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_mempool_items_by_coin_name",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?
+        .fee_estimate)
     }
 }

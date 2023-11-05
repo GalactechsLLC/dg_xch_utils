@@ -2,9 +2,9 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::npc_result::NPCResult;
 use crate::clvm::sexp::{AtomBuf, SExp};
 use dg_xch_serialize::hash_256;
-use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use num_traits::{Num, Zero};
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::io::{Error, ErrorKind};
 
@@ -213,9 +213,7 @@ pub fn encode_bigint(int: BigInt) -> Result<Vec<u8>, Error> {
     }
 }
 
-lazy_static! {
-    static ref RE: Regex = Regex::new("[01]{8}").unwrap();
-}
+static RE: Lazy<Regex> = Lazy::new(|| Regex::new("[01]{8}").unwrap());
 
 pub fn int_to_bytes(value: BigInt, size: usize, signed: bool) -> Result<Vec<u8>, Error> {
     let is_neg = value < BigInt::zero();

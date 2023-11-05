@@ -27,7 +27,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
+#[cfg(target_os = "linux")]
 use tokio::signal::unix::{signal, SignalKind};
+#[cfg(target_os = "windows")]
+use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use tokio::{fs, select};
@@ -40,6 +43,7 @@ use tokio_tungstenite::{
 use urlencoding::encode;
 use uuid::Uuid;
 
+#[cfg(target_os = "linux")]
 pub async fn await_termination() -> Result<(), Error> {
     let mut term_signal = signal(SignalKind::terminate())?;
     let mut int_signal = signal(SignalKind::interrupt())?;
@@ -52,6 +56,23 @@ pub async fn await_termination() -> Result<(), Error> {
         _ = quit_signal.recv() => (),
         _ = alarm_signal.recv() => (),
         _ = hup_signal.recv() => ()
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub async fn await_termination() -> Result<(), Error> {
+    let mut ctrl_break_signal = ctrl_break()?;
+    let mut ctrl_c_signal = ctrl_c()?;
+    let mut ctrl_close_signal = ctrl_close()?;
+    let mut ctrl_logoff_signal = ctrl_logoff()?;
+    let mut ctrl_shutdown_signal = ctrl_shutdown()?;
+    select! {
+        _ = ctrl_break_signal.recv() => (),
+        _ = ctrl_c_signal.recv() => (),
+        _ = ctrl_close_signal.recv() => (),
+        _ = ctrl_logoff_signal.recv() => (),
+        _ = ctrl_shutdown_signal.recv() => ()
     }
     Ok(())
 }
@@ -329,7 +350,7 @@ pub struct HandshakeResp {
 }
 
 async fn perform_handshake(
-    client: &Client,
+    client: Arc<Mutex<Client>>,
     network_id: &str,
     port: u16,
     node_type: NodeType,
@@ -400,7 +421,7 @@ impl MessageHandler for OneShotHandler {
 }
 
 pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
-    client: &C,
+    client: Arc<Mutex<C>>,
     msg: ChiaMessage,
     resp_type: Option<ProtocolMessageTypes>,
     msg_id: Option<u16>,
@@ -420,13 +441,13 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
         },
         handle: handle.clone(),
     };
-    client.subscribe(handle.id, chia_handle).await;
+    client.lock().await.subscribe(handle.id, chia_handle).await;
     let res_handle = tokio::spawn(async move {
         let res = rx.recv().await;
         rx.close();
         res
     });
-    client.send(msg.into()).await.map_err(|e| {
+    client.lock().await.send(msg.into()).await.map_err(|e| {
         Error::new(
             ErrorKind::InvalidData,
             format!("Failed to parse send data: {:?}", e),
@@ -434,7 +455,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
     })?;
     select!(
         _ = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
-            client.unsubscribe(handle.id).await;
+            client.lock().await.unsubscribe(handle.id).await;
             Err(Error::new(
                 ErrorKind::Other,
                 "Timeout before oneshot completed",
@@ -444,7 +465,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
             let res = res?;
             if let Some(v) = res {
                 let mut cursor = Cursor::new(v);
-                client.unsubscribe(handle.id).await;
+                client.lock().await.unsubscribe(handle.id).await;
                 R::from_bytes(&mut cursor).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
@@ -452,7 +473,7 @@ pub async fn oneshot<R: ChiaSerialize, C: Websocket>(
                     )
                 })
             } else {
-                client.unsubscribe(handle.id).await;
+                client.lock().await.unsubscribe(handle.id).await;
                 Err(Error::new(
                     ErrorKind::Other,
                     "Channel Closed before response received",

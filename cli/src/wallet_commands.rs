@@ -1,5 +1,6 @@
 use crate::wallets::plotnft_utils::{
-    get_plotnft_by_launcher_id, submit_next_state_spend_bundle, PlotNFTWallet,
+    get_plotnft_by_launcher_id, submit_next_state_spend_bundle,
+    submit_next_state_spend_bundle_with_key, PlotNFTWallet,
 };
 use crate::wallets::Wallet;
 use bip39::Mnemonic;
@@ -21,7 +22,8 @@ use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
 use log::{debug, error, info};
 use std::collections::{HashMap, HashSet};
 use std::io::{Error, ErrorKind};
-use std::time::Duration;
+use std::ops::Add;
+use std::time::{Duration, Instant};
 
 pub fn create_cold_wallet() -> Result<(), Error> {
     let mnemonic = Mnemonic::generate(24)
@@ -104,13 +106,20 @@ pub async fn migrate_plot_nft(
     mnemonic: &str,
     fee: u64,
 ) -> Result<(), Error> {
-    let pool_url = format!("https://{}", target_pool);
+    let pool_url = if target_pool.starts_with("https://") {
+        target_pool.to_string()
+    } else {
+        format!("https://{}", target_pool)
+    };
     let pool_info = get_pool_info(&pool_url).await?;
     let pool_wallet = PlotNFTWallet::new(key_from_mnemonic(mnemonic)?, client);
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
     if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
         info!("Checking if PlotNFT needs migration");
-        if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url) {
+        if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url)
+            || (plot_nft.pool_state.pool_url.as_ref() == Some(&pool_url)
+                && plot_nft.pool_state.state != FARMING_TO_POOL)
+        {
             info!("Starting Migration");
             let target_pool_state =
                 create_and_validate_target_state(&pool_url, pool_info, &plot_nft)?;
@@ -171,6 +180,77 @@ pub async fn migrate_plot_nft(
     }
     Ok(())
 }
+pub async fn migrate_plot_nft_with_owner_key(
+    client: &FullnodeClient,
+    target_pool: &str,
+    launcher_id: &Bytes32,
+    owner_key: &SecretKey,
+) -> Result<(), Error> {
+    let pool_url = if target_pool.starts_with("https://") {
+        target_pool.to_string()
+    } else {
+        format!("https://{}", target_pool)
+    };
+    let pool_info = get_pool_info(&pool_url).await?;
+    info!("Searching for PlotNFT with LauncherID: {launcher_id}");
+    if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
+        info!("Checking if PlotNFT needs migration");
+        if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url)
+            || (plot_nft.pool_state.pool_url.as_ref() == Some(&pool_url)
+                && plot_nft.pool_state.state != FARMING_TO_POOL)
+        {
+            info!("Starting Migration");
+            let target_pool_state =
+                create_and_validate_target_state(&pool_url, pool_info, &plot_nft)?;
+            if plot_nft.pool_state.state == FARMING_TO_POOL {
+                info!("Creating Leaving Pool Spend");
+                submit_next_state_spend_bundle_with_key(
+                    client,
+                    owner_key,
+                    &plot_nft,
+                    &target_pool_state,
+                    &Default::default(),
+                )
+                .await?;
+                info!(
+                    "Waiting for PlotNFT State to be Buried for Leaving {}",
+                    plot_nft
+                        .pool_state
+                        .pool_url
+                        .as_ref()
+                        .unwrap_or(&String::from("None"))
+                );
+                wait_for_plot_nft_ready_state(client, launcher_id).await;
+                info!("Reloading PlotNFT Info");
+                plot_nft = get_plotnft_by_launcher_id(client, launcher_id)
+                    .await?
+                    .ok_or_else(|| {
+                        error!("Failed to reload plot_nft after first spend");
+                        Error::new(
+                            ErrorKind::Other,
+                            "Failed to reload plot_nft after first spend",
+                        )
+                    })?;
+            }
+            info!("Creating Farming to Pool Spend");
+            submit_next_state_spend_bundle_with_key(
+                client,
+                owner_key,
+                &plot_nft,
+                &target_pool_state,
+                &Default::default(),
+            )
+            .await?;
+            info!("Waiting for PlotNFT State to be Buried for Joining {pool_url}");
+            wait_for_num_blocks(client, 20, 600).await;
+        } else {
+            info!("PlotNFT Already on Selected Pool");
+        }
+    } else {
+        info!("No PlotNFT Found");
+    }
+    Ok(())
+}
 
 async fn wait_for_plot_nft_ready_state(client: &FullnodeClient, launcher_id: &Bytes32) {
     loop {
@@ -188,6 +268,43 @@ async fn wait_for_plot_nft_ready_state(client: &FullnodeClient, launcher_id: &By
                     e
                 );
                 tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        }
+    }
+}
+
+async fn wait_for_num_blocks(client: &FullnodeClient, height: u32, timeout_seconds: u64) {
+    let mut start_height = None;
+    let end_time = Instant::now().add(Duration::from_secs(timeout_seconds));
+    loop {
+        let now = Instant::now();
+        if now >= end_time {
+            break;
+        }
+        match client.get_blockchain_state().await {
+            Ok(state) => {
+                if let Some(peak) = state.peak {
+                    if let Some(start) = start_height {
+                        if peak.height > start + height {
+                            break;
+                        } else {
+                            info!("Waiting for {} more blocks", start + height - peak.height);
+                            tokio::time::sleep(std::cmp::min(
+                                end_time.duration_since(now),
+                                Duration::from_secs(10),
+                            ))
+                            .await;
+                        }
+                    } else {
+                        start_height = Some(peak.height);
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Error Checking PlotNFT State, Waiting and Trying again. {:?}",
+                    e
+                );
             }
         }
     }

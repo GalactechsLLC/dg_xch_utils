@@ -52,7 +52,7 @@ impl SpendBundle {
         for spend in &self.coin_spends {
             let (_, output) = spend
                 .puzzle_reveal
-                .run_with_cost(u64::MAX, &spend.solution.to_program()?)?;
+                .run_with_cost(u64::MAX, &spend.solution.to_program())?;
             conditions.extend(output.as_list())
         }
         Ok(conditions)

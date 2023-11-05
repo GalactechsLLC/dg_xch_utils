@@ -1,6 +1,6 @@
 use crate::plots::plot_reader::read_plot_header_async;
+use crate::utils::open_read_only_async;
 use dg_xch_core::plots::{PlotFile, PlotHeader};
-use nix::libc;
 use std::fmt::{Display, Formatter};
 use std::io::{Error, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -17,11 +17,7 @@ pub struct DiskPlot<F: AsyncSeek + AsyncRead> {
 }
 impl DiskPlot<tokio::fs::File> {
     pub async fn new(filename: &Path) -> Result<Self, Error> {
-        let mut file = tokio::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECT & libc::O_SYNC)
-            .open(filename)
-            .await?;
+        let mut file = open_read_only_async(filename).await?;
         let _plot_size = file.metadata().await?.len();
         let _header = read_plot_header_async(&mut file).await?;
         file.seek(SeekFrom::Start(0)).await?;

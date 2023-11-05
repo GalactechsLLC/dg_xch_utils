@@ -1,4 +1,4 @@
-use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
+use crate::blockchain::sized_bytes::{prep_hex_str, Bytes32, Bytes48, SizedBytes};
 use crate::consensus::constants::ConsensusConstants;
 use blst::min_pk::{AggregatePublicKey, PublicKey, SecretKey};
 use dg_xch_macros::ChiaSerial;
@@ -53,7 +53,7 @@ impl<'de> Visitor<'de> for ProofBytesVisitor {
         E: serde::de::Error,
     {
         Ok(ProofBytes(
-            decode(value).map_err(|e| serde::de::Error::custom(e.to_string()))?,
+            decode(prep_hex_str(value)).map_err(|e| serde::de::Error::custom(e.to_string()))?,
         ))
     }
 
@@ -62,7 +62,7 @@ impl<'de> Visitor<'de> for ProofBytesVisitor {
         E: serde::de::Error,
     {
         Ok(ProofBytes(
-            decode(value).map_err(|e| serde::de::Error::custom(e.to_string()))?,
+            decode(prep_hex_str(&value)).map_err(|e| serde::de::Error::custom(e.to_string()))?,
         ))
     }
 }

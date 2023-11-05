@@ -10,8 +10,7 @@ const P2_CONDITIONS_HEX: &str = "ff04ffff0101ff0280";
 lazy_static! {
     pub static ref MOD: Program = SerializedProgram::from_hex(P2_CONDITIONS_HEX)
         .unwrap()
-        .to_program()
-        .unwrap();
+        .to_program();
 }
 
 pub fn puzzle_for_conditions<T: IntoSExp>(conditions: T) -> Result<Program, Error> {

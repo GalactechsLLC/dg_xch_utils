@@ -1,10 +1,9 @@
-use dg_xch_core::clvm::program::Program;
-use dg_xch_core::clvm::sexp::IntoSExp;
-use log::info;
-use simple_logger::SimpleLogger;
-
 #[test]
 pub fn test_program() {
+    use dg_xch_core::clvm::program::Program;
+    use dg_xch_core::clvm::sexp::IntoSExp;
+    use log::info;
+    use simple_logger::SimpleLogger;
     SimpleLogger::new().env().init().unwrap();
     let program = Program::to(vec![
         10.to_sexp(),

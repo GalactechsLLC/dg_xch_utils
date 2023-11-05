@@ -22,9 +22,9 @@ dg_xch_serialize = {path = "../serialize", version="1.0.7"}
 hex = "0.4.3"
 lazy_static = "1.4.0"
 log = "0.4.17"
-num-bigint = "=0.4.0"
+num-bigint = "0.4.4"
 num-integer = "0.1.45"
-num-traits = "=0.2.14"
+num-traits = "0.2.17"
 sha2 = "0.10.6"
 simple_logger = "4.2.0"
 tokio = {version = "1.21.2", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

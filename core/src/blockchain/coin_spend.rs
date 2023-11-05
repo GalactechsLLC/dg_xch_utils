@@ -38,7 +38,7 @@ pub fn compute_additions_with_cost(
     let mut ret: Vec<Coin> = vec![];
     let (mut cost, r) = cs
         .puzzle_reveal
-        .run_with_cost(max_cost, &cs.solution.to_program()?)?;
+        .run_with_cost(max_cost, &cs.solution.to_program())?;
     for cond in Program::to(r).as_list() {
         if cost > max_cost {
             return Err(Error::new(

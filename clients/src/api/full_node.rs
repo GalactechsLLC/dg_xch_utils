@@ -1,3 +1,5 @@
+use crate::protocols::full_node::BlockCountMetrics;
+use crate::protocols::full_node::FeeEstimate;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
@@ -23,8 +25,10 @@ pub trait FullnodeAPI {
         start: u32,
         end: u32,
         exclude_header_hash: bool,
+        exclude_reorged: bool,
     ) -> Result<Vec<FullBlock>, Error>;
     async fn get_all_blocks(&self, start: u32, end: u32) -> Result<Vec<FullBlock>, Error>;
+    async fn get_block_count_metrics(&self) -> Result<BlockCountMetrics, Error>;
     async fn get_block_record_by_height(&self, height: u32) -> Result<BlockRecord, Error>;
     async fn get_block_record(&self, header_hash: &Bytes32) -> Result<BlockRecord, Error>;
     async fn get_block_records(&self, start: u32, end: u32) -> Result<Vec<BlockRecord>, Error>;
@@ -65,9 +69,23 @@ pub trait FullnodeAPI {
         end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, Error>;
     async fn get_coin_record_by_name(&self, name: &Bytes32) -> Result<Option<CoinRecord>, Error>;
+    async fn get_coin_record_by_names(
+        &self,
+        names: &[Bytes32],
+        include_spent_coins: bool,
+        start_height: u32,
+        end_height: u32,
+    ) -> Result<Vec<CoinRecord>, Error>;
     async fn get_coin_records_by_parent_ids(
         &self,
         parent_ids: &[Bytes32],
+        include_spent_coins: bool,
+        start_height: u32,
+        end_height: u32,
+    ) -> Result<Vec<CoinRecord>, Error>;
+    async fn get_coin_records_by_hint(
+        &self,
+        hint: &Bytes32,
         include_spent_coins: bool,
         start_height: u32,
         end_height: u32,
@@ -82,4 +100,13 @@ pub trait FullnodeAPI {
     async fn get_all_mempool_tx_ids(&self) -> Result<Vec<String>, Error>;
     async fn get_all_mempool_items(&self) -> Result<HashMap<String, MempoolItem>, Error>;
     async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MempoolItem, Error>;
+    async fn get_mempool_items_by_coin_name(
+        &self,
+        coin_name: &Bytes32,
+    ) -> Result<Vec<MempoolItem>, Error>;
+    async fn get_fee_estimate(
+        &self,
+        cost: Option<u64>,
+        target_times: &[u64],
+    ) -> Result<FeeEstimate, Error>;
 }

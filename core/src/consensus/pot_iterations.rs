@@ -1,9 +1,9 @@
 use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use crate::consensus::constants::ConsensusConstants;
 use dg_xch_serialize::hash_256;
-use lazy_static::lazy_static;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
+use once_cell::sync::Lazy;
 use std::cmp::max;
 use std::io::{Error, ErrorKind};
 use std::ops::Mul;
@@ -73,9 +73,7 @@ pub const POOL_SUB_SLOT_ITERS: u64 = 37600000000;
 // This number should be held constant and be consistent for every pool in the network. DO NOT CHANGE
 pub const ITERS_LIMIT: u64 = POOL_SUB_SLOT_ITERS / 64;
 
-lazy_static! {
-    static ref TWO_POW_256: BigUint = BigUint::from(2u64).pow(256);
-}
+static TWO_POW_256: Lazy<BigUint> = Lazy::new(|| BigUint::from(2u64).pow(256));
 
 pub fn expected_plot_size(k: u8) -> u64 {
     ((2 * k as u64) + 1) * 2u64.pow(k as u32 - 1)

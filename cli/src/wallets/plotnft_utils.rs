@@ -28,6 +28,7 @@ use dg_xch_puzzles::clvm_puzzles::{
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
 use log::info;
 use num_traits::cast::ToPrimitive;
+use std::future::Future;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -277,6 +278,104 @@ impl PlotNFTWallet {
     }
 }
 
+pub async fn generate_travel_transaction_without_fee<F, Fut>(
+    client: &FullnodeClient,
+    key_fn: F,
+    plot_nft: &PlotNft,
+    target_pool_state: &PoolState,
+    constants: &ConsensusConstants,
+) -> Result<(TransactionRecord, Option<TransactionRecord>), Error>
+where
+    F: Fn(&Bytes48) -> Fut,
+    Fut: Future<Output = Result<SecretKey, Error>>,
+{
+    let launcher_coin = client
+        .get_coin_record_by_name(&plot_nft.launcher_id)
+        .await?
+        .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load launcher_coin"))?;
+    let last_record = client
+        .get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info)
+        .await?
+        .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load launcher_coin"))?;
+    let last_coin_spend = client.get_coin_spend(&last_record).await?;
+    let next_state = if plot_nft.pool_state.state == FARMING_TO_POOL {
+        PoolState {
+            version: POOL_PROTOCOL_VERSION,
+            state: LEAVING_POOL,
+            target_puzzle_hash: plot_nft.pool_state.target_puzzle_hash,
+            owner_pubkey: plot_nft.pool_state.owner_pubkey,
+            pool_url: plot_nft.pool_state.pool_url.clone(),
+            relative_lock_height: plot_nft.pool_state.relative_lock_height,
+        }
+    } else {
+        target_pool_state.clone()
+    };
+    let new_inner_puzzle = pool_state_to_inner_puzzle(
+        &next_state,
+        &launcher_coin.coin.name(),
+        &constants.genesis_challenge,
+        plot_nft.delay_time as u64,
+        &plot_nft.delay_puzzle_hash,
+    )?;
+    let new_full_puzzle = create_full_puzzle(&new_inner_puzzle, &launcher_coin.coin.name())?;
+    let (outgoing_coin_spend, inner_puzzle) = create_travel_spend(
+        &last_coin_spend,
+        &launcher_coin.coin,
+        &plot_nft.pool_state,
+        &next_state,
+        &constants.genesis_challenge,
+        plot_nft.delay_time as u64,
+        &plot_nft.delay_puzzle_hash,
+    )?;
+    let (additions, _cost) = compute_additions_with_cost(
+        &last_coin_spend,
+        constants.max_block_cost_clvm.to_u64().unwrap(),
+    )?;
+    let singleton = &additions[0];
+    let singleton_id = singleton.name();
+    assert_eq!(
+        outgoing_coin_spend.coin.parent_coin_info,
+        last_coin_spend.coin.name()
+    );
+    assert_eq!(
+        outgoing_coin_spend.coin.parent_coin_info,
+        last_coin_spend.coin.name()
+    );
+    assert_eq!(outgoing_coin_spend.coin.name(), singleton_id);
+    assert_ne!(new_inner_puzzle, inner_puzzle);
+    let signed_spend_bundle = sign_coin_spend(outgoing_coin_spend, key_fn, constants).await?;
+    assert_eq!(
+        signed_spend_bundle.removals()[0].puzzle_hash,
+        singleton.puzzle_hash
+    );
+    assert_eq!(signed_spend_bundle.removals()[0].name(), singleton.name());
+    let additions = signed_spend_bundle.additions()?;
+    let removals = signed_spend_bundle.removals();
+    let name = signed_spend_bundle.name();
+    let tx_record = TransactionRecord {
+        confirmed_at_height: 0,
+        created_at_time: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        to_puzzle_hash: new_full_puzzle.tree_hash(),
+        amount: 1,
+        fee_amount: 0,
+        confirmed: false,
+        sent: 0,
+        spend_bundle: Some(signed_spend_bundle),
+        additions,
+        removals,
+        wallet_id: 1,
+        sent_to: vec![],
+        trade_id: None,
+        memos: vec![],
+        transaction_type: TransactionType::OutgoingTx as u32,
+        name,
+    };
+    Ok((tx_record, None))
+}
+
 pub async fn get_current_pool_state(
     client: &FullnodeClient,
     launcher_id: &Bytes32,
@@ -489,6 +588,60 @@ pub async fn submit_next_state_spend_bundle(
             &pool_wallet.info.constants,
         )
         .await?;
+    let coin_to_find = travel_record
+        .additions
+        .iter()
+        .find(|c| c.amount == 1)
+        .expect("Failed to find NFT coin");
+    match client
+        .push_tx(
+            &travel_record
+                .spend_bundle
+                .expect("Expected Transaction Record to have Spend bundle"),
+        )
+        .await?
+    {
+        TXStatus::SUCCESS => {
+            info!("Transaction Submitted Successfully. Waiting for coin to show as spent...");
+            loop {
+                if let Ok(Some(record)) = client.get_coin_record_by_name(&coin_to_find.name()).await
+                {
+                    if let Ok(Some(record)) = client
+                        .get_coin_record_by_name(&record.coin.parent_coin_info)
+                        .await
+                    {
+                        info!(
+                            "Found spent parent coin, Parent Coin was spent at {}",
+                            record.spent_block_index
+                        );
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                info!("Waiting for plot_nft spend to appear...");
+            }
+            Ok(())
+        }
+        TXStatus::PENDING => Err(Error::new(ErrorKind::Other, "Transaction is pending")),
+        TXStatus::FAILED => Err(Error::new(ErrorKind::Other, "Failed to submit transaction")),
+    }
+}
+
+pub async fn submit_next_state_spend_bundle_with_key(
+    client: &FullnodeClient,
+    secret_key: &SecretKey,
+    plot_nft: &PlotNft,
+    target_pool_state: &PoolState,
+    constants: &ConsensusConstants,
+) -> Result<(), Error> {
+    let (travel_record, _) = generate_travel_transaction_without_fee(
+        client,
+        |_| async { Ok(secret_key.clone()) },
+        plot_nft,
+        target_pool_state,
+        constants,
+    )
+    .await?;
     let coin_to_find = travel_record
         .additions
         .iter()
