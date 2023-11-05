@@ -21,28 +21,23 @@ lazy_static! {
     pub static ref SINGLETON_LAUNCHER: Program =
         SerializedProgram::from_hex(SINGLETON_LAUNCHER_HEX)
             .unwrap()
-            .to_program()
-            .unwrap();
+            .to_program();
     pub static ref SINGLETON_LAUNCHER_HASH: Bytes32 = SINGLETON_LAUNCHER.tree_hash();
     pub static ref SINGLETON_MOD: Program = SerializedProgram::from_hex(SINGLETON_MOD_HEX)
         .unwrap()
-        .to_program()
-        .unwrap();
+        .to_program();
     pub static ref SINGLETON_MOD_HASH: Bytes32 = SINGLETON_MOD.tree_hash();
     pub static ref POOL_WAITING_ROOM_MOD: Program =
         SerializedProgram::from_hex(POOL_WAITING_ROOM_MOD_HEX)
             .unwrap()
-            .to_program()
-            .unwrap();
+            .to_program();
     pub static ref POOL_MEMBER_MOD: Program = SerializedProgram::from_hex(POOL_MEMBER_MOD_HEX)
         .unwrap()
-        .to_program()
-        .unwrap();
+        .to_program();
     pub static ref P2_SINGLETON_OR_DELAYED_MOD: Program =
         SerializedProgram::from_hex(P2_SINGLETON_OR_DELAYED_MOD_HEX)
             .unwrap()
-            .to_program()
-            .unwrap();
+            .to_program();
 }
 
 pub fn launcher_coin_spend_to_extra_data(
@@ -54,7 +49,7 @@ pub fn launcher_coin_spend_to_extra_data(
             "Provided coin spend is not launcher coin spend",
         ));
     }
-    PlotNftExtraData::from_program(coin_spend.solution.to_program()?.rest()?.rest()?.first()?)
+    PlotNftExtraData::from_program(coin_spend.solution.to_program().rest()?.rest()?.first()?)
 }
 
 pub fn puzzle_for_singleton(launcher_id: &Bytes32, inner_puz: &Program) -> Result<Program, Error> {
@@ -274,7 +269,7 @@ pub fn create_travel_spend(
             launcher_coin.amount.to_sexp(),
         ])
     } else {
-        let p = last_coin_spend.puzzle_reveal.to_program()?;
+        let p = last_coin_spend.puzzle_reveal.to_program();
         let last_coin_spend_inner_puzzle = get_inner_puzzle_from_puzzle(&p)?.ok_or(Error::new(
             ErrorKind::InvalidInput,
             "Failed to get inner puzzle for last_coin_spend_inner_puzzle",
@@ -449,7 +444,6 @@ pub fn solution_to_pool_state(coin_solution: &CoinSpend) -> Result<Option<PoolSt
     // Spend which is not absorb, and is not the launcher
     let inner_map = inner_solution.clone().to_map()?;
     let num_args = inner_map.len();
-    //TODO assert num_args in (2, 3); //Check arg length
     if num_args == 2 {
         if inner_solution.rest()?.first()?.as_int()? != Zero::zero() {
             // pool member

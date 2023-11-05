@@ -290,11 +290,11 @@ macro_rules! impl_sized_bytes {
 impl_sized_bytes!(
     Bytes4, 4, Bytes4Visitor;
     Bytes8, 8, Bytes8Visitor;
-    Bytes16, 16, Bytes16Visitor;
     Bytes32, 32, Bytes32Visitor;
     Bytes48, 48, Bytes48Visitor;
     Bytes96, 96, Bytes96Visitor;
-    Bytes192, 192, Bytes192Visitor
+    Bytes100, 100, Bytes100Visitor;
+    Bytes480, 480, Bytes480Visitor
 );
 
 macro_rules! impl_sized_bytes_serial {
@@ -322,11 +322,11 @@ macro_rules! impl_sized_bytes_serial {
 impl_sized_bytes_serial!(
     Bytes4, 4;
     Bytes8, 8;
-    Bytes16, 16;
     Bytes32, 32;
     Bytes48, 48;
     Bytes96, 96;
-    Bytes192, 192
+    Bytes100, 100;
+    Bytes480, 480
 );
 
 impl From<&Bytes32> for SecretKey {

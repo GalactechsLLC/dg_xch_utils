@@ -3,6 +3,11 @@ use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
+// use dg_xch_core::blockchain::challenge_chain_subslot::ChallengeChainSubSlot;
+// use dg_xch_core::blockchain::foliage_block_data::FoliageBlockData;
+// use dg_xch_core::blockchain::foliage_transaction_block::FoliageTransactionBlock;
+// use dg_xch_core::blockchain::reward_chain_subslot::RewardChainSubSlot;
+// use crate::protocols::pool::PostPartialPayload;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PoolDifficulty {
@@ -46,7 +51,20 @@ pub struct NewProofOfSpace {
     pub plot_identifier: String,
     pub proof: ProofOfSpace,
     pub signage_point_index: u8,
+    // pub include_source_signature_data: Option<bool>,
+    // pub farmer_reward_address_override: Option<Bytes32>,
 }
+
+// #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+// pub struct SignatureRequestSourceData {
+//     pub foliage_block_data: Option<FoliageBlockData>,
+//     pub foliage_transaction_block: Option<FoliageTransactionBlock>,
+//     pub cc_vdf: Option<Bytes100>,
+//     pub rc_vdf: Option<Bytes100>,
+//     pub  cc_sub_slot: Option<ChallengeChainSubSlot>,
+//     pub rc_sub_slot: Option<RewardChainSubSlot>,
+//     pub partial: Option<PostPartialPayload>,
+// }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RequestSignatures {
@@ -54,6 +72,7 @@ pub struct RequestSignatures {
     pub challenge_hash: Bytes32,
     pub sp_hash: Bytes32,
     pub messages: Vec<Bytes32>,
+    // pub message_data: Option<Vec<SignatureRequestSourceData>>
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -64,6 +83,8 @@ pub struct RespondSignatures {
     pub local_pk: Bytes48,
     pub farmer_pk: Bytes48,
     pub message_signatures: Vec<(Bytes32, Bytes96)>,
+    // pub include_source_signature_data: Option<bool>,
+    // pub farmer_reward_address_override: Option<Bytes32>,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]

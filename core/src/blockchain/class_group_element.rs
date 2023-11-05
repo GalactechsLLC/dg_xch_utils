@@ -1,8 +1,8 @@
-use crate::blockchain::unsized_bytes::UnsizedBytes;
+use crate::blockchain::sized_bytes::Bytes100;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct VdfOutput {
-    pub data: UnsizedBytes,
+pub struct ClassgroupElement {
+    pub data: Bytes100,
 }

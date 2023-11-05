@@ -1,4 +1,4 @@
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 const PAIRS: [(u8, &str); 32] = [
@@ -36,9 +36,7 @@ const PAIRS: [(u8, &str); 32] = [
     (0x24, "softfork"),
 ];
 
-lazy_static! {
-    pub static ref KEYWORD_FROM_ATOM: HashMap<Vec<u8>, String> =
-        HashMap::from(PAIRS.map(|(k, v)| (vec![k], v.to_string())));
-    pub static ref KEYWORD_TO_ATOM: HashMap<String, Vec<u8>> =
-        HashMap::from(PAIRS.map(|(k, v)| (v.to_string(), vec![k])));
-}
+pub static KEYWORD_FROM_ATOM: Lazy<HashMap<Vec<u8>, String>> =
+    Lazy::new(|| HashMap::from(PAIRS.map(|(k, v)| (vec![k], v.to_string()))));
+pub static KEYWORD_TO_ATOM: Lazy<HashMap<String, Vec<u8>>> =
+    Lazy::new(|| HashMap::from(PAIRS.map(|(k, v)| (v.to_string(), vec![k]))));

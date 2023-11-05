@@ -91,7 +91,7 @@ pub fn conditions_for_solution(
     solution: &SerializedProgram,
     max_cost: u64,
 ) -> Result<(Vec<ConditionWithArgs>, u64), Error> {
-    match puzzle_reveal.run_with_cost(max_cost, &solution.to_program()?) {
+    match puzzle_reveal.run_with_cost(max_cost, &solution.to_program()) {
         Ok((cost, r)) => match parse_sexp_to_conditions(r.to_sexp()) {
             Ok(conditions) => Ok((conditions, cost)),
             Err(error) => Err(error),

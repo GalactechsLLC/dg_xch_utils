@@ -1,3 +1,5 @@
+use crate::protocols::full_node::BlockCountMetrics;
+use crate::protocols::full_node::FeeEstimate;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
@@ -59,9 +61,20 @@ pub struct CoinSpendResp {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FeeEstimateResp {
+    pub fee_estimate: FeeEstimate,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FullBlockResp {
     pub block: FullBlock,
     pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockCountMetricsResp {
+    pub metrics: BlockCountMetrics,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -85,6 +98,12 @@ pub struct LoginResp {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MempoolItemResp {
     pub mempool_item: MempoolItem,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MempoolItemAryResp {
+    pub mempool_items: Vec<MempoolItem>,
     pub success: bool,
 }
 

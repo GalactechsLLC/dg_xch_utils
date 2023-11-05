@@ -102,10 +102,10 @@ pub struct PlotMemo {
     pub farmer_public_key: Bytes48,
     pub local_master_secret_key: Bytes32,
 }
-impl TryFrom<Vec<u8>> for PlotMemo {
+impl TryFrom<&[u8]> for PlotMemo {
     type Error = Error;
 
-    fn try_from(v: Vec<u8>) -> Result<Self, Self::Error> {
+    fn try_from(v: &[u8]) -> Result<Self, Self::Error> {
         if v.len() == 112 {
             Ok(PlotMemo {
                 pool_public_key: None,

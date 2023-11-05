@@ -16,19 +16,17 @@ const P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE_HEX: &str = "ff02ffff01ff02ffff03ff0b
 #[tokio::test]
 pub async fn test_default_hash() {
     let serialized_program = SerializedProgram::from_hex("ff0980").unwrap();
-    let default_hidden_puzzle = serialized_program.to_program().unwrap();
+    let default_hidden_puzzle = serialized_program.to_program();
     let default_hidden_hash = default_hidden_puzzle.tree_hash();
     assert_eq!(
-        "711d6c4e32c92e53179b199484cf8c897542bc57f2b22582799f9d657eec4699".to_string(),
+        "0x711d6c4e32c92e53179b199484cf8c897542bc57f2b22582799f9d657eec4699".to_string(),
         default_hidden_hash.to_string()
     );
 }
 
 lazy_static! {
-    pub static ref DEFAULT_HIDDEN_PUZZLE: Program = SerializedProgram::from_hex("ff0980")
-        .unwrap()
-        .to_program()
-        .unwrap();
+    pub static ref DEFAULT_HIDDEN_PUZZLE: Program =
+        SerializedProgram::from_hex("ff0980").unwrap().to_program();
     pub static ref DEFAULT_HIDDEN_PUZZLE_HASH: Bytes32 = DEFAULT_HIDDEN_PUZZLE.tree_hash();
     pub static ref GROUP_ORDER: BigInt = BigInt::from_signed_bytes_be(
         &hex_to_bytes("0x73EDA753299D7D483339D80809A1D80553BDA402FFFE5BFEFFFFFFFF00000001")
@@ -37,8 +35,7 @@ lazy_static! {
     pub static ref MOD: Program =
         SerializedProgram::from_hex(P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE_HEX)
             .unwrap()
-            .to_program()
-            .unwrap();
+            .to_program();
     pub static ref QUOTED_MOD_HASH: Bytes32 = calculate_hash_of_quoted_mod_hash(&MOD.tree_hash());
 }
 

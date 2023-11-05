@@ -8,8 +8,8 @@ use crate::clvm::sexp::{SExp, NULL as SNULL};
 use crate::clvm::utils::{tree_hash, MEMPOOL_MODE};
 use dg_xch_macros::ChiaSerial;
 use hex::encode;
-use lazy_static::lazy_static;
 use num_bigint::BigInt;
+use once_cell::sync::Lazy;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
@@ -20,12 +20,10 @@ use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::{fmt, fs};
 
-lazy_static! {
-    pub static ref NULL: Program = Program {
-        sexp: SNULL.clone(),
-        serialized: vec![]
-    };
-}
+pub static NULL: Lazy<Program> = Lazy::new(|| Program {
+    sexp: SNULL.clone(),
+    serialized: vec![],
+});
 
 #[derive(Eq, Serialize, Deserialize)]
 pub struct Program {
@@ -130,7 +128,7 @@ impl Program {
         Bytes32::new(&tree_hash(&sexp))
     }
     pub fn curry(&self, args: &[Program]) -> Result<Program, Error> {
-        curry(self, args)
+        Ok(curry(self, args))
     }
 
     pub fn uncurry(&self) -> Result<(Program, Program), Error> {
@@ -379,11 +377,11 @@ macro_rules! impl_sized_bytes {
 impl_sized_bytes!(
     Bytes4;
     Bytes8;
-    Bytes16;
     Bytes32;
     Bytes48;
     Bytes96;
-    Bytes192
+    Bytes100;
+    Bytes480
 );
 
 macro_rules! impl_ints {
@@ -491,8 +489,8 @@ impl SerializedProgram {
         self.run(max_cost, 0, args)
     }
 
-    pub fn to_program(&self) -> Result<Program, Error> {
-        Ok(Program::new(self.buffer.clone()))
+    pub fn to_program(&self) -> Program {
+        Program::new(self.buffer.clone())
     }
 
     pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {

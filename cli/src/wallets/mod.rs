@@ -630,7 +630,7 @@ fn compute_memos_for_spend(
 ) -> Result<HashMap<Bytes32, Vec<Vec<u8>>>, Error> {
     let (_, result) = coin_spend
         .puzzle_reveal
-        .run_with_cost(INFINITE_COST, &coin_spend.solution.to_program()?)?;
+        .run_with_cost(INFINITE_COST, &coin_spend.solution.to_program())?;
     let mut memos = HashMap::default();
     let result_list = result.as_list();
     for condition in result_list {

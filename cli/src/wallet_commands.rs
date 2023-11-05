@@ -116,7 +116,10 @@ pub async fn migrate_plot_nft(
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
     if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
         info!("Checking if PlotNFT needs migration");
-        if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url) {
+        if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url)
+            || (plot_nft.pool_state.pool_url.as_ref() == Some(&pool_url)
+                && plot_nft.pool_state.state != FARMING_TO_POOL)
+        {
             info!("Starting Migration");
             let target_pool_state =
                 create_and_validate_target_state(&pool_url, pool_info, &plot_nft)?;
@@ -192,7 +195,10 @@ pub async fn migrate_plot_nft_with_owner_key(
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
     if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
         info!("Checking if PlotNFT needs migration");
-        if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url) {
+        if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url)
+            || (plot_nft.pool_state.pool_url.as_ref() == Some(&pool_url)
+                && plot_nft.pool_state.state != FARMING_TO_POOL)
+        {
             info!("Starting Migration");
             let target_pool_state =
                 create_and_validate_target_state(&pool_url, pool_info, &plot_nft)?;

@@ -12,26 +12,22 @@ use crate::plots::decompressor::{
 };
 use crate::plots::PROOF_X_COUNT;
 use crate::utils::bit_reader::BitReader;
-use crate::utils::{bytes_to_u64, slice_u128from_bytes};
+use crate::utils::{bytes_to_u64, open_read_only, open_read_only_async, slice_u128from_bytes};
 use crate::verifier::get_f7_from_proof_and_reorder;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_core::plots::{PlotFile, PlotHeader, PlotHeaderV1, PlotHeaderV2, PlotMemo, PlotTable};
 use dg_xch_serialize::hash_256;
 use hex::encode;
 use log::{debug, error, warn};
-use nix::libc;
 use rustc_hash::FxHashSet;
 use std::cmp::{max, min};
 use std::ffi::OsStr;
 use std::fmt::Display;
-use std::fs::{File, OpenOptions};
 use std::io::{Error, ErrorKind, Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::mem::{size_of, swap};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::{fs, panic};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 use tokio::sync::Mutex;
 
@@ -50,7 +46,7 @@ pub async fn test_qualities() {
     let path = Path::new(
         "/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot"
     );
-    let mut reader = PlotReader::new(
+    let reader = PlotReader::new(
         DiskPlot::new(path).await.unwrap(),
         Some(d_pool.clone()),
         Some(d_pool),
@@ -996,154 +992,98 @@ pub fn reorder_proof(
     Ok(get_f7_from_proof_and_reorder(k as u32, plot_id, proof, fx, meta)?.1)
 }
 
-pub fn read_plot_header(file: &mut File) -> Result<PlotHeader, Error> {
+pub fn read_plot_header(file: &mut std::fs::File) -> Result<PlotHeader, Error> {
     use std::io::Read;
-    let mut byte_buf = [0; 1];
-    let mut u16_buf = [0; 2];
-    let mut u32_buf = [0; 4];
-    let mut u64_buf = [0; 8];
-    let mut bytes32_buf = [0; 32];
-    file.read_exact(&mut u32_buf)?;
-    if HEADER_V2_MAGIC == u32_buf {
-        let mut plot_header = PlotHeaderV2 {
-            magic: u32_buf,
-            ..Default::default()
-        };
-        file.read_exact(&mut u32_buf)?;
-        plot_header.version = u32::from_be_bytes(u32_buf);
-        file.read_exact(&mut bytes32_buf)?;
-        plot_header.id = bytes32_buf.into();
-        file.read_exact(&mut byte_buf)?;
-        plot_header.k = byte_buf[0];
-        file.read_exact(&mut u16_buf)?;
-        plot_header.memo_len = u16::from_be_bytes(u16_buf);
-        let mut memo_buf = vec![0; plot_header.memo_len as usize];
-        file.read_exact(memo_buf.as_mut_slice())?;
-        plot_header.memo = PlotMemo::try_from(memo_buf)?;
-        file.read_exact(&mut u32_buf)?;
-        plot_header.plot_flags = u32::from_le_bytes(u32_buf);
-        if plot_header.plot_flags & 1u32 == 1u32 {
-            file.read_exact(&mut byte_buf)?;
-            plot_header.compression_level = byte_buf[0];
-        }
-        for pointer in &mut plot_header.table_begin_pointers {
-            file.read_exact(&mut u64_buf)?;
-            *pointer = u64::from_be_bytes(u64_buf);
-        }
-        for pointer in &mut plot_header.table_sizes {
-            file.read_exact(&mut u64_buf)?;
-            *pointer = u64::from_be_bytes(u64_buf);
-        }
-        Ok(PlotHeader::V2(plot_header))
+    let mut full_buffer = [0; 320];
+    file.read_exact(&mut full_buffer)?;
+    if HEADER_V2_MAGIC == full_buffer[0..4] {
+        Ok(PlotHeader::V2(parse_v2(&full_buffer)?))
+    } else if HEADER_MAGIC == full_buffer[0..19] {
+        Ok(PlotHeader::V1(parse_v1(&full_buffer)?))
     } else {
-        let mut magicv1: [u8; 19] = [0; 19];
-        file.read_exact(&mut magicv1[0..15])?;
-        magicv1[0..4].copy_from_slice(&u32_buf);
-        if HEADER_MAGIC == magicv1 {
-            let mut plot_header = PlotHeaderV1 {
-                magic: magicv1,
-                ..Default::default()
-            };
-            file.read_exact(&mut bytes32_buf)?;
-            plot_header.id = bytes32_buf.into();
-            file.read_exact(&mut byte_buf)?;
-            plot_header.k = byte_buf[0];
-            file.read_exact(&mut u16_buf)?;
-            plot_header.format_desc_len = u16::from_be_bytes(u16_buf);
-            let mut format_buf = vec![0; plot_header.format_desc_len as usize];
-            file.read_exact(format_buf.as_mut_slice())?;
-            plot_header.format_desc = format_buf;
-            file.read_exact(&mut u16_buf)?;
-            plot_header.memo_len = u16::from_be_bytes(u16_buf);
-            let mut memo_buf = vec![0; plot_header.memo_len as usize];
-            file.read_exact(memo_buf.as_mut_slice())?;
-            plot_header.memo = PlotMemo::try_from(memo_buf)?;
-            for pointer in &mut plot_header.table_begin_pointers {
-                file.read_exact(&mut u64_buf)?;
-                *pointer = u64::from_be_bytes(u64_buf);
-            }
-            Ok(PlotHeader::V1(plot_header))
-        } else {
-            Err(Error::new(
-                ErrorKind::InvalidInput,
-                "Invalid plot header magic",
-            ))
-        }
+        Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Invalid plot header magic",
+        ))
     }
 }
 
+fn parse_v1(full_buffer: &[u8]) -> Result<PlotHeaderV1, Error> {
+    let mut start = 0;
+    let mut plot_header = PlotHeaderV1 {
+        magic: full_buffer[start..start + 19].try_into().unwrap(),
+        ..Default::default()
+    };
+    start += 19;
+    plot_header.id = Bytes32::new(&full_buffer[start..start + 32]);
+    start += 32;
+    plot_header.k = full_buffer[start];
+    start += 1;
+    plot_header.format_desc_len =
+        u16::from_be_bytes(full_buffer[start..start + 2].try_into().unwrap());
+    start += 2;
+    plot_header.format_desc =
+        full_buffer[start..(start + plot_header.format_desc_len as usize)].to_vec();
+    start += plot_header.format_desc_len as usize;
+    plot_header.memo_len = u16::from_be_bytes(full_buffer[start..start + 2].try_into().unwrap());
+    start += 2;
+    plot_header.memo =
+        PlotMemo::try_from(&full_buffer[start..(start + plot_header.memo_len as usize)])?;
+    start += plot_header.memo_len as usize;
+    for pointer in &mut plot_header.table_begin_pointers {
+        *pointer = u64::from_be_bytes(full_buffer[start..start + 8].try_into().unwrap());
+        start += 8;
+    }
+    Ok(plot_header)
+}
+
+fn parse_v2(full_buffer: &[u8]) -> Result<PlotHeaderV2, Error> {
+    let mut start = 0;
+    let mut plot_header = PlotHeaderV2 {
+        magic: full_buffer[start..start + 4].try_into().unwrap(),
+        ..Default::default()
+    };
+    start += 4;
+    plot_header.version = u32::from_le_bytes(full_buffer[start..start + 4].try_into().unwrap());
+    start += 4;
+    plot_header.id = Bytes32::new(&full_buffer[start..start + 32]);
+    start += 32;
+    plot_header.k = full_buffer[start];
+    start += 1;
+    plot_header.memo_len = u16::from_be_bytes(full_buffer[start..start + 2].try_into().unwrap());
+    start += 2;
+    plot_header.memo =
+        PlotMemo::try_from(&full_buffer[start..(start + plot_header.memo_len as usize)])?;
+    start += plot_header.memo_len as usize;
+    plot_header.plot_flags = u32::from_le_bytes(full_buffer[start..start + 4].try_into().unwrap());
+    start += 4;
+    if plot_header.plot_flags & 1u32 == 1u32 {
+        plot_header.compression_level = full_buffer[start];
+        start += 1;
+    }
+    for pointer in &mut plot_header.table_begin_pointers {
+        *pointer = u64::from_be_bytes(full_buffer[start..start + 8].try_into().unwrap());
+        start += 8;
+    }
+    for pointer in &mut plot_header.table_sizes {
+        *pointer = u64::from_be_bytes(full_buffer[start..start + 8].try_into().unwrap());
+        start += 8;
+    }
+    Ok(plot_header)
+}
+
 pub async fn read_plot_header_async(file: &mut tokio::fs::File) -> Result<PlotHeader, Error> {
-    let mut byte_buf = [0; 1];
-    let mut u16_buf = [0; 2];
-    let mut u32_buf = [0; 4];
-    let mut u64_buf = [0; 8];
-    let mut bytes32_buf = [0; 32];
-    file.read_exact(&mut u32_buf).await?;
-    if HEADER_V2_MAGIC == u32_buf {
-        let mut plot_header = PlotHeaderV2 {
-            magic: u32_buf,
-            ..Default::default()
-        };
-        file.read_exact(&mut u32_buf).await?;
-        plot_header.version = u32::from_be_bytes(u32_buf);
-        file.read_exact(&mut bytes32_buf).await?;
-        plot_header.id = bytes32_buf.into();
-        file.read_exact(&mut byte_buf).await?;
-        plot_header.k = byte_buf[0];
-        file.read_exact(&mut u16_buf).await?;
-        plot_header.memo_len = u16::from_be_bytes(u16_buf);
-        let mut memo_buf = vec![0; plot_header.memo_len as usize];
-        file.read_exact(memo_buf.as_mut_slice()).await?;
-        plot_header.memo = PlotMemo::try_from(memo_buf)?;
-        file.read_exact(&mut u32_buf).await?;
-        plot_header.plot_flags = u32::from_le_bytes(u32_buf);
-        if plot_header.plot_flags & 1u32 == 1u32 {
-            file.read_exact(&mut byte_buf).await?;
-            plot_header.compression_level = byte_buf[0];
-        }
-        for pointer in &mut plot_header.table_begin_pointers {
-            file.read_exact(&mut u64_buf).await?;
-            *pointer = u64::from_be_bytes(u64_buf);
-        }
-        for pointer in &mut plot_header.table_sizes {
-            file.read_exact(&mut u64_buf).await?;
-            *pointer = u64::from_be_bytes(u64_buf);
-        }
-        Ok(PlotHeader::V2(plot_header))
+    let mut full_buffer = [0; 320];
+    file.read_exact(&mut full_buffer).await?;
+    if HEADER_V2_MAGIC == full_buffer[0..4] {
+        Ok(PlotHeader::V2(parse_v2(&full_buffer)?))
+    } else if HEADER_MAGIC == full_buffer[0..19] {
+        Ok(PlotHeader::V1(parse_v1(&full_buffer)?))
     } else {
-        let mut magicv1: [u8; 19] = [0; 19];
-        file.read_exact(&mut magicv1[4..19]).await?;
-        magicv1[0..4].copy_from_slice(&u32_buf);
-        if HEADER_MAGIC == magicv1 {
-            let mut plot_header = PlotHeaderV1 {
-                magic: magicv1,
-                ..Default::default()
-            };
-            file.read_exact(&mut bytes32_buf).await?;
-            plot_header.id = bytes32_buf.into();
-            file.read_exact(&mut byte_buf).await?;
-            plot_header.k = byte_buf[0];
-            file.read_exact(&mut u16_buf).await?;
-            plot_header.format_desc_len = u16::from_be_bytes(u16_buf);
-            let mut format_buf = vec![0; plot_header.format_desc_len as usize];
-            file.read_exact(format_buf.as_mut_slice()).await?;
-            plot_header.format_desc = format_buf;
-            file.read_exact(&mut u16_buf).await?;
-            plot_header.memo_len = u16::from_be_bytes(u16_buf);
-            let mut memo_buf = vec![0; plot_header.memo_len as usize];
-            file.read_exact(memo_buf.as_mut_slice()).await?;
-            plot_header.memo = PlotMemo::try_from(memo_buf)?;
-            for pointer in &mut plot_header.table_begin_pointers {
-                file.read_exact(&mut u64_buf).await?;
-                *pointer = u64::from_be_bytes(u64_buf);
-            }
-            Ok(PlotHeader::V1(plot_header))
-        } else {
-            Err(Error::new(
-                ErrorKind::InvalidInput,
-                "Invalid plot header magic",
-            ))
-        }
+        Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Invalid plot header magic",
+        ))
     }
 }
 
@@ -1153,23 +1093,18 @@ pub async fn read_plot_file_header_async(
     if !p.as_ref().is_file() {
         return Err(Error::new(ErrorKind::InvalidInput, "Path must be a file"));
     }
-    let p = p.as_ref().to_path_buf();
-    let mut file = tokio::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECT & libc::O_SYNC)
-        .open(&p)
-        .await?;
-    Ok((p, read_plot_header_async(&mut file).await?))
+    let mut file = open_read_only_async(p.as_ref()).await?;
+    Ok((
+        p.as_ref().to_path_buf(),
+        read_plot_header_async(&mut file).await?,
+    ))
 }
 
 pub fn read_plot_file_header(p: impl AsRef<Path>) -> Result<(PathBuf, PlotHeader), Error> {
     if !p.as_ref().is_file() {
         return Err(Error::new(ErrorKind::InvalidInput, "Path must be a file"));
     }
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECT & libc::O_SYNC)
-        .open(&p)?;
+    let mut file = open_read_only(p.as_ref())?;
     Ok((p.as_ref().to_path_buf(), read_plot_header(&mut file)?))
 }
 
@@ -1182,7 +1117,7 @@ pub fn read_all_plot_headers(p: impl AsRef<Path>) -> Result<AllPlotHeaders, Erro
             "Path must be a directory",
         ))
     } else {
-        let dir = fs::read_dir(p)?;
+        let dir = std::fs::read_dir(p)?;
         let mut valid_rtn = vec![];
         let mut failed_rtn = vec![];
         for c in dir {
@@ -1220,12 +1155,12 @@ pub async fn read_all_plot_headers_async(
             "Path must be a directory",
         ))
     } else {
-        let dir = fs::read_dir(p)?;
+        let mut dir = tokio::fs::read_dir(p).await?;
         let mut valid_rtn = vec![];
         let mut failed_rtn = vec![];
-        for c in dir {
-            match c {
-                Ok(c) => {
+        loop {
+            match dir.next_entry().await {
+                Ok(Some(c)) => {
                     let path = c.path();
                     if existing_paths.contains(&path.as_path()) {
                         continue;
@@ -1241,6 +1176,9 @@ pub async fn read_all_plot_headers_async(
                             }
                         }
                     }
+                }
+                Ok(None) => {
+                    break;
                 }
                 Err(e) => {
                     error!("Failed to open directory entry: {:?}", e);

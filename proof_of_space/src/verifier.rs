@@ -20,35 +20,6 @@ use std::thread;
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncSeek};
 
-#[tokio::test]
-pub async fn test_validate_plot() -> Result<(), Error> {
-    use simple_logger::SimpleLogger;
-    SimpleLogger::new().env().init().unwrap();
-    let path = Path::new("/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot");
-    // let mut plot_reader = PlotReader::new(DiskPlot::new(path)?)?;
-    // let mut challenge =
-    //     hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a").unwrap();
-    // let f7 = 0;
-    // let proofs = validate_proof(&mut plot_reader, &mut challenge, f7)?;
-    // for proof in proofs {
-    //     info!("Proof Found: {}", proof);
-    // }
-    // let qualities = plot_reader.fetch_qualities_for_challenge(&challenge)?;
-    // for quality in qualities {
-    //     info!("Quality Found: {}", quality);
-    // }
-    validate_plot(
-        path,
-        ValidatePlotOptions {
-            thread_count: 1,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-    Ok(())
-}
-
 pub struct ValidatePlotOptions {
     pub in_ram: bool,
     pub unpacked: bool,
