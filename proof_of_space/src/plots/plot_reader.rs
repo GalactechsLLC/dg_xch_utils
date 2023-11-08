@@ -13,7 +13,7 @@ use crate::plots::decompressor::{
 use crate::plots::PROOF_X_COUNT;
 use crate::utils::bit_reader::BitReader;
 use crate::utils::{bytes_to_u64, open_read_only, open_read_only_async, slice_u128from_bytes};
-use crate::verifier::get_f7_from_proof_and_reorder;
+use crate::verifier::compress_proof;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_core::plots::{PlotFile, PlotHeader, PlotHeaderV1, PlotHeaderV2, PlotMemo, PlotTable};
 use dg_xch_serialize::hash_256;
@@ -34,53 +34,6 @@ use tokio::sync::Mutex;
 const CHIA_QUALITY_SIZE: usize = 32;
 const HASH_SIZE_MAX: usize = CHIA_QUALITY_SIZE + ucdiv_t(2 * 50, 8);
 
-#[tokio::test]
-pub async fn test_qualities() {
-    use crate::plots::disk_plot::DiskPlot;
-    use crate::verifier::validate_proof;
-    use std::thread::available_parallelism;
-    let d_pool = Arc::new(DecompressorPool::new(
-        1,
-        available_parallelism().map(|u| u.get()).unwrap_or(4) as u8,
-    ));
-    let path = Path::new(
-        "/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot"
-    );
-    let reader = PlotReader::new(
-        DiskPlot::new(path).await.unwrap(),
-        Some(d_pool.clone()),
-        Some(d_pool),
-    )
-    .await
-    .unwrap();
-    let f7 = 0;
-    let k = *reader.plot_file().k();
-    let mut challenge =
-        hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a").unwrap();
-    let f7_size = ucdiv_t(k as usize, 8);
-    for (i, v) in challenge[0..f7_size].iter_mut().enumerate() {
-        *v = (f7 >> ((f7_size - i - 1) * 8)) as u8;
-    }
-    let qualities = reader
-        .fetch_qualities_for_challenge(&challenge)
-        .await
-        .unwrap();
-    let expected = [
-        "aee8c23a4163095b7f321a022868bc3b19e9f96c1d9ab4a0a93deba1d509a68f",
-        "be7ca23fb015e0ce91e3b8ce3d2f9206004840626bbc47fa0bc02e412966934d",
-        "64855fd8fa37efdc904ec26389d8406584cdca8fbfd2b8c6f5d7a47fbeb12941",
-    ];
-    for ((index, quality), expected) in qualities.iter().zip(expected) {
-        println!("Quality Found: {} expected {expected}", quality);
-        let proof = reader.fetch_proof(*index).await.unwrap();
-        let (v_quality, _) =
-            validate_proof(reader.plot_id().to_sized_bytes(), k, &proof, &challenge).unwrap();
-        if *quality != v_quality {
-            error!("Error Proving Plot: {:?}", path);
-        }
-    }
-}
-
 pub struct LinePointParkComponents {
     base_line_point: u128,
     stubs: Vec<u8>,
@@ -98,8 +51,6 @@ pub struct PlotReader<
     _phantom_data: PhantomData<F>,
     last_park: Mutex<usize>,
     pub p7_entries: Mutex<Vec<u64>>,
-    fx: Mutex<Vec<u64>>,
-    meta: Mutex<Vec<BitReader>>,
 }
 impl<
         F: AsyncSeek + AsyncRead + AsyncSeekExt + AsyncReadExt + Unpin,
@@ -119,8 +70,6 @@ impl<
             _phantom_data: PhantomData,
             last_park: Mutex::new(usize::MAX),
             p7_entries: Mutex::new(vec![0u64; K_ENTRIES_PER_PARK as usize]),
-            fx: Mutex::new(vec![0u64; PROOF_X_COUNT]),
-            meta: Mutex::new(Vec::with_capacity(PROOF_X_COUNT)),
         };
         reader.load_c2entries().await?;
         Ok(reader)
@@ -683,19 +632,10 @@ impl<
             }
         };
         //Reorder
-        self.reorder_proof(&proof).await
+        Ok(compress_proof(&proof, *self.plot_file().k() as usize))
     }
 
-    pub async fn reorder_proof(&self, proof: &[u64]) -> Result<Vec<u64>, Error> {
-        let mut fx = self.fx.lock().await;
-        let mut meta = self.meta.lock().await;
-        meta.clear();
-        let k = *self.plot_file().k();
-        let bytes = *self.plot_file().plot_id();
-        reorder_proof(k, bytes.to_sized_bytes(), proof, &mut fx, &mut meta)
-    }
-
-    pub async fn fetch_proof_for_challenge(
+    pub async fn fetch_proofs_for_challenge(
         &self,
         challenge: &[u8],
     ) -> Result<Vec<Vec<u64>>, Error> {
@@ -980,16 +920,6 @@ impl<
             ))
         }
     }
-}
-
-pub fn reorder_proof(
-    k: u8,
-    plot_id: &[u8; 32],
-    proof: &[u64],
-    fx: &mut [u64],
-    meta: &mut Vec<BitReader>,
-) -> Result<Vec<u64>, Error> {
-    Ok(get_f7_from_proof_and_reorder(k as u32, plot_id, proof, fx, meta)?.1)
 }
 
 pub fn read_plot_header(file: &mut std::fs::File) -> Result<PlotHeader, Error> {
