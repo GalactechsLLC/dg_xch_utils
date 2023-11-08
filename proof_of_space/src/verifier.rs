@@ -218,23 +218,6 @@ pub fn uncompress_proof(proof: &[u8], k: usize) -> Vec<u64> {
     new_proof
 }
 
-pub fn compress_proof(new_proof: &[u64], k: usize) -> Vec<u64> {
-    let mut bits = BitReader::default();
-    for v in new_proof {
-        bits.append_value(*v, k);
-    }
-    let mut compacted_proof = vec![0u64; k];
-    for (i, b) in bits
-        .values()
-        .into_iter()
-        .enumerate()
-        .take(PROOF_X_COUNT / 2)
-    {
-        compacted_proof[i] = b;
-    }
-    compacted_proof
-}
-
 pub fn validate_proof(
     id: &[u8; 32],
     k: u8,
@@ -272,7 +255,6 @@ pub fn get_f7_from_proof(
 ) -> Result<u64, Error> {
     meta.clear();
     get_proof_f1_and_meta(k, plot_id, proof, fx, meta)?;
-    // Forward propagate f1 values to get the final f7
     forward_prop_f1_to_f7(None, fx, meta, k)?;
     Ok(fx[0] >> K_EXTRA_BITS)
 }
@@ -284,11 +266,27 @@ pub fn get_f7_from_proof_and_reorder(
     fx: &mut [u64],
     meta: &mut Vec<BitReader>,
 ) -> Result<(u64, Vec<u64>), Error> {
+    pub fn compress_proof(mut new_proof: Vec<u64>, k: usize) -> Vec<u64> {
+        let mut bits = BitReader::default();
+        for v in &new_proof {
+            bits.append_value(*v, k);
+        }
+        new_proof.resize(k, 0u64);
+        for (i, b) in bits
+            .values()
+            .into_iter()
+            .enumerate()
+            .take(PROOF_X_COUNT / 2)
+        {
+            new_proof[i] = b;
+        }
+        new_proof
+    }
     meta.clear();
+    let mut new_proof = proof.to_vec();
     get_proof_f1_and_meta(k, plot_id, proof, fx, meta)?;
-    // Forward propagate f1 values to get the final f7
-    forward_prop_f1_to_f7(None, fx, meta, k)?;
-    Ok((fx[0] >> K_EXTRA_BITS, compress_proof(proof, k as usize)))
+    forward_prop_f1_to_f7(Some(&mut new_proof), fx, meta, k)?;
+    Ok((fx[0] >> K_EXTRA_BITS, compress_proof(new_proof, k as usize)))
 }
 
 pub fn get_quality_string(
@@ -437,47 +435,62 @@ pub async fn test_qualities() {
         1,
         available_parallelism().map(|u| u.get()).unwrap_or(4) as u8,
     ));
-    let path = Path::new(
-        "/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot"
-    );
-    let reader = PlotReader::new(
-        DiskPlot::new(path).await.unwrap(),
+    let compressed_reader = PlotReader::new(
+        DiskPlot::new(Path::new(
+            "/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot"
+        )).await.unwrap(),
+        Some(d_pool.clone()),
+        Some(d_pool.clone()),
+    )
+    .await
+    .unwrap();
+    let uncompressed_reader = PlotReader::new(
+        DiskPlot::new(Path::new(
+            "/home/luna/plot-k32-2023-03-31-06-24-ad3814ecb6ffcfeae3ec68f41b9922e1484b886c614fef4db405468550812dd4.plot"
+        )).await.unwrap(),
         Some(d_pool.clone()),
         Some(d_pool),
     )
     .await
     .unwrap();
-    let f7 = 0;
-    let k = *reader.plot_file().k();
+    let k = *compressed_reader.plot_file().k(); //They are both k32
     let mut challenge =
         hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a").unwrap();
     let f7_size = ucdiv_t(k as usize, 8);
     for (i, v) in challenge[0..f7_size].iter_mut().enumerate() {
-        *v = (f7 >> ((f7_size - i - 1) * 8)) as u8;
+        *v = (0 >> ((f7_size - i - 1) * 8)) as u8;
     }
-    let qualities = reader
+    let qualities = uncompressed_reader
         .fetch_qualities_for_challenge(&challenge)
         .await
         .unwrap();
-    let expected = [
-        "aee8c23a4163095b7f321a022868bc3b19e9f96c1d9ab4a0a93deba1d509a68f",
-        "be7ca23fb015e0ce91e3b8ce3d2f9206004840626bbc47fa0bc02e412966934d",
-        "64855fd8fa37efdc904ec26389d8406584cdca8fbfd2b8c6f5d7a47fbeb12941",
-    ];
-    for ((index, quality), expected) in qualities.iter().zip(expected) {
-        let unordered_proof = reader.fetch_proof(*index).await.unwrap();
-        let comrpessed = compress_proof(&unordered_proof, 32);
-        let proof = reader.fetch_ordered_proof(*index).await.unwrap();
-        println!("Quality Found: {} expected {expected}", quality);
+    for (index, quality) in qualities.iter() {
+        let proof = uncompressed_reader
+            .fetch_ordered_proof(*index)
+            .await
+            .unwrap();
         let v_quality = validate_proof(
-            reader.plot_id().to_sized_bytes(),
+            uncompressed_reader.plot_id().to_sized_bytes(),
             k,
             &proof_to_bytes(&proof),
             &challenge,
         )
         .unwrap();
-        if *quality != v_quality {
-            eprintln!("Error Proving Plot: {:?}", path);
-        }
+        assert_eq!(*quality, v_quality);
+    }
+    let qualities2 = compressed_reader
+        .fetch_qualities_for_challenge(&challenge)
+        .await
+        .unwrap();
+    for (index, quality) in qualities2.iter() {
+        let proof = compressed_reader.fetch_ordered_proof(*index).await.unwrap();
+        let v_quality = validate_proof(
+            compressed_reader.plot_id().to_sized_bytes(),
+            k,
+            &proof_to_bytes(&proof),
+            &challenge,
+        )
+        .unwrap();
+        assert_eq!(*quality, v_quality);
     }
 }

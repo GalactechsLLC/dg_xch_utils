@@ -13,7 +13,7 @@ use crate::plots::decompressor::{
 use crate::plots::PROOF_X_COUNT;
 use crate::utils::bit_reader::BitReader;
 use crate::utils::{bytes_to_u64, open_read_only, open_read_only_async, slice_u128from_bytes};
-use crate::verifier::compress_proof;
+use crate::verifier::get_f7_from_proof_and_reorder;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_core::plots::{PlotFile, PlotHeader, PlotHeaderV1, PlotHeaderV2, PlotMemo, PlotTable};
 use dg_xch_serialize::hash_256;
@@ -51,6 +51,8 @@ pub struct PlotReader<
     _phantom_data: PhantomData<F>,
     last_park: Mutex<usize>,
     pub p7_entries: Mutex<Vec<u64>>,
+    fx: Mutex<Vec<u64>>,
+    meta: Mutex<Vec<BitReader>>,
 }
 impl<
         F: AsyncSeek + AsyncRead + AsyncSeekExt + AsyncReadExt + Unpin,
@@ -70,6 +72,8 @@ impl<
             _phantom_data: PhantomData,
             last_park: Mutex::new(usize::MAX),
             p7_entries: Mutex::new(vec![0u64; K_ENTRIES_PER_PARK as usize]),
+            fx: Mutex::new(vec![0u64; PROOF_X_COUNT]),
+            meta: Mutex::new(Vec::with_capacity(PROOF_X_COUNT)),
         };
         reader.load_c2entries().await?;
         Ok(reader)
@@ -632,7 +636,16 @@ impl<
             }
         };
         //Reorder
-        Ok(compress_proof(&proof, *self.plot_file().k() as usize))
+        self.reorder_proof(&proof).await
+    }
+
+    pub async fn reorder_proof(&self, proof: &[u64]) -> Result<Vec<u64>, Error> {
+        let mut fx = self.fx.lock().await;
+        let mut meta = self.meta.lock().await;
+        meta.clear();
+        let k = *self.plot_file().k();
+        let bytes = *self.plot_file().plot_id();
+        reorder_proof(k, bytes.to_sized_bytes(), proof, &mut fx, &mut meta)
     }
 
     pub async fn fetch_proofs_for_challenge(
@@ -920,6 +933,16 @@ impl<
             ))
         }
     }
+}
+
+pub fn reorder_proof(
+    k: u8,
+    plot_id: &[u8; 32],
+    proof: &[u64],
+    fx: &mut [u64],
+    meta: &mut Vec<BitReader>,
+) -> Result<Vec<u64>, Error> {
+    Ok(get_f7_from_proof_and_reorder(k as u32, plot_id, proof, fx, meta)?.1)
 }
 
 pub fn read_plot_header(file: &mut std::fs::File) -> Result<PlotHeader, Error> {
