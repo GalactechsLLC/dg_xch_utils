@@ -206,27 +206,60 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
     Ok(())
 }
 
+pub fn uncompress_proof(proof: &[u8], k: usize) -> Vec<u64> {
+    let mut index = 0;
+    let proof_bits = BitReader::from_bytes_be(proof, proof.len() * 8);
+    let mut new_proof = vec![];
+    while index < 64usize {
+        let as_int = proof_bits.slice_to_int(k * index, k * (index + 1));
+        new_proof.push(as_int);
+        index += 1;
+    }
+    new_proof
+}
+
+pub fn compress_proof(new_proof: &[u64], k: usize) -> Vec<u64> {
+    let mut bits = BitReader::default();
+    for v in new_proof {
+        bits.append_value(*v, k);
+    }
+    let mut compacted_proof = vec![0u64; k];
+    for (i, b) in bits
+        .values()
+        .into_iter()
+        .enumerate()
+        .take(PROOF_X_COUNT / 2)
+    {
+        compacted_proof[i] = b;
+    }
+    compacted_proof
+}
+
 pub fn validate_proof(
     id: &[u8; 32],
     k: u8,
-    proof: &[u64],
+    proof: &[u8],
     challenge: &[u8],
-) -> Result<(Bytes32, Vec<u64>), Error> {
+) -> Result<Bytes32, Error> {
     let mut fx = vec![0; PROOF_X_COUNT];
     let mut meta: Vec<BitReader> = Vec::with_capacity(PROOF_X_COUNT);
-    let (f7, reordered_proof) =
-        get_f7_from_proof_and_reorder(k as u32, id, proof, &mut fx, &mut meta)?;
+    let f7 = get_f7_from_proof(
+        k as u32,
+        id,
+        &uncompress_proof(proof, k as usize),
+        &mut fx,
+        &mut meta,
+    )?;
     let challenge_bits = BitReader::from_bytes_be(challenge, challenge.len() * 8);
     let index = (challenge_bits
         .range(256 - 5, challenge_bits.get_size())
         .read_u64(5)?
         << 1) as u16;
     if challenge_bits.range(0, k as usize).first_u64() == f7 {
-        let quality_string =
-            get_quality_string(k, &proof_to_bytes(&reordered_proof), index, challenge)?;
-        Ok((Bytes32::new(&quality_string), reordered_proof))
+        let quality_string = get_quality_string(k, proof, index, challenge)?;
+        Ok(Bytes32::new(&quality_string))
     } else {
-        Ok((Bytes32::default(), reordered_proof))
+        Ok(Bytes32::default())
     }
 }
 
@@ -234,9 +267,10 @@ pub fn get_f7_from_proof(
     k: u32,
     plot_id: &[u8; 32],
     proof: &[u64],
-    fx: &mut [u64; 64],
+    fx: &mut [u64],
     meta: &mut Vec<BitReader>,
 ) -> Result<u64, Error> {
+    meta.clear();
     get_proof_f1_and_meta(k, plot_id, proof, fx, meta)?;
     // Forward propagate f1 values to get the final f7
     forward_prop_f1_to_f7(None, fx, meta, k)?;
@@ -251,24 +285,10 @@ pub fn get_f7_from_proof_and_reorder(
     meta: &mut Vec<BitReader>,
 ) -> Result<(u64, Vec<u64>), Error> {
     meta.clear();
-    let mut new_proof = proof.to_vec();
     get_proof_f1_and_meta(k, plot_id, proof, fx, meta)?;
     // Forward propagate f1 values to get the final f7
-    forward_prop_f1_to_f7(Some(&mut new_proof), fx, meta, k)?;
-    let mut bits = BitReader::default();
-    for v in new_proof {
-        bits.append_value(v, k as usize);
-    }
-    let mut compacted_proof = vec![0u64; k as usize];
-    for (i, b) in bits
-        .values()
-        .into_iter()
-        .enumerate()
-        .take(PROOF_X_COUNT / 2)
-    {
-        compacted_proof[i] = b;
-    }
-    Ok((fx[0] >> K_EXTRA_BITS, compacted_proof))
+    forward_prop_f1_to_f7(None, fx, meta, k)?;
+    Ok((fx[0] >> K_EXTRA_BITS, compress_proof(proof, k as usize)))
 }
 
 pub fn get_quality_string(
@@ -348,7 +368,7 @@ pub async fn check_plot<T: AsRef<Path>>(
                 debug!("\tLooking up qualities took: {duration} ms.");
             }
             let proof_start = Instant::now();
-            let proof = reader.fetch_proof(*index).await?;
+            let proof = reader.fetch_ordered_proof(*index).await?;
             let proof_duration = Instant::now().duration_since(proof_start).as_millis();
             if proof_duration > 15000 {
                 warn!("\tFinding proof took: {proof_duration} ms. This should be below 15 seconds to minimize risk of losing rewards.");
@@ -356,7 +376,14 @@ pub async fn check_plot<T: AsRef<Path>>(
                 debug!("\tFinding proof took: {proof_duration} ms");
             }
             total_proofs += 1;
-            if validate_proof(id.to_sized_bytes(), k, &proof, challenge_hash.as_ref()).is_err() {
+            if validate_proof(
+                id.to_sized_bytes(),
+                k,
+                &proof_to_bytes(&proof),
+                challenge_hash.as_ref(),
+            )
+            .is_err()
+            {
                 bad_proofs += 1;
                 error!("Error Proving Plot: {:?}", path.as_ref());
             }
@@ -394,4 +421,63 @@ pub fn proof_to_bytes(src: &[u64]) -> Vec<u8> {
         .map(|b| b.to_be_bytes())
         .collect::<Vec<[u8; size_of::<u64>()]>>()
         .concat()
+}
+
+#[tokio::test]
+pub async fn test_qualities() {
+    use crate::constants::ucdiv_t;
+    use crate::plots::decompressor::DecompressorPool;
+    use crate::plots::disk_plot::DiskPlot;
+    use crate::plots::plot_reader::PlotReader;
+    use crate::verifier::proof_to_bytes;
+    use crate::verifier::validate_proof;
+    use dg_xch_core::plots::PlotFile;
+    use std::thread::available_parallelism;
+    let d_pool = Arc::new(DecompressorPool::new(
+        1,
+        available_parallelism().map(|u| u.get()).unwrap_or(4) as u8,
+    ));
+    let path = Path::new(
+        "/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot"
+    );
+    let reader = PlotReader::new(
+        DiskPlot::new(path).await.unwrap(),
+        Some(d_pool.clone()),
+        Some(d_pool),
+    )
+    .await
+    .unwrap();
+    let f7 = 0;
+    let k = *reader.plot_file().k();
+    let mut challenge =
+        hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a").unwrap();
+    let f7_size = ucdiv_t(k as usize, 8);
+    for (i, v) in challenge[0..f7_size].iter_mut().enumerate() {
+        *v = (f7 >> ((f7_size - i - 1) * 8)) as u8;
+    }
+    let qualities = reader
+        .fetch_qualities_for_challenge(&challenge)
+        .await
+        .unwrap();
+    let expected = [
+        "aee8c23a4163095b7f321a022868bc3b19e9f96c1d9ab4a0a93deba1d509a68f",
+        "be7ca23fb015e0ce91e3b8ce3d2f9206004840626bbc47fa0bc02e412966934d",
+        "64855fd8fa37efdc904ec26389d8406584cdca8fbfd2b8c6f5d7a47fbeb12941",
+    ];
+    for ((index, quality), expected) in qualities.iter().zip(expected) {
+        let unordered_proof = reader.fetch_proof(*index).await.unwrap();
+        let comrpessed = compress_proof(&unordered_proof, 32);
+        let proof = reader.fetch_ordered_proof(*index).await.unwrap();
+        println!("Quality Found: {} expected {expected}", quality);
+        let v_quality = validate_proof(
+            reader.plot_id().to_sized_bytes(),
+            k,
+            &proof_to_bytes(&proof),
+            &challenge,
+        )
+        .unwrap();
+        if *quality != v_quality {
+            eprintln!("Error Proving Plot: {:?}", path);
+        }
+    }
 }
