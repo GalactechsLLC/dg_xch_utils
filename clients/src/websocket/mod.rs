@@ -175,11 +175,10 @@ pub async fn get_client_generated_tls(
     port: u16,
     additional_headers: &Option<HashMap<String, String>>,
 ) -> Result<(Client, ReadStream), Error> {
-    let (cert_bytes, key_bytes) =
-        generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
-            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
-    let certs = load_certs_from_bytes(&cert_bytes)?;
-    let key = load_private_key_from_bytes(&key_bytes)?;
+    let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)
+        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+    let certs = load_certs_from_bytes(cert_bytes.as_bytes())?;
+    let key = load_private_key_from_bytes(key_bytes.as_bytes())?;
     let cfg = Arc::new(
         ClientConfig::builder()
             .with_safe_defaults()
@@ -203,13 +202,12 @@ pub async fn get_client_generated_tls(
                 format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
             )
         })?,
-        HeaderValue::from_str(encode(&String::from_utf8(cert_bytes).unwrap_or_default()).as_ref())
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::InvalidData,
-                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
-                )
-            })?,
+        HeaderValue::from_str(encode(&cert_bytes).as_ref()).map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+            )
+        })?,
     );
     if let Some(m) = additional_headers {
         for (k, v) in m {
@@ -272,9 +270,8 @@ pub async fn get_client(
             );
         }
     }
-    let (cert_bytes, _) =
-        generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
-            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+    let (cert_bytes, _) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)
+        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
     request.headers_mut().insert(
         HeaderName::from_str("chia-client-cert").map_err(|e| {
             Error::new(
@@ -282,13 +279,12 @@ pub async fn get_client(
                 format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
             )
         })?,
-        HeaderValue::from_str(encode(&String::from_utf8(cert_bytes).unwrap_or_default()).as_ref())
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::InvalidData,
-                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
-                )
-            })?,
+        HeaderValue::from_str(encode(&cert_bytes).as_ref()).map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+            )
+        })?,
     );
     let (stream, resp) = connect_async_tls_with_config(request, None, false, None)
         .await
