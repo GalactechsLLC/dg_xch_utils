@@ -391,5 +391,5 @@ pub fn generate_ssl_for_nodes_in_memory(
 pub fn test_ssl() {
     use simple_logger::SimpleLogger;
     SimpleLogger::new().init().unwrap();
-    create_all_ssl("/home/luna/.config/fast_farmer/new_ssl".as_ref(), true).unwrap();
+    create_all_ssl("./ssl".as_ref(), true).unwrap();
 }
