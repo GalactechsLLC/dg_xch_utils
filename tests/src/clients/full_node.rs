@@ -64,12 +64,13 @@ pub async fn test_farmer_ws_client() {
     SimpleLogger::new().env().init().unwrap_or_default();
     let mut clients = vec![];
     let simulate_count = 1;
-    let host = env::var("FULLNODE_HOST").unwrap_or_else(|_| String::from("localhost"));
-    let port = env::var("FULLNODE_PORT").unwrap_or_else(|_| String::from("8444"));
+    let host = Arc::new(env::var("FULLNODE_HOST").unwrap_or_else(|_| String::from("localhost")));
+    let port = env::var("FULLNODE_PORT")
+        .map(|v| v.parse().unwrap_or(8444u16))
+        .unwrap_or(8444u16);
     let network_id = "mainnet";
     let run_handle = Arc::new(AtomicBool::new(true));
     let mut headers = HashMap::new();
-    headers.insert(String::from("X-iriga-client"), String::from("evergreen"));
     headers.insert(
         String::from("X-evg-lite-farmer-version"),
         "benchmarker-v1".to_string(),
@@ -78,16 +79,16 @@ pub async fn test_farmer_ws_client() {
         String::from("X-evg-dg-xch-pos-version"),
         dg_xch_pos::version(),
     );
-    headers.insert(String::from("X-evg-device-id"), Uuid::new_v4().to_string());
+    let additional_headers = Some(headers.clone());
     for _ in 0..simulate_count {
         let client_handle = run_handle.clone();
-        let additional_headers = Some(headers.clone());
+        let host = host.clone();
+        let additional_headers = additional_headers.clone();
         let thread = tokio::spawn(async move {
-            let additional_headers = additional_headers;
             let client_handle = client_handle.clone();
             'retry: loop {
                 match FarmerClient::new_ssl_generate(
-                    host,
+                    &host,
                     port,
                     network_id,
                     &additional_headers,
