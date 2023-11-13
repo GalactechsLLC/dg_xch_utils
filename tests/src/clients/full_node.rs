@@ -70,16 +70,7 @@ pub async fn test_farmer_ws_client() {
         .unwrap_or(8444u16);
     let network_id = "mainnet";
     let run_handle = Arc::new(AtomicBool::new(true));
-    let mut headers = HashMap::new();
-    headers.insert(
-        String::from("X-evg-lite-farmer-version"),
-        "benchmarker-v1".to_string(),
-    );
-    headers.insert(
-        String::from("X-evg-dg-xch-pos-version"),
-        dg_xch_pos::version(),
-    );
-    let additional_headers = Some(headers.clone());
+    let additional_headers = Some(HashMap::new());
     for _ in 0..simulate_count {
         let client_handle = run_handle.clone();
         let host = host.clone();
