@@ -4,7 +4,7 @@ pub mod wallet;
 use crate::protocols::shared::NoCertificateVerification;
 use crate::protocols::shared::{load_certs, load_private_key};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{header, Client, ClientBuilder};
+use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
