@@ -1,4 +1,4 @@
-![Cargo Checks](https://github.com/GalactechsLLC/dg_xch_utils/actions/workflows/rust.yml/badge.svg)
+[![CI](https://github.com/GalactechsLLC/dg_xch_utils/actions/workflows/ci.yml/badge.svg)](https://github.com/GalactechsLLC/dg_xch_utils/actions/workflows/ci.yml)
 
 ## Introduction
 A collection of packages for working with the Chia Blockchain using Rust
