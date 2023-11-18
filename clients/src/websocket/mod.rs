@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "windows"))]
 use tokio::signal::unix::{signal, SignalKind};
 #[cfg(target_os = "windows")]
 use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown};
@@ -43,7 +43,7 @@ use tokio_tungstenite::{
 use urlencoding::encode;
 use uuid::Uuid;
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "windows"))]
 pub async fn await_termination() -> Result<(), Error> {
     let mut term_signal = signal(SignalKind::terminate())?;
     let mut int_signal = signal(SignalKind::interrupt())?;

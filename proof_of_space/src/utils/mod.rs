@@ -8,9 +8,18 @@ pub mod bit_reader;
 pub mod radix_sort;
 pub mod span;
 
-#[cfg(target_os = "linux")]
-use libc::{O_DIRECT, O_SYNC};
-#[cfg(target_os = "linux")]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+use libc::O_DIRECT;
+#[cfg(target_os = "dragonfly")]
+use libc::O_FSYNC;
+#[cfg(not(any(target_os = "dragonfly", target_os = "windows")))]
+use libc::O_SYNC;
+#[cfg(not(target_os = "windows"))]
 use std::os::unix::fs::OpenOptionsExt;
 #[cfg(target_os = "windows")]
 use std::os::windows::fs::OpenOptionsExt;
@@ -19,11 +28,32 @@ use winapi::um::winbase::FILE_FLAG_NO_BUFFERING;
 #[cfg(target_os = "windows")]
 use winapi::um::winbase::FILE_FLAG_WRITE_THROUGH;
 pub async fn open_read_only_async(filename: &Path) -> Result<tokio::fs::File, Error> {
-    #[cfg(target_os = "linux")]
+    #[cfg(target_os = "dragonfly")]
+    {
+        tokio::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(O_DIRECT & O_FSYNC)
+            .open(filename)
+            .await
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
     {
         tokio::fs::OpenOptions::new()
             .read(true)
             .custom_flags(O_DIRECT & O_SYNC)
+            .open(filename)
+            .await
+    }
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android",
+        target_os = "openbsd"
+    ))]
+    {
+        tokio::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(O_SYNC)
             .open(filename)
             .await
     }
@@ -37,11 +67,30 @@ pub async fn open_read_only_async(filename: &Path) -> Result<tokio::fs::File, Er
     }
 }
 pub fn open_read_only(filename: &Path) -> Result<std::fs::File, Error> {
-    #[cfg(target_os = "linux")]
+    #[cfg(target_os = "dragonfly")]
+    {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(O_DIRECT & O_FSYNC)
+            .open(filename)
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
     {
         std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(O_DIRECT & O_SYNC)
+            .open(filename)
+    }
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android",
+        target_os = "openbsd"
+    ))]
+    {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(O_SYNC)
             .open(filename)
     }
     #[cfg(target_os = "windows")]
