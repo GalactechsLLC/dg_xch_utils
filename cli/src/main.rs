@@ -15,7 +15,6 @@ use std::io::Error;
 async fn main() -> Result<(), Error> {
     let cli = Cli::parse();
     SimpleLogger::new().env().init().unwrap_or_default();
-
     match cli.action {
         RootCommands::GetCoinRecord { .. } => {
             //Do Stuff Here

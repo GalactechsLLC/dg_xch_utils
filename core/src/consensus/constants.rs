@@ -22,12 +22,13 @@ pub struct ConsensusConstants {
 
     pub significant_bits: BigInt, //The number of bits to look at in difficulty and min iters. The rest are zeroed
     pub discriminant_size_bits: BigInt, //Max is 1024 (based on ClassGroupElement int size)
-    pub number_zero_bits_plot_filter: usize, //H(plot id + challenge hash + signage point) must start with these many zeroes
+    pub number_zero_bits_plot_filter: u8, //H(plot id + challenge hash + signage point) must start with these many zeroes
     pub min_plot_size: u8,
     pub max_plot_size: u8,
     pub sub_slot_time_target: BigInt, //The target number of seconds per sub-slot
     pub num_sp_intervals_extra: u64, //The difference between signage point and infusion point (plus required_iters)
     pub max_future_time: BigInt, //The next block can have a timestamp of at most these many seconds more
+    pub max_future_time2: BigInt, //After soft-fork2, this is the new max_future_time
     pub number_of_timestamps: BigInt, //Than the average of the last number_of_timestamps blocks
     //Used as the initial cc rc challenges, as well as first block back pointers, and first SES back pointer
     //We override this value based on the chain being run (testnet0, testnet1, mainnet, etc)
@@ -53,6 +54,22 @@ pub struct ConsensusConstants {
     pub max_generator_size: u32,
     pub max_generator_ref_list_size: u32,
     pub pool_sub_slot_iters: u64,
+
+    // soft fork initiated in 1.8.0 release
+    pub soft_fork2_height: u32,
+
+    // soft fork initiated in 2.0 release
+    pub soft_fork3_height: u32,
+
+    // the hard fork planned with the 2.0 release
+    // this is the block with the first plot filter adjustment
+    pub hard_fork_height: u32,
+    pub hard_fork_fix_height: u32,
+
+    // the plot filter adjustment heights
+    pub plot_filter_128_height: u32,
+    pub plot_filter_64_height: u32,
+    pub plot_filter_32_height: u32,
 
     //This is NOT standard, but makes some things easier
     pub bech32_prefix: String,
@@ -83,6 +100,7 @@ pub static MAINNET: Lazy<ConsensusConstants> = Lazy::new(|| ConsensusConstants {
     sub_slot_time_target: BigInt::from(600),
     num_sp_intervals_extra: 3,
     max_future_time: BigInt::from(5 * 60),
+    max_future_time2: BigInt::from(2 * 60),
     number_of_timestamps: BigInt::from(11),
     genesis_challenge: Bytes32::from(
         "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
@@ -109,6 +127,13 @@ pub static MAINNET: Lazy<ConsensusConstants> = Lazy::new(|| ConsensusConstants {
     max_generator_size: 1000000,
     max_generator_ref_list_size: 512,
     pool_sub_slot_iters: 37600000000,
+    soft_fork2_height: 0,
+    soft_fork3_height: 4510000,
+    hard_fork_height: 5496000,
+    hard_fork_fix_height: 5496000,
+    plot_filter_128_height: 10542000,
+    plot_filter_64_height: 15592000,
+    plot_filter_32_height: 20643000,
     bech32_prefix: String::from("xch"),
     is_testnet: false,
 });
@@ -236,6 +261,19 @@ pub static TESTNET_10: Lazy<ConsensusConstants> = Lazy::new(|| ConsensusConstant
     ),
     mempool_block_buffer: BigInt::from(10),
     min_plot_size: 18,
+    soft_fork2_height: 3000000,
+    soft_fork3_height: 2997292,
+    // planned 2.0 release is July 26, height 2965036 on testnet
+    //1 week later
+    hard_fork_height: 2997292,
+    // November 2023
+    hard_fork_fix_height: 3426000,
+    // another 2 weeks later
+    plot_filter_128_height: 3061804,
+    // 3 years later
+    plot_filter_64_height: 8010796,
+    // 3 years later
+    plot_filter_32_height: 13056556,
     bech32_prefix: String::from("txch"),
     is_testnet: true,
     ..Default::default()

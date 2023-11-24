@@ -1,11 +1,14 @@
-use crate::api::full_node::FullnodeAPI;
-use crate::api::responses::{BlockCountMetricsResp, FeeEstimateResp, MempoolItemAryResp};
+use crate::api::full_node::{FullnodeAPI, FullnodeExtAPI};
+use crate::api::responses::{
+    BlockCountMetricsResp, CoinHintsResp, CoinSpendMapResp, FeeEstimateResp,
+    HintedAdditionsAndRemovalsResp, MempoolItemAryResp, PaginatedCoinRecordAryResp,
+};
 use crate::protocols::full_node::BlockCountMetrics;
 use crate::protocols::full_node::FeeEstimate;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::CoinRecord;
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -530,4 +533,197 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .fee_estimate)
     }
+}
+
+#[async_trait]
+impl FullnodeExtAPI for FullnodeClient {
+    async fn get_additions_and_removals_with_hints(
+        &self,
+        header_hash: &Bytes32,
+    ) -> Result<(Vec<HintedCoinRecord>, Vec<HintedCoinRecord>), Error> {
+        let mut request_body = Map::new();
+        request_body.insert("header_hash".to_string(), json!(header_hash));
+        let resp = post::<HintedAdditionsAndRemovalsResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_additions_and_removals_with_hints",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?;
+        Ok((resp.additions, resp.removals))
+    }
+
+    async fn get_coin_records_by_hints(
+        &self,
+        hints: &[Bytes32],
+        include_spent_coins: bool,
+        start_height: u32,
+        end_height: u32,
+    ) -> Result<Vec<CoinRecord>, Error> {
+        let mut request_body = Map::new();
+        request_body.insert("hints".to_string(), json!(hints));
+        request_body.insert(
+            "include_spent_coins".to_string(),
+            json!(include_spent_coins),
+        );
+        request_body.insert("start_height".to_string(), json!(start_height));
+        request_body.insert("end_height".to_string(), json!(end_height));
+        Ok(post::<CoinRecordAryResp>(
+            &self.client,
+            &get_url(self.host.as_str(), self.port, "get_coin_records_by_hints"),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?
+        .coin_records)
+    }
+
+    async fn get_coin_records_by_puzzle_hashes_paginated(
+        &self,
+        puzzle_hashes: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+        page_size: Option<u32>,
+        last_id: Option<Bytes32>,
+    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error> {
+        let mut request_body = Map::new();
+        request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
+        request_body.insert(
+            "include_spent_coins".to_string(),
+            json!(include_spent_coins.unwrap_or(true)),
+        );
+        if let Some(sh) = start_height {
+            request_body.insert("start_height".to_string(), json!(sh));
+        }
+        if let Some(eh) = end_height {
+            request_body.insert("end_height".to_string(), json!(eh));
+        }
+        if let Some(ps) = page_size {
+            request_body.insert("page_size".to_string(), json!(ps));
+        }
+        if let Some(li) = last_id {
+            request_body.insert("last_id".to_string(), json!(li));
+        }
+        let resp = post::<PaginatedCoinRecordAryResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_coin_records_by_puzzle_hashes_paginated",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?;
+
+        Ok((resp.coin_records, resp.last_id, resp.total_coin_count))
+    }
+
+    async fn get_hints_by_coin_ids(
+        &self,
+        coin_ids: &[Bytes32],
+    ) -> Result<HashMap<Bytes32, Bytes32>, Error> {
+        let mut request_body = Map::new();
+        request_body.insert("coin_ids".to_string(), json!(coin_ids));
+        Ok(post::<CoinHintsResp>(
+            &self.client,
+            &get_url(self.host.as_str(), self.port, "get_hints_by_coin_ids"),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?
+        .coin_id_hints)
+    }
+
+    async fn get_puzzles_and_solutions_by_names(
+        &self,
+        names: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+    ) -> Result<HashMap<Bytes32, CoinSpend>, Error> {
+        let mut request_body = Map::new();
+        request_body.insert("names".to_string(), json!(names));
+        request_body.insert(
+            "include_spent_coins".to_string(),
+            json!(include_spent_coins.unwrap_or(true)),
+        );
+        if let Some(sh) = start_height {
+            request_body.insert("start_height".to_string(), json!(sh));
+        }
+        if let Some(eh) = end_height {
+            request_body.insert("end_height".to_string(), json!(eh));
+        }
+        Ok(post::<CoinSpendMapResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_puzzles_and_solutions_by_names",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?
+        .coin_solutions)
+    }
+}
+
+#[tokio::test]
+async fn test_extended_functions() {
+    let fnc = FullnodeClient::new(
+        "localhost",
+        8555,
+        Some("~/.chia/mainnet/config/ssl".to_string()),
+        &None,
+    );
+    fnc.get_blockchain_state().await.unwrap();
+    let (additions, _removals) = fnc
+        .get_additions_and_removals_with_hints(&Bytes32::from(
+            "0x499c034d9761ab329c0ce293006a55628bb9ea62cae3836901628f6a1afb0031",
+        ))
+        .await
+        .unwrap();
+    let mut hints = vec![];
+    let mut puz_hashes = vec![];
+    let mut coin_ids = vec![];
+    for add in additions {
+        if let Some(hint) = add.hint {
+            hints.push(hint);
+            puz_hashes.push(add.coin.puzzle_hash);
+            coin_ids.push(add.coin.coin_id());
+        }
+    }
+    let coin_hints = fnc.get_hints_by_coin_ids(&coin_ids).await.unwrap();
+    for h in &hints {
+        assert!(coin_hints.values().any(|v| v == h));
+    }
+    let by_hints = fnc
+        .get_coin_records_by_hints(&hints, true, 4540000, 4542825)
+        .await
+        .unwrap();
+    assert!(!by_hints.is_empty());
+    let by_puz = fnc
+        .get_coin_records_by_puzzle_hashes_paginated(
+            &puz_hashes,
+            Some(true),
+            Some(4540000),
+            Some(4542825),
+            Some(2),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!by_puz.0.is_empty());
+    assert!(by_puz.0.iter().all(|v| by_hints.contains(v)));
+    assert!(!fnc
+        .get_puzzles_and_solutions_by_names(&coin_ids, Some(true), Some(4540000), Some(4542825))
+        .await
+        .unwrap()
+        .is_empty());
 }

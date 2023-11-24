@@ -7,6 +7,7 @@ use hex::{decode, encode};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+use std::cmp::max;
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind};
 
@@ -145,26 +146,44 @@ pub fn calculate_plot_id_puzzle_hash(
     Bytes32::new(&hasher.finalize())
 }
 
+pub fn calculate_prefix_bits(constants: &ConsensusConstants, height: u32) -> i8 {
+    let mut prefix_bits = constants.number_zero_bits_plot_filter as i8;
+    if height >= constants.plot_filter_32_height {
+        prefix_bits -= 4;
+    } else if height >= constants.plot_filter_64_height {
+        prefix_bits -= 3;
+    } else if height >= constants.plot_filter_128_height {
+        prefix_bits -= 2;
+    } else if height >= constants.hard_fork_height {
+        prefix_bits -= 1;
+    }
+    max(0, prefix_bits)
+}
+
 pub fn passes_plot_filter(
-    constants: &ConsensusConstants,
+    prefix_bits: i8,
     plot_id: &Bytes32,
     challenge_hash: &Bytes32,
     signage_point: &Bytes32,
 ) -> bool {
-    let mut filter = [false; 256];
-    let mut index = 0;
-    for b in calculate_plot_filter_input(plot_id, challenge_hash, signage_point).as_slice() {
-        for i in (0..=7).rev() {
-            filter[index] = (b >> i & 1) == 1;
-            index += 1;
+    if prefix_bits == 0 {
+        true
+    } else {
+        let mut filter = [false; 256];
+        let mut index = 0;
+        for b in calculate_plot_filter_input(plot_id, challenge_hash, signage_point).as_slice() {
+            for i in (0..=7).rev() {
+                filter[index] = (b >> i & 1) == 1;
+                index += 1;
+            }
         }
-    }
-    for is_one in filter.iter().take(constants.number_zero_bits_plot_filter) {
-        if *is_one {
-            return false;
+        for is_one in filter.iter().take(prefix_bits as usize) {
+            if *is_one {
+                return false;
+            }
         }
+        true
     }
-    true
 }
 
 pub fn calculate_plot_filter_input(

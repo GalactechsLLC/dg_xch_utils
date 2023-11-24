@@ -3,7 +3,7 @@ use crate::protocols::full_node::FeeEstimate;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::CoinRecord;
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -109,4 +109,40 @@ pub trait FullnodeAPI {
         cost: Option<u64>,
         target_times: &[u64],
     ) -> Result<FeeEstimate, Error>;
+}
+
+//Non Standard Endpoints supported by some modified nodes
+#[async_trait]
+pub trait FullnodeExtAPI {
+    async fn get_additions_and_removals_with_hints(
+        &self,
+        header_hash: &Bytes32,
+    ) -> Result<(Vec<HintedCoinRecord>, Vec<HintedCoinRecord>), Error>;
+    async fn get_coin_records_by_hints(
+        &self,
+        hints: &[Bytes32],
+        include_spent_coins: bool,
+        start_height: u32,
+        end_height: u32,
+    ) -> Result<Vec<CoinRecord>, Error>;
+    async fn get_coin_records_by_puzzle_hashes_paginated(
+        &self,
+        puzzle_hashes: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+        page_size: Option<u32>,
+        last_id: Option<Bytes32>,
+    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error>;
+    async fn get_hints_by_coin_ids(
+        &self,
+        coin_ids: &[Bytes32],
+    ) -> Result<HashMap<Bytes32, Bytes32>, Error>;
+    async fn get_puzzles_and_solutions_by_names(
+        &self,
+        names: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+    ) -> Result<HashMap<Bytes32, CoinSpend>, Error>;
 }
