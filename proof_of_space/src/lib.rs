@@ -2,7 +2,7 @@ extern crate core;
 
 use crate::verifier::validate_proof;
 use dg_xch_core::blockchain::proof_of_space::{
-    calculate_pos_challenge, passes_plot_filter, ProofOfSpace,
+    calculate_pos_challenge, calculate_prefix_bits, passes_plot_filter, ProofOfSpace,
 };
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
@@ -39,9 +39,10 @@ pub fn verify_and_get_quality_string(
     constants: &ConsensusConstants,
     original_challenge_hash: &Bytes32,
     signage_point: &Bytes32,
+    height: u32,
 ) -> Option<Bytes32> {
     if pos.pool_public_key.is_none() && pos.pool_contract_puzzle_hash.is_none() {
-        warn!("Failed to Verify ProofOfSpace: null value for pool_public_key and pool_contract_puzzle_hash");
+        warn!("Failed to Verify ProofOfSpace: null value for both pool_public_key and pool_contract_puzzle_hash");
         return None;
     }
     if pos.pool_public_key.is_some() && pos.pool_contract_puzzle_hash.is_some() {
@@ -63,23 +64,38 @@ pub fn verify_and_get_quality_string(
             warn!("Failed to Verify ProofOfSpace: New challenge is not challenge");
             return None;
         }
-        if !passes_plot_filter(constants, &plot_id, original_challenge_hash, signage_point) {
+        let prefix_bits = if height == 0 {
+            //Backwords compat with 1.8
+            calculate_prefix_bits(constants, height)
+        } else {
+            constants.number_zero_bits_plot_filter as i8
+        };
+        if !passes_plot_filter(
+            prefix_bits,
+            &plot_id,
+            original_challenge_hash,
+            signage_point,
+        ) {
             warn!("Failed to Verify ProofOfSpace: Plot Failed to Pass Filter");
             return None;
         }
-        match validate_proof(
-            plot_id.to_sized_bytes(),
-            pos.size,
-            pos.proof.as_ref(),
-            pos.challenge.as_ref(),
-        ) {
-            Ok(q) => Some(q),
-            Err(e) => {
-                warn!("Failed to Validate Proof: {:?}", e);
-                None
-            }
-        }
+        get_quality_string(pos, &plot_id)
     } else {
         None
+    }
+}
+
+pub fn get_quality_string(pos: &ProofOfSpace, plot_id: &Bytes32) -> Option<Bytes32> {
+    match validate_proof(
+        plot_id.to_sized_bytes(),
+        pos.size,
+        pos.proof.as_ref(),
+        pos.challenge.as_ref(),
+    ) {
+        Ok(q) => Some(q),
+        Err(e) => {
+            warn!("Failed to Validate Proof: {:?}", e);
+            None
+        }
     }
 }

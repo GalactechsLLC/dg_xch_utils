@@ -2,7 +2,7 @@ use crate::protocols::full_node::BlockCountMetrics;
 use crate::protocols::full_node::FeeEstimate;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::CoinRecord;
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -16,11 +16,18 @@ use dg_xch_core::blockchain::wallet_info::WalletInfo;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AdditionsAndRemovalsResp {
     pub additions: Vec<CoinRecord>,
     pub removals: Vec<CoinRecord>,
+    pub success: bool,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HintedAdditionsAndRemovalsResp { //non-standard
+    pub additions: Vec<HintedCoinRecord>,
+    pub removals: Vec<HintedCoinRecord>,
     pub success: bool,
 }
 
@@ -55,8 +62,28 @@ pub struct CoinRecordAryResp {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CoinHintsResp { //non-standard
+    pub coin_id_hints: HashMap<Bytes32, Bytes32>,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PaginatedCoinRecordAryResp { //non-standard
+    pub coin_records: Vec<CoinRecord>,
+    pub last_id: Option<Bytes32>,
+    pub total_coin_count: Option<i32>,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CoinSpendResp {
     pub coin_solution: CoinSpend,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CoinSpendMapResp { //non-standard
+    pub coin_solutions: HashMap<Bytes32, CoinSpend>,
     pub success: bool,
 }
 

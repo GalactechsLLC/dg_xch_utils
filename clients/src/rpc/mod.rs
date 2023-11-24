@@ -3,14 +3,12 @@ pub mod wallet;
 
 use crate::protocols::shared::NoCertificateVerification;
 use crate::protocols::shared::{load_certs, load_private_key};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,26 +69,13 @@ pub async fn post<T>(
 where
     T: DeserializeOwned,
 {
-    let mut header_map = HeaderMap::new();
-    if let Some(m) = additional_headers {
-        for (k, v) in m {
-            header_map.insert(
-                HeaderName::from_str(k).map_err(|e| {
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        format!("Failed to Parse Header Name {},\r\n {}", k, e),
-                    )
-                })?,
-                HeaderValue::from_str(v).map_err(|e| {
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        format!("Failed to Parse Header value {},\r\n {}", v, e),
-                    )
-                })?,
-            );
+    let mut request_builder = client.post(url);
+    if let Some(headers) = additional_headers {
+        for (k, v) in headers {
+            request_builder = request_builder.header(k, v);
         }
     }
-    match client.post(url).headers(header_map).json(data).send().await {
+    match request_builder.json(data).send().await {
         Ok(resp) => match resp.status() {
             reqwest::StatusCode::OK => {
                 let body = resp

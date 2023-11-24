@@ -3,11 +3,6 @@ use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-// use dg_xch_core::blockchain::challenge_chain_subslot::ChallengeChainSubSlot;
-// use dg_xch_core::blockchain::foliage_block_data::FoliageBlockData;
-// use dg_xch_core::blockchain::foliage_transaction_block::FoliageTransactionBlock;
-// use dg_xch_core::blockchain::reward_chain_subslot::RewardChainSubSlot;
-// use crate::protocols::pool::PostPartialPayload;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PoolDifficulty {
@@ -30,6 +25,7 @@ pub struct NewSignagePointHarvester {
     pub signage_point_index: u8,
     pub sp_hash: Bytes32,
     pub pool_difficulties: Vec<PoolDifficulty>,
+    pub filter_prefix_bits: i8,
 }
 impl Display for NewSignagePointHarvester {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -40,6 +36,7 @@ impl Display for NewSignagePointHarvester {
         writeln!(f, "\tsignage_point_index: {:?},", self.signage_point_index)?;
         writeln!(f, "\tsp_hash: {:?},", self.sp_hash)?;
         writeln!(f, "\tpool_difficulties: {:?},", self.pool_difficulties)?;
+        writeln!(f, "\tfilter_prefix_bits: {:?},", self.filter_prefix_bits)?;
         writeln!(f, "}}")
     }
 }
@@ -51,28 +48,13 @@ pub struct NewProofOfSpace {
     pub plot_identifier: String,
     pub proof: ProofOfSpace,
     pub signage_point_index: u8,
-    // pub include_source_signature_data: Option<bool>,
-    // pub farmer_reward_address_override: Option<Bytes32>,
 }
-
-// #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-// pub struct SignatureRequestSourceData {
-//     pub foliage_block_data: Option<FoliageBlockData>,
-//     pub foliage_transaction_block: Option<FoliageTransactionBlock>,
-//     pub cc_vdf: Option<Bytes100>,
-//     pub rc_vdf: Option<Bytes100>,
-//     pub  cc_sub_slot: Option<ChallengeChainSubSlot>,
-//     pub rc_sub_slot: Option<RewardChainSubSlot>,
-//     pub partial: Option<PostPartialPayload>,
-// }
-
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RequestSignatures {
     pub plot_identifier: String,
     pub challenge_hash: Bytes32,
     pub sp_hash: Bytes32,
     pub messages: Vec<Bytes32>,
-    // pub message_data: Option<Vec<SignatureRequestSourceData>>
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -83,8 +65,6 @@ pub struct RespondSignatures {
     pub local_pk: Bytes48,
     pub farmer_pk: Bytes48,
     pub message_signatures: Vec<(Bytes32, Bytes96)>,
-    // pub include_source_signature_data: Option<bool>,
-    // pub farmer_reward_address_override: Option<Bytes32>,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -97,6 +77,7 @@ pub struct Plot {
     pub plot_public_key: Bytes48,
     pub file_size: u64,
     pub time_modified: u64,
+    pub compression_level: Option<u8>,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -122,22 +103,21 @@ pub struct PlotSyncStart {
     pub initial: bool,
     pub last_sync_id: u64,
     pub plot_file_count: u32,
+    pub harvesting_mode: u8,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PlotSyncPathList {
     pub identifier: PlotSyncIdentifier,
     pub data: Vec<String>,
-    //final
-    pub is_final: bool,
+    pub r#final: bool,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PlotSyncPlotList {
     pub identifier: PlotSyncIdentifier,
     pub data: Vec<Plot>,
-    //final
-    pub is_final: bool,
+    pub r#final: bool,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
