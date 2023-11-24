@@ -14,9 +14,9 @@ use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
 use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
 
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AdditionsAndRemovalsResp {
@@ -25,7 +25,8 @@ pub struct AdditionsAndRemovalsResp {
     pub success: bool,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct HintedAdditionsAndRemovalsResp { //non-standard
+pub struct HintedAdditionsAndRemovalsResp {
+    //non-standard
     pub additions: Vec<HintedCoinRecord>,
     pub removals: Vec<HintedCoinRecord>,
     pub success: bool,
@@ -62,13 +63,15 @@ pub struct CoinRecordAryResp {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CoinHintsResp { //non-standard
+pub struct CoinHintsResp {
+    //non-standard
     pub coin_id_hints: HashMap<Bytes32, Bytes32>,
     pub success: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PaginatedCoinRecordAryResp { //non-standard
+pub struct PaginatedCoinRecordAryResp {
+    //non-standard
     pub coin_records: Vec<CoinRecord>,
     pub last_id: Option<Bytes32>,
     pub total_coin_count: Option<i32>,
@@ -82,7 +85,8 @@ pub struct CoinSpendResp {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CoinSpendMapResp { //non-standard
+pub struct CoinSpendMapResp {
+    //non-standard
     pub coin_solutions: HashMap<Bytes32, CoinSpend>,
     pub success: bool,
 }

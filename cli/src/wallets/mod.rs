@@ -535,7 +535,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                         .name(),
                     );
                 }
-                let message = hash_256(&message_list.iter().fold(vec![], |mut v, e| {
+                let message = hash_256(message_list.iter().fold(vec![], |mut v, e| {
                     v.extend(e.to_bytes());
                     v
                 }));
