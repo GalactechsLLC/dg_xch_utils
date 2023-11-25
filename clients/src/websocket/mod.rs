@@ -15,9 +15,10 @@ use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::ChiaSerialize;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
-use hyper::header::{HeaderName, HeaderValue};
 use hyper::upgrade::Upgraded;
+use hyper_util::rt::TokioIo;
 use log::{debug, error, info, trace};
+use reqwest::header::{HeaderName, HeaderValue};
 use rustls::ClientConfig;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -137,12 +138,7 @@ pub async fn get_client_tls(
         }
     }
     request.headers_mut().insert(
-        HeaderName::from_str("chia-client-cert").map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
-            )
-        })?,
+        "chia-client-cert",
         HeaderValue::from_str(
             encode(
                 &fs::read_to_string(ssl_info.ssl_crt_path)
@@ -196,12 +192,7 @@ pub async fn get_client_generated_tls(
             )
         })?;
     request.headers_mut().insert(
-        HeaderName::from_str("chia-client-cert").map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
-            )
-        })?,
+        "chia-client-cert",
         HeaderValue::from_str(encode(&cert_bytes).as_ref()).map_err(|e| {
             Error::new(
                 ErrorKind::InvalidData,
@@ -273,12 +264,7 @@ pub async fn get_client(
     let (cert_bytes, _) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)
         .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
     request.headers_mut().insert(
-        HeaderName::from_str("chia-client-cert").map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("Failed to Parse Header Name chia-client-cert,\r\n {}", e),
-            )
-        })?,
+        "chia-client-cert",
         HeaderValue::from_str(encode(&cert_bytes).as_ref()).map_err(|e| {
             Error::new(
                 ErrorKind::InvalidData,
@@ -646,7 +632,7 @@ impl Websocket for Client {
 }
 
 pub struct ServerReadStream {
-    read: SplitStream<WebSocketStream<Upgraded>>,
+    read: SplitStream<WebSocketStream<TokioIo<Upgraded>>>,
     subscribers: Arc<DashMap<Uuid, ChiaMessageHandler>>,
 }
 impl ServerReadStream {
@@ -728,11 +714,11 @@ impl ServerReadStream {
 }
 
 pub struct ServerConnection {
-    write: Arc<Mutex<SplitSink<WebSocketStream<Upgraded>, Message>>>,
+    write: Arc<Mutex<SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>>>,
     subscribers: Arc<DashMap<Uuid, ChiaMessageHandler>>,
 }
 impl ServerConnection {
-    pub fn new(stream: WebSocketStream<Upgraded>) -> (Self, ServerReadStream) {
+    pub fn new(stream: WebSocketStream<TokioIo<Upgraded>>) -> (Self, ServerReadStream) {
         let (write, read) = stream.split();
         let subscribers = Arc::new(DashMap::<Uuid, ChiaMessageHandler>::new());
         let server = ServerConnection {

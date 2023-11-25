@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_puzzles"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library for working with CLVM puzzles"
@@ -10,8 +10,8 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/puzzles"
 
 [dependencies]
 blst = "0.3.11"
-dg_xch_core = {path = "../core", version = "1.2.0", features = ["paperclip"] }
-dg_xch_serialize = {path = "../serialize", version="1.2.0"}
+dg_xch_core = {path = "../core", version = "1.2.1", features = ["paperclip"] }
+dg_xch_serialize = {path = "../serialize", version="1.2.1"}
 hex = "0.4.3"
 lazy_static = "1.4.0"
 num-bigint = "0.4.4"

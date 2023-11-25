@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_tests"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Low Level Support Package for dg_xch_utils"
@@ -12,14 +12,14 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/serialize"
 async-trait = "0.1.74"
 blst = "0.3.11"
 bytes = "1.5.0"
-dg_xch_core = {path = "../core", version = "1.2.0", features = ["paperclip"] }
-dg_xch_cli = {path = "../cli", version="1.2.0"}
-dg_xch_clients = {path = "../clients", version="1.2.0"}
-dg_xch_keys = {path = "../keys", version="1.2.0"}
-dg_xch_macros = {path = "../macros", version="1.2.0"}
-dg_xch_pos = {path = "../proof_of_space", version="1.2.0"}
-dg_xch_puzzles = {path = "../puzzles", version="1.2.0"}
-dg_xch_serialize = {path = "../serialize", version="1.2.0"}
+dg_xch_core = {path = "../core", version = "1.2.1", features = ["paperclip"] }
+dg_xch_cli = {path = "../cli", version="1.2.1"}
+dg_xch_clients = {path = "../clients", version="1.2.1"}
+dg_xch_keys = {path = "../keys", version="1.2.1"}
+dg_xch_macros = {path = "../macros", version="1.2.1"}
+dg_xch_pos = {path = "../proof_of_space", version="1.2.1"}
+dg_xch_puzzles = {path = "../puzzles", version="1.2.1"}
+dg_xch_serialize = {path = "../serialize", version="1.2.1"}
 futures-util = "0.3.29"
 hex = "0.4.3"
 lazy_static = "1.4.0"
