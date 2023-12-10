@@ -1,8 +1,8 @@
 pub mod full_node;
 pub mod wallet;
 
-use crate::protocols::shared::NoCertificateVerification;
-use crate::protocols::shared::{load_certs, load_private_key};
+use dg_xch_core::protocols::shared::NoCertificateVerification;
+use dg_xch_core::ssl::{load_certs, load_private_key};
 use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;

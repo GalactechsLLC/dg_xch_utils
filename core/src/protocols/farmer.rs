@@ -1,10 +1,15 @@
-use dg_xch_core::blockchain::pool_target::PoolTarget;
-use dg_xch_core::blockchain::proof_of_space::ProofOfSpace;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes96};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use crate::blockchain::pool_target::PoolTarget;
+use crate::blockchain::proof_of_space::ProofOfSpace;
+use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
+use crate::config::PoolWalletConfig;
 use dg_xch_macros::ChiaSerial;
 use hyper::body::Buf;
 use log::debug;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct NewSignagePoint {
@@ -105,4 +110,46 @@ pub struct SignedValues {
     pub quality_string: Bytes32,
     pub foliage_block_data_signature: Bytes96,
     pub foliage_transaction_block_signature: Bytes96,
+}
+
+pub type ProofsMap = Arc<Mutex<HashMap<Bytes32, Vec<(String, ProofOfSpace)>>>>;
+
+#[derive(Debug)]
+pub struct FarmerIdentifier {
+    pub plot_identifier: String,
+    pub challenge_hash: Bytes32,
+    pub sp_hash: Bytes32,
+    pub peer_node_id: Bytes32,
+}
+
+#[derive(Debug, Clone)]
+pub struct FarmerPoolState {
+    pub points_found_since_start: u64,
+    pub points_found_24h: Vec<(Instant, u64)>,
+    pub points_acknowledged_since_start: u64,
+    pub points_acknowledged_24h: Vec<(Instant, u64)>,
+    pub next_farmer_update: Instant,
+    pub next_pool_info_update: Instant,
+    pub current_points: u64,
+    pub current_difficulty: Option<u64>,
+    pub pool_config: Option<PoolWalletConfig>,
+    pub pool_errors_24h: Vec<(Instant, String)>,
+    pub authentication_token_timeout: Option<u8>,
+}
+impl Default for FarmerPoolState {
+    fn default() -> Self {
+        Self {
+            points_found_since_start: 0,
+            points_found_24h: vec![],
+            points_acknowledged_since_start: 0,
+            points_acknowledged_24h: vec![],
+            next_farmer_update: Instant::now(),
+            next_pool_info_update: Instant::now(),
+            current_points: 0,
+            current_difficulty: None,
+            pool_config: None,
+            pool_errors_24h: vec![],
+            authentication_token_timeout: None,
+        }
+    }
 }

@@ -1,4 +1,4 @@
-use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
+use crate::blockchain::peer_info::TimestampedPeerInfo;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 

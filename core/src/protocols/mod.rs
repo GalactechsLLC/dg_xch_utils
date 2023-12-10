@@ -6,7 +6,32 @@ pub mod pool;
 pub mod shared;
 pub mod timelord;
 pub mod wallet;
+
+use crate::blockchain::sized_bytes::Bytes32;
+use crate::utils::await_termination;
+use async_trait::async_trait;
 use dg_xch_macros::ChiaSerial;
+use dg_xch_serialize::ChiaSerialize;
+use futures_util::stream::{FusedStream, SplitSink, SplitStream};
+use futures_util::SinkExt;
+use futures_util::{Sink, Stream, StreamExt};
+use hyper::upgrade::Upgraded;
+use hyper_util::rt::TokioIo;
+use log::{debug, error, info};
+use std::collections::HashMap;
+use std::io::{Cursor, Error, ErrorKind};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio::select;
+use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use uuid::Uuid;
 
 #[repr(u8)]
 #[derive(ChiaSerial, Copy, Clone, Debug, PartialEq, Eq)]
@@ -392,3 +417,307 @@ impl From<u8> for ProtocolMessageTypes {
 pub const INVALID_PROTOCOL_BAN_SECONDS: u8 = 10;
 pub const API_EXCEPTION_BAN_SECONDS: u8 = 10;
 pub const INTERNAL_PROTOCOL_ERROR_BAN_SECONDS: u8 = 10;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeType {
+    Unknown = 0,
+    FullNode = 1,
+    Harvester = 2,
+    Farmer = 3,
+    Timelord = 4,
+    Introducer = 5,
+    Wallet = 6,
+    DataLayer = 7,
+}
+impl From<u8> for NodeType {
+    fn from(byte: u8) -> Self {
+        match byte {
+            i if i == NodeType::Unknown as u8 => NodeType::Unknown,
+            i if i == NodeType::FullNode as u8 => NodeType::FullNode,
+            i if i == NodeType::Harvester as u8 => NodeType::Harvester,
+            i if i == NodeType::Farmer as u8 => NodeType::Farmer,
+            i if i == NodeType::Timelord as u8 => NodeType::Timelord,
+            i if i == NodeType::Introducer as u8 => NodeType::Introducer,
+            i if i == NodeType::Wallet as u8 => NodeType::Wallet,
+            i if i == NodeType::DataLayer as u8 => NodeType::DataLayer,
+            _ => NodeType::Unknown,
+        }
+    }
+}
+
+#[async_trait]
+pub trait MessageHandler {
+    async fn handle(
+        &self,
+        msg: Arc<ChiaMessage>,
+        peer_id: Arc<Bytes32>,
+        peers: PeerMap,
+    ) -> Result<(), Error>;
+}
+
+#[derive(ChiaSerial, Debug, Clone)]
+pub struct ChiaMessage {
+    pub msg_type: ProtocolMessageTypes,
+    pub id: Option<u16>,
+    pub data: Vec<u8>,
+}
+impl ChiaMessage {
+    pub fn new<T: ChiaSerialize>(msg_type: ProtocolMessageTypes, msg: &T, id: Option<u16>) -> Self {
+        ChiaMessage {
+            msg_type,
+            id,
+            data: msg.to_bytes(),
+        }
+    }
+}
+impl From<ChiaMessage> for Message {
+    fn from(val: ChiaMessage) -> Self {
+        Message::Binary(val.to_bytes())
+    }
+}
+
+#[derive(Debug)]
+pub struct ChiaMessageFilter {
+    pub msg_type: Option<ProtocolMessageTypes>,
+    pub id: Option<u16>,
+}
+impl ChiaMessageFilter {
+    pub fn matches(&self, msg: Arc<ChiaMessage>) -> bool {
+        if self.id.is_some() && self.id != msg.id {
+            return false;
+        }
+        if let Some(s) = &self.msg_type {
+            if *s != msg.msg_type {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+pub struct ChiaMessageHandler {
+    pub filter: Arc<ChiaMessageFilter>,
+    pub handle: Arc<dyn MessageHandler + Send + Sync>,
+}
+impl ChiaMessageHandler {
+    pub fn new(
+        filter: Arc<ChiaMessageFilter>,
+        handle: Arc<dyn MessageHandler + Send + Sync>,
+    ) -> Self {
+        ChiaMessageHandler { filter, handle }
+    }
+}
+
+pub type PeerMap = Arc<Mutex<HashMap<Bytes32, Arc<SocketPeer>>>>;
+
+pub struct SocketPeer {
+    pub node_type: Arc<Mutex<NodeType>>,
+    pub websocket: Arc<Mutex<WebsocketConnection>>,
+}
+
+pub enum WebsocketMsgStream {
+    TokioIo(WebSocketStream<TokioIo<Upgraded>>),
+    Tls(WebSocketStream<MaybeTlsStream<TcpStream>>),
+}
+impl Stream for WebsocketMsgStream {
+    type Item = Result<Message, tokio_tungstenite::tungstenite::error::Error>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.get_mut() {
+            WebsocketMsgStream::TokioIo(ref mut s) => Pin::new(s).poll_next(cx),
+            WebsocketMsgStream::Tls(ref mut s) => Pin::new(s).poll_next(cx),
+        }
+    }
+}
+impl FusedStream for WebsocketMsgStream {
+    fn is_terminated(&self) -> bool {
+        match self {
+            WebsocketMsgStream::TokioIo(s) => s.is_terminated(),
+            WebsocketMsgStream::Tls(s) => s.is_terminated(),
+        }
+    }
+}
+impl Sink<Message> for WebsocketMsgStream {
+    type Error = tokio_tungstenite::tungstenite::error::Error;
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self.get_mut() {
+            WebsocketMsgStream::TokioIo(ref mut s) => Pin::new(s).poll_ready(cx),
+            WebsocketMsgStream::Tls(ref mut s) => Pin::new(s).poll_ready(cx),
+        }
+    }
+    fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        match self.get_mut() {
+            WebsocketMsgStream::TokioIo(ref mut s) => Pin::new(s).start_send(item),
+            WebsocketMsgStream::Tls(ref mut s) => Pin::new(s).start_send(item),
+        }
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self.get_mut() {
+            WebsocketMsgStream::TokioIo(ref mut s) => Pin::new(s).poll_flush(cx),
+            WebsocketMsgStream::Tls(ref mut s) => Pin::new(s).poll_flush(cx),
+        }
+    }
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self.get_mut() {
+            WebsocketMsgStream::TokioIo(ref mut s) => Pin::new(s).poll_close(cx),
+            WebsocketMsgStream::Tls(ref mut s) => Pin::new(s).poll_close(cx),
+        }
+    }
+}
+
+pub struct WebsocketConnection {
+    write: SplitSink<WebsocketMsgStream, Message>,
+    message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+}
+impl WebsocketConnection {
+    pub fn new(
+        websocket: WebsocketMsgStream,
+        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        peer_id: Arc<Bytes32>,
+        peers: PeerMap,
+    ) -> (Self, ReadStream) {
+        let (write, read) = websocket.split();
+        let websocket = WebsocketConnection {
+            write,
+            message_handlers: message_handlers.clone(),
+        };
+        let stream = ReadStream {
+            read,
+            message_handlers,
+            peer_id,
+            peers,
+        };
+        (websocket, stream)
+    }
+    pub async fn send(&mut self, msg: Message) -> Result<(), Error> {
+        self.write
+            .send(msg)
+            .await
+            .map_err(|e| Error::new(ErrorKind::Other, e))
+    }
+
+    pub async fn subscribe(&self, uuid: Uuid, handle: ChiaMessageHandler) {
+        self.message_handlers
+            .lock()
+            .await
+            .insert(uuid, Arc::new(handle));
+    }
+
+    pub async fn unsubscribe(&self, uuid: Uuid) -> Option<Arc<ChiaMessageHandler>> {
+        self.message_handlers.lock().await.remove(&uuid)
+    }
+
+    pub async fn clear(&self) {
+        self.message_handlers.lock().await.clear();
+    }
+
+    pub async fn close(&mut self, msg: Option<Message>) -> Result<(), Error> {
+        if let Some(msg) = msg {
+            let _ = self
+                .write
+                .send(msg)
+                .await
+                .map_err(|e| Error::new(ErrorKind::Other, e));
+            self.write
+                .close()
+                .await
+                .map_err(|e| Error::new(ErrorKind::Other, e))
+        } else {
+            self.write
+                .close()
+                .await
+                .map_err(|e| Error::new(ErrorKind::Other, e))
+        }
+    }
+
+    pub async fn shutdown(&mut self) -> Result<(), Error> {
+        self.clear().await;
+        self.close(None).await
+    }
+}
+
+pub struct ReadStream {
+    read: SplitStream<WebsocketMsgStream>,
+    message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    peer_id: Arc<Bytes32>,
+    peers: PeerMap,
+}
+impl ReadStream {
+    pub async fn run(&mut self, run: Arc<AtomicBool>) {
+        loop {
+            select! {
+                msg = self.read.next() => {
+                    match msg {
+                        Some(Ok(msg)) => {
+                            match msg {
+                                Message::Binary(bin_data) => {
+                                    let mut cursor = Cursor::new(bin_data);
+                                    match ChiaMessage::from_bytes(&mut cursor) {
+                                        Ok(chia_msg) => {
+                                            let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
+                                            let mut matched = false;
+                                            for v in self.message_handlers.lock().await.values()
+                                                .cloned().collect::<Vec<Arc<ChiaMessageHandler>>>() {
+                                                if v.filter.matches(msg_arc.clone()) {
+                                                    let msg_arc_c = msg_arc.clone();
+                                                    let peer_id = self.peer_id.clone();
+                                                    let peers = self.peers.clone();
+                                                    let v_arc_c = v.handle.clone();
+                                                    tokio::spawn(async move { v_arc_c.handle(msg_arc_c, peer_id, peers).await });
+                                                    matched = true;
+                                                }
+                                            }
+                                            if !matched{
+                                                error!("No Matches for Message: {:?}", &msg_arc);
+                                            }
+                                            debug!("Processed Message: {:?}", &msg_arc.msg_type);
+                                        }
+                                        Err(e) => {
+                                            error!("Invalid Message: {:?}", e);
+                                        }
+                                    }
+                                }
+                                Message::Close(e) => {
+                                    debug!("Server Got Close Message: {:?}", e);
+                                    return;
+                                },
+                                _ => {
+                                    error!("Invalid Message: {:?}", msg);
+                                }
+                            }
+                        }
+                        Some(Err(msg)) => {
+                            match msg {
+                                tokio_tungstenite::tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake) => {
+                                    debug!("Server Stream Closed without Handshake");
+                                },
+                                others => {
+                                    error!("Server Stream Error: {:?}", others);
+                                }
+                            }
+                            return;
+                        }
+                        None => {
+                            info!("End of server read Stream");
+                            return;
+                        }
+                    }
+                }
+                _ = await_termination() => {
+                    return;
+                }
+                _ = async {
+                    loop {
+                        if !run.load(Ordering::Relaxed){
+                            debug!("Server is exiting");
+                            return;
+                        } else {
+                            tokio::time::sleep(Duration::from_millis(100)).await
+                        }
+                    }
+                } => {
+                    return;
+                }
+            }
+        }
+    }
+}

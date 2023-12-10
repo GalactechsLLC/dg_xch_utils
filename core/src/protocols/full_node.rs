@@ -1,12 +1,12 @@
-use dg_xch_core::blockchain::end_of_subslot_bundle::EndOfSubSlotBundle;
-use dg_xch_core::blockchain::full_block::FullBlock;
-use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use dg_xch_core::blockchain::spend_bundle::SpendBundle;
-use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
-use dg_xch_core::blockchain::vdf_info::VdfInfo;
-use dg_xch_core::blockchain::vdf_proof::VdfProof;
-use dg_xch_core::blockchain::weight_proof::WeightProof;
+use crate::blockchain::end_of_subslot_bundle::EndOfSubSlotBundle;
+use crate::blockchain::full_block::FullBlock;
+use crate::blockchain::peer_info::TimestampedPeerInfo;
+use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::spend_bundle::SpendBundle;
+use crate::blockchain::unfinished_block::UnfinishedBlock;
+use crate::blockchain::vdf_info::VdfInfo;
+use crate::blockchain::vdf_proof::VdfProof;
+use crate::blockchain::weight_proof::WeightProof;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 

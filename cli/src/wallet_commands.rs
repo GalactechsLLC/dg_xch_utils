@@ -7,14 +7,12 @@ use bip39::Mnemonic;
 use blst::min_pk::SecretKey;
 use dg_xch_clients::api::full_node::FullnodeAPI;
 use dg_xch_clients::api::pool::{DefaultPoolClient, PoolClient};
-use dg_xch_clients::protocols::pool::{
-    GetPoolInfoResponse, FARMING_TO_POOL, POOL_PROTOCOL_VERSION,
-};
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
+use dg_xch_core::protocols::pool::{GetPoolInfoResponse, FARMING_TO_POOL, POOL_PROTOCOL_VERSION};
 use dg_xch_keys::*;
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     calculate_synthetic_secret_key, puzzle_hash_for_pk, DEFAULT_HIDDEN_PUZZLE_HASH,

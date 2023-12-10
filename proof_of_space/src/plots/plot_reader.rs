@@ -26,10 +26,13 @@ use std::fmt::Display;
 use std::io::{Error, ErrorKind, Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::mem::{size_of, swap};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread::available_parallelism;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 use tokio::sync::Mutex;
+use crate::plots::fx_generator::F1Generator;
 
 const CHIA_QUALITY_SIZE: usize = 32;
 const HASH_SIZE_MAX: usize = CHIA_QUALITY_SIZE + ucdiv_t(2 * 50, 8);
@@ -53,6 +56,7 @@ pub struct PlotReader<
     pub p7_entries: Mutex<Vec<u64>>,
     fx: Mutex<Vec<u64>>,
     meta: Mutex<Vec<BitReader>>,
+    f1_generator: Arc<F1Generator>
 }
 impl<
         F: AsyncSeek + AsyncRead + AsyncSeekExt + AsyncReadExt + Unpin,
@@ -64,6 +68,15 @@ impl<
         proof_decompressor: Option<Arc<DecompressorPool>>,
         quality_decompressor: Option<Arc<DecompressorPool>>,
     ) -> Result<Self, Error> {
+        let f1_generator = Arc::new(F1Generator::new(
+            t.k(),
+            available_parallelism()
+                .unwrap_or_else(|_| {
+                    NonZeroUsize::new(8).expect("Safe Value Expected for Non Zero Usize")
+                })
+                .get() as u8,
+            &t.plot_id().bytes
+        ));
         let mut reader = Self {
             proof_decompressor,
             quality_decompressor,
@@ -74,6 +87,7 @@ impl<
             p7_entries: Mutex::new(vec![0u64; K_ENTRIES_PER_PARK as usize]),
             fx: Mutex::new(vec![0u64; PROOF_X_COUNT]),
             meta: Mutex::new(Vec::with_capacity(PROOF_X_COUNT)),
+            f1_generator,
         };
         reader.load_c2entries().await?;
         Ok(reader)
@@ -111,6 +125,7 @@ impl<
                     PlotTable::Table2
                 }
             }
+            PlotHeader::GHv2_5(_) => PlotTable::Table1,
         }
     }
 
@@ -124,17 +139,18 @@ impl<
                     *table == self.get_lowest_stored_table()
                 }
             }
+            PlotHeader::GHv2_5(_) => false,
         }
     }
 
     pub fn get_park_size_for_table(&self, table: &PlotTable) -> u64 {
         if self.is_compressed_table(table) {
-            get_compression_info_for_level(*self.plot_file().compression_level()).table_park_size
+            get_compression_info_for_level(self.plot_file().compression_level()).table_park_size
                 as u64
         } else if (*table as u8) < self.get_lowest_stored_table() as u8 {
             0
         } else {
-            EntrySizes::calculate_park_size(table, *self.plot_file().k() as u32) as u64
+            EntrySizes::calculate_park_size(table, self.plot_file().k() as u32) as u64
         }
     }
 
@@ -153,14 +169,14 @@ impl<
             | PlotTable::Table5
             | PlotTable::Table6 => {
                 self.file.table_size(table) as usize
-                    / EntrySizes::calculate_park_size(table, *self.file.k() as u32) as usize
+                    / EntrySizes::calculate_park_size(table, self.file.k() as u32) as usize
             }
         }
     }
 
     pub fn get_maximum_c1_entries(&self) -> u64 {
         let c1table_size = self.file.table_size(&PlotTable::C1);
-        let f7size = ucdiv64(*self.file.k() as u64, 8);
+        let f7size = ucdiv64(self.file.k() as u64, 8);
         let c3park_count = max(c1table_size / f7size, 1);
         // -1 because an extra 0 entry is added at the end
         c3park_count - 1
@@ -171,8 +187,8 @@ impl<
         if max_c1entries < 1 {
             return Ok(0);
         }
-        let f7size_bytes = ucdiv64(*self.file.k() as u64, 8);
-        let c1address = *self.file.table_address(&PlotTable::C1);
+        let f7size_bytes = ucdiv64(self.file.k() as u64, 8);
+        let c1address = self.file.table_address(&PlotTable::C1);
         let c1table_size = self.file.table_size(&PlotTable::C1);
         let mut c1read_address = c1address + c1table_size - f7size_bytes;
         // Read entries from the end of the table until the start, until we find an entry that is
@@ -209,10 +225,10 @@ impl<
         Ok((c1read_address - c1address) / f7size_bytes)
     }
     pub async fn read_c3park(&self, park_index: u64) -> Result<Vec<u64>, Error> {
-        let f7size_bytes: u64 = ucdiv64(*self.file.k() as u64, 8);
-        let c3park_size: u64 = EntrySizes::calculate_c3size(*self.file.k() as u32) as u64;
-        let c1address: u64 = *self.file.table_address(&PlotTable::C1);
-        let c3address: u64 = *self.file.table_address(&PlotTable::C3);
+        let f7size_bytes: u64 = ucdiv64(self.file.k() as u64, 8);
+        let c3park_size: u64 = EntrySizes::calculate_c3size(self.file.k() as u32) as u64;
+        let c1address: u64 = self.file.table_address(&PlotTable::C1);
+        let c3address: u64 = self.file.table_address(&PlotTable::C3);
         let c1table_size: u64 = self.file.table_size(&PlotTable::C1);
         let c3table_size: u64 = self.file.table_size(&PlotTable::C3);
         let c1entry_address: u64 = c1address + park_index * f7size_bytes;
@@ -236,7 +252,7 @@ impl<
             file_lock.read_exact(&mut c1_entry_bytes).await?;
         }
         let mut f7_reader = BitReader::from_bytes_be(&c1_entry_bytes, f7size_bytes as usize * 8);
-        let c1 = f7_reader.read_u64(*self.plot_file().k() as usize)?;
+        let c1 = f7_reader.read_u64(self.plot_file().k() as usize)?;
 
         // Ensure we can read this park. If it's not present, it means
         // the C1 entry is the only entry in the park, so just return it.
@@ -284,10 +300,10 @@ impl<
     }
 
     pub async fn read_p7park(&self, park_index: usize) -> Result<(), Error> {
-        let entry_size = 1 + *self.plot_file().k() as usize;
-        let table_address = *self.file.table_address(&PlotTable::Table7);
+        let entry_size = 1 + self.plot_file().k() as usize;
+        let table_address = self.file.table_address(&PlotTable::Table7);
         let max_table_size = self.file.table_size(&PlotTable::Table7);
-        let park_size = EntrySizes::calculate_park7_size(*self.plot_file().k() as u32) as u64;
+        let park_size = EntrySizes::calculate_park7_size(self.plot_file().k() as u32) as u64;
         let max_parks = max_table_size / park_size;
         if park_index >= max_parks as usize {
             return Err(Error::new(
@@ -333,6 +349,12 @@ impl<
         let compression_level = match self.header() {
             PlotHeader::V1(_) => 0,
             PlotHeader::V2(h) => h.compression_level,
+            PlotHeader::GHv2_5(_) => {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "Gigahorse Plots are Not Supported",
+                ))
+            }
         };
         let tables = if compression_level == 0 {
             vec![
@@ -359,12 +381,12 @@ impl<
                 PlotTable::Table3,
             ]
         };
-        for table in tables.iter() {
+        for table in tables {
             let (mut i, mut dst) = (0, 0);
             while i < lookup_count {
                 let idx = lp_idx_src[i];
-                let lp = self.read_line_point(table, idx).await?;
-                let (x, y) = if *self.file.k() <= 32 && *table != PlotTable::Table6 {
+                let lp = self.read_line_point(&table, idx).await?;
+                let (x, y) = if self.file.k() <= 32 && table != PlotTable::Table6 {
                     line_point_to_square64(lp as u64)
                 } else {
                     line_point_to_square(lp)
@@ -378,15 +400,15 @@ impl<
             swap(lp_idx_src, lp_idx_dst);
         }
         if compression_level > 0 {
-            let plot_id = *self.plot_id();
-            let k = *self.file.k();
+            let plot_id = self.plot_id();
+            let k = self.file.k();
             let c = self.compression_level();
             if let Some(pool) = self.proof_decompressor.as_ref() {
                 match pool.pull_wait(10000).await {
                     Ok(mut rede) => {
                         debug!("Search for proof at index {index} in plot {}", self.file);
                         rede.prealloc_for_clevel(k, c);
-                        match rede.decompress_proof(&plot_id, k, c, lp_idx_src) {
+                        match rede.decompress_proof(&plot_id, k, c, lp_idx_src, Some(self.f1_generator.clone())) {
                             Ok(p) => {
                                 pool.push(rede).await;
                                 Ok(p)
@@ -407,7 +429,7 @@ impl<
                 debug!("Search for proof at index {index} in plot {}", self.file);
                 let mut d = Decompressor::default();
                 d.prealloc_for_clevel(k, c);
-                d.decompress_proof(&plot_id, k, compression_level, lp_idx_src)
+                d.decompress_proof(&plot_id, k, compression_level, lp_idx_src, Some(self.f1_generator.clone()))
             }
         } else {
             Ok(first)
@@ -468,7 +490,7 @@ impl<
         index: u64,
         challenge: &[u8],
     ) -> Result<(u64, u64), Error> {
-        let compression_level = *self.file.compression_level();
+        let compression_level = self.file.compression_level();
         let last5bits = challenge[31] & 0x1f;
         let mut lp_index = index;
         let mut alt_index = 0;
@@ -501,7 +523,7 @@ impl<
         };
         for table in tables {
             let lp = self.read_line_point(&table, lp_index).await?;
-            let (x, y) = if *self.file.k() <= 32 {
+            let (x, y) = if self.file.k() <= 32 {
                 line_point_to_square64(lp as u64)
             } else {
                 line_point_to_square(lp)
@@ -527,7 +549,7 @@ impl<
                 };
             }
             let req = CompressedQualitiesRequest {
-                plot_id: *self.plot_id(),
+                plot_id: self.plot_id(),
                 compression_level,
                 challenge,
                 line_points: [
@@ -537,9 +559,10 @@ impl<
                     },
                     x_lp1,
                 ],
+                f1_generator: Some(self.f1_generator.clone())
             };
-            let k = *self.file.k();
-            let c = *self.file.compression_level();
+            let k = self.file.k();
+            let c = self.file.compression_level();
             if let Some(pool) = &self.quality_decompressor {
                 match pool.pull_wait(10000).await {
                     Ok(mut rede) => {
@@ -568,11 +591,11 @@ impl<
             } else {
                 let mut d = Decompressor::default();
                 d.prealloc_for_clevel(k, c);
-                d.get_fetch_qualties_x_pair(*self.file.k(), req)
+                d.get_fetch_qualties_x_pair(self.file.k(), req)
             }
         } else {
             let lp = self.read_line_point(&end_table, lp_index).await?;
-            Ok(if *self.file.k() <= 32 {
+            Ok(if self.file.k() <= 32 {
                 line_point_to_square64(lp as u64)
             } else {
                 line_point_to_square(lp)
@@ -591,8 +614,8 @@ impl<
         let mut hash_input = Vec::with_capacity(HASH_SIZE_MAX);
         hash_input.extend(challenge);
         let mut bits = BitReader::default();
-        bits.append_value(x2, *self.file.k() as usize);
-        bits.append_value(x1, *self.file.k() as usize);
+        bits.append_value(x2, self.file.k() as usize);
+        bits.append_value(x1, self.file.k() as usize);
         hash_input.extend(bits.to_bytes());
         Ok(Bytes32::new(&hash_256(hash_input)))
     }
@@ -601,7 +624,7 @@ impl<
         &self,
         challenge: &[u8],
     ) -> Result<Vec<(u64, Bytes32)>, Error> {
-        let k = *self.plot_file().k() as usize;
+        let k = self.plot_file().k() as usize;
         let mut challenge_reader = BitReader::from_bytes_be(&challenge[0..8], 64);
         let f7 = challenge_reader.read_u64(k)?;
         let (match_count, p7base_index) = self.get_p7indices_for_f7(f7).await?;
@@ -643,8 +666,8 @@ impl<
         let mut fx = self.fx.lock().await;
         let mut meta = self.meta.lock().await;
         meta.clear();
-        let k = *self.plot_file().k();
-        let bytes = *self.plot_file().plot_id();
+        let k = self.plot_file().k();
+        let bytes = self.plot_file().plot_id();
         reorder_proof(k, bytes.to_sized_bytes(), proof, &mut fx, &mut meta)
     }
 
@@ -653,7 +676,7 @@ impl<
         challenge: &[u8],
     ) -> Result<Vec<Vec<u64>>, Error> {
         let mut challenge_reader = BitReader::from_bytes_be(&challenge[0..8], 64);
-        let f7 = challenge_reader.read_u64(*self.plot_file().k() as usize)?;
+        let f7 = challenge_reader.read_u64(self.plot_file().k() as usize)?;
         let (match_count, p7base_index) = self.get_p7indices_for_f7(f7).await?;
         if match_count == 0 {
             Err(Error::new(
@@ -702,10 +725,10 @@ impl<
             c2index -= 1;
         }
         let c1start_index = (c2index as u64) * K_CHECKPOINT2INTERVAL as u64;
-        let k = *self.file.k() as usize;
+        let k = self.file.k() as usize;
         let f7size_bytes = ucdiv_t(k, 8);
         let f7bit_count = f7size_bytes * 8;
-        let c1table_address = *self.file.table_address(&PlotTable::C1);
+        let c1table_address = self.file.table_address(&PlotTable::C1);
         let c1table_size = self.file.table_size(&PlotTable::C1);
         let c1table_end = c1table_address + c1table_size;
         let c1entry_address = c1table_address + c1start_index * f7size_bytes as u64;
@@ -784,17 +807,17 @@ impl<
     pub fn header(&self) -> &PlotHeader {
         self.file.header()
     }
-    pub fn plot_id(&self) -> &Bytes32 {
+    pub fn plot_id(&self) -> Bytes32 {
         self.file.plot_id()
     }
     pub fn compression_level(&self) -> u8 {
-        *self.file.compression_level()
+        self.file.compression_level()
     }
     pub fn calculate_max_deltas_size(&self, table: &PlotTable) -> u32 {
         if !self.is_compressed_table(table) {
             EntrySizes::calculate_max_deltas_size(table)
         } else {
-            let info = get_compression_info_for_level(*self.file.compression_level());
+            let info = get_compression_info_for_level(self.file.compression_level());
             let lp_size = ucdiv((self.file.k() * 2) as u32, 8);
             let stub_byte_size = self.calculate_lp_stubs_size(table);
             info.table_park_size as u32 - (lp_size + stub_byte_size)
@@ -807,7 +830,7 @@ impl<
         if !self.is_compressed_table(table) {
             (self.file.k() - K_STUB_MINUS_BITS) as u32
         } else {
-            get_compression_info_for_level(*self.file.compression_level()).stub_size_bits
+            get_compression_info_for_level(self.file.compression_level()).stub_size_bits
         }
     }
     pub fn calculate_lp_stubs_size(&self, table: &PlotTable) -> u32 {
@@ -822,7 +845,7 @@ impl<
         park_index: u64,
     ) -> Result<LinePointParkComponents, Error> {
         let park_size = self.get_park_size_for_table(table);
-        let k = *self.plot_file().k() as u32;
+        let k = self.plot_file().k() as u32;
         let table_max_size = self.plot_file().table_size(table);
         let table_address = self.plot_file().table_address(table);
         let max_parks = table_max_size / park_size;
@@ -894,18 +917,18 @@ impl<
             let r = K_RVALUES[*table as usize];
             encoding::get_d_table(r)
         } else {
-            create_compression_dtable(*self.file.compression_level())
+            create_compression_dtable(self.file.compression_level())
         }
     }
     async fn load_c2entries(&mut self) -> Result<(), Error> {
         let c2size = self.file.table_size(&PlotTable::C2) as usize;
         if c2size != 0 {
-            let k = *self.file.k() as usize;
+            let k = self.file.k() as usize;
             let f7byte_size = ucdiv_t(k, 8);
             let c2max_entries = c2size / f7byte_size;
             if c2max_entries > 0 {
-                let address = *self.file.table_address(&PlotTable::C2);
-                let file = self.file.file().clone();
+                let address = self.file.table_address(&PlotTable::C2);
+                let file = self.file.file();
                 let mut file_lock = file.lock().await;
                 file_lock.seek(SeekFrom::Start(address)).await?;
                 let mut buffer = vec![0; c2size];
@@ -952,6 +975,7 @@ pub fn read_plot_header(file: &mut std::fs::File) -> Result<PlotHeader, Error> {
     if HEADER_V2_MAGIC == full_buffer[0..4] {
         Ok(PlotHeader::V2(parse_v2(&full_buffer)?))
     } else if HEADER_MAGIC == full_buffer[0..19] {
+        //TODO Gigahorse plots also follow this format but cant be actually read, memo is encrypted.
         Ok(PlotHeader::V1(parse_v1(&full_buffer)?))
     } else {
         Err(Error::new(

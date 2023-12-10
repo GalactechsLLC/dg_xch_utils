@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 
 members = [
     "cli",
@@ -9,5 +10,6 @@ members = [
     "proof_of_space",
     "puzzles",
     "serialize",
+    "servers",
     "tests"
 ]

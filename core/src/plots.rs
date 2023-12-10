@@ -43,51 +43,41 @@ impl PlotTable {
 }
 
 pub trait PlotFile<'a, F: AsyncSeek + AsyncRead> {
-    fn k(&'a self) -> &'a u8 {
+    fn table_address(&'a self, plot_table: &PlotTable) -> u64 {
         match self.header() {
-            PlotHeader::V1(h) => &h.k,
-            PlotHeader::V2(h) => &h.k,
-        }
-    }
-    fn plot_id(&'a self) -> &'a Bytes32 {
-        match self.header() {
-            PlotHeader::V1(h) => &h.id,
-            PlotHeader::V2(h) => &h.id,
-        }
-    }
-    fn table_address(&'a self, plot_table: &PlotTable) -> &'a u64 {
-        match self.header() {
-            PlotHeader::V1(h) => &h.table_begin_pointers[*plot_table as usize],
-            PlotHeader::V2(h) => &h.table_begin_pointers[*plot_table as usize],
+            PlotHeader::V1(h) => h.table_begin_pointers[*plot_table as usize],
+            PlotHeader::V2(h) => h.table_begin_pointers[*plot_table as usize],
+            PlotHeader::GHv2_5(_) => 0,
         }
     }
     fn table_size(&'a self, plot_table: &PlotTable) -> u64 {
         let table_pointers = match self.header() {
             PlotHeader::V1(h) => &h.table_begin_pointers,
             PlotHeader::V2(h) => &h.table_begin_pointers,
+            PlotHeader::GHv2_5(_) => {
+                return 0;
+            }
         };
-        let address = &table_pointers[*plot_table as usize];
-        let mut end_address = self.plot_size();
-        for a in table_pointers {
-            if a > address && a < end_address {
-                end_address = a;
+        let address = table_pointers[*plot_table as usize];
+        if let Some(next) = table_pointers.get(*plot_table as usize + 1) {
+            if *next > address {
+                return next - address;
             }
         }
-        end_address - address
+        self.plot_size() - address
+    }
+    fn k(&'a self) -> u8 {
+        self.header().k()
+    }
+    fn plot_id(&'a self) -> Bytes32 {
+        self.header().id()
     }
     fn memo(&'a self) -> &'a PlotMemo {
-        match self.header() {
-            PlotHeader::V1(h) => &h.memo,
-            PlotHeader::V2(h) => &h.memo,
-        }
+        self.header().memo()
     }
-    fn compression_level(&'a self) -> &'a u8 {
-        match self.header() {
-            PlotHeader::V1(_) => &0,
-            PlotHeader::V2(h) => &h.compression_level,
-        }
+    fn compression_level(&'a self) -> u8 {
+        self.header().compression_level()
     }
-
     //The Interface stuff
     fn header(&'a self) -> &'a PlotHeader;
     fn plot_size(&'a self) -> &'a u64;
@@ -158,6 +148,109 @@ impl Display for PlotMemo {
 pub enum PlotHeader {
     V1(PlotHeaderV1),
     V2(PlotHeaderV2),
+    GHv2_5(PlotHeaderGHv2_5),
+}
+impl PlotHeader {
+    pub fn magic(&self) -> Vec<u8> {
+        match self {
+            PlotHeader::V1(h) => h.magic.to_vec(),
+            PlotHeader::V2(h) => h.magic.to_vec(),
+            PlotHeader::GHv2_5(h) => h.magic.to_vec(),
+        }
+    }
+    pub fn id(&self) -> Bytes32 {
+        match self {
+            PlotHeader::V1(h) => h.id,
+            PlotHeader::V2(h) => h.id,
+            PlotHeader::GHv2_5(h) => h.id,
+        }
+    }
+    pub fn k(&self) -> u8 {
+        match self {
+            PlotHeader::V1(h) => h.k,
+            PlotHeader::V2(h) => h.k,
+            PlotHeader::GHv2_5(h) => h.k,
+        }
+    }
+    pub fn memo_len(&self) -> u16 {
+        match self {
+            PlotHeader::V1(h) => h.memo_len,
+            PlotHeader::V2(h) => h.memo_len,
+            PlotHeader::GHv2_5(h) => h.memo_len,
+        }
+    }
+    pub fn memo(&self) -> &PlotMemo {
+        match self {
+            PlotHeader::V1(h) => &h.memo,
+            PlotHeader::V2(h) => &h.memo,
+            PlotHeader::GHv2_5(h) => &h.memo,
+        }
+    }
+    pub fn format_desc_len(&self) -> u16 {
+        match self {
+            PlotHeader::V1(h) => h.format_desc_len,
+            PlotHeader::V2(_) => 0,
+            PlotHeader::GHv2_5(h) => h.format_desc_len,
+        }
+    }
+    pub fn format_desc(&self) -> &[u8] {
+        match self {
+            PlotHeader::V1(h) => &h.format_desc,
+            PlotHeader::V2(_) => &[],
+            PlotHeader::GHv2_5(h) => &h.format_desc,
+        }
+    }
+    pub fn plot_flags(&self) -> u32 {
+        match self {
+            PlotHeader::V1(_) => 0,
+            PlotHeader::V2(h) => h.plot_flags,
+            PlotHeader::GHv2_5(_) => 0,
+        }
+    }
+    pub fn compression_level(&self) -> u8 {
+        match self {
+            PlotHeader::V1(_) => 0,
+            PlotHeader::V2(h) => h.compression_level,
+            PlotHeader::GHv2_5(h) => h.compression_level,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlotHeaderV1 {
+    pub magic: [u8; 19],
+    pub id: Bytes32,
+    pub k: u8,
+    pub format_desc_len: u16,
+    pub format_desc: Vec<u8>,
+    pub memo_len: u16,
+    pub memo: PlotMemo,
+    pub table_begin_pointers: [u64; 10],
+}
+impl PlotHeaderV1 {
+    pub fn new() -> Self {
+        PlotHeaderV1 {
+            magic: [0; 19],
+            id: [0; 32].into(),
+            k: 0,
+            format_desc_len: 0,
+            format_desc: vec![],
+            memo_len: 0,
+            memo: PlotMemo {
+                pool_public_key: None,
+                pool_contract_puzzle_hash: None,
+                farmer_public_key: [0; 48].into(),
+                local_master_secret_key: [0; 32].into(),
+            },
+            table_begin_pointers: [0; 10],
+        }
+    }
+}
+
+impl Default for PlotHeaderV1 {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -201,24 +294,22 @@ impl Default for PlotHeaderV2 {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PlotHeaderV1 {
-    pub magic: [u8; 19],
+pub struct PlotHeaderGHv2_5 {
+    pub magic: [u8; 4],
     pub id: Bytes32,
     pub k: u8,
     pub format_desc_len: u16,
     pub format_desc: Vec<u8>,
     pub memo_len: u16,
     pub memo: PlotMemo,
-    pub table_begin_pointers: [u64; 10],
+    pub compression_level: u8,
 }
-impl PlotHeaderV1 {
+impl PlotHeaderGHv2_5 {
     pub fn new() -> Self {
-        PlotHeaderV1 {
-            magic: [0; 19],
+        PlotHeaderGHv2_5 {
+            magic: [0; 4],
             id: [0; 32].into(),
             k: 0,
-            format_desc_len: 0,
-            format_desc: vec![],
             memo_len: 0,
             memo: PlotMemo {
                 pool_public_key: None,
@@ -226,38 +317,15 @@ impl PlotHeaderV1 {
                 farmer_public_key: [0; 48].into(),
                 local_master_secret_key: [0; 32].into(),
             },
-            table_begin_pointers: [0; 10],
+            format_desc_len: 0,
+            format_desc: vec![],
+            compression_level: 0,
         }
     }
 }
-impl Default for PlotHeaderV1 {
+impl Default for PlotHeaderGHv2_5 {
     fn default() -> Self {
         Self::new()
-    }
-}
-impl Display for PlotHeaderV1 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{{\n\
-            \t\"magic\": {:?},\n\
-            \t\"id\": {:?},\n\
-            \t\"k\": {},\n\
-            \t\"format_desc_len\": {},\n\
-            \t\"format_desc\": {:?},\n\
-            \t\"memo_len\": {},\n\
-            \t\"memo\": {}\n\
-            }}",
-            String::from_utf8(self.magic.to_vec()).map_err(|_| fmt::Error)?,
-            encode(self.id),
-            self.k,
-            self.format_desc_len,
-            String::from_utf8(self.format_desc.to_vec()).map_err(|_| fmt::Error)?,
-            self.memo_len,
-            format!("{}", self.memo)
-                .replace('\t', "\t\t")
-                .replace('}', "\t}")
-        )
     }
 }
 
@@ -278,7 +346,6 @@ pub struct PlotNftExtraData {
 impl PlotNftExtraData {
     pub fn from_program(program: Program) -> Result<Self, Error> {
         let pool_state = PoolState::from_extra_data_program(&program)?;
-
         let extra_data_program_list = program.as_list();
         let delay_time_programs: Vec<Program> = extra_data_program_list
             .iter()
@@ -298,7 +365,6 @@ impl PlotNftExtraData {
             return Err(Error::new(ErrorKind::InvalidInput, "Invalid PlotNFT"));
         }
         let delay_time = delay_time_programs[0].rest()?.as_int()?;
-
         let extra_data_programs: Vec<Program> = extra_data_program_list
             .into_iter()
             .filter(|p| {

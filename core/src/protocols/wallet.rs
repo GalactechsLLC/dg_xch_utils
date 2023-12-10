@@ -1,8 +1,8 @@
-use dg_xch_core::blockchain::coin::Coin;
-use dg_xch_core::blockchain::header_block::HeaderBlock;
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use dg_xch_core::blockchain::spend_bundle::SpendBundle;
-use dg_xch_core::clvm::program::SerializedProgram;
+use crate::blockchain::coin::Coin;
+use crate::blockchain::header_block::HeaderBlock;
+use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::spend_bundle::SpendBundle;
+use crate::clvm::program::SerializedProgram;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 

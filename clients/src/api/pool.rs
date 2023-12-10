@@ -1,15 +1,20 @@
 use crate::api::RequestMode;
-use crate::protocols::pool::{
-    GetFarmerRequest, GetFarmerResponse, GetPoolInfoResponse, PoolError, PoolErrorCode,
-    PostFarmerRequest, PostFarmerResponse, PostPartialRequest, PostPartialResponse,
-    PutFarmerRequest, PutFarmerResponse,
-};
 use async_trait::async_trait;
+use blst::min_pk::{AggregateSignature, SecretKey, Signature};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::clvm::bls_bindings::sign;
+use dg_xch_core::protocols::pool::{
+    get_current_authentication_token, AuthenticationPayload, GetFarmerRequest, GetFarmerResponse,
+    GetPoolInfoResponse, PoolError, PoolErrorCode, PostFarmerRequest, PostFarmerResponse,
+    PostPartialRequest, PostPartialResponse, PutFarmerRequest, PutFarmerResponse,
+};
+use dg_xch_serialize::{hash_256, ChiaSerialize};
 use log::warn;
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::{Error, ErrorKind};
 
 #[async_trait]
 pub trait PoolClient {
@@ -192,5 +197,73 @@ async fn send_request<T: Serialize, R: DeserializeOwned>(
                 error_message: e.to_string(),
             })
         }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct PoolLoginParts {
+    pub auth_token: u64,
+    pub aggregate_signature: String,
+}
+
+pub async fn create_pool_login_url(
+    target_pool: &str,
+    keys_and_launcher_ids: &[(SecretKey, Bytes32)],
+) -> Result<String, Error> {
+    let parts = create_pool_login_parts(target_pool, keys_and_launcher_ids).await?;
+    let mut ids = String::new();
+    for (index, (_, launcher_id)) in keys_and_launcher_ids.iter().enumerate() {
+        if index != 0 {
+            ids.push(',')
+        }
+        ids.push_str(&hex::encode(launcher_id.as_slice()));
+    }
+    Ok(format!(
+        "{target_pool}/login?launcher_id={ids}&authentication_token={}&signature={})",
+        parts.auth_token, parts.aggregate_signature
+    ))
+}
+
+pub async fn create_pool_login_parts(
+    target_pool: &str,
+    keys_and_launcher_ids: &[(SecretKey, Bytes32)],
+) -> Result<PoolLoginParts, Error> {
+    let pool_client = DefaultPoolClient::new();
+    let pool_info = pool_client
+        .get_pool_info(target_pool)
+        .await
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
+    let current_auth_token =
+        get_current_authentication_token(pool_info.authentication_token_timeout);
+    let mut sigs = vec![];
+    for (sec_key, launcher_id) in keys_and_launcher_ids {
+        let payload = AuthenticationPayload {
+            method_name: String::from("get_login"),
+            launcher_id: *launcher_id,
+            target_puzzle_hash: pool_info.target_puzzle_hash,
+            authentication_token: current_auth_token,
+        };
+        let to_sign = hash_256(payload.to_bytes());
+        let sig = sign(sec_key, &to_sign);
+        sigs.push(sig);
+    }
+    if !sigs.is_empty() {
+        let aggregate_signature =
+            AggregateSignature::aggregate(sigs.iter().collect::<Vec<&Signature>>().as_ref(), true)
+                .map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidInput,
+                        format!("Failed to calculate signature: {:?}", e),
+                    )
+                })?;
+        Ok(PoolLoginParts {
+            auth_token: current_auth_token,
+            aggregate_signature: hex::encode(aggregate_signature.to_signature().to_bytes()),
+        })
+    } else {
+        Err(Error::new(
+            ErrorKind::NotFound,
+            "No Launcher IDs with Keys found",
+        ))
     }
 }

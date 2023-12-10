@@ -4,7 +4,6 @@ use crate::wallets::{Wallet, WalletInfo};
 use async_trait::async_trait;
 use blst::min_pk::SecretKey;
 use dg_xch_clients::api::full_node::FullnodeAPI;
-use dg_xch_clients::protocols::pool::{FARMING_TO_POOL, LEAVING_POOL, POOL_PROTOCOL_VERSION};
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
@@ -17,6 +16,7 @@ use dg_xch_core::blockchain::wallet_type::WalletType;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
+use dg_xch_core::protocols::pool::{FARMING_TO_POOL, LEAVING_POOL, POOL_PROTOCOL_VERSION};
 use dg_xch_keys::{
     master_sk_to_singleton_owner_sk, master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened,
 };
