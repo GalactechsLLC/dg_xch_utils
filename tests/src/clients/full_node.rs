@@ -48,9 +48,8 @@ pub async fn test_full_node_client() {
 
 #[tokio::test]
 pub async fn test_farmer_ws_client() {
-    use dg_xch_clients::protocols::ProtocolMessageTypes;
     use dg_xch_clients::websocket::farmer::FarmerClient;
-    use dg_xch_clients::websocket::{ChiaMessageFilter, ChiaMessageHandler, Websocket};
+    use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
     use futures_util::future::try_join_all;
     use log::{error, info};
     use simple_logger::SimpleLogger;
@@ -99,10 +98,10 @@ pub async fn test_farmer_ws_client() {
                                 .subscribe(
                                     signage_handle_id,
                                     ChiaMessageHandler::new(
-                                        ChiaMessageFilter {
+                                        Arc::new(ChiaMessageFilter {
                                             msg_type: Some(ProtocolMessageTypes::NewSignagePoint),
                                             id: None,
-                                        },
+                                        }),
                                         signage_handle,
                                     ),
                                 )
@@ -139,18 +138,25 @@ pub async fn test_farmer_ws_client() {
 }
 
 use async_trait::async_trait;
-use dg_xch_clients::protocols::farmer::NewSignagePoint;
+use dg_xch_core::protocols::farmer::NewSignagePoint;
 use std::io::{Cursor, Error};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use dg_xch_clients::websocket::{ChiaMessage, MessageHandler};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap};
+
 pub struct NewSignagePointEcho {
     pub id: Uuid,
 }
 #[async_trait]
 impl MessageHandler for NewSignagePointEcho {
-    async fn handle(&self, msg: Arc<ChiaMessage>) -> Result<(), Error> {
+    async fn handle(
+        &self,
+        msg: Arc<ChiaMessage>,
+        _: Arc<Bytes32>,
+        _: PeerMap,
+    ) -> Result<(), Error> {
         use dg_xch_serialize::ChiaSerialize;
         let mut cursor = Cursor::new(&msg.data);
         let sp = NewSignagePoint::from_bytes(&mut cursor)?;

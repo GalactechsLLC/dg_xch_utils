@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::available_parallelism;
 use tokio::runtime::{Builder, Runtime};
-use tokio::sync::Mutex;
 
 fn proof_benchmark(c: &mut Criterion, runtime: &Runtime) {
     SimpleLogger::new().env().init().unwrap_or_default();
@@ -37,11 +36,11 @@ fn proof_benchmark(c: &mut Criterion, runtime: &Runtime) {
                 hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a")
                     .unwrap();
             let _f7 = f7.load(Ordering::Relaxed);
-            let f7size = ucdiv_t(*reader.plot_file().k() as usize, 8);
+            let f7size = ucdiv_t(reader.plot_file().k() as usize, 8);
             for (i, v) in challenge[0..f7size].iter_mut().enumerate() {
                 *v = (_f7 >> ((f7size - i - 1) * 8)) as u8;
             }
-            let _ = reader.fetch_proof_for_challenge(&challenge).await;
+            let _ = reader.fetch_proofs_for_challenge(&challenge).await;
             f7.fetch_add(1, Ordering::Relaxed);
         })
     });
@@ -72,17 +71,18 @@ fn quality_then_proof_benchmark(c: &mut Criterion, runtime: &Runtime) {
                 hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a")
                     .unwrap();
             let _f7 = f7.load(Ordering::Relaxed);
-            let f7size = ucdiv_t(*reader.plot_file().k() as usize, 8);
+            let f7size = ucdiv_t(reader.plot_file().k() as usize, 8);
             for (i, v) in challenge[0..f7size].iter_mut().enumerate() {
                 *v = (_f7 >> ((f7size - i - 1) * 8)) as u8;
             }
             for (index, _) in reader
                 .fetch_qualities_for_challenge(&challenge)
                 .await
-                .unwrap()
+                .unwrap_or_default()
             {
-                reader.fetch_ordered_proof(index).await.unwrap();
+                let _ = reader.fetch_ordered_proof(index).await;
             }
+            f7.fetch_add(1, Ordering::Relaxed);
         })
     });
 }
@@ -103,7 +103,7 @@ fn quality_benchmark(c: &mut Criterion, runtime: &Runtime) {
         .await
         .unwrap()
     });
-    let reader = Arc::new(Mutex::new(plot_reader));
+    let reader = Arc::new(plot_reader);
     let f7 = Arc::new(AtomicU64::new(0));
     c.bench_function("Quality Bench", |b| {
         let reader = reader.clone();
@@ -112,13 +112,11 @@ fn quality_benchmark(c: &mut Criterion, runtime: &Runtime) {
                 hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a")
                     .unwrap();
             let _f7 = f7.load(Ordering::Relaxed);
-            let f7size = ucdiv_t(*reader.lock().await.plot_file().k() as usize, 8);
+            let f7size = ucdiv_t(reader.plot_file().k() as usize, 8);
             for (i, v) in challenge[0..f7size].iter_mut().enumerate() {
                 *v = (_f7 >> ((f7size - i - 1) * 8)) as u8;
             }
             reader
-                .lock()
-                .await
                 .fetch_qualities_for_challenge(&challenge)
                 .await
                 .unwrap();
@@ -128,9 +126,11 @@ fn quality_benchmark(c: &mut Criterion, runtime: &Runtime) {
 
 pub fn benches(runtime: Runtime) {
     let mut criterion = Criterion::default().configure_from_args();
+    let mut criterion = criterion.sample_size(50);
     quality_benchmark(&mut criterion, &runtime);
-    // quality_then_proof_benchmark(&mut criterion, &runtime);
-    // proof_benchmark(&mut criterion, &runtime);
+    let mut criterion = criterion.sample_size(10);
+    proof_benchmark(&mut criterion, &runtime);
+    quality_then_proof_benchmark(&mut criterion, &runtime);
     criterion.final_summary();
 }
 

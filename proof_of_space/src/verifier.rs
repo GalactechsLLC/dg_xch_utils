@@ -163,7 +163,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
                 Ok(proof) => {
                     // Now we can validate the proof
                     match get_f7_from_proof(
-                        *reader.plot_file().k() as u32,
+                        reader.plot_file().k() as u32,
                         reader.plot_id().to_sized_bytes(),
                         &proof,
                         &mut fx,
@@ -335,21 +335,25 @@ pub async fn check_plot<T: AsRef<Path>>(
 ) -> Result<(usize, usize), Error> {
     debug!("Testing plot {:?}", path.as_ref());
     let reader = PlotReader::new(DiskPlot::new(path.as_ref()).await?, None, None).await?;
-    if *reader.plot_file().compression_level() > 0 {
+    if reader.plot_file().compression_level() > 0 {
         warn!(
             "Plot Check skipped for plot at compression level {}",
             reader.plot_file().compression_level()
         );
         return Ok((challenges, 0));
     }
-    let k = match reader.header() {
-        PlotHeader::V1(h) => h.k,
-        PlotHeader::V2(h) => h.k,
-    };
     let id = match reader.header() {
+        //This is used to filter out GH plots
         PlotHeader::V1(h) => h.id,
         PlotHeader::V2(h) => h.id,
+        PlotHeader::GHv2_5(_) => {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "Gigahorse Plots are Not Supported",
+            ))
+        }
     };
+    let k = reader.header().k();
     let mut total_proofs = 0;
     let mut bad_proofs = 0;
     for i in 0..challenges {
@@ -453,7 +457,7 @@ pub async fn test_qualities() {
     )
     .await
     .unwrap();
-    let k = *compressed_reader.plot_file().k(); //They are both k32
+    let k = compressed_reader.plot_file().k();
     let mut challenge =
         hex::decode("00000000ff04b8ee9355068689bd558eafe07cc7af47ad1574b074fc34d6913a").unwrap();
     let f7_size = ucdiv_t(k as usize, 8);

@@ -6,14 +6,19 @@ use rand::Rng;
 use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey};
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::EncodePublicKey;
+use rustls::server::{ClientCertVerified, ClientCertVerifier};
+use rustls::{DistinguishedName, PrivateKey, RootCertStore};
+use rustls_pemfile::{certs, read_one, Item};
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
-use std::fs::{create_dir_all, OpenOptions};
-use std::io::{Error, ErrorKind, Write};
+use std::fs::{create_dir_all, File, OpenOptions};
+use std::io::{BufReader, Error, ErrorKind, Write};
 use std::ops::{Add, Sub};
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use x509_cert::builder::{Builder, CertificateBuilder, Profile};
 use x509_cert::der::DecodePem;
@@ -25,6 +30,30 @@ use x509_cert::spki::SubjectPublicKeyInfo;
 use x509_cert::time::{Time, Validity};
 use x509_cert::Certificate;
 
+pub struct AllowAny {
+    _roots: RootCertStore,
+}
+impl AllowAny {
+    pub fn new(_roots: RootCertStore) -> Arc<Self> {
+        Arc::new(Self { _roots })
+    }
+}
+
+impl ClientCertVerifier for AllowAny {
+    fn client_auth_root_subjects(&self) -> &[DistinguishedName] {
+        info!("In Farmer client_auth_root_subjects");
+        &[]
+    }
+    fn verify_client_cert(
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _now: SystemTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        info!("In Farmer verify_client_cert");
+        Ok(ClientCertVerified::assertion())
+    }
+}
 pub const CHIA_CA_CRT: &str = r"-----BEGIN CERTIFICATE-----
 MIIDKTCCAhGgAwIBAgIUXIpxI5MoZQ65/vhc7DK/d5ymoMUwDQYJKoZIhvcNAQEL
 BQAwRDENMAsGA1UECgwEQ2hpYTEQMA4GA1UEAwwHQ2hpYSBDQTEhMB8GA1UECwwY
@@ -72,6 +101,80 @@ psKwmwKBgG5uLzCyMvMB2KwI+f3np2LYVGG0Pl1jq6yNXSaBosAiF0y+IgUjtWY5
 EejO8oPWcb9AbqgPtrWaiJi17KiKv4Oyba5+y36IEtyjolWt0AB6F3oDK0X+Etw8
 j/xlvBNuzDL6gRJHQg1+d4dO8Lz54NDUbKW8jGl+N/7afGVpGmX9
 -----END RSA PRIVATE KEY-----";
+
+const ALL_PRIVATE_NODE_NAMES: [&str; 8] = [
+    "full_node",
+    "wallet",
+    "farmer",
+    "harvester",
+    "timelord",
+    "crawler",
+    "data_layer",
+    "daemon",
+];
+
+const ALL_PUBLIC_NODE_NAMES: [&str; 6] = [
+    "full_node",
+    "wallet",
+    "farmer",
+    "introducer",
+    "timelord",
+    "data_layer",
+];
+
+pub fn load_certs(filename: &str) -> Result<Vec<rustls::Certificate>, Error> {
+    let cert_file = File::open(filename)?;
+    let mut reader = BufReader::new(cert_file);
+    let certs = certs(&mut reader)?;
+    Ok(certs.into_iter().map(rustls::Certificate).collect())
+}
+
+pub fn load_certs_from_bytes(bytes: &[u8]) -> Result<Vec<rustls::Certificate>, Error> {
+    let mut reader = BufReader::new(bytes);
+    let certs = certs(&mut reader)?;
+    Ok(certs.into_iter().map(rustls::Certificate).collect())
+}
+
+pub fn load_private_key(filename: &str) -> Result<PrivateKey, Error> {
+    let keyfile = File::open(filename)?;
+    let mut reader = BufReader::new(keyfile);
+    for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
+        match item? {
+            Item::X509Certificate(_) => error!("Found Certificate, not Private Key"),
+            Item::RSAKey(key) => {
+                return Ok(PrivateKey(key));
+            }
+            Item::PKCS8Key(key) => {
+                return Ok(PrivateKey(key));
+            }
+            Item::ECKey(key) => {
+                return Ok(PrivateKey(key));
+            }
+            _ => error!("Unknown Item while loading private key"),
+        }
+    }
+    Err(Error::new(ErrorKind::NotFound, "Private Key Not Found"))
+}
+
+pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKey, Error> {
+    let mut reader = BufReader::new(bytes);
+    for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
+        match item? {
+            Item::X509Certificate(_) => error!("Found Certificate, not Private Key"),
+            Item::RSAKey(key) => {
+                return Ok(PrivateKey(key));
+            }
+            Item::PKCS8Key(key) => {
+                return Ok(PrivateKey(key));
+            }
+            Item::ECKey(key) => {
+                return Ok(PrivateKey(key));
+            }
+            _ => error!("Unknown Item while loading private key"),
+        }
+    }
+    Err(Error::new(ErrorKind::NotFound, "Private Key Not Found"))
+}
 
 pub fn generate_ca_signed_cert(
     cert_path: &Path,
@@ -236,26 +339,6 @@ fn make_ca_cert_data() -> Result<(String, String), Error> {
     ))
 }
 
-const ALL_PRIVATE_NODE_NAMES: [&str; 8] = [
-    "full_node",
-    "wallet",
-    "farmer",
-    "harvester",
-    "timelord",
-    "crawler",
-    "data_layer",
-    "daemon",
-];
-
-const ALL_PUBLIC_NODE_NAMES: [&str; 6] = [
-    "full_node",
-    "wallet",
-    "farmer",
-    "introducer",
-    "timelord",
-    "data_layer",
-];
-
 pub struct MemorySSL {
     pub public: HashMap<String, MemoryNodeSSL>,
     pub private: HashMap<String, MemoryNodeSSL>,
@@ -385,6 +468,23 @@ pub fn generate_ssl_for_nodes_in_memory(
         );
     }
     Ok(map)
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SslCertInfo {
+    #[serde(default)]
+    pub public_crt: Option<String>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    pub private_crt: String,
+    pub private_key: String,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SslInfo {
+    pub root_path: String,
+    pub certs: SslCertInfo,
+    pub ca: SslCertInfo,
 }
 
 #[test]

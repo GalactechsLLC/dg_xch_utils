@@ -1,5 +1,3 @@
-use crate::protocols::full_node::BlockCountMetrics;
-use crate::protocols::full_node::FeeEstimate;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
 use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
@@ -13,6 +11,8 @@ use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
 use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
+use dg_xch_core::protocols::full_node::BlockCountMetrics;
+use dg_xch_core::protocols::full_node::FeeEstimate;
 
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use serde::{Deserialize, Serialize};

@@ -1,12 +1,22 @@
-extern crate core;
-
+use crate::plots::disk_plot::DiskPlot;
+use crate::plots::plot_reader::PlotReader;
 use crate::verifier::validate_proof;
+use async_trait::async_trait;
 use dg_xch_core::blockchain::proof_of_space::{
     calculate_pos_challenge, calculate_prefix_bits, passes_plot_filter, ProofOfSpace,
 };
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_core::protocols::harvester::HarvesterState;
 use log::warn;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::io::Error;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use tokio::fs::File;
+use tokio::sync::Mutex;
 
 pub mod chacha8;
 pub mod constants;
@@ -98,4 +108,42 @@ pub fn get_quality_string(pos: &ProofOfSpace, plot_id: &Bytes32) -> Option<Bytes
             None
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct PathInfo {
+    pub path: PathBuf,
+    pub file_name: String,
+}
+impl Hash for PathInfo {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.file_name.hash(state)
+    }
+}
+impl Eq for PathInfo {}
+impl PartialEq for PathInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.file_name == other.file_name
+    }
+}
+
+#[derive(Debug)]
+pub struct PlotInfo {
+    pub reader: PlotReader<File, DiskPlot<File>>,
+    pub pool_public_key: Option<Bytes48>,
+    pub pool_contract_puzzle_hash: Option<Bytes32>,
+    pub plot_public_key: Bytes48,
+    pub file_size: u64,
+    pub time_modified: u64,
+}
+
+#[async_trait]
+pub trait PlotManagerAsync {
+    fn set_public_keys(&mut self, farmer_public_keys: Vec<Bytes48>, pool_public_keys: Vec<Bytes48>);
+    async fn load_plots(
+        &mut self,
+        harvester_state: Arc<Mutex<HarvesterState>>,
+    ) -> Result<(), Error>;
+    fn plots(&self) -> &HashMap<PathInfo, Arc<PlotInfo>>;
+    fn plots_ready(&self) -> Arc<AtomicBool>;
 }

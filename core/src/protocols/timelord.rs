@@ -1,11 +1,11 @@
-use dg_xch_core::blockchain::end_of_subslot_bundle::EndOfSubSlotBundle;
-use dg_xch_core::blockchain::foliage::Foliage;
-use dg_xch_core::blockchain::reward_chain_block::RewardChainBlock;
-use dg_xch_core::blockchain::reward_chain_block_unfinished::RewardChainBlockUnfinished;
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary;
-use dg_xch_core::blockchain::vdf_info::VdfInfo;
-use dg_xch_core::blockchain::vdf_proof::VdfProof;
+use crate::blockchain::end_of_subslot_bundle::EndOfSubSlotBundle;
+use crate::blockchain::foliage::Foliage;
+use crate::blockchain::reward_chain_block::RewardChainBlock;
+use crate::blockchain::reward_chain_block_unfinished::RewardChainBlockUnfinished;
+use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::sub_epoch_summary::SubEpochSummary;
+use crate::blockchain::vdf_info::VdfInfo;
+use crate::blockchain::vdf_proof::VdfProof;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 

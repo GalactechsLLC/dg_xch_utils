@@ -3,7 +3,7 @@ use num_bigint::BigInt;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusConstants {
     pub slot_blocks_target: u32, //How many blocks to target per sub-slot
     pub min_blocks_per_challenge_block: u8, //How many blocks must be created per slot (to make challenge sb)

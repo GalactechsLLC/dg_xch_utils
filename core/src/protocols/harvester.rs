@@ -1,8 +1,13 @@
-use dg_xch_core::blockchain::proof_of_space::ProofOfSpace;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
+use crate::blockchain::proof_of_space::ProofOfSpace;
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+#[cfg(feature = "metrics")]
+use std::sync::Arc;
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PoolDifficulty {
@@ -138,4 +143,80 @@ pub struct PlotSyncResponse {
     pub identifier: PlotSyncIdentifier,
     pub message_type: i16,
     pub error: Option<PlotSyncError>,
+}
+
+#[cfg(feature = "metrics")]
+use prometheus::core::{AtomicU64, GenericGauge};
+#[cfg(feature = "metrics")]
+use prometheus::Registry;
+
+#[derive(Debug, Default, Clone)]
+pub struct HarvesterState {
+    pub og_plot_count: usize,
+    pub nft_plot_count: usize,
+    pub compressed_plot_count: usize,
+    pub invalid_plot_count: usize,
+    pub plot_space: u64,
+    #[cfg(feature = "metrics")]
+    pub metrics: Option<HarvesterMetrics>,
+    pub missing_keys: HashSet<Bytes48>,
+    pub missing_pool_info: HashMap<Bytes48, Bytes32>,
+}
+
+#[cfg(feature = "metrics")]
+#[derive(Debug, Clone)]
+pub struct HarvesterMetrics {
+    pub start_time: Arc<Instant>,
+    pub uptime: Option<GenericGauge<AtomicU64>>,
+    pub reported_space: Option<GenericGauge<AtomicU64>>,
+    pub og_plot_count: Option<GenericGauge<AtomicU64>>,
+    pub nft_plot_count: Option<GenericGauge<AtomicU64>>,
+    pub compressed_plot_count: Option<GenericGauge<AtomicU64>>,
+}
+#[cfg(feature = "metrics")]
+
+impl HarvesterMetrics {
+    pub fn new(registry: &Registry) -> Self {
+        let uptime = GenericGauge::new("harvester_uptime", "Uptime of Harvester").map_or(
+            None,
+            |g: GenericGauge<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            },
+        );
+        let reported_space = GenericGauge::new("reported_space", "Reported Space in Bytes").map_or(
+            None,
+            |g: GenericGauge<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            },
+        );
+        let og_plot_count = GenericGauge::new("og_plot_count", "OG Plot Count").map_or(
+            None,
+            |g: GenericGauge<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            },
+        );
+        let nft_plot_count = GenericGauge::new("nft_plot_count", "NFT Plot Count").map_or(
+            None,
+            |g: GenericGauge<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            },
+        );
+        let compressed_plot_count = GenericGauge::new("compressed_plot_count", "OG Plot Count")
+            .map_or(None, |g: GenericGauge<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            });
+        HarvesterMetrics {
+            start_time: Arc::new(Instant::now()),
+            uptime,
+            reported_space,
+            og_plot_count,
+            nft_plot_count,
+            compressed_plot_count,
+        }
+    }
 }

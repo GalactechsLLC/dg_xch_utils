@@ -98,6 +98,7 @@ pub struct CompressedQualitiesRequest<'a> {
     pub compression_level: u8,
     pub challenge: &'a [u8],
     pub line_points: [LinePoint; 2],
+    pub f1_generator: Option<Arc<F1Generator>>,
 }
 unsafe impl<'a> Send for CompressedQualitiesRequest<'a> {}
 unsafe impl<'a> Sync for CompressedQualitiesRequest<'a> {}
@@ -109,7 +110,7 @@ pub struct TableContext<'a> {
     out_y: Span<u64>,
     out_meta: Span<K32Meta2>,
     out_pairs: Span<Pair>,
-    pub f1_generator: F1Generator,
+    pub f1_generator: Arc<F1Generator>,
 }
 unsafe impl<'a> Send for TableContext<'a> {}
 unsafe impl<'a> Sync for TableContext<'a> {}
@@ -120,6 +121,7 @@ pub struct ProofRequest {
     full_proof: Vec<u64>,       //[u64; POST_PROOF_X_COUNT],
     c_level: u8,
     plot_id: Bytes32,
+    f1_generator: Option<Arc<F1Generator>>,
 }
 
 #[derive(Debug)]
@@ -344,41 +346,39 @@ impl Decompressor {
         let num_groups = POST_PROOF_CMP_X_COUNT;
         let entries_per_bucket = get_entries_per_bucket_for_compression_level(k, req.c_level);
         assert!(entries_per_bucket <= 0xFFFFFFFF);
-        let mut proof_might_be_dropped = false;
         let mut tables = Span::new(self.tables.as_mut_ptr(), self.tables.len());
         let mut x_groups = [0u32; POST_PROOF_X_COUNT];
-        let mut x_groups = Span::new(x_groups.as_mut_ptr(), POST_PROOF_X_COUNT);
         if req.c_level < 9 {
-            let mut i = 0usize;
             let mut j = 0usize;
-            while i < num_groups {
-                let x_line_point = req.compressed_proof[i];
-                let xs = line_point_to_square64(x_line_point);
-                proof_might_be_dropped = proof_might_be_dropped || (xs.0 == 0 || xs.1 == 0);
+            for xs in req
+                .compressed_proof
+                .iter()
+                .take(num_groups)
+                .copied()
+                .map(line_point_to_square64)
+            {
                 x_groups[j] = xs.1 as u32;
                 x_groups[j + 1] = xs.0 as u32;
-                i += 1;
                 j += 2;
             }
         } else {
-            let mut i = 0usize;
+            let entry_bits = get_compression_info_for_level(req.c_level).entry_size_bits;
+            let mask = (1 << entry_bits) - 1;
             let mut j = 0usize;
-            while i < num_groups / 2 {
-                let x_line_point = req.compressed_proof[i];
-                let xs = line_point_to_square64(x_line_point);
-                let entry_bits = get_compression_info_for_level(req.c_level).entry_size_bits;
-                let mask = (1 << entry_bits) - 1;
-                proof_might_be_dropped = proof_might_be_dropped || (xs.0 == 0 || xs.1 == 0);
+            for xs in req
+                .compressed_proof
+                .iter()
+                .take(num_groups / 2)
+                .copied()
+                .map(line_point_to_square64)
+            {
                 x_groups[j] = (xs.1 as u32) & mask;
                 x_groups[j + 1] = (xs.1 as u32) >> entry_bits;
                 x_groups[j + 2] = (xs.0 as u32) & mask;
                 x_groups[j + 3] = (xs.0 as u32) >> entry_bits;
-                i += 1;
                 j += 4;
             }
         }
-        let mut i = 0usize;
-        let mut j = 0usize;
         let out_y = Span::new(self.y_buffer_tmp.as_mut_ptr(), self.y_buffer_tmp.len());
         let out_meta = Span::new(
             self.meta_buffer_tmp.as_mut_ptr(),
@@ -389,13 +389,17 @@ impl Decompressor {
         let thread_count = self.config.thread_count;
         let mut table_context = TableContext {
             context: self,
-            f1_generator: F1Generator::new(k, thread_count, req.plot_id.as_ref()),
+            f1_generator: if let Some(f1) = &req.f1_generator {
+                f1.clone()
+            } else {
+                Arc::new(F1Generator::new(k, thread_count, req.plot_id.as_ref()))
+            },
             entries_per_bucket: entries_per_bucket as isize,
             out_y,
             out_meta,
             out_pairs,
         };
-        while i < num_groups {
+        for (i, j) in (0..num_groups).zip((0..x_groups.len()).step_by(2)) {
             let x1 = x_groups[j] as u64;
             let x2 = x_groups[j + 1] as u64;
             let group_index = i / 2;
@@ -403,12 +407,6 @@ impl Decompressor {
             if i % 2 == 0 {
                 table.begin_group(group_index);
             }
-            debug!(
-                "Processing Table Group: {}/{num_groups}: ({},{})",
-                i + 1,
-                x1,
-                x2
-            );
             if let Err(e) =
                 Self::process_table1bucket(k, req.c_level, &mut table_context, x1, x2, group_index)
             {
@@ -418,8 +416,6 @@ impl Decompressor {
                     format!("Error Processing Table1 Bucket: {:?}", e),
                 ));
             }
-            i += 1;
-            j += 2;
         }
 
         // #NOTE: Sanity check, but should never happen w/ our starting compression levels.
@@ -1729,12 +1725,14 @@ impl Decompressor {
         k: u8,
         c_level: u8,
         compressed_proof: &[u64],
+        f1_generator: Option<Arc<F1Generator>>,
     ) -> Result<Vec<u64>, Error> {
         let mut req = ProofRequest {
             compressed_proof: vec![0u64; k as usize],
             full_proof: vec![0u64; k as usize * 2],
             c_level,
             plot_id: *plot_id,
+            f1_generator,
         };
         let compressed_proof_count = if c_level < 9 {
             PROOF_X_COUNT / 2
@@ -1823,28 +1821,24 @@ impl Decompressor {
             let thread_count = self.config.thread_count;
             let mut table_context = TableContext {
                 context: self,
-                f1_generator: F1Generator::new(k, thread_count, req.plot_id.as_ref()),
+                f1_generator: if let Some(f1) = req.f1_generator {
+                    f1.clone()
+                } else {
+                    Arc::new(F1Generator::new(k, thread_count, req.plot_id.as_ref()))
+                },
                 entries_per_bucket: entries_per_bucket as isize,
                 out_y,
                 out_meta,
                 out_pairs,
             };
-            let mut i = 0;
-            let mut j = 0;
             let table: &mut ProofTable = &mut tables[1isize];
-            while i < num_xgroups {
+            for (i, j) in (0..num_xgroups).zip((0..x_groups.len()).step_by(2)) {
                 let x1 = x_groups[j] as u64;
                 let x2 = x_groups[j + 1] as u64;
                 let group_index = i / 2;
                 if i % 2 == 0 {
                     table.begin_group(group_index);
                 }
-                debug!(
-                    "Processing Table Group: {}/{num_xgroups}: ({},{})",
-                    i + 1,
-                    x1,
-                    x2
-                );
                 if let Err(e) = Self::process_table1bucket(
                     k,
                     req.compression_level,
@@ -1859,8 +1853,6 @@ impl Decompressor {
                         format!("Error Processing Table1 Bucket: {:?}", e),
                     ));
                 }
-                i += 1;
-                j += 2;
             }
         }
         // #NOTE: Sanity check, but should never happen w/ our starting compression levels.
