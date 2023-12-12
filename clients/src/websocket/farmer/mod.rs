@@ -1,50 +1,40 @@
-use crate::websocket::{WsClient, WsClientConfig};
-use crate::websocket::farmer::signage_point::NewSignagePointHandle;
 use crate::websocket::farmer::request_signed_values::RequestSignedValuesHandle;
-use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, NodeType, PeerMap, ProtocolMessageTypes};
-use dg_xch_core::protocols::farmer::{FarmerIdentifier, FarmerPoolState, NewSignagePoint};
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use crate::websocket::farmer::signage_point::NewSignagePointHandle;
+use crate::websocket::{WsClient, WsClientConfig};
+use dg_xch_core::consensus::constants::{ConsensusConstants, CONSENSUS_CONSTANTS_MAP, MAINNET};
+use dg_xch_core::protocols::farmer::FarmerSharedState;
+use dg_xch_core::protocols::{
+    ChiaMessageFilter, ChiaMessageHandler, NodeType, ProtocolMessageTypes,
+};
 use std::collections::HashMap;
-use std::io::{Error};
+use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS_MAP, ConsensusConstants, MAINNET};
 
 pub mod request_signed_values;
 pub mod signage_point;
 
 pub struct FarmerClient {
     pub client: WsClient,
+    pub shared_state: Arc<FarmerSharedState>,
 }
 impl FarmerClient {
     pub async fn new(
         client_config: Arc<WsClientConfig>,
-        quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
-        signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-        pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
-        cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-        harvester_peers: PeerMap,
+        shared_state: Arc<FarmerSharedState>,
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
-        let constants = CONSENSUS_CONSTANTS_MAP.get(&client_config.network_id).unwrap_or(&MAINNET);
-        let handles = Arc::new(Mutex::new(handles(
-            constants,
-            quality_to_identifiers,
-            signage_points,
-            pool_state,
-            cache_time,
-            harvester_peers,
-        )));
-        let client = WsClient::new(
-            client_config,
-            NodeType::Farmer,
-            handles,
-            run,
-        ).await?;
-        Ok(FarmerClient { client })
+        let constants = CONSENSUS_CONSTANTS_MAP
+            .get(&client_config.network_id)
+            .unwrap_or(&MAINNET);
+        let handles = Arc::new(Mutex::new(handles(constants, shared_state.clone())));
+        let client = WsClient::new(client_config, NodeType::Farmer, handles, run.clone()).await?;
+        Ok(FarmerClient {
+            client,
+            shared_state,
+        })
     }
 
     pub async fn join(self) -> Result<(), Error> {
@@ -59,35 +49,42 @@ impl FarmerClient {
 
 fn handles(
     constants: &'static ConsensusConstants,
-    quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
-    signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
-    cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-    harvester_peers: PeerMap,
+    shared_state: Arc<FarmerSharedState>,
 ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
-    HashMap::from(
-        [(Uuid::new_v4(), Arc::new(ChiaMessageHandler::new(
-            Arc::new(ChiaMessageFilter {
-                msg_type: Some(ProtocolMessageTypes::NewSignagePoint),
-                id: None,
-            }),
-            Arc::new(NewSignagePointHandle {
-                constants,
-                harvester_peers: harvester_peers.clone(),
-                signage_points: signage_points.clone(),
-                pool_state: pool_state.clone(),
-                cache_time: cache_time.clone(),
-            }),
-        ))),
-        (Uuid::new_v4(), Arc::new(ChiaMessageHandler::new(
-            Arc::new(ChiaMessageFilter {
-                msg_type: Some(ProtocolMessageTypes::RequestSignedValues),
-                id: None,
-            }),
-            Arc::new(RequestSignedValuesHandle {
-                quality_to_identifiers: quality_to_identifiers.clone(),
-                harvester_peers: harvester_peers.clone(),
-            })
-        )))]
-    )
+    HashMap::from([
+        (
+            Uuid::new_v4(),
+            Arc::new(ChiaMessageHandler::new(
+                Arc::new(ChiaMessageFilter {
+                    msg_type: Some(ProtocolMessageTypes::NewSignagePoint),
+                    id: None,
+                }),
+                Arc::new(NewSignagePointHandle {
+                    constants,
+                    harvester_peers: shared_state.harvester_peers.clone(),
+                    signage_points: shared_state.signage_points.clone(),
+                    pool_state: shared_state.pool_state.clone(),
+                    cache_time: shared_state.cache_time.clone(),
+                    running_state: shared_state.running_state.clone(),
+                    most_recent_sp: shared_state.most_recent_sp.clone(),
+                    #[cfg(feature = "metrics")]
+                    metrics: shared_state.metrics.clone(),
+                }),
+            )),
+        ),
+        (
+            Uuid::new_v4(),
+            Arc::new(ChiaMessageHandler::new(
+                Arc::new(ChiaMessageFilter {
+                    msg_type: Some(ProtocolMessageTypes::RequestSignedValues),
+                    id: None,
+                }),
+                Arc::new(RequestSignedValuesHandle {
+                    quality_to_identifiers: shared_state.quality_to_identifiers.clone(),
+                    recent_errors: Arc::new(Default::default()),
+                    harvester_peers: shared_state.harvester_peers.clone(),
+                }),
+            )),
+        ),
+    ])
 }

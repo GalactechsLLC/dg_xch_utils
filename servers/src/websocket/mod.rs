@@ -1,50 +1,34 @@
 pub mod farmer;
 pub mod harvester;
 
-use std::collections::HashMap;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
-use dg_xch_core::protocols::{ChiaMessageHandler, NodeType, PeerMap, SocketPeer, WebsocketConnection, WebsocketMsgStream};
-use dg_xch_core::ssl::{load_certs, load_private_key, AllowAny};
+use dg_xch_core::protocols::{
+    ChiaMessageHandler, NodeType, PeerMap, SocketPeer, WebsocketConnection, WebsocketMsgStream,
+};
+use dg_xch_core::ssl::{load_certs, load_private_key, AllowAny, SslInfo};
 use dg_xch_serialize::hash_256;
 use http_body_util::Full;
+use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1::Builder;
 use hyper::service::service_fn;
+use hyper::{Request, Response};
 use hyper_tungstenite::{is_upgrade_request, upgrade, HyperWebsocket};
 use hyper_util::rt::TokioIo;
 use log::{debug, error, info};
 use rustls::{RootCertStore, ServerConfig};
-use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
-use hyper::body::{Bytes, Incoming};
-use hyper::{Request, Response};
 use tokio::net::TcpListener;
 use tokio::select;
 use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
-use tokio_tungstenite::{tungstenite};
+use tokio_tungstenite::tungstenite;
 use uuid::Uuid;
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SslCertInfo {
-    #[serde(default)]
-    pub public_crt: Option<String>,
-    #[serde(default)]
-    pub public_key: Option<String>,
-    pub private_crt: String,
-    pub private_key: String,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SslInfo {
-    pub root_path: String,
-    pub certs: SslCertInfo,
-    pub ca: SslCertInfo,
-}
 
 pub struct WebsocketServerConfig {
     pub host: String,
@@ -59,19 +43,19 @@ pub struct WebsocketServer {
     pub message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
 }
 impl WebsocketServer {
-    pub fn new(config: &WebsocketServerConfig, peers: PeerMap, message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>) -> Result<Self, Error> {
-        let server_config = Self::init(config).map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidInput,
-                format!("Invalid Cert for Farmer Server: {:?}", e),
-            )
-        })?;
+    pub fn new(
+        config: &WebsocketServerConfig,
+        peers: PeerMap,
+        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    ) -> Result<Self, Error> {
+        let server_config = Self::init(config)
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
         let socket_address = Self::init_socket(config)?;
         Ok(WebsocketServer {
             socket_address,
             server_config,
             peers,
-            message_handlers
+            message_handlers,
         })
     }
 
@@ -148,7 +132,6 @@ impl WebsocketServer {
                 Error::new(
                     ErrorKind::InvalidInput,
                     format!("Invalid Root Cert for Server: {:?}", e),
-
                 )
             })?;
         }
@@ -194,17 +177,27 @@ struct ConnectionData {
 }
 
 async fn connection_handler(
-    mut data: ConnectionData
+    mut data: ConnectionData,
 ) -> Result<Response<Full<Bytes>>, tungstenite::error::Error> {
     if is_upgrade_request(&data.req) {
         let (response, websocket) = upgrade(&mut data.req, None)?;
-        let addr = data.addr.ok_or_else(|| Error::new(ErrorKind::Other, "Invalid SocketAddr"))?;
-        let peer_id =
-            Arc::new(data.peer_id.ok_or_else(|| Error::new(ErrorKind::Other, "Invalid Peer"))?);
+        let addr = data
+            .addr
+            .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid SocketAddr"))?;
+        let peer_id = Arc::new(
+            data.peer_id
+                .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid Peer"))?,
+        );
         tokio::spawn(async move {
-            if let Err(e) =
-                handle_connection(addr, peer_id, websocket, data.peers, data.message_handlers.clone(), data.run.clone())
-                    .await
+            if let Err(e) = handle_connection(
+                addr,
+                peer_id,
+                websocket,
+                data.peers,
+                data.message_handlers.clone(),
+                data.run.clone(),
+            )
+            .await
             {
                 error!("Error in websocket connection: {}", e);
             }
@@ -229,7 +222,7 @@ async fn handle_connection(
         WebsocketMsgStream::TokioIo(websocket.await?),
         message_handlers,
         peer_id.clone(),
-        peers.clone()
+        peers.clone(),
     );
     let removed = peers.lock().await.insert(
         *peer_id,

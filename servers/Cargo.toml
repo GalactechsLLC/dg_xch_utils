@@ -31,5 +31,5 @@ tokio-tungstenite = {version = "0.20.1", features = ["rustls-tls-webpki-roots", 
 uuid = {version="1.6.1", features=["v4"]}
 
 [features]
-metrics = ["dep:prometheus"]
+metrics = ["dep:prometheus", "dg_xch_core/metrics", "dg_xch_clients/metrics"]
 default = []

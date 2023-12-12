@@ -1,18 +1,20 @@
-use std::collections::HashMap;
+use crate::version;
+use crate::websocket::farmer::FarmerServerConfig;
 use async_trait::async_trait;
+use blst::min_pk::SecretKey;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::protocols::harvester::HarvesterHandshake;
 use dg_xch_core::protocols::shared::{Handshake, CAPABILITIES, PROTOCOL_VERSION};
-use dg_xch_core::protocols::{ChiaMessage, MessageHandler, NodeType, PeerMap, ProtocolMessageTypes};
+use dg_xch_core::protocols::{
+    ChiaMessage, MessageHandler, NodeType, PeerMap, ProtocolMessageTypes,
+};
 use dg_xch_serialize::ChiaSerialize;
 use hyper_tungstenite::tungstenite::Message;
 use log::{debug, info};
+use std::collections::HashMap;
 use std::io::{Cursor, Error};
 use std::sync::Arc;
-use blst::min_pk::SecretKey;
 use tokio::sync::Mutex;
-use crate::version;
-use crate::websocket::farmer::FarmerServerConfig;
 
 pub struct HandshakeHandle {
     pub config: Arc<FarmerServerConfig>,
@@ -21,7 +23,12 @@ pub struct HandshakeHandle {
 }
 #[async_trait]
 impl MessageHandler for HandshakeHandle {
-    async fn handle(&self, msg: Arc<ChiaMessage>, peer_id: Arc<Bytes32>, peers: PeerMap) -> Result<(), Error> {
+    async fn handle(
+        &self,
+        msg: Arc<ChiaMessage>,
+        peer_id: Arc<Bytes32>,
+        peers: PeerMap,
+    ) -> Result<(), Error> {
         let mut cursor = Cursor::new(&msg.data);
         let handshake = Handshake::from_bytes(&mut cursor)?;
         debug!("New Peer: {}", &peer_id);
@@ -31,7 +38,9 @@ impl MessageHandler for HandshakeHandle {
                 (cfg.network.clone(), cfg.websocket.port)
             };
             *peer.node_type.lock().await = NodeType::from(handshake.node_type);
-            peer.websocket.lock().await
+            peer.websocket
+                .lock()
+                .await
                 .send(Message::Binary(
                     ChiaMessage::new(
                         ProtocolMessageTypes::Handshake,
@@ -48,7 +57,7 @@ impl MessageHandler for HandshakeHandle {
                         },
                         msg.id,
                     )
-                        .to_bytes(),
+                    .to_bytes(),
                 ))
                 .await
                 .unwrap_or_default();
@@ -60,13 +69,7 @@ impl MessageHandler for HandshakeHandle {
                     .iter()
                     .map(|k| k.sk_to_pk().to_bytes().into())
                     .collect();
-                let pool_public_keys = self
-                    .pool_public_keys
-                    .lock()
-                    .await
-                    .keys()
-                    .cloned()
-                    .collect();
+                let pool_public_keys = self.pool_public_keys.lock().await.keys().cloned().collect();
                 info! {"Harvester Connected. Sending Keys: ({:?}n {:?})", &farmer_public_keys, &pool_public_keys}
                 peer.websocket
                     .lock()
@@ -80,7 +83,7 @@ impl MessageHandler for HandshakeHandle {
                             },
                             None,
                         )
-                            .to_bytes(),
+                        .to_bytes(),
                     ))
                     .await
                     .unwrap_or_default();

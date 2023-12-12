@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::protocols::harvester::{HarvesterHandshake, HarvesterState};
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap};
 use dg_xch_pos::PlotManagerAsync;
@@ -32,7 +32,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for HarvesterHandshakeHan
                 .await
                 .set_public_keys(handshake.farmer_public_keys, handshake.pool_public_keys);
         }
-        debug!("Set Key... Loading Plots");
+        info!("Got Keys, Loading Plots.");
         match self
             .plot_manager
             .lock()

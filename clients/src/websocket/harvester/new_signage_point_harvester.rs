@@ -8,16 +8,13 @@ use dg_xch_core::consensus::pot_iterations::{
     calculate_iterations_quality, calculate_sp_interval_iters,
 };
 use dg_xch_core::protocols::harvester::{NewProofOfSpace, NewSignagePointHarvester};
-use dg_xch_core::protocols::{
-    ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes,
-};
-use dg_xch_pos::PlotManagerAsync;
+use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
 use dg_xch_pos::verifier::proof_to_bytes;
+use dg_xch_pos::PlotManagerAsync;
 use dg_xch_serialize::ChiaSerialize;
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use hex::encode;
-use tokio_tungstenite::tungstenite::Message;
 use log::{debug, error, info, trace, warn};
 use std::io::{Cursor, Error};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -25,6 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Default)]
 struct PlotCounts {
@@ -212,7 +210,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                 },
                                                 None,
                                             )
-                                                .to_bytes(),
+                                            .to_bytes(),
                                         ))
                                         .await;
                                     if is_partial {
@@ -225,6 +223,8 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                         proofs.fetch_add(1, Ordering::Relaxed);
                                     }
                                 }
+                            } else {
+                                error!("No Connection to send Proof");
                             }
                         }
                         Err(e) => {

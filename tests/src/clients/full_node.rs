@@ -151,7 +151,12 @@ pub struct NewSignagePointEcho {
 }
 #[async_trait]
 impl MessageHandler for NewSignagePointEcho {
-    async fn handle(&self, msg: Arc<ChiaMessage>, _: Arc<Bytes32>, _: PeerMap) -> Result<(), Error> {
+    async fn handle(
+        &self,
+        msg: Arc<ChiaMessage>,
+        _: Arc<Bytes32>,
+        _: PeerMap,
+    ) -> Result<(), Error> {
         use dg_xch_serialize::ChiaSerialize;
         let mut cursor = Cursor::new(&msg.data);
         let sp = NewSignagePoint::from_bytes(&mut cursor)?;

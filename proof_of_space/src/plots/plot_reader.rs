@@ -10,6 +10,7 @@ use crate::plots::compression::{create_compression_dtable, get_compression_info_
 use crate::plots::decompressor::{
     CompressedQualitiesRequest, Decompressor, DecompressorPool, LinePoint,
 };
+use crate::plots::fx_generator::F1Generator;
 use crate::plots::PROOF_X_COUNT;
 use crate::utils::bit_reader::BitReader;
 use crate::utils::{bytes_to_u64, open_read_only, open_read_only_async, slice_u128from_bytes};
@@ -32,7 +33,6 @@ use std::sync::Arc;
 use std::thread::available_parallelism;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 use tokio::sync::Mutex;
-use crate::plots::fx_generator::F1Generator;
 
 const CHIA_QUALITY_SIZE: usize = 32;
 const HASH_SIZE_MAX: usize = CHIA_QUALITY_SIZE + ucdiv_t(2 * 50, 8);
@@ -56,7 +56,7 @@ pub struct PlotReader<
     pub p7_entries: Mutex<Vec<u64>>,
     fx: Mutex<Vec<u64>>,
     meta: Mutex<Vec<BitReader>>,
-    f1_generator: Arc<F1Generator>
+    f1_generator: Arc<F1Generator>,
 }
 impl<
         F: AsyncSeek + AsyncRead + AsyncSeekExt + AsyncReadExt + Unpin,
@@ -75,7 +75,7 @@ impl<
                     NonZeroUsize::new(8).expect("Safe Value Expected for Non Zero Usize")
                 })
                 .get() as u8,
-            &t.plot_id().bytes
+            &t.plot_id().bytes,
         ));
         let mut reader = Self {
             proof_decompressor,
@@ -408,7 +408,13 @@ impl<
                     Ok(mut rede) => {
                         debug!("Search for proof at index {index} in plot {}", self.file);
                         rede.prealloc_for_clevel(k, c);
-                        match rede.decompress_proof(&plot_id, k, c, lp_idx_src, Some(self.f1_generator.clone())) {
+                        match rede.decompress_proof(
+                            &plot_id,
+                            k,
+                            c,
+                            lp_idx_src,
+                            Some(self.f1_generator.clone()),
+                        ) {
                             Ok(p) => {
                                 pool.push(rede).await;
                                 Ok(p)
@@ -429,7 +435,13 @@ impl<
                 debug!("Search for proof at index {index} in plot {}", self.file);
                 let mut d = Decompressor::default();
                 d.prealloc_for_clevel(k, c);
-                d.decompress_proof(&plot_id, k, compression_level, lp_idx_src, Some(self.f1_generator.clone()))
+                d.decompress_proof(
+                    &plot_id,
+                    k,
+                    compression_level,
+                    lp_idx_src,
+                    Some(self.f1_generator.clone()),
+                )
             }
         } else {
             Ok(first)
@@ -559,7 +571,7 @@ impl<
                     },
                     x_lp1,
                 ],
-                f1_generator: Some(self.f1_generator.clone())
+                f1_generator: Some(self.f1_generator.clone()),
             };
             let k = self.file.k();
             let c = self.file.compression_level();

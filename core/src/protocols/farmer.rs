@@ -1,14 +1,21 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
 use crate::blockchain::pool_target::PoolTarget;
 use crate::blockchain::proof_of_space::ProofOfSpace;
-use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use crate::config::PoolWalletConfig;
+use crate::protocols::error::RecentErrors;
+use crate::protocols::PeerMap;
+use blst::min_pk::SecretKey;
 use dg_xch_macros::ChiaSerial;
 use hyper::body::Buf;
 use log::debug;
+#[cfg(feature = "metrics")]
+use prometheus::core::{AtomicU64, GenericCounter, GenericGauge};
+#[cfg(feature = "metrics")]
+use prometheus::Registry;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -150,6 +157,120 @@ impl Default for FarmerPoolState {
             pool_config: None,
             pool_errors_24h: vec![],
             authentication_token_timeout: None,
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, Copy, Clone)]
+pub enum FarmerRunningState {
+    #[default]
+    Starting,
+    NeedsConfig,
+    Running,
+    Stopped,
+    Failed,
+    PendingReload,
+    Migrating,
+}
+
+pub struct MostRecentSignagePoint {
+    pub hash: Bytes32,
+    pub index: u8,
+    pub timestamp: Instant,
+}
+impl Default for MostRecentSignagePoint {
+    fn default() -> Self {
+        MostRecentSignagePoint {
+            hash: Default::default(),
+            index: 0,
+            timestamp: Instant::now(),
+        }
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct FarmerSharedState {
+    pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
+    pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
+    pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
+    pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
+    pub proofs_of_space: ProofsMap,
+    pub farmer_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
+    pub farmer_private_keys: Arc<Mutex<Vec<SecretKey>>>,
+    pub pool_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
+    pub owner_secret_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
+    pub harvester_peers: PeerMap,
+    pub most_recent_sp: Arc<Mutex<MostRecentSignagePoint>>,
+    pub recent_errors: Arc<Mutex<RecentErrors<String>>>,
+    pub running_state: Arc<Mutex<FarmerRunningState>>,
+    #[cfg(feature = "metrics")]
+    pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
+}
+
+#[cfg(feature = "metrics")]
+#[derive(Debug, Clone)]
+pub struct FarmerMetrics {
+    pub start_time: Arc<Instant>,
+    pub uptime: Option<GenericGauge<AtomicU64>>,
+    pub points_acknowledged_24h: Option<GenericGauge<AtomicU64>>,
+    pub points_found_24h: Option<GenericGauge<AtomicU64>>,
+    pub current_difficulty: Option<GenericGauge<AtomicU64>>,
+    pub proofs_declared: Option<GenericCounter<AtomicU64>>,
+    pub last_signage_point_index: Option<GenericGauge<AtomicU64>>,
+}
+#[cfg(feature = "metrics")]
+impl FarmerMetrics {
+    pub fn new(registry: &Registry) -> Self {
+        let uptime = GenericGauge::new("farmer_uptime", "Uptime of Farmer").map_or(
+            None,
+            |g: GenericGauge<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            },
+        );
+        let points_acknowledged_24h = GenericGauge::new(
+            "points_acknowledged_24h",
+            "Total points acknowledged by pool for all plot nfts",
+        )
+        .map_or(None, |g: GenericGauge<AtomicU64>| {
+            registry.register(Box::new(g.clone())).unwrap_or(());
+            Some(g)
+        });
+        let points_found_24h = GenericGauge::new(
+            "points_found_24h",
+            "Total points fount for all plot nfts",
+        )
+        .map_or(None, |g: GenericGauge<AtomicU64>| {
+            registry.register(Box::new(g.clone())).unwrap_or(());
+            Some(g)
+        });
+        let current_difficulty = GenericGauge::new("current_difficulty", "Current Difficulty")
+            .map_or(None, |g: GenericGauge<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            });
+        let proofs_declared =
+            GenericCounter::new("proofs_declared", "Proofs of Space declared by this farmer")
+                .map_or(None, |g: GenericCounter<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                    Some(g)
+                });
+        let last_signage_point_index = GenericGauge::new(
+            "last_signage_point_index",
+            "Index of Last Signage Point",
+        )
+        .map_or(None, |g: GenericGauge<AtomicU64>| {
+            registry.register(Box::new(g.clone())).unwrap_or(());
+            Some(g)
+        });
+        FarmerMetrics {
+            start_time: Arc::new(Instant::now()),
+            uptime,
+            points_acknowledged_24h,
+            points_found_24h,
+            current_difficulty,
+            proofs_declared,
+            last_signage_point_index,
         }
     }
 }

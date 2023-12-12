@@ -90,7 +90,7 @@ pub fn square_to_line_point128(x: u64, y: u64) -> u128 {
 pub fn line_point_to_square(index: u128) -> (u64, u64) {
     // Performs a square root, without the use of doubles, to use the precision of the u128.
     let mut x = 0;
-    for i in (0..=63).rev(){
+    for i in (0..=63).rev() {
         let new_x = x + (1u64 << i);
         if get_x_enc128(&new_x) <= index {
             x = new_x;

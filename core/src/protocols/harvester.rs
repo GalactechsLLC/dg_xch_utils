@@ -1,9 +1,13 @@
-use std::collections::{HashMap, HashSet};
 use crate::blockchain::proof_of_space::ProofOfSpace;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+#[cfg(feature = "metrics")]
+use std::sync::Arc;
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PoolDifficulty {

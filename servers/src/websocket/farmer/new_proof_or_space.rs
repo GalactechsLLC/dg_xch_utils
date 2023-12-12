@@ -1,4 +1,4 @@
-use crate::websocket::farmer::{FarmerIdentifier, FarmerPoolState, FarmerServerConfig, ProofsMap, update_pool_farmer_info};
+use crate::websocket::farmer::{update_pool_farmer_info, FarmerServerConfig};
 use async_trait::async_trait;
 use blst::min_pk::{AggregateSignature, PublicKey, SecretKey, Signature};
 use blst::BLST_ERROR;
@@ -10,6 +10,11 @@ use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend, AUG_SCHEME_DST};
 use dg_xch_core::consensus::constants::CONSENSUS_CONSTANTS_MAP;
 use dg_xch_core::consensus::pot_iterations::{
     calculate_iterations_quality, calculate_sp_interval_iters,
+};
+#[cfg(feature = "metrics")]
+use dg_xch_core::protocols::farmer::FarmerMetrics;
+use dg_xch_core::protocols::farmer::{
+    FarmerIdentifier, FarmerPoolState, NewSignagePoint, ProofsMap,
 };
 use dg_xch_core::protocols::harvester::{NewProofOfSpace, RequestSignatures, RespondSignatures};
 use dg_xch_core::protocols::pool::{
@@ -27,7 +32,6 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
-use dg_xch_core::protocols::farmer::NewSignagePoint;
 
 static ONE_SHOT_COUNTER: AtomicU16 = AtomicU16::new(0);
 
@@ -42,6 +46,8 @@ pub struct NewProofOfSpaceHandle<T: PoolClient + Sized + Sync + Send + 'static> 
     pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
     pub config: Arc<FarmerServerConfig>,
     pub headers: Arc<HashMap<String, String>>,
+    #[cfg(feature = "metrics")]
+    pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
 }
 #[async_trait]
 impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofOfSpaceHandle<T> {
@@ -58,12 +64,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
         if exists {
             let mut cursor = Cursor::new(&msg.data);
             let new_pos = NewProofOfSpace::from_bytes(&mut cursor)?;
-            if let Some(sps) = self
-                .signage_points
-                .lock()
-                .await
-                .get(&new_pos.sp_hash)
-            {
+            if let Some(sps) = self.signage_points.lock().await.get(&new_pos.sp_hash) {
                 let constants = CONSENSUS_CONSTANTS_MAP
                     .get(&self.config.network)
                     .cloned()
@@ -113,12 +114,10 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                     peer_node_id: *peer_id,
                                 },
                             );
-                            self.cache_time
-                                .lock()
-                                .await
-                                .insert(qs, Instant::now());
+                            self.cache_time.lock().await.insert(qs, Instant::now());
                             if let Some(p) = peers.lock().await.get(&peer_id).cloned() {
-                                let _ = p.websocket
+                                let _ = p
+                                    .websocket
                                     .lock()
                                     .await
                                     .send(Message::Binary(
@@ -127,7 +126,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                             &request,
                                             None,
                                         )
-                                            .to_bytes(),
+                                        .to_bytes(),
                                     ))
                                     .await;
                             }
@@ -157,9 +156,9 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                         );
                                         if required_iters
                                             >= calculate_sp_interval_iters(
-                                            &constants,
-                                            constants.pool_sub_slot_iters,
-                                        )?
+                                                &constants,
+                                                constants.pool_sub_slot_iters,
+                                            )?
                                         {
                                             debug!(
                                                 "Proof of space not good enough for pool {}: {:?}",
@@ -174,9 +173,9 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                             let payload = PostPartialPayload {
                                                 launcher_id,
                                                 authentication_token:
-                                                get_current_authentication_token(
-                                                    auth_token_timeout,
-                                                ),
+                                                    get_current_authentication_token(
+                                                        auth_token_timeout,
+                                                    ),
                                                 proof_of_space: new_pos.proof.clone(),
                                                 sp_hash: new_pos.sp_hash,
                                                 end_of_sub_slot: is_eos,
@@ -206,7 +205,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                     msg_id,
                                                     Some(15000),
                                                 )
-                                                    .await?;
+                                                .await?;
                                                 let response_msg_sig = if let Some(f) =
                                                     respond_sigs.message_signatures.first()
                                                 {
@@ -227,17 +226,14 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                 let local_pk = PublicKey::from_bytes(
                                                     respond_sigs.local_pk.to_sized_bytes(),
                                                 )
-                                                    .map_err(|e| {
-                                                        Error::new(
-                                                            ErrorKind::InvalidInput,
-                                                            format!("{:?}", e),
-                                                        )
-                                                    })?;
-                                                for sk in self
-                                                    .farmer_private_keys
-                                                    .lock()
-                                                    .await
-                                                    .iter()
+                                                .map_err(|e| {
+                                                    Error::new(
+                                                        ErrorKind::InvalidInput,
+                                                        format!("{:?}", e),
+                                                    )
+                                                })?;
+                                                for sk in
+                                                    self.farmer_private_keys.lock().await.iter()
                                                 {
                                                     let pk = sk.sk_to_pk();
                                                     if pk.to_bytes()
@@ -248,9 +244,9 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                         )?;
                                                         if agg_pk.to_bytes()
                                                             != *new_pos
-                                                            .proof
-                                                            .plot_public_key
-                                                            .to_sized_bytes()
+                                                                .proof
+                                                                .plot_public_key
+                                                                .to_sized_bytes()
                                                         {
                                                             return Err(Error::new(
                                                                 ErrorKind::InvalidInput,
@@ -275,12 +271,12 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                             ],
                                                             true,
                                                         )
-                                                            .map_err(|e| {
-                                                                Error::new(
-                                                                    ErrorKind::InvalidInput,
-                                                                    format!("{:?}", e),
-                                                                )
-                                                            })?;
+                                                        .map_err(|e| {
+                                                            Error::new(
+                                                                ErrorKind::InvalidInput,
+                                                                format!("{:?}", e),
+                                                            )
+                                                        })?;
                                                         if p_sig.to_signature().verify(
                                                             true,
                                                             to_sign.as_ref(),
@@ -315,12 +311,12 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                                 ],
                                                                 true,
                                                             )
-                                                                .map_err(|e| {
-                                                                    Error::new(
-                                                                        ErrorKind::InvalidInput,
-                                                                        format!("{:?}", e),
-                                                                    )
-                                                                })?;
+                                                            .map_err(|e| {
+                                                                Error::new(
+                                                                    ErrorKind::InvalidInput,
+                                                                    format!("{:?}", e),
+                                                                )
+                                                            })?;
                                                         let post_request = PostPartialRequest {
                                                             payload,
                                                             aggregate_signature: agg_sig
@@ -346,6 +342,20 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                                 .current_difficulty
                                                                 .unwrap_or_default(),
                                                         ));
+                                                        #[cfg(feature = "metrics")]
+                                                        if let Some(r) =
+                                                            self.metrics.lock().await.as_mut()
+                                                        {
+                                                            use std::time::Duration;
+                                                            let now = Instant::now();
+                                                            if let Some(c) = &mut r.points_found_24h
+                                                            {
+                                                                c.set(
+                                                                    pool_state
+                                                                        .points_found_24h.iter().filter(|v| now.duration_since(v.0) < Duration::from_secs(60 * 60 * 24) ).map(|v| v.1).sum()
+                                                                )
+                                                            }
+                                                        }
                                                         debug!(
                                                             "POST /partial request {:?}",
                                                             &post_request
@@ -375,6 +385,24 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                                             .current_difficulty
                                                                             .unwrap_or_default(),
                                                                     ));
+                                                                #[cfg(feature = "metrics")]
+                                                                if let Some(r) = self
+                                                                    .metrics
+                                                                    .lock()
+                                                                    .await
+                                                                    .as_mut()
+                                                                {
+                                                                    use std::time::Duration;
+                                                                    let now = Instant::now();
+                                                                    if let Some(c) = &mut r
+                                                                        .points_acknowledged_24h
+                                                                    {
+                                                                        c.set(
+                                                                            pool_state
+                                                                                .points_acknowledged_24h.iter().filter(|v| now.duration_since(v.0) < Duration::from_secs(60 * 60 * 24) ).map(|v| v.1).sum()
+                                                                        )
+                                                                    }
+                                                                }
                                                                 if pool_state
                                                                     .current_difficulty
                                                                     .unwrap_or_default()
@@ -387,6 +415,19 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                                 }
                                                                 pool_state.current_difficulty =
                                                                     Some(resp.new_difficulty);
+                                                                #[cfg(feature = "metrics")]
+                                                                if let Some(r) = self
+                                                                    .metrics
+                                                                    .lock()
+                                                                    .await
+                                                                    .as_mut()
+                                                                {
+                                                                    if let Some(c) =
+                                                                        &mut r.current_difficulty
+                                                                    {
+                                                                        c.set(resp.new_difficulty);
+                                                                    }
+                                                                }
                                                                 debug!(
                                                                     "Current Points: {:?} ",
                                                                     pool_state.current_points

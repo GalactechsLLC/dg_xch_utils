@@ -1,17 +1,19 @@
-use std::collections::HashMap;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::protocols::error::RecentErrors;
 use dg_xch_core::protocols::farmer::{FarmerIdentifier, RequestSignedValues};
 use dg_xch_core::protocols::harvester::RequestSignatures;
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
 use dg_xch_serialize::ChiaSerialize;
-use tokio_tungstenite::tungstenite::Message;
+use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
 
 pub struct RequestSignedValuesHandle {
     pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
+    pub recent_errors: Arc<Mutex<RecentErrors<String>>>,
     pub harvester_peers: PeerMap,
 }
 #[async_trait]
@@ -30,7 +32,12 @@ impl MessageHandler for RequestSignedValuesHandle {
             .await
             .get(&request.quality_string)
         {
-            if let Some(peer) = self.harvester_peers.lock().await.get(&identifier.peer_node_id) {
+            if let Some(peer) = self
+                .harvester_peers
+                .lock()
+                .await
+                .get(&identifier.peer_node_id)
+            {
                 let _ = peer
                     .websocket
                     .lock()
@@ -55,6 +62,10 @@ impl MessageHandler for RequestSignedValuesHandle {
             }
             Ok(())
         } else {
+            self.recent_errors
+                .lock()
+                .await
+                .add(format!("Do not have quality {}", &request.quality_string));
             Err(Error::new(
                 ErrorKind::NotFound,
                 format!("Do not have quality {}", &request.quality_string),

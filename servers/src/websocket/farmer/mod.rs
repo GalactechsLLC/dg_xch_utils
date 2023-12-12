@@ -1,32 +1,34 @@
-use std::collections::HashMap;
-use std::io::{Error};
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::time::Instant;
+use crate::websocket::{WebsocketServer, WebsocketServerConfig};
 use blst::min_pk::SecretKey;
-use log::{error, info};
-use tokio::sync::Mutex;
-use uuid::Uuid;
 use dg_xch_clients::api::pool::PoolClient;
 use dg_xch_clients::websocket::farmer::FarmerClient;
-use dg_xch_core::blockchain::proof_of_space::ProofOfSpace;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, hex_to_bytes};
+use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48};
 use dg_xch_core::clvm::bls_bindings::{sign, verify_signature};
 use dg_xch_core::config::PoolWalletConfig;
-use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, PeerMap, ProtocolMessageTypes};
-use dg_xch_core::protocols::farmer::NewSignagePoint;
-use dg_xch_core::protocols::pool::{AuthenticationPayload, get_current_authentication_token, GetFarmerRequest, GetFarmerResponse, PoolError, PoolErrorCode, PostFarmerPayload, PostFarmerRequest, PostFarmerResponse, PutFarmerPayload, PutFarmerRequest, PutFarmerResponse};
+use dg_xch_core::protocols::farmer::{FarmerPoolState, FarmerSharedState};
+use dg_xch_core::protocols::pool::{
+    get_current_authentication_token, AuthenticationPayload, GetFarmerRequest, GetFarmerResponse,
+    PoolError, PoolErrorCode, PostFarmerPayload, PostFarmerRequest, PostFarmerResponse,
+    PutFarmerPayload, PutFarmerRequest, PutFarmerResponse,
+};
+use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
 use dg_xch_keys::decode_puzzle_hash;
-use dg_xch_serialize::{ChiaSerialize, hash_256};
-use crate::websocket::{WebsocketServer, WebsocketServerConfig};
+use dg_xch_serialize::{hash_256, ChiaSerialize};
+use log::{error, info};
+use std::collections::HashMap;
+use std::io::Error;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
 mod handshake;
 mod new_proof_or_space;
 mod respond_signatures;
 
-use handshake::HandshakeHandle;
 use crate::websocket::farmer::new_proof_or_space::NewProofOfSpaceHandle;
 use crate::websocket::farmer::respond_signatures::RespondSignaturesHandle;
+use handshake::HandshakeHandle;
 
 pub struct FarmerServerConfig {
     pub network: String,
@@ -35,120 +37,62 @@ pub struct FarmerServerConfig {
     pub pool_rewards_payout_address: Bytes32,
 }
 
-pub struct FarmerIdentifier {
-    pub plot_identifier: String,
-    pub challenge_hash: Bytes32,
-    pub sp_hash: Bytes32,
-    pub peer_node_id: Bytes32,
-}
-
-pub type ProofsMap = Arc<Mutex<HashMap<Bytes32, Vec<(String, ProofOfSpace)>>>>;
-
-#[derive(Debug, Clone)]
-pub struct FarmerPoolState {
-    pub points_found_since_start: u64,
-    pub points_found_24h: Vec<(Instant, u64)>,
-    pub points_acknowledged_since_start: u64,
-    pub points_acknowledged_24h: Vec<(Instant, u64)>,
-    pub next_farmer_update: Instant,
-    pub next_pool_info_update: Instant,
-    pub current_points: u64,
-    pub current_difficulty: Option<u64>,
-    pub pool_config: Option<PoolWalletConfig>,
-    pub pool_errors_24h: Vec<(Instant, String)>,
-    pub authentication_token_timeout: Option<u8>,
-}
-
 pub struct FarmerServer<T> {
     pub server: WebsocketServer,
-    pub peers: PeerMap,
-    pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
-    pub proofs_of_space: ProofsMap,
-    pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-    pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
-    pub farmer_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
-    pub farmer_private_keys: Arc<Mutex<Vec<SecretKey>>>,
-    pub pool_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
-    pub owner_secret_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
-    pub full_node_client: Arc<Mutex<Option<FarmerClient>>>,
+    pub shared_state: Arc<FarmerSharedState>,
     pub pool_client: Arc<T>,
-    pub additional_headers: Arc<HashMap<String, String>>,
-    pub config: Arc<FarmerServerConfig>
+    pub config: Arc<FarmerServerConfig>,
 }
 impl<T: PoolClient + Sized + Sync + Send + 'static> FarmerServer<T> {
-    pub fn new(config: FarmerServerConfig, pool_client: Arc<T>, additional_headers: Arc<HashMap<String, String>>) -> Result<Self, Error> {
-        let peers = Arc::new(Mutex::new(HashMap::new()));
+    pub fn new(
+        config: FarmerServerConfig,
+        pool_client: Arc<T>,
+        shared_state: Arc<FarmerSharedState>,
+        full_node_client: Arc<Mutex<Option<FarmerClient>>>,
+        additional_headers: Arc<HashMap<String, String>>,
+    ) -> Result<Self, Error> {
         let config = Arc::new(config);
-        let signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>> = Default::default();
-        let quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>> = Default::default();
-        let proofs_of_space: ProofsMap  = Default::default();
-        let cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>> = Default::default();
-        let pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>> = Default::default();
-        let farmer_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>> = Default::default();
-        let farmer_private_keys: Arc<Mutex<Vec<SecretKey>>> = Default::default();
-        let pool_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>> = Default::default();
-        let owner_secret_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>> = Default::default();
-        let full_node_client: Arc<Mutex<Option<FarmerClient>>> = Default::default();
         let handles = Arc::new(Mutex::new(Self::handles(
-            signage_points.clone(),
-            quality_to_identifiers.clone(),
-            proofs_of_space.clone(),
-            cache_time.clone(),
-            pool_state.clone(),
-            farmer_private_keys.clone(),
-            pool_public_keys.clone(),
-            owner_secret_keys.clone(),
-            full_node_client.clone(),
-            pool_client.clone(),
-            additional_headers.clone(),
             config.clone(),
+            pool_client.clone(),
+            shared_state.clone(),
+            full_node_client,
+            additional_headers,
         )));
         Ok(Self {
-            server: WebsocketServer::new(&config.websocket, peers.clone(), handles)?,
-            peers,
-            signage_points,
-            quality_to_identifiers,
-            proofs_of_space,
-            cache_time,
-            pool_state,
-            farmer_public_keys,
-            farmer_private_keys,
-            pool_public_keys,
-            owner_secret_keys,
-            full_node_client,
+            server: WebsocketServer::new(
+                &config.websocket,
+                shared_state.harvester_peers.clone(),
+                handles,
+            )?,
+            shared_state,
             pool_client,
-            additional_headers,
-            config
+            config,
         })
     }
 
     fn handles(
-        signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-        quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
-        proofs_of_space: ProofsMap,
-        cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-        pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
-        farmer_private_keys: Arc<Mutex<Vec<SecretKey>>>,
-        pool_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
-        owner_secret_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
-        full_node_client: Arc<Mutex<Option<FarmerClient>>>,
+        config: Arc<FarmerServerConfig>,
         pool_client: Arc<T>,
+        shared_state: Arc<FarmerSharedState>,
+        full_node_client: Arc<Mutex<Option<FarmerClient>>>,
         additional_headers: Arc<HashMap<String, String>>,
-        config: Arc<FarmerServerConfig>
     ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
         HashMap::from([
-            (Uuid::new_v4(), Arc::new(ChiaMessageHandler::new(
-                Arc::new(ChiaMessageFilter {
-                    msg_type: Some(ProtocolMessageTypes::Handshake),
-                    id: None,
-                }),
-                Arc::new(HandshakeHandle {
-                    config: config.clone(),
-                    farmer_private_keys: Arc::new(Default::default()),
-                    pool_public_keys: Arc::new(Default::default()),
-                }),
-            ))),
+            (
+                Uuid::new_v4(),
+                Arc::new(ChiaMessageHandler::new(
+                    Arc::new(ChiaMessageFilter {
+                        msg_type: Some(ProtocolMessageTypes::Handshake),
+                        id: None,
+                    }),
+                    Arc::new(HandshakeHandle {
+                        config: config.clone(),
+                        farmer_private_keys: shared_state.farmer_private_keys.clone(),
+                        pool_public_keys: shared_state.pool_public_keys.clone(),
+                    }),
+                )),
+            ),
             (
                 Uuid::new_v4(),
                 Arc::new(ChiaMessageHandler::new(
@@ -158,15 +102,17 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> FarmerServer<T> {
                     }),
                     Arc::new(NewProofOfSpaceHandle {
                         pool_client: pool_client.clone(),
-                        signage_points: signage_points.clone(),
-                        quality_to_identifiers: quality_to_identifiers.clone(),
-                        proofs_of_space: proofs_of_space.clone(),
-                        cache_time: cache_time.clone(),
-                        farmer_private_keys: farmer_private_keys.clone(),
-                        owner_secret_keys: owner_secret_keys.clone(),
-                        pool_state: pool_state.clone(),
+                        signage_points: shared_state.signage_points.clone(),
+                        quality_to_identifiers: shared_state.quality_to_identifiers.clone(),
+                        proofs_of_space: shared_state.proofs_of_space.clone(),
+                        cache_time: shared_state.cache_time.clone(),
+                        farmer_private_keys: shared_state.farmer_private_keys.clone(),
+                        owner_secret_keys: shared_state.owner_secret_keys.clone(),
+                        pool_state: shared_state.pool_state.clone(),
                         config: config.clone(),
                         headers: additional_headers.clone(),
+                        #[cfg(feature = "metrics")]
+                        metrics: shared_state.metrics.clone(),
                     }),
                 )),
             ),
@@ -178,17 +124,19 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> FarmerServer<T> {
                         id: None,
                     }),
                     Arc::new(RespondSignaturesHandle {
-                        signage_points,
-                        quality_to_identifiers,
-                        proofs_of_space,
-                        cache_time,
-                        pool_public_keys,
-                        farmer_private_keys,
-                        owner_secret_keys,
-                        pool_state,
-                        full_node_client,
+                        signage_points: shared_state.signage_points.clone(),
+                        quality_to_identifiers: shared_state.quality_to_identifiers.clone(),
+                        proofs_of_space: shared_state.proofs_of_space.clone(),
+                        cache_time: shared_state.cache_time.clone(),
+                        pool_public_keys: shared_state.pool_public_keys.clone(),
+                        farmer_private_keys: shared_state.farmer_private_keys.clone(),
+                        owner_secret_keys: shared_state.owner_secret_keys.clone(),
+                        pool_state: shared_state.pool_state.clone(),
+                        full_node_client: full_node_client.clone(),
                         config,
-                        headers: Arc::new(Default::default()),
+                        headers: additional_headers.clone(),
+                        #[cfg(feature = "metrics")]
+                        metrics: shared_state.metrics.clone(),
                     }),
                 )),
             ),
@@ -226,7 +174,8 @@ pub async fn get_farmer<T: PoolClient + Sized + Sync + Send>(
         launcher_id: pool_config.launcher_id,
         target_puzzle_hash: pool_config.target_puzzle_hash,
         authentication_token,
-    }.to_bytes();
+    }
+    .to_bytes();
     let to_sign = hash_256(&msg);
     let signature = sign(authentication_sk, &to_sign);
     if !verify_signature(&authentication_sk.sk_to_pk(), &to_sign, &signature) {
@@ -355,19 +304,19 @@ pub async fn update_pool_farmer_info<T: PoolClient + Sized + Sync + Send>(
     additional_headers: Arc<HashMap<String, String>>,
 ) -> Result<GetFarmerResponse, PoolError> {
     let response = get_farmer(
-            pool_config,
-            authentication_token_timeout,
-            authentication_sk,
-            client,
-            additional_headers
-        )
-        .await?;
+        pool_config,
+        authentication_token_timeout,
+        authentication_sk,
+        client,
+        additional_headers,
+    )
+    .await?;
     pool_state.current_difficulty = Some(response.current_difficulty);
     pool_state.current_points = response.current_points;
     info!(
-            "Updating Pool Difficulty: {:?} ",
-            pool_state.current_difficulty
-        );
+        "Updating Pool Difficulty: {:?} ",
+        pool_state.current_difficulty
+    );
     info!("Updating Current Points: {:?} ", pool_state.current_points);
     Ok(response)
 }

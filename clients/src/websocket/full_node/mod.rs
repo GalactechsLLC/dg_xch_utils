@@ -1,7 +1,7 @@
 use crate::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::protocols::{ChiaMessageHandler, NodeType};
 use std::collections::HashMap;
-use std::io::{Error};
+use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -16,12 +16,7 @@ impl FullnodeClient {
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let handles = Arc::new(Mutex::new(handles()));
-        let client = WsClient::new(
-            client_config,
-            NodeType::FullNode,
-            handles,
-            run,
-        ).await?;
+        let client = WsClient::new(client_config, NodeType::FullNode, handles, run).await?;
         Ok(FullnodeClient { client })
     }
 

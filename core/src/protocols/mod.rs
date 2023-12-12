@@ -1,3 +1,4 @@
+pub mod error;
 pub mod farmer;
 pub mod full_node;
 pub mod harvester;

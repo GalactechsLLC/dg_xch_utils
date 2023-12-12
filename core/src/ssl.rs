@@ -9,6 +9,7 @@ use rsa::pkcs8::EncodePublicKey;
 use rustls::server::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DistinguishedName, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, read_one, Item};
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
@@ -467,6 +468,23 @@ pub fn generate_ssl_for_nodes_in_memory(
         );
     }
     Ok(map)
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SslCertInfo {
+    #[serde(default)]
+    pub public_crt: Option<String>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    pub private_crt: String,
+    pub private_key: String,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SslInfo {
+    pub root_path: String,
+    pub certs: SslCertInfo,
+    pub ca: SslCertInfo,
 }
 
 #[test]

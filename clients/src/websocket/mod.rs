@@ -9,7 +9,7 @@ use dg_xch_core::protocols::shared::{
     Handshake, NoCertificateVerification, CAPABILITIES, PROTOCOL_VERSION,
 };
 use dg_xch_core::protocols::{
-    ChiaMessage, ChiaMessageFilter, ChiaMessageHandler, MessageHandler, NodeType,
+    ChiaMessage, ChiaMessageFilter, ChiaMessageHandler, MessageHandler, NodeType, SocketPeer,
     WebsocketConnection,
 };
 use dg_xch_core::protocols::{PeerMap, ProtocolMessageTypes, WebsocketMsgStream};
@@ -26,12 +26,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Cursor, Error, ErrorKind};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
-use tokio::{select};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
@@ -67,11 +67,19 @@ impl WsClient {
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (certs, key, cert_str) = if let Some(ssl_info) = &client_config.ssl_info {
-            (load_certs(&ssl_info.ssl_crt_path)?, load_private_key(&ssl_info.ssl_key_path)?, fs::read_to_string(&ssl_info.ssl_crt_path)?)
+            (
+                load_certs(&ssl_info.ssl_crt_path)?,
+                load_private_key(&ssl_info.ssl_key_path)?,
+                fs::read_to_string(&ssl_info.ssl_crt_path)?,
+            )
         } else {
             let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)
                 .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
-            (load_certs_from_bytes(cert_bytes.as_bytes())?, load_private_key_from_bytes(key_bytes.as_bytes())?, cert_bytes)
+            (
+                load_certs_from_bytes(cert_bytes.as_bytes())?,
+                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                cert_bytes,
+            )
         };
         let mut request = format!("wss://{}:{}/ws", client_config.host, client_config.port)
             .into_client_request()
@@ -118,22 +126,38 @@ impl WsClient {
                     .with_safe_defaults()
                     .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
                     .with_client_auth_cert(certs, key)
-                    .map_err(|e| Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e)))?,
-            )))
-        ).await.map_err(|e| {
+                    .map_err(|e| {
+                        Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e))
+                    })?,
+            ))),
+        )
+        .await
+        .map_err(|e| {
             Error::new(
                 ErrorKind::Other,
                 format!("Error Connecting Client: {:?}", e),
             )
         })?;
+        let peers = Arc::new(Mutex::new(HashMap::new()));
         let (ws_con, mut stream) = WebsocketConnection::new(
             WebsocketMsgStream::Tls(stream),
             message_handlers,
-            peer_id,
-            Default::default(),
+            peer_id.clone(),
+            peers.clone(),
         );
         let connection = Arc::new(Mutex::new(ws_con));
-        let ws_client = WsClient { connection, client_config, handle: tokio::spawn(async move { stream.run(run).await }) };
+        peers.lock().await.insert(
+            *peer_id.as_ref(),
+            Arc::new(SocketPeer {
+                node_type: Arc::new(Mutex::new(NodeType::Harvester)),
+                websocket: connection.clone(),
+            }),
+        );
+        let ws_client = WsClient {
+            connection,
+            client_config,
+            handle: tokio::spawn(async move { stream.run(run).await }),
+        };
         ws_client.perform_handshake(node_type).await?;
         Ok(ws_client)
     }
@@ -144,10 +168,7 @@ impl WsClient {
             .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {:?}", e)))
     }
 
-    async fn perform_handshake(
-        &self,
-        node_type: NodeType,
-    ) -> Result<Handshake, Error> {
+    async fn perform_handshake(&self, node_type: NodeType) -> Result<Handshake, Error> {
         oneshot::<Handshake>(
             self.connection.clone(),
             ChiaMessage::new(
@@ -169,7 +190,7 @@ impl WsClient {
             None,
             Some(15000),
         )
-            .await
+        .await
     }
 }
 

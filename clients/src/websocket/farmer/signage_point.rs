@@ -1,21 +1,25 @@
-use std::collections::HashMap;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::proof_of_space::calculate_prefix_bits;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::consensus::pot_iterations::POOL_SUB_SLOT_ITERS;
-use dg_xch_core::protocols::farmer::{FarmerPoolState, NewSignagePoint};
+#[cfg(feature = "metrics")]
+use dg_xch_core::protocols::farmer::FarmerMetrics;
+use dg_xch_core::protocols::farmer::{
+    FarmerPoolState, FarmerRunningState, MostRecentSignagePoint, NewSignagePoint,
+};
 use dg_xch_core::protocols::harvester::{NewSignagePointHarvester, PoolDifficulty};
 use dg_xch_core::protocols::{
     ChiaMessage, MessageHandler, NodeType, PeerMap, ProtocolMessageTypes, SocketPeer,
 };
 use dg_xch_serialize::ChiaSerialize;
-use tokio_tungstenite::tungstenite::Message;
 use log::{debug, info, warn};
+use std::collections::HashMap;
 use std::io::{Cursor, Error};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
 
 pub struct NewSignagePointHandle {
     pub constants: &'static ConsensusConstants,
@@ -23,6 +27,10 @@ pub struct NewSignagePointHandle {
     pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
     pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
     pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
+    pub running_state: Arc<Mutex<FarmerRunningState>>,
+    pub most_recent_sp: Arc<Mutex<MostRecentSignagePoint>>,
+    #[cfg(feature = "metrics")]
+    pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
 }
 #[async_trait]
 impl MessageHandler for NewSignagePointHandle {
@@ -75,12 +83,16 @@ impl MessageHandler for NewSignagePointHandle {
             )
             .to_bytes(),
         );
-        let peers: Vec<Arc<SocketPeer>> = self.harvester_peers.lock().await.values().cloned().collect();
+        let peers: Vec<Arc<SocketPeer>> = self
+            .harvester_peers
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect();
         for peer in peers {
             if *peer.node_type.lock().await == NodeType::Harvester {
-                let _ = peer.websocket
-                    .lock()
-                    .await.send(msg.clone()).await;
+                let _ = peer.websocket.lock().await.send(msg.clone()).await;
             }
         }
         {
@@ -90,17 +102,37 @@ impl MessageHandler for NewSignagePointHandle {
                 signage_points.insert(sp.challenge_chain_sp, vec![]);
             }
         }
-        let now = Instant::now();
-        self.pool_state
-            .lock()
-            .await
-            .iter_mut()
-            .for_each(|(_, s)| {
-                s.points_acknowledged_24h
-                    .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
-                s.points_found_24h
-                    .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
-            });
+        #[cfg(feature = "metrics")]
+        {
+            let now = Instant::now();
+            let sums = self
+                .pool_state
+                .lock()
+                .await
+                .iter_mut()
+                .map(|(_, s)| {
+                    s.points_acknowledged_24h
+                        .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
+                    s.points_found_24h
+                        .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
+                    (
+                        s.points_acknowledged_24h.iter().map(|(_, v)| *v).sum(),
+                        s.points_found_24h.iter().map(|(_, v)| *v).sum(),
+                    )
+                })
+                .collect::<Vec<(u64, u64)>>();
+            if let Some(r) = self.metrics.lock().await.as_mut() {
+                if let Some(c) = &mut r.points_acknowledged_24h {
+                    c.set(sums.iter().map(|(v, _)| *v).sum());
+                }
+                if let Some(c) = &mut r.points_found_24h {
+                    c.set(sums.iter().map(|(_, v)| *v).sum());
+                }
+                if let Some(c) = &mut r.last_signage_point_index {
+                    c.set(sp.signage_point_index as u64);
+                }
+            }
+        }
         if let Some(sps) = self
             .signage_points
             .lock()
@@ -109,6 +141,11 @@ impl MessageHandler for NewSignagePointHandle {
         {
             sps.push(sp.clone());
         }
+        *self.most_recent_sp.lock().await = MostRecentSignagePoint {
+            hash: sp.challenge_chain_sp,
+            index: sp.signage_point_index,
+            timestamp: Instant::now(),
+        };
         self.cache_time
             .lock()
             .await

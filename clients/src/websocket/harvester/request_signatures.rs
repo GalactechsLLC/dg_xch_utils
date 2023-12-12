@@ -4,17 +4,15 @@ use dg_xch_core::blockchain::proof_of_space::generate_plot_public_key;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::clvm::bls_bindings::sign_prepend;
 use dg_xch_core::protocols::harvester::{RequestSignatures, RespondSignatures};
-use dg_xch_core::protocols::{
-    ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes,
-};
+use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
 use dg_xch_keys::master_sk_to_local_sk;
 use dg_xch_pos::{PathInfo, PlotManagerAsync};
 use dg_xch_serialize::ChiaSerialize;
-use tokio_tungstenite::tungstenite::Message;
 use log::{debug, error};
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
 
 pub struct RequestSignaturesHandle<T> {
     pub plot_manager: Arc<Mutex<T>>,
@@ -76,7 +74,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
                         },
                         msg.id,
                     )
-                        .to_bytes(),
+                    .to_bytes(),
                 ))
                 .await;
         } else {

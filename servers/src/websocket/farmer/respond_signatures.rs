@@ -1,25 +1,30 @@
-use std::collections::HashMap;
+use crate::websocket::farmer::FarmerServerConfig;
 use async_trait::async_trait;
 use blst::min_pk::{AggregateSignature, SecretKey};
 use blst::BLST_ERROR;
+use dg_xch_clients::websocket::farmer::FarmerClient;
 use dg_xch_core::blockchain::pool_target::PoolTarget;
 use dg_xch_core::blockchain::proof_of_space::{generate_plot_public_key, generate_taproot_sk};
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend, AUG_SCHEME_DST};
 use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS_MAP, MAINNET};
-use dg_xch_core::protocols::farmer::{DeclareProofOfSpace, NewSignagePoint, SignedValues};
+#[cfg(feature = "metrics")]
+use dg_xch_core::protocols::farmer::FarmerMetrics;
+use dg_xch_core::protocols::farmer::{
+    DeclareProofOfSpace, FarmerIdentifier, FarmerPoolState, NewSignagePoint, ProofsMap,
+    SignedValues,
+};
 use dg_xch_core::protocols::harvester::RespondSignatures;
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
 use dg_xch_pos::verify_and_get_quality_string;
 use dg_xch_serialize::ChiaSerialize;
 use hyper_tungstenite::tungstenite::Message;
 use log::{debug, error, info, warn};
+use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
-use dg_xch_clients::websocket::farmer::FarmerClient;
-use crate::websocket::farmer::{FarmerIdentifier, FarmerPoolState, FarmerServerConfig, ProofsMap};
 
 pub struct RespondSignaturesHandle {
     pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
@@ -33,6 +38,8 @@ pub struct RespondSignaturesHandle {
     pub full_node_client: Arc<Mutex<Option<FarmerClient>>>,
     pub config: Arc<FarmerServerConfig>,
     pub headers: Arc<HashMap<String, String>>,
+    #[cfg(feature = "metrics")]
+    pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
 }
 #[async_trait]
 impl MessageHandler for RespondSignaturesHandle {
@@ -44,12 +51,7 @@ impl MessageHandler for RespondSignaturesHandle {
     ) -> Result<(), Error> {
         let mut cursor = Cursor::new(&msg.data);
         let response = RespondSignatures::from_bytes(&mut cursor)?;
-        if let Some(sps) = self
-            .signage_points
-            .lock()
-            .await
-            .get(&response.sp_hash)
-        {
+        if let Some(sps) = self.signage_points.lock().await.get(&response.sp_hash) {
             if sps.is_empty() {
                 error!("Missing Signage Points for {}", &response.sp_hash);
             } else {
@@ -216,15 +218,14 @@ impl MessageHandler for RespondSignaturesHandle {
                                     ) =
                                         &pospace.pool_public_key
                                     {
-                                        if let Some(sk) = self
-                                            .pool_public_keys
-                                            .lock()
-                                            .await
-                                            .get(pool_public_key)
+                                        if let Some(sk) =
+                                            self.pool_public_keys.lock().await.get(pool_public_key)
                                         {
                                             let pool_target = PoolTarget {
                                                 max_height: 0,
-                                                puzzle_hash: self.config.pool_rewards_payout_address,
+                                                puzzle_hash: self
+                                                    .config
+                                                    .pool_rewards_payout_address,
                                             };
                                             let pool_target_signature =
                                                 sign(sk, &pool_target.to_bytes());
@@ -250,7 +251,9 @@ impl MessageHandler for RespondSignaturesHandle {
                                             .to_signature()
                                             .to_bytes()
                                             .into(),
-                                        farmer_puzzle_hash: self.config.farmer_reward_payout_address,
+                                        farmer_puzzle_hash: self
+                                            .config
+                                            .farmer_reward_payout_address,
                                         pool_target,
                                         pool_signature: pool_target_signature
                                             .map(|s| s.to_bytes().into()),
@@ -269,23 +272,16 @@ impl MessageHandler for RespondSignaturesHandle {
                                                     &request,
                                                     None,
                                                 )
-                                                    .to_bytes(),
+                                                .to_bytes(),
                                             ))
                                             .await;
                                         info!("Declaring Proof of Space: {:?}", request);
-                                        info!(
-                                            "
-                             +&-
-                           _.-^-._     .--.
-   Proof Found!          .-'   _   '-. |__|
-                       /     |_|     \\|  |
-                      /               \\  |
-                     /|     _____     |\\ |
-                      |    |==|==|    |  |
-  |---|---|---|---|---|    |--|--|    |  |
-  |---|---|---|---|---|    |==|==|    |  |
- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
-                                        );
+                                        #[cfg(feature = "metrics")]
+                                        if let Some(r) = self.metrics.lock().await.as_mut() {
+                                            if let Some(c) = &mut r.proofs_declared {
+                                                c.inc();
+                                            }
+                                        }
                                     } else {
                                         error!(
                                             "Failed to declare Proof of Space: {:?} No Client",
@@ -350,8 +346,8 @@ impl MessageHandler for RespondSignaturesHandle {
                                     let foliage_agg_sig =
                                         AggregateSignature::aggregate(&foliage_sigs_to_agg, true)
                                             .map_err(|e| {
-                                                Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
-                                            })?;
+                                            Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
+                                        })?;
 
                                     let foliage_block_sigs_to_agg =
                                         if let Some(foliage_transaction_block_sig_taproot) =
@@ -372,9 +368,9 @@ impl MessageHandler for RespondSignaturesHandle {
                                         &foliage_block_sigs_to_agg,
                                         true,
                                     )
-                                        .map_err(|e| {
-                                            Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
-                                        })?;
+                                    .map_err(|e| {
+                                        Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
+                                    })?;
                                     if foliage_agg_sig.to_signature().verify(
                                         true,
                                         foliage_block_data_hash.as_ref(),
@@ -431,7 +427,7 @@ impl MessageHandler for RespondSignaturesHandle {
                                                     &request,
                                                     None,
                                                 )
-                                                    .to_bytes(),
+                                                .to_bytes(),
                                             ))
                                             .await;
                                         info!("Sending Signed Values: {:?}", request);

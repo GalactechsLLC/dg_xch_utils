@@ -98,7 +98,7 @@ pub struct CompressedQualitiesRequest<'a> {
     pub compression_level: u8,
     pub challenge: &'a [u8],
     pub line_points: [LinePoint; 2],
-    pub f1_generator: Option<Arc<F1Generator>>
+    pub f1_generator: Option<Arc<F1Generator>>,
 }
 unsafe impl<'a> Send for CompressedQualitiesRequest<'a> {}
 unsafe impl<'a> Sync for CompressedQualitiesRequest<'a> {}
@@ -121,7 +121,7 @@ pub struct ProofRequest {
     full_proof: Vec<u64>,       //[u64; POST_PROOF_X_COUNT],
     c_level: u8,
     plot_id: Bytes32,
-    f1_generator: Option<Arc<F1Generator>>
+    f1_generator: Option<Arc<F1Generator>>,
 }
 
 #[derive(Debug)]
@@ -350,8 +350,13 @@ impl Decompressor {
         let mut x_groups = [0u32; POST_PROOF_X_COUNT];
         if req.c_level < 9 {
             let mut j = 0usize;
-            for xs in req.compressed_proof.iter().take(num_groups).copied()
-                .map(line_point_to_square64) {
+            for xs in req
+                .compressed_proof
+                .iter()
+                .take(num_groups)
+                .copied()
+                .map(line_point_to_square64)
+            {
                 x_groups[j] = xs.1 as u32;
                 x_groups[j + 1] = xs.0 as u32;
                 j += 2;
@@ -360,8 +365,13 @@ impl Decompressor {
             let entry_bits = get_compression_info_for_level(req.c_level).entry_size_bits;
             let mask = (1 << entry_bits) - 1;
             let mut j = 0usize;
-            for xs in req.compressed_proof.iter().take(num_groups / 2).copied()
-                .map(line_point_to_square64) {
+            for xs in req
+                .compressed_proof
+                .iter()
+                .take(num_groups / 2)
+                .copied()
+                .map(line_point_to_square64)
+            {
                 x_groups[j] = (xs.1 as u32) & mask;
                 x_groups[j + 1] = (xs.1 as u32) >> entry_bits;
                 x_groups[j + 2] = (xs.0 as u32) & mask;
@@ -379,7 +389,9 @@ impl Decompressor {
         let thread_count = self.config.thread_count;
         let mut table_context = TableContext {
             context: self,
-            f1_generator: if let Some(f1) = &req.f1_generator {f1.clone()} else {
+            f1_generator: if let Some(f1) = &req.f1_generator {
+                f1.clone()
+            } else {
                 Arc::new(F1Generator::new(k, thread_count, req.plot_id.as_ref()))
             },
             entries_per_bucket: entries_per_bucket as isize,
@@ -1713,14 +1725,14 @@ impl Decompressor {
         k: u8,
         c_level: u8,
         compressed_proof: &[u64],
-        f1_generator: Option<Arc<F1Generator>>
+        f1_generator: Option<Arc<F1Generator>>,
     ) -> Result<Vec<u64>, Error> {
         let mut req = ProofRequest {
             compressed_proof: vec![0u64; k as usize],
             full_proof: vec![0u64; k as usize * 2],
             c_level,
             plot_id: *plot_id,
-            f1_generator
+            f1_generator,
         };
         let compressed_proof_count = if c_level < 9 {
             PROOF_X_COUNT / 2
@@ -1809,7 +1821,9 @@ impl Decompressor {
             let thread_count = self.config.thread_count;
             let mut table_context = TableContext {
                 context: self,
-                f1_generator: if let Some(f1) = req.f1_generator {f1.clone()} else {
+                f1_generator: if let Some(f1) = req.f1_generator {
+                    f1.clone()
+                } else {
                     Arc::new(F1Generator::new(k, thread_count, req.plot_id.as_ref()))
                 },
                 entries_per_bucket: entries_per_bucket as isize,
