@@ -26,6 +26,7 @@ mod handshake;
 mod new_proof_or_space;
 mod respond_signatures;
 
+use crate::rpc::DefaultRpcHandler;
 use crate::websocket::farmer::new_proof_or_space::NewProofOfSpaceHandle;
 use crate::websocket::farmer::respond_signatures::RespondSignaturesHandle;
 use handshake::HandshakeHandle;
@@ -38,7 +39,7 @@ pub struct FarmerServerConfig {
 }
 
 pub struct FarmerServer<T> {
-    pub server: WebsocketServer,
+    pub server: WebsocketServer<(), DefaultRpcHandler<()>>,
     pub shared_state: Arc<FarmerSharedState>,
     pub pool_client: Arc<T>,
     pub config: Arc<FarmerServerConfig>,
@@ -64,6 +65,8 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> FarmerServer<T> {
                 &config.websocket,
                 shared_state.harvester_peers.clone(),
                 handles,
+                Arc::new(DefaultRpcHandler::new()),
+                Arc::new(()),
             )?,
             shared_state,
             pool_client,

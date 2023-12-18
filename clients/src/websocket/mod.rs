@@ -3,6 +3,7 @@ pub mod full_node;
 pub mod harvester;
 pub mod wallet;
 
+use crate::ClientSSLConfig;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_core::protocols::shared::{
@@ -20,15 +21,15 @@ use dg_xch_core::ssl::{
 use dg_xch_serialize::{hash_256, ChiaSerialize};
 use log::debug;
 use reqwest::header::{HeaderName, HeaderValue};
-use rustls::ClientConfig;
+use rustls::{Certificate, ClientConfig, PrivateKey};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Cursor, Error, ErrorKind};
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use std::{env, fs};
 use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
@@ -58,19 +59,30 @@ pub struct WsClient {
     pub connection: Arc<Mutex<WebsocketConnection>>,
     pub client_config: Arc<WsClientConfig>,
     handle: JoinHandle<()>,
+    run: Arc<AtomicBool>,
 }
 impl WsClient {
     pub async fn new(
         client_config: Arc<WsClientConfig>,
         node_type: NodeType,
         message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
-        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (certs, key, cert_str) = if let Some(ssl_info) = &client_config.ssl_info {
             (
                 load_certs(&ssl_info.ssl_crt_path)?,
                 load_private_key(&ssl_info.ssl_key_path)?,
                 fs::read_to_string(&ssl_info.ssl_crt_path)?,
+            )
+        } else if let (Some(crt), Some(key)) = (
+            env::var("PRIVATE_CA_CRT").ok(),
+            env::var("PRIVATE_CA_KEY").ok(),
+        ) {
+            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(&crt, &key)
+                .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+            (
+                load_certs_from_bytes(cert_bytes.as_bytes())?,
+                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                cert_bytes,
             )
         } else {
             let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)
@@ -81,6 +93,55 @@ impl WsClient {
                 cert_bytes,
             )
         };
+        Self::build(
+            client_config,
+            node_type,
+            message_handlers,
+            Arc::new(AtomicBool::new(true)),
+            certs,
+            key,
+            cert_str,
+        )
+        .await
+    }
+    pub async fn with_ca(
+        client_config: Arc<crate::websocket::WsClientConfig>,
+        node_type: NodeType,
+        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        run: Arc<AtomicBool>,
+        cert_data: &str,
+        key_data: &str,
+    ) -> Result<Self, Error> {
+        let (certs, key, cert_str) = {
+            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
+                .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+            (
+                load_certs_from_bytes(cert_bytes.as_bytes())?,
+                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                cert_bytes,
+            )
+        };
+        Self::build(
+            client_config,
+            node_type,
+            message_handlers,
+            run,
+            certs,
+            key,
+            cert_str,
+        )
+        .await
+    }
+
+    async fn build(
+        client_config: Arc<crate::websocket::WsClientConfig>,
+        node_type: NodeType,
+        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        run: Arc<AtomicBool>,
+        certs: Vec<Certificate>,
+        key: PrivateKey,
+        cert_str: String,
+    ) -> Result<Self, Error> {
         let mut request = format!("wss://{}:{}/ws", client_config.host, client_config.port)
             .into_client_request()
             .map_err(|e| {
@@ -153,19 +214,30 @@ impl WsClient {
                 websocket: connection.clone(),
             }),
         );
+        let handle_run = run.clone();
         let ws_client = WsClient {
             connection,
             client_config,
-            handle: tokio::spawn(async move { stream.run(run).await }),
+            handle: tokio::spawn(async move { stream.run(handle_run).await }),
+            run,
         };
         ws_client.perform_handshake(node_type).await?;
         Ok(ws_client)
+    }
+
+    pub async fn shutdown(&mut self) -> Result<(), Error> {
+        self.run.store(false, Ordering::Relaxed);
+        self.connection.lock().await.shutdown().await
     }
 
     pub async fn join(self) -> Result<(), Error> {
         self.handle
             .await
             .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {:?}", e)))
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.handle.is_finished()
     }
 
     async fn perform_handshake(&self, node_type: NodeType) -> Result<Handshake, Error> {
@@ -192,12 +264,6 @@ impl WsClient {
         )
         .await
     }
-}
-
-pub struct ClientSSLConfig {
-    pub ssl_crt_path: String,
-    pub ssl_key_path: String,
-    pub ssl_ca_crt_path: String,
 }
 
 pub struct WsClientConfig {

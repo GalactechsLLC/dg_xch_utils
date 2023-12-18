@@ -1,3 +1,4 @@
+pub mod rpc;
 pub mod websocket;
 
 fn _version() -> &'static str {

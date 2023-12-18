@@ -5,7 +5,7 @@ use log::{error, info};
 use rand::Rng;
 use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey};
 use rsa::pkcs1v15::SigningKey;
-use rsa::pkcs8::EncodePublicKey;
+use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
 use rustls::server::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DistinguishedName, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, read_one, Item};
@@ -159,18 +159,20 @@ pub fn load_private_key(filename: &str) -> Result<PrivateKey, Error> {
 pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKey, Error> {
     let mut reader = BufReader::new(bytes);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
-        match item? {
-            Item::X509Certificate(_) => error!("Found Certificate, not Private Key"),
-            Item::RSAKey(key) => {
+        match item {
+            Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
+            Ok(Item::RSAKey(key)) => {
                 return Ok(PrivateKey(key));
             }
-            Item::PKCS8Key(key) => {
+            Ok(Item::PKCS8Key(key)) => {
                 return Ok(PrivateKey(key));
             }
-            Item::ECKey(key) => {
+            Ok(Item::ECKey(key)) => {
                 return Ok(PrivateKey(key));
             }
-            _ => error!("Unknown Item while loading private key"),
+            _ => {
+                error!("Unknown Item while loading private key")
+            }
         }
     }
     Err(Error::new(ErrorKind::NotFound, "Private Key Not Found"))
@@ -222,6 +224,7 @@ pub fn generate_ca_signed_cert_data(
     let root_cert = Certificate::from_pem(cert_data.as_bytes())
         .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let root_key = rsa::RsaPrivateKey::from_pkcs1_pem(key_data)
+        .or_else(|_| rsa::RsaPrivateKey::from_pkcs8_pem(key_data))
         .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let mut rng = rand::thread_rng();
     let cert_key = rsa::RsaPrivateKey::new(&mut rng, 2048)
@@ -272,7 +275,7 @@ pub fn generate_ca_signed_cert_data(
         cert.to_pem(LineEnding::LF)
             .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?,
         cert_key
-            .to_pkcs1_pem(LineEnding::LF)
+            .to_pkcs8_pem(LineEnding::LF)
             .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?
             .to_string(),
     ))
@@ -457,8 +460,7 @@ pub fn generate_ssl_for_nodes_in_memory(
 ) -> Result<HashMap<String, MemoryNodeSSL>, Error> {
     let mut map = HashMap::new();
     for node_name in nodes {
-        let (cert, key) = generate_ca_signed_cert_data(crt, key)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+        let (cert, key) = generate_ca_signed_cert_data(crt, key)?;
         map.insert(
             node_name.to_string(),
             MemoryNodeSSL {

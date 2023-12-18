@@ -30,12 +30,13 @@ use crate::api::responses::{
     NetworkInfoResp, SignagePointOrEOSResp, TXResp, UnfinishedBlockAryResp,
 };
 use crate::rpc::{get_client, get_url, post};
+use crate::ClientSSLConfig;
 
 pub struct FullnodeClient {
     client: Client,
     pub host: String,
     pub port: u16,
-    pub ssl_path: Option<String>,
+    pub ssl_path: Option<ClientSSLConfig>,
     pub additional_headers: Option<HashMap<String, String>>,
 }
 
@@ -43,11 +44,12 @@ impl FullnodeClient {
     pub fn new(
         host: &str,
         port: u16,
-        ssl_path: Option<String>,
+        timeout: u64,
+        ssl_path: Option<ClientSSLConfig>,
         additional_headers: &Option<HashMap<String, String>>,
     ) -> Self {
         FullnodeClient {
-            client: get_client(ssl_path.clone()).unwrap_or_default(),
+            client: get_client(ssl_path.clone(), timeout).unwrap(),
             host: host.to_string(),
             port,
             ssl_path,
@@ -676,12 +678,7 @@ impl FullnodeExtAPI for FullnodeClient {
 
 #[tokio::test]
 async fn test_extended_functions() {
-    let fnc = FullnodeClient::new(
-        "localhost",
-        8555,
-        Some("~/.chia/mainnet/config/ssl".to_string()),
-        &None,
-    );
+    let fnc = FullnodeClient::new("localhost", 8555, 10, None, &None);
     fnc.get_blockchain_state().await.unwrap();
     let (additions, _removals) = fnc
         .get_additions_and_removals_with_hints(&Bytes32::from(

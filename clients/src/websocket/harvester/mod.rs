@@ -27,7 +27,6 @@ impl HarvesterClient {
         plot_manager: Arc<Mutex<T>>,
         plots_ready: Arc<AtomicBool>,
         harvester_state: Arc<Mutex<HarvesterState>>,
-        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let constants = CONSENSUS_CONSTANTS_MAP
             .get(&client_config.network_id)
@@ -38,7 +37,7 @@ impl HarvesterClient {
             plots_ready,
             harvester_state,
         )));
-        let client = WsClient::new(client_config, NodeType::Harvester, handles, run).await?;
+        let client = WsClient::new(client_config, NodeType::Harvester, handles).await?;
         Ok(HarvesterClient { client })
     }
 

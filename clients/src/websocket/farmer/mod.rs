@@ -8,7 +8,6 @@ use dg_xch_core::protocols::{
 };
 use std::collections::HashMap;
 use std::io::Error;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -24,13 +23,12 @@ impl FarmerClient {
     pub async fn new(
         client_config: Arc<WsClientConfig>,
         shared_state: Arc<FarmerSharedState>,
-        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let constants = CONSENSUS_CONSTANTS_MAP
             .get(&client_config.network_id)
             .unwrap_or(&MAINNET);
         let handles = Arc::new(Mutex::new(handles(constants, shared_state.clone())));
-        let client = WsClient::new(client_config, NodeType::Farmer, handles, run.clone()).await?;
+        let client = WsClient::new(client_config, NodeType::Farmer, handles).await?;
         Ok(FarmerClient {
             client,
             shared_state,

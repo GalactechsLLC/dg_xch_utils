@@ -46,6 +46,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
             fullnode_client: FullnodeClient::new(
                 &config.fullnode_host,
                 config.fullnode_port,
+                60,
                 config.fullnode_ssl_path.clone(),
                 &config.additional_headers,
             ),

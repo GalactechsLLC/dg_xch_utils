@@ -7,6 +7,7 @@ use dg_xch_cli::wallet_commands::{
 };
 use dg_xch_clients::api::pool::create_pool_login_url;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
+use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use simple_logger::SimpleLogger;
 use std::io::Error;
@@ -29,7 +30,12 @@ async fn main() -> Result<(), Error> {
             let client = FullnodeClient::new(
                 &host,
                 cli.fullnode_port.unwrap_or(8444),
-                cli.ssl_path,
+                60,
+                cli.ssl_path.map(|v| ClientSSLConfig {
+                    ssl_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                    ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                    ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                }),
                 &None,
             );
             migrate_plot_nft(
@@ -50,7 +56,12 @@ async fn main() -> Result<(), Error> {
             let client = FullnodeClient::new(
                 &host,
                 cli.fullnode_port.unwrap_or(8444),
-                cli.ssl_path,
+                60,
+                cli.ssl_path.map(|v| ClientSSLConfig {
+                    ssl_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                    ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                    ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                }),
                 &None,
             );
             let owner_key = SecretKey::from_bytes(Bytes32::from(&owner_key).as_ref())
@@ -68,7 +79,12 @@ async fn main() -> Result<(), Error> {
             let client = FullnodeClient::new(
                 &host,
                 cli.fullnode_port.unwrap_or(8444),
-                cli.ssl_path,
+                60,
+                cli.ssl_path.map(|v| ClientSSLConfig {
+                    ssl_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                    ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                    ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+                }),
                 &None,
             );
             get_plotnft_ready_state(&client, &Bytes32::from(launcher_id))
