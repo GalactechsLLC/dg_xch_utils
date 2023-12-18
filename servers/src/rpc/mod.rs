@@ -75,20 +75,26 @@ impl RpcServer {
                 res = listener.accept() => {
                     match res {
                         Ok((stream, _)) => {
-                            info!("New Client Connection");
-                            let stream = acceptor.accept(stream).await?;
-                            let server = server.clone();
-                            let service = service_fn(move |req| {
-                                let server = server.clone();
-                                connection_handler(server, req)
-                            });
-                            let connection = http.serve_connection(TokioIo::new(stream), service);
-                            tokio::spawn( async move {
-                                if let Err(err) = connection.await {
-                                    error!("Error serving connection: {:?}", err);
+                            match acceptor.accept(stream).await {
+                                Ok(stream) => {
+                                    info!("New Client Connection");
+                                    let server = server.clone();
+                                    let service = service_fn(move |req| {
+                                        let server = server.clone();
+                                        connection_handler(server, req)
+                                    });
+                                    let connection = http.serve_connection(TokioIo::new(stream), service);
+                                    tokio::spawn( async move {
+                                        if let Err(err) = connection.await {
+                                            error!("Error serving connection: {:?}", err);
+                                        }
+                                        Ok::<(), Error>(())
+                                    });
                                 }
-                                Ok::<(), Error>(())
-                            });
+                                Err(e) => {
+                                    error!("Error accepting connection: {:?}", e);
+                                }
+                            }
                         }
                         Err(e) => {
                             error!("Error accepting connection: {:?}", e);
