@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_cli"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "CLI Utilities for the Chia Blockchain"
@@ -22,12 +22,12 @@ bip39 = {version= "2.0.0", features=["rand"] }
 blst = "0.3.11"
 clap = { version = "4.4.8", features = ["derive"] }
 dashmap = "5.5.3"
-dg_xch_clients = {path = "../clients", version="2.0.0"}
-dg_xch_core = {path = "../core", version = "2.0.0", features = ["paperclip"] }
-dg_xch_keys = {path = "../keys", version="2.0.0"}
-dg_xch_pos = {path = "../proof_of_space", version="2.0.0"}
-dg_xch_puzzles = {path = "../puzzles", version="2.0.0"}
-dg_xch_serialize= {path = "../serialize", version="2.0.0"}
+dg_xch_clients = {path = "../clients", version="2.0.1"}
+dg_xch_core = {path = "../core", version = "2.0.1", features = ["paperclip"] }
+dg_xch_keys = {path = "../keys", version="2.0.1"}
+dg_xch_pos = {path = "../proof_of_space", version="2.0.1"}
+dg_xch_puzzles = {path = "../puzzles", version="2.0.1"}
+dg_xch_serialize= {path = "../serialize", version="2.0.1"}
 hex = "0.4.3"
 lazy_static = "1.4.0"
 log = "0.4.20"
