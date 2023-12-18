@@ -1,4 +1,3 @@
-use crate::rpc::DefaultRpcHandler;
 use crate::websocket::harvester::handshake::HandshakeHandle;
 use crate::websocket::{WebsocketServer, WebsocketServerConfig};
 use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
@@ -17,7 +16,7 @@ pub struct HarvesterServerConfig {
 }
 
 pub struct HarvesterServer {
-    pub server: WebsocketServer<(), DefaultRpcHandler<()>>,
+    pub server: WebsocketServer,
     pub config: Arc<HarvesterServerConfig>,
 }
 impl HarvesterServer {
@@ -25,13 +24,7 @@ impl HarvesterServer {
         let config = Arc::new(config);
         let handles = Arc::new(Mutex::new(Self::handles(config.clone())));
         Ok(Self {
-            server: WebsocketServer::new(
-                &config.websocket,
-                Default::default(),
-                handles,
-                Arc::new(DefaultRpcHandler::new()),
-                Arc::new(()),
-            )?,
+            server: WebsocketServer::new(&config.websocket, Default::default(), handles)?,
             config,
         })
     }

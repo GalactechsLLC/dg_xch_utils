@@ -44,6 +44,9 @@ impl ClientCertVerifier for AllowAny {
         info!("In Farmer client_auth_root_subjects");
         &[]
     }
+    fn client_auth_mandatory(&self) -> bool {
+        false
+    }
     fn verify_client_cert(
         &self,
         _end_entity: &rustls::Certificate,

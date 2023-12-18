@@ -66,6 +66,7 @@ impl WsClient {
         client_config: Arc<WsClientConfig>,
         node_type: NodeType,
         message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (certs, key, cert_str) = if let Some(ssl_info) = &client_config.ssl_info {
             (
@@ -97,7 +98,7 @@ impl WsClient {
             client_config,
             node_type,
             message_handlers,
-            Arc::new(AtomicBool::new(true)),
+            run,
             certs,
             key,
             cert_str,
