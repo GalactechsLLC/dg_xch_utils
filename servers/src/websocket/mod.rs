@@ -31,6 +31,7 @@ use tokio::select;
 use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::tungstenite;
+use tokio_tungstenite::tungstenite::error::TlsError;
 use uuid::Uuid;
 
 pub struct WebsocketServerConfig {
@@ -228,7 +229,22 @@ async fn connection_handler(
             .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid SocketAddr"))?;
         let peer_id = Arc::new(
             data.peer_id
-                .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid Peer"))?,
+                .or_else(|| {
+                    if let Some(key) = data.req.headers().get("ssl-client-cert") {
+                        debug!("Using ssl-client header");
+                        Some(Bytes32::new(&hash_256(key.as_bytes())))
+                    } else if let Some(key) = data.req.headers().get("chia-client-cert") {
+                        Some(Bytes32::new(&hash_256(key.as_bytes())))
+                    } else {
+                        error!("Invalid Peer - No Cert or Header");
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    tungstenite::error::Error::Tls(TlsError::Rustls(
+                        rustls::Error::NoCertificatesPresented,
+                    ))
+                })?,
         );
         tokio::spawn(async move {
             if let Err(e) = handle_connection(
