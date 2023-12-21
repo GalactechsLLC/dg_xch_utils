@@ -125,6 +125,15 @@ pub trait FullnodeExtAPI {
         start_height: u32,
         end_height: u32,
     ) -> Result<Vec<CoinRecord>, Error>;
+    async fn get_coin_records_by_hints_paginated(
+        &self,
+        hints: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+        page_size: Option<u32>,
+        last_id: Option<Bytes32>,
+    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error>;
     async fn get_coin_records_by_puzzle_hashes_paginated(
         &self,
         puzzle_hashes: &[Bytes32],

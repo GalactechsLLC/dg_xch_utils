@@ -1,6 +1,7 @@
 #[tokio::test]
-pub async fn test_full_node_client() -> Result<(), std::io::Error> {
+pub async fn test_full_node_client() -> Result<(), Error> {
     use dg_xch_clients::api::full_node::FullnodeAPI;
+    use dg_xch_clients::api::full_node::FullnodeExtAPI;
     use dg_xch_clients::rpc::full_node::FullnodeClient;
     use dg_xch_clients::ClientSSLConfig;
     use dg_xch_core::blockchain::sized_bytes::Bytes32;
@@ -10,17 +11,15 @@ pub async fn test_full_node_client() -> Result<(), std::io::Error> {
     let port = env::var("FULLNODE_PORT")
         .map(|v| v.parse().unwrap_or(8555))
         .unwrap_or(8555);
-    let ssl_path = env::var("FULLNODE_SSL_PATH")
-        .ok()
-        .unwrap_or(String::from("/home/luna/.chia/mainnet/config/ssl"));
+    let ssl_path = env::var("FULLNODE_SSL_PATH").ok();
     let client = FullnodeClient::new(
         &hostname,
         port,
         10,
-        Some(ClientSSLConfig {
-            ssl_crt_path: format!("{}/{}", ssl_path, "full_node/private_farmer_node.crt"),
-            ssl_key_path: format!("{}/{}", ssl_path, "full_node/private_farmer_node.key"),
-            ssl_ca_crt_path: format!("{}/{}", ssl_path, "ca/private_ca.crt"),
+        ssl_path.map(|s| ClientSSLConfig {
+            ssl_crt_path: format!("{}/{}", s, "full_node/private_farmer_node.crt"),
+            ssl_key_path: format!("{}/{}", s, "full_node/private_farmer_node.key"),
+            ssl_ca_crt_path: format!("{}/{}", s, "ca/private_ca.crt"),
         }),
         &None,
     );
@@ -50,11 +49,38 @@ pub async fn test_full_node_client() -> Result<(), std::io::Error> {
         .await
         .unwrap(); //this also tests get_network_space and get_block_record_by_height
     assert_eq!(140670610131864768, height);
-    let add_and_removes = client
+    let _ = client
         .get_additions_and_removals(&first_block.header_hash)
         .await
         .unwrap();
-    println!("{:?}", add_and_removes);
+    let hinted_block = client.get_block_record_by_height(4000001).await.unwrap();
+    let add_and_removes_with_hints = client
+        .get_additions_and_removals_with_hints(&hinted_block.header_hash)
+        .await
+        .unwrap();
+    let coin_records_by_hints = client
+        .get_coin_records_by_hints_paginated(
+            &add_and_removes_with_hints
+                .0
+                .iter()
+                .fold(std::collections::HashSet::new(), |mut v, d| {
+                    if let Some(h) = d.hint {
+                        v.insert(h);
+                    }
+                    v
+                })
+                .iter()
+                .copied()
+                .collect::<Vec<Bytes32>>(),
+            Some(true),
+            Some(4000000),
+            Some(4000010),
+            Some(50),
+            None,
+        )
+        .await
+        .unwrap();
+    println!("{:?}", coin_records_by_hints);
     Ok(())
 }
 
@@ -75,11 +101,11 @@ pub async fn test_farmer_ws_client() {
 
     SimpleLogger::new().env().init().unwrap_or_default();
     let mut clients = vec![];
-    let simulate_count = 1;
+    let simulate_count = 10;
     let host = env::var("FULLNODE_HOST").unwrap_or_else(|_| String::from("localhost"));
     let port = env::var("FULLNODE_PORT")
-        .map(|v| v.parse().unwrap_or(38444u16))
-        .unwrap_or(38444u16);
+        .map(|v| v.parse().unwrap_or(8444u16))
+        .unwrap_or(8444u16);
     let network_id = "mainnet";
     let run_handle = Arc::new(AtomicBool::new(true));
     let config = Arc::new(WsClientConfig {
@@ -100,7 +126,9 @@ pub async fn test_farmer_ws_client() {
         let thread = tokio::spawn(async move {
             let client_handle = client_handle.clone();
             'retry: loop {
-                match FarmerClient::new(config.clone(), shared_state.clone()).await {
+                match FarmerClient::new(config.clone(), shared_state.clone(), client_handle.clone())
+                    .await
+                {
                     Ok(farmer_client) => {
                         {
                             let signage_handle_id = Uuid::new_v4();

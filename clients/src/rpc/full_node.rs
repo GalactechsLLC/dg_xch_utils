@@ -104,12 +104,9 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("end".to_string(), json!(end));
         request_body.insert(
             "exclude_header_hash".to_string(),
-            json!(if exclude_header_hash { "True" } else { "False" }),
+            json!(exclude_header_hash),
         );
-        request_body.insert(
-            "exclude_reorged".to_string(),
-            json!(if exclude_reorged { "True" } else { "False" }),
-        );
+        request_body.insert("exclude_reorged".to_string(), json!(exclude_reorged));
         Ok(post::<FullBlockAryResp>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_blocks"),
@@ -356,13 +353,13 @@ impl FullnodeAPI for FullnodeClient {
     }
     async fn get_coin_record_by_names(
         &self,
-        name: &[Bytes32],
+        names: &[Bytes32],
         include_spent_coins: bool,
         start_height: u32,
         end_height: u32,
     ) -> Result<Vec<CoinRecord>, Error> {
         let mut request_body = Map::new();
-        request_body.insert("names".to_string(), json!(name));
+        request_body.insert("names".to_string(), json!(names));
         request_body.insert(
             "include_spent_coins".to_string(),
             json!(include_spent_coins),
@@ -582,6 +579,48 @@ impl FullnodeExtAPI for FullnodeClient {
         )
         .await?
         .coin_records)
+    }
+
+    async fn get_coin_records_by_hints_paginated(
+        &self,
+        hints: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+        page_size: Option<u32>,
+        last_id: Option<Bytes32>,
+    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error> {
+        let mut request_body = Map::new();
+        request_body.insert("hints".to_string(), json!(hints));
+        request_body.insert(
+            "include_spent_coins".to_string(),
+            json!(include_spent_coins.unwrap_or(true)),
+        );
+        if let Some(sh) = start_height {
+            request_body.insert("start_height".to_string(), json!(sh));
+        }
+        if let Some(eh) = end_height {
+            request_body.insert("end_height".to_string(), json!(eh));
+        }
+        if let Some(ps) = page_size {
+            request_body.insert("page_size".to_string(), json!(ps));
+        }
+        if let Some(li) = last_id {
+            request_body.insert("last_id".to_string(), json!(li));
+        }
+        let resp = post::<PaginatedCoinRecordAryResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_coin_records_by_hints_paginated",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?;
+
+        Ok((resp.coin_records, resp.last_id, resp.total_coin_count))
     }
 
     async fn get_coin_records_by_puzzle_hashes_paginated(
