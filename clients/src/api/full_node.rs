@@ -153,5 +153,5 @@ pub trait FullnodeExtAPI {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-    ) -> Result<HashMap<Bytes32, CoinSpend>, Error>;
+    ) -> Result<HashMap<Bytes32, Option<CoinSpend>>, Error>;
 }

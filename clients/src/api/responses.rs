@@ -87,7 +87,7 @@ pub struct CoinSpendResp {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CoinSpendMapResp {
     //non-standard
-    pub coin_solutions: HashMap<Bytes32, CoinSpend>,
+    pub coin_solutions: HashMap<Bytes32, Option<CoinSpend>>,
     pub success: bool,
 }
 
