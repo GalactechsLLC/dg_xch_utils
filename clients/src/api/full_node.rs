@@ -135,7 +135,7 @@ pub trait FullnodeExtAPI {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-        page_size: Option<u32>,
+        page_size: u32,
         last_id: Option<Bytes32>,
     ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error>;
     async fn get_coin_records_by_puzzle_hashes_paginated(
@@ -144,7 +144,7 @@ pub trait FullnodeExtAPI {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-        page_size: Option<u32>,
+        page_size: u32,
         last_id: Option<Bytes32>,
     ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error>;
     async fn get_hints_by_coin_ids(

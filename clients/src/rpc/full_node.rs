@@ -607,7 +607,7 @@ impl FullnodeExtAPI for FullnodeClient {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-        page_size: Option<u32>,
+        page_size: u32,
         last_id: Option<Bytes32>,
     ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error> {
         let mut request_body = Map::new();
@@ -622,9 +622,7 @@ impl FullnodeExtAPI for FullnodeClient {
         if let Some(eh) = end_height {
             request_body.insert("end_height".to_string(), json!(eh));
         }
-        if let Some(ps) = page_size {
-            request_body.insert("page_size".to_string(), json!(ps));
-        }
+        request_body.insert("page_size".to_string(), json!(page_size));
         if let Some(li) = last_id {
             request_body.insert("last_id".to_string(), json!(li));
         }
@@ -649,7 +647,7 @@ impl FullnodeExtAPI for FullnodeClient {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-        page_size: Option<u32>,
+        page_size: u32,
         last_id: Option<Bytes32>,
     ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error> {
         let mut request_body = Map::new();
@@ -663,9 +661,7 @@ impl FullnodeExtAPI for FullnodeClient {
         if let Some(eh) = end_height {
             request_body.insert("end_height".to_string(), json!(eh));
         }
-        if let Some(ps) = page_size {
-            request_body.insert("page_size".to_string(), json!(ps));
-        }
+        request_body.insert("page_size".to_string(), json!(page_size));
         if let Some(li) = last_id {
             request_body.insert("last_id".to_string(), json!(li));
         }

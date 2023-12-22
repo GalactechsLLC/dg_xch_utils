@@ -23,6 +23,19 @@ pub async fn test_full_node_client() -> Result<(), Error> {
         }),
         &None,
     );
+    let by_puz = client
+        .get_coin_records_by_puzzle_hashes_paginated(
+            &[Bytes32::from(
+                "1c69feee1fb42ffa6c60fcc222c3aa8fb6cc719937a83f5aa068dc7045e0a633",
+            )],
+            None,
+            None,
+            None,
+            50,
+            None,
+        )
+        .await
+        .unwrap();
     let state = client.get_blockchain_state().await.unwrap();
     assert!(state.space > 0);
     let first_block = client.get_block_record_by_height(1).await.unwrap();
@@ -75,7 +88,7 @@ pub async fn test_full_node_client() -> Result<(), Error> {
             Some(true),
             Some(4000000),
             Some(4000010),
-            Some(50),
+            50,
             None,
         )
         .await
