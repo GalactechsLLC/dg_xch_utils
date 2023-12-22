@@ -634,10 +634,9 @@ impl FullnodeExtAPI for FullnodeClient {
     ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error> {
         let mut request_body = Map::new();
         request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
-        request_body.insert(
-            "include_spent_coins".to_string(),
-            json!(include_spent_coins.unwrap_or(true)),
-        );
+        if let Some(isc) = include_spent_coins {
+            request_body.insert("include_spent_coins".to_string(), json!(isc));
+        }
         if let Some(sh) = start_height {
             request_body.insert("start_height".to_string(), json!(sh));
         }
