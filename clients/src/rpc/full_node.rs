@@ -6,7 +6,7 @@ use crate::api::responses::{
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord, PaginatedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -609,7 +609,7 @@ impl FullnodeExtAPI for FullnodeClient {
         end_height: Option<u32>,
         page_size: Option<u32>,
         last_id: Option<Bytes32>,
-    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error> {
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error> {
         let mut request_body = Map::new();
         request_body.insert("hints".to_string(), json!(hints));
         request_body.insert(
@@ -651,7 +651,7 @@ impl FullnodeExtAPI for FullnodeClient {
         end_height: Option<u32>,
         page_size: Option<u32>,
         last_id: Option<Bytes32>,
-    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error> {
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error> {
         let mut request_body = Map::new();
         request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
         if let Some(isc) = include_spent_coins {
@@ -737,6 +737,19 @@ impl FullnodeExtAPI for FullnodeClient {
 #[tokio::test]
 async fn test_extended_functions() {
     let fnc = FullnodeClient::new("localhost", 8555, 10, None, &None);
+    let by_puz = fnc
+        .get_coin_records_by_puzzle_hashes_paginated(
+            &[Bytes32::from(
+                "1c69feee1fb42ffa6c60fcc222c3aa8fb6cc719937a83f5aa068dc7045e0a633",
+            )],
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
     fnc.get_blockchain_state().await.unwrap();
     let (additions, _removals) = fnc
         .get_additions_and_removals_with_hints(&Bytes32::from(

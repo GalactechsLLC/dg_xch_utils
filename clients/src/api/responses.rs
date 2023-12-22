@@ -1,6 +1,6 @@
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord, PaginatedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -79,7 +79,7 @@ pub struct CoinHintsResp {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PaginatedCoinRecordAryResp {
     //non-standard
-    pub coin_records: Vec<CoinRecord>,
+    pub coin_records: Vec<PaginatedCoinRecord>,
     pub last_id: Option<Bytes32>,
     pub total_coin_count: Option<i32>,
     pub success: bool,

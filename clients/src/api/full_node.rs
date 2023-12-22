@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord, PaginatedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -137,7 +137,7 @@ pub trait FullnodeExtAPI {
         end_height: Option<u32>,
         page_size: Option<u32>,
         last_id: Option<Bytes32>,
-    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error>;
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error>;
     async fn get_coin_records_by_puzzle_hashes_paginated(
         &self,
         puzzle_hashes: &[Bytes32],
@@ -146,7 +146,7 @@ pub trait FullnodeExtAPI {
         end_height: Option<u32>,
         page_size: Option<u32>,
         last_id: Option<Bytes32>,
-    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error>;
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error>;
     async fn get_hints_by_coin_ids(
         &self,
         coin_ids: &[Bytes32],
