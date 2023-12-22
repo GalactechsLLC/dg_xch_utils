@@ -27,7 +27,8 @@ use crate::api::responses::{
     AdditionsAndRemovalsResp, BlockRecordAryResp, BlockRecordResp, BlockchainStateResp,
     CoinRecordAryResp, CoinRecordResp, CoinSpendResp, FullBlockAryResp, FullBlockResp,
     InitialFreezePeriodResp, MempoolItemResp, MempoolItemsResp, MempoolTXResp, NetSpaceResp,
-    NetworkInfoResp, SignagePointOrEOSResp, TXResp, UnfinishedBlockAryResp,
+    NetworkInfoResp, SignagePointOrEOSResp, SingletonByLauncherIdResp, TXResp,
+    UnfinishedBlockAryResp,
 };
 use crate::rpc::{get_client, get_url, post};
 use crate::ClientSSLConfig;
@@ -536,6 +537,25 @@ impl FullnodeAPI for FullnodeClient {
 
 #[async_trait]
 impl FullnodeExtAPI for FullnodeClient {
+    async fn get_singleton_by_launcher_id(
+        &self,
+        launcher_id: &Bytes32,
+    ) -> Result<(CoinRecord, CoinSpend), Error> {
+        let mut request_body = Map::new();
+        request_body.insert("launcher_id".to_string(), json!(launcher_id));
+        let resp = post::<SingletonByLauncherIdResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_singleton_by_launcher_id",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?;
+        Ok((resp.coin_record, resp.parent_spend))
+    }
     async fn get_additions_and_removals_with_hints(
         &self,
         header_hash: &Bytes32,

@@ -118,6 +118,10 @@ pub trait FullnodeExtAPI {
         &self,
         header_hash: &Bytes32,
     ) -> Result<(Vec<HintedCoinRecord>, Vec<HintedCoinRecord>), Error>;
+    async fn get_singleton_by_launcher_id(
+        &self,
+        launcher_id: &Bytes32,
+    ) -> Result<(CoinRecord, CoinSpend), Error>;
     async fn get_coin_records_by_hints(
         &self,
         hints: &[Bytes32],

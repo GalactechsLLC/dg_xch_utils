@@ -31,6 +31,13 @@ pub struct HintedAdditionsAndRemovalsResp {
     pub removals: Vec<HintedCoinRecord>,
     pub success: bool,
 }
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SingletonByLauncherIdResp {
+    //non-standard
+    pub coin_record: CoinRecord,
+    pub parent_spend: CoinSpend,
+    pub success: bool,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockchainStateResp {
