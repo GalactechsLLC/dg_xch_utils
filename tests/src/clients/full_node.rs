@@ -15,7 +15,7 @@ pub async fn test_full_node_client() -> Result<(), Error> {
     let client = FullnodeClient::new(
         &hostname,
         port,
-        10,
+        120,
         ssl_path.map(|s| ClientSSLConfig {
             ssl_crt_path: format!("{}/{}", s, "full_node/private_farmer_node.crt"),
             ssl_key_path: format!("{}/{}", s, "full_node/private_farmer_node.key"),
@@ -23,6 +23,7 @@ pub async fn test_full_node_client() -> Result<(), Error> {
         }),
         &None,
     );
+    let items = client.get_all_mempool_items().await.unwrap();
     let by_puz = client
         .get_coin_records_by_puzzle_hashes_paginated(
             &[Bytes32::from(
