@@ -97,8 +97,8 @@ pub trait FullnodeAPI {
         height: u32,
     ) -> Result<CoinSpend, Error>;
     async fn get_coin_spend(&self, coin_record: &CoinRecord) -> Result<CoinSpend, Error>;
-    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<String>, Error>;
-    async fn get_all_mempool_items(&self) -> Result<HashMap<String, MempoolItem>, Error>;
+    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<Bytes32>, Error>;
+    async fn get_all_mempool_items(&self) -> Result<HashMap<Bytes32, MempoolItem>, Error>;
     async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MempoolItem, Error>;
     async fn get_mempool_items_by_coin_name(
         &self,

@@ -461,7 +461,7 @@ impl FullnodeAPI for FullnodeClient {
         self.get_puzzle_and_solution(&coin_record.coin.name(), coin_record.spent_block_index)
             .await
     }
-    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<String>, Error> {
+    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<Bytes32>, Error> {
         Ok(post::<MempoolTXResp>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_all_mempool_tx_ids"),
@@ -471,7 +471,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .tx_ids)
     }
-    async fn get_all_mempool_items(&self) -> Result<HashMap<String, MempoolItem>, Error> {
+    async fn get_all_mempool_items(&self) -> Result<HashMap<Bytes32, MempoolItem>, Error> {
         Ok(post::<MempoolItemsResp>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_all_mempool_items"),

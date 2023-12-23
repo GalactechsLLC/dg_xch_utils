@@ -147,13 +147,13 @@ pub struct MempoolItemAryResp {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MempoolItemsResp {
-    pub mempool_items: HashMap<String, MempoolItem>,
+    pub mempool_items: HashMap<Bytes32, MempoolItem>,
     pub success: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MempoolTXResp {
-    pub tx_ids: Vec<String>,
+    pub tx_ids: Vec<Bytes32>,
     pub success: bool,
 }
 
