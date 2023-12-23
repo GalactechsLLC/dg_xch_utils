@@ -24,15 +24,15 @@ pub struct MempoolItem {
     pub cost: u64,
     pub npc_result: NPCResult,
     pub spend_bundle_name: Bytes32,
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub height_added_to_mempool: u32,
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub assert_height: Option<u32>,
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub assert_before_height: Option<u32>,
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub assert_before_seconds: Option<u64>,
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub bundle_coin_spends: HashMap<Bytes32, BundleCoinSpend>,
     pub additions: Vec<Coin>,
     pub removals: Vec<Coin>,
