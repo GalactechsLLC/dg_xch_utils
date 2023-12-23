@@ -18,6 +18,7 @@ pub struct CoinRecord {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PaginatedCoinRecord {
     pub coin: Coin,
+    pub coin_spend: Option<CoinSpend>,
     pub parent_coin_spend: Option<CoinSpend>,
     pub confirmed_block_index: u32,
     pub spent_block_index: u32,
