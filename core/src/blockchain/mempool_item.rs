@@ -34,8 +34,6 @@ pub struct MempoolItem {
     pub assert_before_seconds: Option<u64>,
     #[serde(skip)]
     pub bundle_coin_spends: HashMap<Bytes32, BundleCoinSpend>,
-    pub additions: Vec<Coin>,
-    pub removals: Vec<Coin>,
 }
 impl MempoolItem {
     pub fn fee_per_cost(&self) -> f64 {
