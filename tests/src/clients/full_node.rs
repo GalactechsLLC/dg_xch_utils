@@ -13,13 +13,13 @@ pub async fn test_full_node_client() -> Result<(), Error> {
         .unwrap_or(8555);
     let ssl_path = env::var("FULLNODE_SSL_PATH").ok();
     let client = FullnodeClient::new(
-        &hostname,
-        port,
+        "localhost",
+        8555,
         120,
-        ssl_path.map(|s| ClientSSLConfig {
-            ssl_crt_path: format!("{}/{}", s, "full_node/private_farmer_node.crt"),
-            ssl_key_path: format!("{}/{}", s, "full_node/private_farmer_node.key"),
-            ssl_ca_crt_path: format!("{}/{}", s, "ca/private_ca.crt"),
+        Some(ClientSSLConfig {
+            ssl_crt_path: "/home/luna/dev_cert.crt".to_string(),
+            ssl_key_path: "/home/luna/dev_cert.key".to_string(),
+            ssl_ca_crt_path: "/home/luna/ca_cert.crt".to_string(),
         }),
         &None,
     );

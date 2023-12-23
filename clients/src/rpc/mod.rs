@@ -11,6 +11,7 @@ use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
+use std::cmp::min;
 use std::collections::HashMap;
 use std::env;
 use std::io::{Error, ErrorKind};
@@ -108,7 +109,11 @@ where
                 serde_json::from_str(body.as_str()).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
-                        format!("Failed to Parse Json {},\r\n {}", body, e),
+                        format!(
+                            "Failed to Parse Json {},\r\n {}",
+                            &body[0..min(body.len(), 1024)],
+                            e
+                        ),
                     )
                 })
             }
