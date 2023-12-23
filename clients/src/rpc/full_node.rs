@@ -352,7 +352,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .coin_record)
     }
-    async fn get_coin_record_by_names(
+    async fn get_coin_records_by_names(
         &self,
         names: &[Bytes32],
         include_spent_coins: bool,
@@ -369,7 +369,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("end_height".to_string(), json!(end_height));
         Ok(post::<CoinRecordAryResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_coin_record_by_names"),
+            &get_url(self.host.as_str(), self.port, "get_coin_records_by_names"),
             &request_body,
             &self.additional_headers,
         )

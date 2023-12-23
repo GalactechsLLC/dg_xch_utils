@@ -69,7 +69,7 @@ pub trait FullnodeAPI {
         end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, Error>;
     async fn get_coin_record_by_name(&self, name: &Bytes32) -> Result<Option<CoinRecord>, Error>;
-    async fn get_coin_record_by_names(
+    async fn get_coin_records_by_names(
         &self,
         names: &[Bytes32],
         include_spent_coins: bool,
