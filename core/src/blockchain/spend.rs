@@ -1,4 +1,5 @@
 use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::unsized_bytes::UnsizedBytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -16,13 +17,13 @@ pub struct Spend {
     pub birth_height: Option<u32>,
     pub birth_seconds: Option<u64>,
     pub create_coin: HashSet<NewCoin>,
-    pub agg_sig_me: Vec<(Vec<u8>, Vec<u8>)>,
-    pub agg_sig_parent: Vec<(Vec<u8>, Vec<u8>)>,
-    pub agg_sig_puzzle: Vec<(Vec<u8>, Vec<u8>)>,
-    pub agg_sig_amount: Vec<(Vec<u8>, Vec<u8>)>,
-    pub agg_sig_puzzle_amount: Vec<(Vec<u8>, Vec<u8>)>,
-    pub agg_sig_parent_amount: Vec<(Vec<u8>, Vec<u8>)>,
-    pub agg_sig_parent_puzzle: Vec<(Vec<u8>, Vec<u8>)>,
+    pub agg_sig_me: Vec<(UnsizedBytes, UnsizedBytes)>,
+    pub agg_sig_parent: Vec<(UnsizedBytes, UnsizedBytes)>,
+    pub agg_sig_puzzle: Vec<(UnsizedBytes, UnsizedBytes)>,
+    pub agg_sig_amount: Vec<(UnsizedBytes, UnsizedBytes)>,
+    pub agg_sig_puzzle_amount: Vec<(UnsizedBytes, UnsizedBytes)>,
+    pub agg_sig_parent_amount: Vec<(UnsizedBytes, UnsizedBytes)>,
+    pub agg_sig_parent_puzzle: Vec<(UnsizedBytes, UnsizedBytes)>,
     pub flags: u32,
 }
 
