@@ -31,7 +31,7 @@ pub struct Spend {
 pub struct NewCoin {
     pub puzzle_hash: Bytes32,
     pub amount: u64,
-    pub hint: Option<Vec<u8>>,
+    pub hint: Option<UnsizedBytes>,
 }
 impl Hash for NewCoin {
     fn hash<H: Hasher>(&self, h: &mut H) {

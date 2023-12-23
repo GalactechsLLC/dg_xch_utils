@@ -21,13 +21,21 @@ pub struct BundleCoinSpend {
 pub struct MempoolItem {
     pub spend_bundle: SpendBundle,
     pub fee: u64,
+    pub cost: u64,
     pub npc_result: NPCResult,
     pub spend_bundle_name: Bytes32,
+    #[serde(skip_serializing)]
     pub height_added_to_mempool: u32,
+    #[serde(skip_serializing)]
     pub assert_height: Option<u32>,
+    #[serde(skip_serializing)]
     pub assert_before_height: Option<u32>,
+    #[serde(skip_serializing)]
     pub assert_before_seconds: Option<u64>,
+    #[serde(skip_serializing)]
     pub bundle_coin_spends: HashMap<Bytes32, BundleCoinSpend>,
+    pub additions: Vec<Coin>,
+    pub removals: Vec<Coin>,
 }
 impl MempoolItem {
     pub fn fee_per_cost(&self) -> f64 {
