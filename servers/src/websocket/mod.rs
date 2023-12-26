@@ -17,7 +17,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_tungstenite::{is_upgrade_request, upgrade, HyperWebsocket};
 use hyper_util::rt::TokioIo;
-use log::{debug, error, info};
+use log::{debug, error};
 use rustls::{Certificate, PrivateKey, RootCertStore, ServerConfig};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
@@ -122,7 +122,6 @@ impl WebsocketServer {
                 res = listener.accept() => {
                     match res {
                         Ok((stream, _)) => {
-                            info!("New Client Connection");
                             let peers = peers.clone();
                             let message_handlers = handlers.clone();
                             let stream = acceptor.accept(stream).await?;

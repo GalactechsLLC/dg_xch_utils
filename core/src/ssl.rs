@@ -41,7 +41,6 @@ impl AllowAny {
 
 impl ClientCertVerifier for AllowAny {
     fn client_auth_root_subjects(&self) -> &[DistinguishedName] {
-        info!("In Farmer client_auth_root_subjects");
         &[]
     }
     fn client_auth_mandatory(&self) -> bool {
@@ -53,7 +52,6 @@ impl ClientCertVerifier for AllowAny {
         _intermediates: &[rustls::Certificate],
         _now: SystemTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        info!("In Farmer verify_client_cert");
         Ok(ClientCertVerified::assertion())
     }
 }

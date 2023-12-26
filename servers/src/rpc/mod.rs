@@ -9,7 +9,7 @@ use hyper::server::conn::http1::Builder;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use log::{error, info};
+use log::{error};
 use rustls::{RootCertStore, ServerConfig};
 use std::env;
 use std::io::{Error, ErrorKind};
@@ -77,7 +77,6 @@ impl RpcServer {
                         Ok((stream, _)) => {
                             match acceptor.accept(stream).await {
                                 Ok(stream) => {
-                                    info!("New Client Connection");
                                     let server = server.clone();
                                     let service = service_fn(move |req| {
                                         let server = server.clone();
