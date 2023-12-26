@@ -11,18 +11,12 @@ pub async fn test_full_node_client() -> Result<(), Error> {
     let port = env::var("FULLNODE_PORT")
         .map(|v| v.parse().unwrap_or(8555))
         .unwrap_or(8555);
-    let ssl_path = env::var("FULLNODE_SSL_PATH").ok();
-    let client = FullnodeClient::new(
-        "localhost",
-        8555,
-        120,
-        Some(ClientSSLConfig {
-            ssl_crt_path: "/home/luna/dev_cert.crt".to_string(),
-            ssl_key_path: "/home/luna/dev_cert.key".to_string(),
-            ssl_ca_crt_path: "/home/luna/ca_cert.crt".to_string(),
-        }),
-        &None,
-    );
+    let client = FullnodeClient::new(&hostname, port, 120, None, &None);
+    let hinted_block = client.get_block_record_by_height(4000001).await.unwrap();
+    let add_and_removes_with_hints = client
+        .get_additions_and_removals_with_hints(&hinted_block.header_hash)
+        .await
+        .unwrap();
     let items = client.get_all_mempool_items().await.unwrap();
     let by_puz = client
         .get_coin_records_by_puzzle_hashes_paginated(
@@ -65,11 +59,6 @@ pub async fn test_full_node_client() -> Result<(), Error> {
     assert_eq!(140670610131864768, height);
     let _ = client
         .get_additions_and_removals(&first_block.header_hash)
-        .await
-        .unwrap();
-    let hinted_block = client.get_block_record_by_height(4000001).await.unwrap();
-    let add_and_removes_with_hints = client
-        .get_additions_and_removals_with_hints(&hinted_block.header_hash)
         .await
         .unwrap();
     let coin_records_by_hints = client

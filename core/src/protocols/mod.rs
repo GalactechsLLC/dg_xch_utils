@@ -607,10 +607,6 @@ impl WebsocketConnection {
         self.message_handlers.lock().await.remove(&uuid)
     }
 
-    pub async fn clear(&self) {
-        self.message_handlers.lock().await.clear();
-    }
-
     pub async fn close(&mut self, msg: Option<Message>) -> Result<(), Error> {
         if let Some(msg) = msg {
             let _ = self
@@ -631,7 +627,6 @@ impl WebsocketConnection {
     }
 
     pub async fn shutdown(&mut self) -> Result<(), Error> {
-        self.clear().await;
         self.close(None).await
     }
 }
