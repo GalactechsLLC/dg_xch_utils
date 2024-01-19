@@ -240,12 +240,3 @@ pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, 
     let address_hex = puzzle_hash_for_pk(&wallet_sk.sk_to_pk().to_bytes().into())?;
     encode_puzzle_hash(&address_hex, prefix)
 }
-
-#[test]
-fn test_hash() {
-    println!(
-        "{}",
-        decode_puzzle_hash("xch104x239y7ctmpjcp0t4stg5fc49vexxk2srgc2hnchnj5yqfkfa9stct9yc")
-            .unwrap()
-    );
-}
