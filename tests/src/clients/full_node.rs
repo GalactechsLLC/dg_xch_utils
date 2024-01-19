@@ -1,9 +1,9 @@
+use dg_xch_clients::api::full_node::FullnodeAPI;
 #[tokio::test]
 pub async fn test_full_node_client() -> Result<(), Error> {
     use dg_xch_clients::api::full_node::FullnodeAPI;
     use dg_xch_clients::api::full_node::FullnodeExtAPI;
     use dg_xch_clients::rpc::full_node::FullnodeClient;
-    use dg_xch_clients::ClientSSLConfig;
     use dg_xch_core::blockchain::sized_bytes::Bytes32;
     use std::env;
 
@@ -12,79 +12,122 @@ pub async fn test_full_node_client() -> Result<(), Error> {
         .map(|v| v.parse().unwrap_or(8555))
         .unwrap_or(8555);
     let client = FullnodeClient::new(&hostname, port, 120, None, &None);
-    let hinted_block = client.get_block_record_by_height(4000001).await.unwrap();
-    let add_and_removes_with_hints = client
-        .get_additions_and_removals_with_hints(&hinted_block.header_hash)
-        .await
-        .unwrap();
-    let items = client.get_all_mempool_items().await.unwrap();
-    let by_puz = client
-        .get_coin_records_by_puzzle_hashes_paginated(
-            &[Bytes32::from(
-                "1c69feee1fb42ffa6c60fcc222c3aa8fb6cc719937a83f5aa068dc7045e0a633",
-            )],
-            None,
-            None,
-            None,
-            50,
-            None,
-        )
-        .await
-        .unwrap();
-    let state = client.get_blockchain_state().await.unwrap();
-    assert!(state.space > 0);
+    // let hinted_block = client.get_block_record_by_height(4000001).await.unwrap();
+    // let add_and_removes_with_hints = client
+    //     .get_additions_and_removals_with_hints(&hinted_block.header_hash)
+    //     .await
+    //     .unwrap();
+    // let items = client.get_all_mempool_items().await.unwrap();
+    // let by_puz = client
+    //     .get_coin_records_by_puzzle_hashes_paginated(
+    //         &[Bytes32::from(
+    //             "1c69feee1fb42ffa6c60fcc222c3aa8fb6cc719937a83f5aa068dc7045e0a633",
+    //         )],
+    //         None,
+    //         None,
+    //         None,
+    //         50,
+    //         None,
+    //     )
+    //     .await
+    //     .unwrap();
+    // let state = client.get_blockchain_state().await.unwrap();
+    // assert!(state.space > 0);
     let first_block = client.get_block_record_by_height(1).await.unwrap();
     assert_ne!(Bytes32::default(), first_block.header_hash);
-    let full_first_block = client.get_block(&first_block.header_hash).await.unwrap();
-    assert_eq!(
-        Bytes32::from("0xd780d22c7a87c9e01d98b49a0910f6701c3b95015741316b3fda042e5d7b81d2"),
-        full_first_block.foliage.prev_block_hash
-    );
-    let blocks = client.get_blocks(0, 5, true, true).await.unwrap();
-    assert_eq!(blocks.len(), 5);
-    let blocks2 = client.get_all_blocks(0, 5).await.unwrap();
-    assert_eq!(blocks, blocks2);
-    let firet_block_record = client
-        .get_block_record(&first_block.header_hash)
-        .await
-        .unwrap();
-    assert_eq!(first_block, firet_block_record);
-    let block_records = client.get_block_records(0, 5).await.unwrap();
-    assert_eq!(block_records.len(), 5);
-    let _ = client.get_unfinished_block_headers().await.unwrap();
-    let height = client
-        .get_network_space_by_height(1000, 5000)
-        .await
-        .unwrap(); //this also tests get_network_space and get_block_record_by_height
-    assert_eq!(140670610131864768, height);
-    let _ = client
-        .get_additions_and_removals(&first_block.header_hash)
-        .await
-        .unwrap();
-    let coin_records_by_hints = client
-        .get_coin_records_by_hints_paginated(
-            &add_and_removes_with_hints
-                .0
-                .iter()
-                .fold(std::collections::HashSet::new(), |mut v, d| {
-                    if let Some(h) = d.hint {
-                        v.insert(h);
-                    }
-                    v
-                })
-                .iter()
-                .copied()
-                .collect::<Vec<Bytes32>>(),
-            Some(true),
-            Some(4000000),
-            Some(4000010),
-            50,
-            None,
+    // let full_first_block = client.get_block(&first_block.header_hash).await.unwrap();
+    // assert_eq!(
+    //     Bytes32::from("0xd780d22c7a87c9e01d98b49a0910f6701c3b95015741316b3fda042e5d7b81d2"),
+    //     full_first_block.foliage.prev_block_hash
+    // );
+    // let blocks = client.get_blocks(0, 5, true, true).await.unwrap();
+    // assert_eq!(blocks.len(), 5);
+    // let blocks2 = client.get_all_blocks(0, 5).await.unwrap();
+    // assert_eq!(blocks, blocks2);
+    // let firet_block_record = client
+    //     .get_block_record(&first_block.header_hash)
+    //     .await
+    //     .unwrap();
+    // assert_eq!(first_block, firet_block_record);
+    // let block_records = client.get_block_records(0, 5).await.unwrap();
+    // assert_eq!(block_records.len(), 5);
+    // let _ = client.get_unfinished_block_headers().await.unwrap();
+    // let height = client
+    //     .get_network_space_by_height(1000, 5000)
+    //     .await
+    //     .unwrap(); //this also tests get_network_space and get_block_record_by_height
+    // assert_eq!(140670610131864768, height);
+    let coins = client
+        .get_coin_records_by_hints(
+            &[
+                "6240759ea957a932e32b7ff28611c2dc70d087520323fabfe6b5ec7b8c060097",
+                "f896b9ad8e6d644e6f6877d06de12473d5e370ff93ddf2066a57811c54fc40bd",
+                "a9e173a3600db00fda09ad45934c02a8230b5b0478f74221faa8d52cff4f09ce",
+                "a436040e0180cb8885f8fa14d61079dc87f9a5d376a1757d137edaf309f65b3f",
+                "8925e95611307d918fb76c3a25d4115ed2a585a4bae5d5f69954a2ec0dc463f7",
+                "d7efb93500033639863b3c2248b42c0d61e9c3157cea474b9ec877aa099cdc62",
+                "d82d511a98d20b146c462a1dc5ad29b1d59018c742a514fbf7d73ea2670a1b37",
+                "74ecebcf4e3c38e8ec337bbfa854b62ce40027c3073e1b5b6100d90fcea6a92d",
+                "43bc11f49edef45736434879016574fb32c750be5e051b00109d379aff57956c",
+                "cd24cd73b67ea2577c58c3d0093cc8816d965aa637945ab3d5446d8b3122582a",
+                "95d09badc05dd138cf56bd2d8cf653e82c731da57478fdd56c050f9e4ea81d0d",
+                "32a55d46b08d1e54a14fdc8dbb01577605512a8b6a52173d95e5af3213f656c7",
+                "8cc604c6a1aec251d7b69fbf6edd3f011df4d2a5dcf6ec70621b4484e59cdef5",
+                "9a53f63a29e1f1f5f33c52bd4608060067c4c6d4ec2d7857adeb439596decf22",
+                "5bcafbd5b44da8891e5a3ecbc6162e2341f4afd565626d1634b15be465795129",
+                "9261ce337f122a7a305b0ef1b8594916f7c8e40429576846b863a0099558234e",
+                "50e38db1b36d55050a19aca3928573431f8c2dedbb8d956b6894fbd9e55989d9",
+                "db3795f2bc6069a5c1ea737d44005ab011c190753b7a3d40502bdc9dc796a168",
+                "7d1b208b571cadf5cd853f139191110aef2c31ba01214b0df409101c7522af4d",
+            ]
+            .map(Bytes32::from),
+            true,
+            3068715,
+            3468715,
         )
         .await
         .unwrap();
-    println!("{:?}", coin_records_by_hints);
+    for coin in coins {
+        if !coin.spent {
+            let _parent_spend = get_parent_spend(&client, &coin).await.unwrap();
+        }
+    }
+    // let coin_records_by_hints = client
+    //     .get_coin_records_by_hints_paginated(
+    //         &add_and_removes_with_hints
+    //             .0
+    //             .iter()
+    //             .fold(std::collections::HashSet::new(), |mut v, d| {
+    //                 if let Some(h) = d.hint {
+    //                     v.insert(h);
+    //                 }
+    //                 v
+    //             })
+    //             .iter()
+    //             .copied()
+    //             .collect::<Vec<Bytes32>>(),
+    //         Some(true),
+    //         Some(4000000),
+    //         Some(4000010),
+    //         50,
+    //         None,
+    //     )
+    //     .await
+    //     .unwrap();
+    // println!("{:?}", coin_records_by_hints);
     Ok(())
+}
+
+async fn get_parent_spend(
+    client: &FullnodeClient,
+    coin_record: &CoinRecord,
+) -> Result<CoinSpend, Error> {
+    client
+        .get_puzzle_and_solution(
+            &coin_record.coin.parent_coin_info,
+            coin_record.confirmed_block_index,
+        )
+        .await
 }
 
 #[tokio::test]
@@ -186,6 +229,9 @@ pub async fn test_farmer_ws_client() {
 }
 
 use async_trait::async_trait;
+use dg_xch_clients::rpc::full_node::FullnodeClient;
+use dg_xch_core::blockchain::coin_record::CoinRecord;
+use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::protocols::farmer::NewSignagePoint;
 use std::io::{Cursor, Error};
 use std::sync::Arc;

@@ -39,6 +39,7 @@ pub struct PoolState {
     pub pool_url: Option<String>,
     pub relative_lock_height: u32,
 }
+
 impl PoolState {
     pub fn from_extra_data_program(program: &Program) -> Result<Self, Error> {
         let extra_data_cons_boxes: Vec<Program> = program

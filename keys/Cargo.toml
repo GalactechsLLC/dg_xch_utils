@@ -10,7 +10,7 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/keys"
 
 [dependencies]
 bech32 = "0.9.1"
-blst = "0.3.11"
+blst = { version = "0.3.11", features = ["portable"] }
 bip39 = {version= "2.0.0", features=["rand"] }
 dg_xch_core = {path = "../core", version = "2.0.1", features = ["paperclip"] }
 dg_xch_puzzles = {path = "../puzzles", version="2.0.1"}

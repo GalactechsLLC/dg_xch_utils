@@ -10,7 +10,7 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/servers"
 
 [dependencies]
 async-trait = "0.1.74"
-blst = "0.3.11"
+blst = { version = "0.3.11", features = ["portable"] }
 dg_xch_core = {path = "../core", version = "2.0.1", features = ["paperclip"] }
 dg_xch_clients = {path = "../clients", version = "2.0.1" }
 dg_xch_keys = {path = "../keys", version = "2.0.1" }

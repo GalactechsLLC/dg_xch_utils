@@ -3,7 +3,7 @@ use der::pem::LineEnding;
 use der::{DateTime, EncodePem};
 use log::{error, info};
 use rand::Rng;
-use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey};
+use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
 use rustls::server::{ClientCertVerified, ClientCertVerifier};
@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime};
 use x509_cert::builder::{Builder, CertificateBuilder, Profile};
 use x509_cert::der::DecodePem;
 use x509_cert::ext::pkix::name::GeneralName;
-use x509_cert::ext::pkix::{BasicConstraints, SubjectAltName};
+use x509_cert::ext::pkix::SubjectAltName;
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::SubjectPublicKeyInfo;
@@ -140,18 +140,14 @@ pub fn load_private_key(filename: &str) -> Result<PrivateKey, Error> {
     let keyfile = File::open(filename)?;
     let mut reader = BufReader::new(keyfile);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
-        match item? {
-            Item::X509Certificate(_) => error!("Found Certificate, not Private Key"),
-            Item::RSAKey(key) => {
+        match item {
+            Ok(Item::RSAKey(key)) | Ok(Item::PKCS8Key(key)) | Ok(Item::ECKey(key)) => {
                 return Ok(PrivateKey(key));
             }
-            Item::PKCS8Key(key) => {
-                return Ok(PrivateKey(key));
+            Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
+            _ => {
+                error!("Unknown Item while loading private key")
             }
-            Item::ECKey(key) => {
-                return Ok(PrivateKey(key));
-            }
-            _ => error!("Unknown Item while loading private key"),
         }
     }
     Err(Error::new(ErrorKind::NotFound, "Private Key Not Found"))
@@ -161,16 +157,10 @@ pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKey, Error> {
     let mut reader = BufReader::new(bytes);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
+            Ok(Item::RSAKey(key)) | Ok(Item::PKCS8Key(key)) | Ok(Item::ECKey(key)) => {
+                return Ok(PrivateKey(key));
+            }
             Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
-            Ok(Item::RSAKey(key)) => {
-                return Ok(PrivateKey(key));
-            }
-            Ok(Item::PKCS8Key(key)) => {
-                return Ok(PrivateKey(key));
-            }
-            Ok(Item::ECKey(key)) => {
-                return Ok(PrivateKey(key));
-            }
             _ => {
                 error!("Unknown Item while loading private key")
             }
@@ -181,21 +171,20 @@ pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKey, Error> {
 
 pub fn generate_ca_signed_cert(
     cert_path: &Path,
-    cert_data: &str,
+    cert_data: &[u8],
     key_path: &Path,
-    key_data: &str,
-) -> Result<(String, String), Error> {
-    let (cert_data, key_data) = generate_ca_signed_cert_data(cert_data, key_data)
-        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+    key_data: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    let (cert_data, key_data) = generate_ca_signed_cert_data(cert_data, key_data)?;
     write_ssl_cert_and_key(cert_path, &cert_data, key_path, &key_data, true)?;
     Ok((cert_data, key_data))
 }
 
 fn write_ssl_cert_and_key(
     cert_path: &Path,
-    cert_data: &str,
+    cert_data: &[u8],
     key_path: &Path,
-    key_data: &str,
+    key_data: &[u8],
     overwrite: bool,
 ) -> Result<(), Error> {
     if cert_path.exists() && overwrite {
@@ -205,7 +194,7 @@ fn write_ssl_cert_and_key(
         .write(true)
         .create_new(true)
         .open(cert_path)?;
-    crt.write_all(cert_data.as_bytes())?;
+    crt.write_all(cert_data)?;
     crt.flush()?;
     if key_path.exists() && overwrite {
         fs::remove_file(key_path)?;
@@ -214,19 +203,19 @@ fn write_ssl_cert_and_key(
         .write(true)
         .create_new(true)
         .open(key_path)?;
-    key.write_all(key_data.as_bytes())?;
+    key.write_all(key_data)?;
     key.flush()
 }
 
 pub fn generate_ca_signed_cert_data(
-    cert_data: &str,
-    key_data: &str,
-) -> Result<(String, String), Error> {
-    let root_cert = Certificate::from_pem(cert_data.as_bytes())
+    cert_data: &[u8],
+    key_data: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    let root_cert = Certificate::from_pem(cert_data)
         .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
-    let root_key = rsa::RsaPrivateKey::from_pkcs1_pem(key_data)
-        .or_else(|_| rsa::RsaPrivateKey::from_pkcs8_pem(key_data))
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+    let root_key = rsa::RsaPrivateKey::from_pkcs1_pem(&String::from_utf8_lossy(key_data))
+        .or_else(|_| rsa::RsaPrivateKey::from_pkcs8_pem(&String::from_utf8_lossy(key_data)))
+        .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to load Root Key: {e:?}")))?;
     let mut rng = rand::thread_rng();
     let cert_key = rsa::RsaPrivateKey::new(&mut rng, 2048)
         .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
@@ -234,7 +223,7 @@ pub fn generate_ca_signed_cert_data(
     let signing_key: SigningKey<Sha256> = SigningKey::new(root_key);
     let subject_pub_key = SubjectPublicKeyInfo::from_pem(
         pub_key
-            .to_public_key_pem(LineEnding::LF)
+            .to_public_key_pem(LineEnding::default())
             .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?
             .as_bytes(),
     )
@@ -273,23 +262,26 @@ pub fn generate_ca_signed_cert_data(
         .build()
         .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     Ok((
-        cert.to_pem(LineEnding::LF)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?,
-        cert_key
-            .to_pkcs8_pem(LineEnding::LF)
+        cert.to_pem(LineEnding::default())
             .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?
-            .to_string(),
+            .as_bytes()
+            .to_vec(),
+        cert_key
+            .to_pkcs8_pem(LineEnding::default())
+            .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?
+            .as_bytes()
+            .to_vec(),
     ))
 }
 
-pub fn make_ca_cert(cert_path: &Path, key_path: &Path) -> Result<(String, String), Error> {
+pub fn make_ca_cert(cert_path: &Path, key_path: &Path) -> Result<(Vec<u8>, Vec<u8>), Error> {
     let (cert_data, key_data) = make_ca_cert_data()
         .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
     write_ssl_cert_and_key(cert_path, &cert_data, key_path, &key_data, true)?;
     Ok((cert_data, key_data))
 }
 
-fn make_ca_cert_data() -> Result<(String, String), Error> {
+fn make_ca_cert_data() -> Result<(Vec<u8>, Vec<u8>), Error> {
     let mut rng = rand::thread_rng();
     let root_key = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate a key");
     let pub_key = root_key.to_public_key();
@@ -298,12 +290,12 @@ fn make_ca_cert_data() -> Result<(String, String), Error> {
         .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let subject_pub_key = SubjectPublicKeyInfo::from_pem(
         pub_key
-            .to_public_key_pem(LineEnding::LF)
+            .to_public_key_pem(LineEnding::default())
             .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?
             .as_bytes(),
     )
     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
-    let mut cert = CertificateBuilder::new(
+    let cert = CertificateBuilder::new(
         Profile::SubCA {
             issuer: name.clone(),
             path_len_constraint: None,
@@ -326,20 +318,19 @@ fn make_ca_cert_data() -> Result<(String, String), Error> {
         &signing_key,
     )
     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
-    cert.add_extension(&BasicConstraints {
-        ca: true,
-        path_len_constraint: None,
-    })
-    .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+    let cert = cert
+        .build()
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     Ok((
-        cert.build()
+        cert.to_pem(LineEnding::default())
             .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?
-            .to_pem(LineEnding::LF)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?,
+            .as_bytes()
+            .to_vec(),
         root_key
-            .to_pkcs1_pem(LineEnding::LF)
+            .to_pkcs8_pem(LineEnding::default())
             .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?
-            .to_string(),
+            .as_bytes()
+            .to_vec(),
     ))
 }
 
@@ -365,14 +356,17 @@ pub fn create_all_ssl_memory() -> Result<MemorySSL, Error> {
     private_map.insert(
         "ca".to_string(),
         MemoryNodeSSL {
-            cert: ca_cert_data.into_bytes(),
-            key: ca_key_data.into_bytes(),
+            cert: ca_cert_data,
+            key: ca_key_data,
         },
     );
     private_map.extend(private_certs);
     info!("Generating Public Certs");
-    let public_certs =
-        generate_ssl_for_nodes_in_memory(CHIA_CA_CRT, CHIA_CA_KEY, &ALL_PUBLIC_NODE_NAMES)?;
+    let public_certs = generate_ssl_for_nodes_in_memory(
+        CHIA_CA_CRT.as_bytes(),
+        CHIA_CA_KEY.as_bytes(),
+        &ALL_PUBLIC_NODE_NAMES,
+    )?;
     public_map.insert(
         "ca".to_string(),
         MemoryNodeSSL {
@@ -396,19 +390,20 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
     let chia_ca_key_path = ca_dir.join("chia_ca.key");
     write_ssl_cert_and_key(
         &chia_ca_crt_path,
-        CHIA_CA_CRT,
+        CHIA_CA_CRT.as_bytes(),
         &chia_ca_key_path,
-        CHIA_CA_KEY,
+        CHIA_CA_KEY.as_bytes(),
         true,
     )?;
-    let (crt, key) = if !private_ca_crt_path.exists() || !private_ca_key_path.exists() {
+    let (crt, key) = if !private_ca_crt_path.exists() || !private_ca_key_path.exists() || overwrite
+    {
         info!("Generating SSL CA Cert");
         make_ca_cert(&private_ca_crt_path, &private_ca_key_path)?
     } else {
         info!("Loading SSL CA Cert");
         (
-            fs::read_to_string(private_ca_crt_path)?,
-            fs::read_to_string(private_ca_key_path)?,
+            fs::read(private_ca_crt_path)?,
+            fs::read(private_ca_key_path)?,
         )
     };
     info!("Generating Private Certs");
@@ -423,8 +418,8 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
     info!("Generating Public Certs");
     generate_ssl_for_nodes(
         ssl_dir,
-        CHIA_CA_CRT,
-        CHIA_CA_KEY,
+        CHIA_CA_CRT.as_bytes(),
+        CHIA_CA_KEY.as_bytes(),
         "public",
         &ALL_PUBLIC_NODE_NAMES,
         overwrite,
@@ -433,8 +428,8 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
 
 fn generate_ssl_for_nodes(
     ssl_dir: &Path,
-    crt: &str,
-    key: &str,
+    crt: &[u8],
+    key: &[u8],
     prefix: &str,
     nodes: &[&str],
     overwrite: bool,
@@ -455,8 +450,8 @@ fn generate_ssl_for_nodes(
 }
 
 pub fn generate_ssl_for_nodes_in_memory(
-    crt: &str,
-    key: &str,
+    crt: &[u8],
+    key: &[u8],
     nodes: &[&str],
 ) -> Result<HashMap<String, MemoryNodeSSL>, Error> {
     let mut map = HashMap::new();
@@ -465,8 +460,8 @@ pub fn generate_ssl_for_nodes_in_memory(
         map.insert(
             node_name.to_string(),
             MemoryNodeSSL {
-                cert: cert.into_bytes(),
-                key: key.into_bytes(),
+                cert: cert.to_vec(),
+                key: key.to_vec(),
             },
         );
     }

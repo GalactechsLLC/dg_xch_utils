@@ -47,7 +47,11 @@ impl MempoolItem {
         self.spend_bundle_name
     }
     pub fn cost(&self) -> u64 {
-        self.npc_result.cost
+        self.npc_result
+            .conds
+            .as_ref()
+            .map(|c| c.cost)
+            .unwrap_or_default()
     }
     pub fn additions(self) -> Vec<Coin> {
         additions_for_npc(self.npc_result)

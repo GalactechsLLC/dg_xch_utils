@@ -5,5 +5,4 @@ use serde::{Deserialize, Serialize};
 pub struct NPCResult {
     pub error: Option<u16>,
     pub conds: Option<SpendBundleConditions>,
-    pub cost: u64,
 }

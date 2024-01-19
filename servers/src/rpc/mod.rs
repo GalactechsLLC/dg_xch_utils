@@ -9,7 +9,7 @@ use hyper::server::conn::http1::Builder;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use log::{error};
+use log::error;
 use rustls::{RootCertStore, ServerConfig};
 use std::env;
 use std::io::{Error, ErrorKind};
@@ -126,17 +126,19 @@ impl RpcServer {
             env::var("PRIVATE_CA_CRT").ok(),
             env::var("PRIVATE_CA_KEY").ok(),
         ) {
-            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(&crt, &key)?;
+            let (cert_bytes, key_bytes) =
+                generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes())?;
             (
-                load_certs_from_bytes(cert_bytes.as_bytes())?,
-                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                load_certs_from_bytes(&cert_bytes)?,
+                load_private_key_from_bytes(&key_bytes)?,
                 load_certs_from_bytes(crt.as_bytes())?,
             )
         } else {
-            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)?;
+            let (cert_bytes, key_bytes) =
+                generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())?;
             (
-                load_certs_from_bytes(cert_bytes.as_bytes())?,
-                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                load_certs_from_bytes(&cert_bytes)?,
+                load_private_key_from_bytes(&key_bytes)?,
                 load_certs_from_bytes(CHIA_CA_CRT.as_bytes())?,
             )
         };

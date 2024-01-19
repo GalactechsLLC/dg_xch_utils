@@ -53,10 +53,10 @@ pub fn get_client(ssl_path: Option<ClientSSLConfig>, timeout: u64) -> Result<Cli
         env::var("PRIVATE_CA_CRT").ok(),
         env::var("PRIVATE_CA_KEY").ok(),
     ) {
-        let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(&crt, &key)?;
+        let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes())?;
         (
-            load_certs_from_bytes(cert_bytes.as_bytes())?,
-            load_private_key_from_bytes(key_bytes.as_bytes())?,
+            load_certs_from_bytes(&cert_bytes)?,
+            load_private_key_from_bytes(&key_bytes)?,
         )
     } else if let (Some(crt), Some(key)) =
         (env::var("PRIVATE_CRT").ok(), env::var("PRIVATE_KEY").ok())
@@ -66,10 +66,11 @@ pub fn get_client(ssl_path: Option<ClientSSLConfig>, timeout: u64) -> Result<Cli
             load_private_key_from_bytes(key.as_bytes())?,
         )
     } else {
-        let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)?;
+        let (cert_bytes, key_bytes) =
+            generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())?;
         (
-            load_certs_from_bytes(cert_bytes.as_bytes())?,
-            load_private_key_from_bytes(key_bytes.as_bytes())?,
+            load_certs_from_bytes(&cert_bytes)?,
+            load_private_key_from_bytes(&key_bytes)?,
         )
     };
     let config = ClientConfig::builder()

@@ -72,25 +72,30 @@ impl WsClient {
             (
                 load_certs(&ssl_info.ssl_crt_path)?,
                 load_private_key(&ssl_info.ssl_key_path)?,
-                fs::read_to_string(&ssl_info.ssl_crt_path)?,
+                fs::read(&ssl_info.ssl_crt_path)?,
             )
         } else if let (Some(crt), Some(key)) = (
             env::var("PRIVATE_CA_CRT").ok(),
             env::var("PRIVATE_CA_KEY").ok(),
         ) {
-            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(&crt, &key)
-                .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+            let (cert_bytes, key_bytes) =
+                generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes()).map_err(|e| {
+                    Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e))
+                })?;
             (
-                load_certs_from_bytes(cert_bytes.as_bytes())?,
-                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                load_certs_from_bytes(&cert_bytes)?,
+                load_private_key_from_bytes(&key_bytes)?,
                 cert_bytes,
             )
         } else {
-            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)
-                .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+            let (cert_bytes, key_bytes) =
+                generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
+                    .map_err(|e| {
+                        Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e))
+                    })?;
             (
-                load_certs_from_bytes(cert_bytes.as_bytes())?,
-                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                load_certs_from_bytes(&cert_bytes)?,
+                load_private_key_from_bytes(&key_bytes)?,
                 cert_bytes,
             )
         };
@@ -101,7 +106,7 @@ impl WsClient {
             run,
             certs,
             key,
-            cert_str,
+            &cert_str,
         )
         .await
     }
@@ -110,15 +115,15 @@ impl WsClient {
         node_type: NodeType,
         message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
-        cert_data: &str,
-        key_data: &str,
+        cert_data: &[u8],
+        key_data: &[u8],
     ) -> Result<Self, Error> {
         let (certs, key, cert_str) = {
             let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
                 .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
             (
-                load_certs_from_bytes(cert_bytes.as_bytes())?,
-                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                load_certs_from_bytes(&cert_bytes)?,
+                load_private_key_from_bytes(&key_bytes)?,
                 cert_bytes,
             )
         };
@@ -129,7 +134,7 @@ impl WsClient {
             run,
             certs,
             key,
-            cert_str,
+            &cert_str,
         )
         .await
     }
@@ -141,7 +146,7 @@ impl WsClient {
         run: Arc<AtomicBool>,
         certs: Vec<Certificate>,
         key: PrivateKey,
-        cert_str: String,
+        cert_str: &[u8],
     ) -> Result<Self, Error> {
         let mut request = format!("wss://{}:{}/ws", client_config.host, client_config.port)
             .into_client_request()
@@ -171,7 +176,7 @@ impl WsClient {
         }
         request.headers_mut().insert(
             "chia-client-cert",
-            HeaderValue::from_str(&encode(&cert_str)).map_err(|e| {
+            HeaderValue::from_str(&encode(&String::from_utf8_lossy(cert_str))).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidData,
                     format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),

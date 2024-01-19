@@ -68,10 +68,11 @@ impl WebsocketServer {
                 ))?,
             )
         } else {
-            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(CHIA_CA_CRT, CHIA_CA_KEY)?;
+            let (cert_bytes, key_bytes) =
+                generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())?;
             (
-                load_certs_from_bytes(cert_bytes.as_bytes())?,
-                load_private_key_from_bytes(key_bytes.as_bytes())?,
+                load_certs_from_bytes(&cert_bytes)?,
+                load_private_key_from_bytes(&key_bytes)?,
                 load_certs_from_bytes(CHIA_CA_CRT.as_bytes())?,
             )
         };
@@ -92,10 +93,11 @@ impl WebsocketServer {
         cert_data: &str,
         key_data: &str,
     ) -> Result<Self, Error> {
-        let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)?;
+        let (cert_bytes, key_bytes) =
+            generate_ca_signed_cert_data(cert_data.as_bytes(), key_data.as_bytes())?;
         let (certs, key, root_certs) = (
-            load_certs_from_bytes(cert_bytes.as_bytes())?,
-            load_private_key_from_bytes(key_bytes.as_bytes())?,
+            load_certs_from_bytes(&cert_bytes)?,
+            load_private_key_from_bytes(&key_bytes)?,
             load_certs_from_bytes(cert_data.as_bytes())?,
         );
         let server_config = Self::init(certs, key, root_certs)
@@ -124,33 +126,39 @@ impl WebsocketServer {
                         Ok((stream, _)) => {
                             let peers = peers.clone();
                             let message_handlers = handlers.clone();
-                            let stream = acceptor.accept(stream).await?;
-                            let addr = stream.get_ref().0.peer_addr().ok();
-                            let mut peer_id = None;
-                            if let Some(certs) = stream.get_ref().1.peer_certificates() {
-                                if !certs.is_empty() {
-                                    peer_id = Some(Bytes32::new(&hash_256(&certs[0].0)));
+                            match acceptor.accept(stream).await {
+                                Ok(stream) => {
+                                    let addr = stream.get_ref().0.peer_addr().ok();
+                                    let mut peer_id = None;
+                                    if let Some(certs) = stream.get_ref().1.peer_certificates() {
+                                        if !certs.is_empty() {
+                                            peer_id = Some(Bytes32::new(&hash_256(&certs[0].0)));
+                                        }
+                                    }
+                                    let peer_id = Arc::new(peer_id);
+                                    let service = service_fn(move |req| {
+                                        let data = ConnectionData {
+                                            addr,
+                                            peer_id: peer_id.clone(),
+                                            req,
+                                            peers: peers.clone(),
+                                            message_handlers: message_handlers.clone(),
+                                            run: run.clone(),
+                                        };
+                                        connection_handler(data)
+                                    });
+                                    let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
+                                    tokio::spawn( async move {
+                                        if let Err(err) = connection.await {
+                                            error!("Error serving connection: {:?}", err);
+                                        }
+                                        Ok::<(), Error>(())
+                                    });
+                                }
+                                Err(e) => {
+                                    error!("Error accepting connection: {:?}", e);
                                 }
                             }
-                            let peer_id = Arc::new(peer_id);
-                            let service = service_fn(move |req| {
-                                let data = ConnectionData {
-                                    addr,
-                                    peer_id: peer_id.clone(),
-                                    req,
-                                    peers: peers.clone(),
-                                    message_handlers: message_handlers.clone(),
-                                    run: run.clone(),
-                                };
-                                connection_handler(data)
-                            });
-                            let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
-                            tokio::spawn( async move {
-                                if let Err(err) = connection.await {
-                                    error!("Error serving connection: {:?}", err);
-                                }
-                                Ok::<(), Error>(())
-                            });
                         }
                         Err(e) => {
                             error!("Error accepting connection: {:?}", e);
