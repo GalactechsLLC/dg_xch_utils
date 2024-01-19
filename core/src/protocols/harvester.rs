@@ -1,14 +1,14 @@
 use crate::blockchain::proof_of_space::ProofOfSpace;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
+use bytes::Buf;
 use dg_xch_macros::ChiaSerial;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
 #[cfg(feature = "metrics")]
 use std::time::Instant;
-use bytes::Buf;
-use log::debug;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PoolDifficulty {
@@ -49,7 +49,7 @@ pub enum SigningDataKind {
     RewardChainSubSlot = 6,
     Partial = 7,
     RewardChainBlockUnfinished = 9,
-    Unknown = 255
+    Unknown = 255,
 }
 impl From<u8> for SigningDataKind {
     fn from(value: u8) -> Self {
@@ -70,7 +70,7 @@ impl From<u8> for SigningDataKind {
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SignatureRequestSourceData {
     pub kind: SigningDataKind,
-    pub data: Vec<u8>
+    pub data: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -81,8 +81,8 @@ pub struct NewProofOfSpace {
     pub proof: ProofOfSpace,
     pub signage_point_index: u8,
     pub include_source_signature_data: bool,
-    pub farmer_reward_address_override : Option<Bytes32>,
-    pub fee_info : Option<ProofOfSpaceFeeInfo>,
+    pub farmer_reward_address_override: Option<Bytes32>,
+    pub fee_info: Option<ProofOfSpaceFeeInfo>,
 }
 impl dg_xch_serialize::ChiaSerialize for NewProofOfSpace {
     fn to_bytes(&self) -> Vec<u8> {
@@ -90,9 +90,7 @@ impl dg_xch_serialize::ChiaSerialize for NewProofOfSpace {
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.challenge_hash,
         ));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
-            &self.sp_hash,
-        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.sp_hash));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.plot_identifier,
         ));
@@ -103,13 +101,15 @@ impl dg_xch_serialize::ChiaSerialize for NewProofOfSpace {
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.include_source_signature_data,
         ));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.farmer_reward_address_override));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.farmer_reward_address_override,
+        ));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.fee_info));
         bytes
     }
     fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
-        where
-            Self: Sized,
+    where
+        Self: Sized,
     {
         let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
         let sp_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
@@ -145,7 +145,7 @@ impl dg_xch_serialize::ChiaSerialize for NewProofOfSpace {
             signage_point_index,
             include_source_signature_data,
             farmer_reward_address_override,
-            fee_info
+            fee_info,
         })
     }
 }
@@ -166,9 +166,7 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignatures {
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.challenge_hash,
         ));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
-            &self.sp_hash,
-        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.sp_hash));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.messages));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.message_data,
@@ -176,8 +174,8 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignatures {
         bytes
     }
     fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
-        where
-            Self: Sized,
+    where
+        Self: Sized,
     {
         let plot_identifier = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
         let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
@@ -195,7 +193,7 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignatures {
             challenge_hash,
             sp_hash,
             messages,
-            message_data
+            message_data,
         })
     }
 }
@@ -209,7 +207,7 @@ pub struct RespondSignatures {
     pub farmer_pk: Bytes48,
     pub message_signatures: Vec<(Bytes32, Bytes96)>,
     pub include_source_signature_data: bool,
-    pub farmer_reward_address_override: Option<Bytes32>
+    pub farmer_reward_address_override: Option<Bytes32>,
 }
 
 impl dg_xch_serialize::ChiaSerialize for RespondSignatures {
@@ -221,21 +219,23 @@ impl dg_xch_serialize::ChiaSerialize for RespondSignatures {
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.challenge_hash,
         ));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
-            &self.sp_hash,
-        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.sp_hash));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.local_pk));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.farmer_pk));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
-            &self.farmer_pk,
+            &self.message_signatures,
         ));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.message_signatures));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.include_source_signature_data));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.farmer_reward_address_override));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.include_source_signature_data,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.farmer_reward_address_override,
+        ));
         bytes
     }
     fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
-        where
-            Self: Sized,
+    where
+        Self: Sized,
     {
         let plot_identifier = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
         let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
@@ -265,7 +265,7 @@ impl dg_xch_serialize::ChiaSerialize for RespondSignatures {
             farmer_pk,
             message_signatures,
             include_source_signature_data,
-            farmer_reward_address_override
+            farmer_reward_address_override,
         })
     }
 }

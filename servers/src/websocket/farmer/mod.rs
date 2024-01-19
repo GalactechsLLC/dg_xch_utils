@@ -42,7 +42,7 @@ pub struct FarmerServer<T, S> {
     pub pool_client: Arc<T>,
     pub config: Arc<FarmerServerConfig>,
 }
-impl<T: PoolClient + Sized + Sync + Send + 'static, S:  Sync + Send + 'static> FarmerServer<T, S> {
+impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> FarmerServer<T, S> {
     pub fn new(
         config: FarmerServerConfig,
         pool_client: Arc<T>,

@@ -16,7 +16,10 @@ use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
     FarmerIdentifier, FarmerPoolState, NewSignagePoint, ProofsMap,
 };
-use dg_xch_core::protocols::harvester::{NewProofOfSpace, RequestSignatures, RespondSignatures, SignatureRequestSourceData, SigningDataKind};
+use dg_xch_core::protocols::harvester::{
+    NewProofOfSpace, RequestSignatures, RespondSignatures, SignatureRequestSourceData,
+    SigningDataKind,
+};
 use dg_xch_core::protocols::pool::{
     get_current_authentication_token, PoolErrorCode, PostPartialPayload, PostPartialRequest,
 };
@@ -88,30 +91,39 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                             < calculate_sp_interval_iters(&constants, sp.sub_slot_iters)?
                         {
                             let sp_src_data = {
-                                if new_pos.include_source_signature_data || new_pos.farmer_reward_address_override.is_some() {
-                                    if let Some(sp_data) = sp.sp_source_data.as_ref(){
-                                        let (cc, rc) = if let Some(vdf) = sp_data.vdf_data.as_ref() {
-                                            (SignatureRequestSourceData{
-                                                kind: SigningDataKind::ChallengeChainVdf,
-                                                data: vdf.cc_vdf.to_bytes()
-                                            },SignatureRequestSourceData{
-                                                kind: SigningDataKind::RewardChainVdf,
-                                                data: vdf.rc_vdf.to_bytes()
-                                            })
+                                if new_pos.include_source_signature_data
+                                    || new_pos.farmer_reward_address_override.is_some()
+                                {
+                                    if let Some(sp_data) = sp.sp_source_data.as_ref() {
+                                        let (cc, rc) = if let Some(vdf) = sp_data.vdf_data.as_ref()
+                                        {
+                                            (
+                                                SignatureRequestSourceData {
+                                                    kind: SigningDataKind::ChallengeChainVdf,
+                                                    data: vdf.cc_vdf.to_bytes(),
+                                                },
+                                                SignatureRequestSourceData {
+                                                    kind: SigningDataKind::RewardChainVdf,
+                                                    data: vdf.rc_vdf.to_bytes(),
+                                                },
+                                            )
                                         } else if let Some(vdf) = sp_data.vdf_data.as_ref() {
-                                            (SignatureRequestSourceData{
-                                                kind: SigningDataKind::ChallengeChainVdf,
-                                                data: vdf.cc_vdf.to_bytes()
-                                            },SignatureRequestSourceData{
-                                                kind: SigningDataKind::RewardChainVdf,
-                                                data: vdf.rc_vdf.to_bytes()
-                                            })
+                                            (
+                                                SignatureRequestSourceData {
+                                                    kind: SigningDataKind::ChallengeChainVdf,
+                                                    data: vdf.cc_vdf.to_bytes(),
+                                                },
+                                                SignatureRequestSourceData {
+                                                    kind: SigningDataKind::RewardChainVdf,
+                                                    data: vdf.rc_vdf.to_bytes(),
+                                                },
+                                            )
                                         } else {
-                                            return Err(Error::new(ErrorKind::InvalidInput, format!("Source Signature Did not contain any data, Cannot Sign Proof")));
+                                            return Err(Error::new(ErrorKind::InvalidInput, "Source Signature Did not contain any data, Cannot Sign Proof"));
                                         };
                                         Some(vec![Some(cc), Some(rc)])
                                     } else {
-                                        return Err(Error::new(ErrorKind::InvalidInput, format!("Source Signature Data Request But was Null, Cannot Sign Proof")));
+                                        return Err(Error::new(ErrorKind::InvalidInput, "Source Signature Data Request But was Null, Cannot Sign Proof"));
                                     }
                                 } else {
                                     None
@@ -214,10 +226,14 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                             };
                                             let to_sign = hash_256(payload.to_bytes());
                                             let sp_src_data = {
-                                                if new_pos.include_source_signature_data || new_pos.farmer_reward_address_override.is_some() {
-                                                    Some(vec![Some(SignatureRequestSourceData{
+                                                if new_pos.include_source_signature_data
+                                                    || new_pos
+                                                        .farmer_reward_address_override
+                                                        .is_some()
+                                                {
+                                                    Some(vec![Some(SignatureRequestSourceData {
                                                         kind: SigningDataKind::Partial,
-                                                        data: payload.to_bytes()
+                                                        data: payload.to_bytes(),
                                                     })])
                                                 } else {
                                                     None
@@ -274,9 +290,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                         format!("{:?}", e),
                                                     )
                                                 })?;
-                                                for sk in
-                                                    self.farmer_private_keys.values()
-                                                {
+                                                for sk in self.farmer_private_keys.values() {
                                                     let pk = sk.sk_to_pk();
                                                     if pk.to_bytes()
                                                         == *respond_sigs.farmer_pk.to_sized_bytes()

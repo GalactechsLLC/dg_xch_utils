@@ -4,6 +4,7 @@ use crate::blockchain::foliage_block_data::FoliageBlockData;
 use crate::blockchain::foliage_transaction_block::FoliageTransactionBlock;
 use crate::blockchain::pool_target::PoolTarget;
 use crate::blockchain::proof_of_space::ProofOfSpace;
+use crate::blockchain::reward_chain_block_unfinished::RewardChainBlockUnfinished;
 use crate::blockchain::reward_chain_subslot::RewardChainSubSlot;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use crate::config::PoolWalletConfig;
@@ -22,14 +23,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
-use crate::blockchain::reward_chain_block_unfinished::RewardChainBlockUnfinished;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SPSubSlotSourceData {
     pub cc_sub_slot: ChallengeChainSubSlot,
-    pub rc_sub_slot: RewardChainSubSlot
+    pub rc_sub_slot: RewardChainSubSlot,
 }
-
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SPVDFSourceData {
@@ -40,7 +39,7 @@ pub struct SPVDFSourceData {
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SignagePointSourceData {
     pub sub_slot_data: Option<SPSubSlotSourceData>,
-    pub vdf_data: Option<SPVDFSourceData>
+    pub vdf_data: Option<SPVDFSourceData>,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -52,7 +51,7 @@ pub struct NewSignagePoint {
     pub sub_slot_iters: u64,
     pub signage_point_index: u8,
     pub peak_height: u32,
-    pub sp_source_data: Option<SignagePointSourceData>
+    pub sp_source_data: Option<SignagePointSourceData>,
 }
 impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
     fn to_bytes(&self) -> Vec<u8> {
@@ -108,7 +107,7 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
             sub_slot_iters,
             signage_point_index,
             peak_height,
-            sp_source_data
+            sp_source_data,
         })
     }
 }
@@ -125,28 +124,48 @@ pub struct DeclareProofOfSpace {
     pub farmer_puzzle_hash: Bytes32,
     pub pool_target: Option<PoolTarget>,
     pub pool_signature: Option<Bytes96>,
-    pub include_signature_source_data: bool
+    pub include_signature_source_data: bool,
 }
 
 impl dg_xch_serialize::ChiaSerialize for DeclareProofOfSpace {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.challenge_hash));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.challenge_chain_sp));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.signage_point_index));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.reward_chain_sp));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.proof_of_space));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.challenge_chain_sp_signature));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.reward_chain_sp_signature));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.farmer_puzzle_hash));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.challenge_hash,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.challenge_chain_sp,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.signage_point_index,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.reward_chain_sp,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.proof_of_space,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.challenge_chain_sp_signature,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.reward_chain_sp_signature,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.farmer_puzzle_hash,
+        ));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.pool_target));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.pool_signature));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.include_signature_source_data));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.pool_signature,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.include_signature_source_data,
+        ));
         bytes
     }
     fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
-        where
-            Self: Sized,
+    where
+        Self: Sized,
     {
         let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
         let challenge_chain_sp = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
@@ -193,17 +212,29 @@ pub struct RequestSignedValues {
 impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.quality_string));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.foliage_block_data_hash));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.foliage_transaction_block_hash));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.foliage_block_data));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.foliage_transaction_block_data));
-        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.reward_chain_block_unfinished));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.quality_string,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.foliage_block_data_hash,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.foliage_transaction_block_hash,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.foliage_block_data,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.foliage_transaction_block_data,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.reward_chain_block_unfinished,
+        ));
         bytes
     }
     fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
-        where
-            Self: Sized,
+    where
+        Self: Sized,
     {
         let quality_string = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
         let foliage_block_data_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
@@ -235,7 +266,7 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
             foliage_transaction_block_hash,
             foliage_block_data,
             foliage_transaction_block_data,
-            reward_chain_block_unfinished
+            reward_chain_block_unfinished,
         })
     }
 }

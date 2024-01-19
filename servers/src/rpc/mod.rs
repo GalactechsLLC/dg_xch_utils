@@ -9,7 +9,7 @@ use hyper::server::conn::http1::Builder;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use log::{error};
+use log::error;
 use rustls::{RootCertStore, ServerConfig};
 use std::env;
 use std::io::{Error, ErrorKind};

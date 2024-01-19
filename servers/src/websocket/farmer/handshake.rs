@@ -61,9 +61,7 @@ impl MessageHandler for HandshakeHandle {
                 .await
                 .unwrap_or_default();
             if NodeType::Harvester as u8 == handshake.node_type {
-                let farmer_public_keys = self
-                    .farmer_private_keys
-                    .keys().copied().collect();
+                let farmer_public_keys = self.farmer_private_keys.keys().copied().collect();
                 let pool_public_keys = self.pool_public_keys.keys().copied().collect();
                 info! {"Harvester Connected. Sending Keys: ({:?}n {:?})", &farmer_public_keys, &pool_public_keys}
                 peer.websocket

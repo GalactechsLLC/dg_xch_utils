@@ -218,8 +218,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                     ) =
                                         &pospace.pool_public_key
                                     {
-                                        if let Some(sk) =
-                                            self.pool_public_keys.get(pool_public_key)
+                                        if let Some(sk) = self.pool_public_keys.get(pool_public_key)
                                         {
                                             let pool_target = PoolTarget {
                                                 max_height: 0,
@@ -251,7 +250,11 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .to_signature()
                                             .to_bytes()
                                             .into(),
-                                        farmer_puzzle_hash: if let Some(farmer_reward_address_override) = response.farmer_reward_address_override {
+                                        farmer_puzzle_hash: if let Some(
+                                            farmer_reward_address_override,
+                                        ) =
+                                            response.farmer_reward_address_override
+                                        {
                                             farmer_reward_address_override
                                         } else {
                                             self.config.farmer_reward_payout_address
@@ -259,7 +262,9 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                         pool_target,
                                         pool_signature: pool_target_signature
                                             .map(|s| s.to_bytes().into()),
-                                        include_signature_source_data: response.include_source_signature_data || response.farmer_reward_address_override.is_some(),
+                                        include_signature_source_data: response
+                                            .include_source_signature_data
+                                            || response.farmer_reward_address_override.is_some(),
                                     };
                                     if let Some(client) =
                                         self.full_node_client.lock().await.as_mut()
