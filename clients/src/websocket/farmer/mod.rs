@@ -16,14 +16,14 @@ use uuid::Uuid;
 pub mod request_signed_values;
 pub mod signage_point;
 
-pub struct FarmerClient {
+pub struct FarmerClient<T> {
     pub client: WsClient,
-    pub shared_state: Arc<FarmerSharedState>,
+    pub shared_state: Arc<FarmerSharedState<T>>,
 }
-impl FarmerClient {
+impl<T> FarmerClient<T> {
     pub async fn new(
         client_config: Arc<WsClientConfig>,
-        shared_state: Arc<FarmerSharedState>,
+        shared_state: Arc<FarmerSharedState<T>>,
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let constants = CONSENSUS_CONSTANTS_MAP
@@ -47,9 +47,9 @@ impl FarmerClient {
     }
 }
 
-fn handles(
+fn handles<T>(
     constants: &'static ConsensusConstants,
-    shared_state: Arc<FarmerSharedState>,
+    shared_state: Arc<FarmerSharedState<T>>,
 ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
     HashMap::from([
         (
@@ -63,7 +63,7 @@ fn handles(
                     constants,
                     harvester_peers: shared_state.harvester_peers.clone(),
                     signage_points: shared_state.signage_points.clone(),
-                    pool_state: shared_state.pool_state.clone(),
+                    pool_state: shared_state.pool_states.clone(),
                     cache_time: shared_state.cache_time.clone(),
                     running_state: shared_state.running_state.clone(),
                     most_recent_sp: shared_state.most_recent_sp.clone(),

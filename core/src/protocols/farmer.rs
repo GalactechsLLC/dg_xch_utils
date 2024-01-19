@@ -1,5 +1,10 @@
+use crate::blockchain::challenge_chain_subslot::ChallengeChainSubSlot;
+use crate::blockchain::class_group_element::ClassgroupElement;
+use crate::blockchain::foliage_block_data::FoliageBlockData;
+use crate::blockchain::foliage_transaction_block::FoliageTransactionBlock;
 use crate::blockchain::pool_target::PoolTarget;
 use crate::blockchain::proof_of_space::ProofOfSpace;
+use crate::blockchain::reward_chain_subslot::RewardChainSubSlot;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use crate::config::PoolWalletConfig;
 use crate::protocols::error::RecentErrors;
@@ -17,6 +22,26 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
+use crate::blockchain::reward_chain_block_unfinished::RewardChainBlockUnfinished;
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SPSubSlotSourceData {
+    pub cc_sub_slot: ChallengeChainSubSlot,
+    pub rc_sub_slot: RewardChainSubSlot
+}
+
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SPVDFSourceData {
+    pub cc_vdf: ClassgroupElement,
+    pub rc_vdf: ClassgroupElement,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SignagePointSourceData {
+    pub sub_slot_data: Option<SPSubSlotSourceData>,
+    pub vdf_data: Option<SPVDFSourceData>
+}
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct NewSignagePoint {
@@ -27,8 +52,8 @@ pub struct NewSignagePoint {
     pub sub_slot_iters: u64,
     pub signage_point_index: u8,
     pub peak_height: u32,
+    pub sp_source_data: Option<SignagePointSourceData>
 }
-
 impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
@@ -68,6 +93,13 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
             debug!("You are connected to an old node version, Please update your Fullnode.");
             0u32
         };
+        let sp_source_data = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 Nodes for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
         Ok(Self {
             challenge_hash,
             challenge_chain_sp,
@@ -76,11 +108,12 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
             sub_slot_iters,
             signage_point_index,
             peak_height,
+            sp_source_data
         })
     }
 }
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct DeclareProofOfSpace {
     pub challenge_hash: Bytes32,
     pub challenge_chain_sp: Bytes32,
@@ -92,13 +125,119 @@ pub struct DeclareProofOfSpace {
     pub farmer_puzzle_hash: Bytes32,
     pub pool_target: Option<PoolTarget>,
     pub pool_signature: Option<Bytes96>,
+    pub include_signature_source_data: bool
 }
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+impl dg_xch_serialize::ChiaSerialize for DeclareProofOfSpace {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.challenge_hash));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.challenge_chain_sp));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.signage_point_index));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.reward_chain_sp));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.proof_of_space));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.challenge_chain_sp_signature));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.reward_chain_sp_signature));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.farmer_puzzle_hash));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.pool_target));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.pool_signature));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.include_signature_source_data));
+        bytes
+    }
+    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
+        where
+            Self: Sized,
+    {
+        let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let challenge_chain_sp = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let signage_point_index = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let reward_chain_sp = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let proof_of_space = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let challenge_chain_sp_signature = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let reward_chain_sp_signature = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let farmer_puzzle_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let pool_target = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let pool_signature = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let include_signature_source_data = if bytes.remaining() > 0 {
+            //Maintain Compatibility with < Chia 2.X nodes for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            false
+        };
+        Ok(Self {
+            challenge_hash,
+            challenge_chain_sp,
+            signage_point_index,
+            reward_chain_sp,
+            proof_of_space,
+            challenge_chain_sp_signature,
+            reward_chain_sp_signature,
+            farmer_puzzle_hash,
+            pool_target,
+            pool_signature,
+            include_signature_source_data,
+        })
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RequestSignedValues {
     pub quality_string: Bytes32,
     pub foliage_block_data_hash: Bytes32,
     pub foliage_transaction_block_hash: Bytes32,
+    pub foliage_block_data: Option<FoliageBlockData>,
+    pub foliage_transaction_block_data: Option<FoliageTransactionBlock>,
+    pub reward_chain_block_unfinished: Option<RewardChainBlockUnfinished>,
+}
+impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.quality_string));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.foliage_block_data_hash));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.foliage_transaction_block_hash));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.foliage_block_data));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.foliage_transaction_block_data));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.reward_chain_block_unfinished));
+        bytes
+    }
+    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
+        where
+            Self: Sized,
+    {
+        let quality_string = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let foliage_block_data_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let foliage_transaction_block_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let foliage_block_data = if bytes.remaining() > 0 {
+            //Maintain Compatibility with < Chia 2.X nodes for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
+        let foliage_transaction_block_data = if bytes.remaining() > 0 {
+            //Maintain Compatibility with < Chia 2.X nodes for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
+        let reward_chain_block_unfinished = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 Nodes for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
+        Ok(Self {
+            quality_string,
+            foliage_block_data_hash,
+            foliage_transaction_block_hash,
+            foliage_block_data,
+            foliage_transaction_block_data,
+            reward_chain_block_unfinished
+        })
+    }
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -189,20 +328,21 @@ impl Default for MostRecentSignagePoint {
 }
 
 #[derive(Default, Clone)]
-pub struct FarmerSharedState {
-    pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
+pub struct FarmerSharedState<T> {
     pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
-    pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
+    pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
     pub proofs_of_space: ProofsMap,
-    pub farmer_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
-    pub farmer_private_keys: Arc<Mutex<Vec<SecretKey>>>,
-    pub pool_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
-    pub owner_secret_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
+    pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
+    pub pool_states: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
+    pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub owner_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub auth_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub pool_public_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub harvester_peers: PeerMap,
     pub most_recent_sp: Arc<Mutex<MostRecentSignagePoint>>,
     pub recent_errors: Arc<Mutex<RecentErrors<String>>>,
     pub running_state: Arc<Mutex<FarmerRunningState>>,
+    pub data: Arc<T>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
 }

@@ -16,7 +16,7 @@ use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
     FarmerIdentifier, FarmerPoolState, NewSignagePoint, ProofsMap,
 };
-use dg_xch_core::protocols::harvester::{NewProofOfSpace, RequestSignatures, RespondSignatures};
+use dg_xch_core::protocols::harvester::{NewProofOfSpace, RequestSignatures, RespondSignatures, SignatureRequestSourceData, SigningDataKind};
 use dg_xch_core::protocols::pool::{
     get_current_authentication_token, PoolErrorCode, PostPartialPayload, PostPartialRequest,
 };
@@ -41,8 +41,8 @@ pub struct NewProofOfSpaceHandle<T: PoolClient + Sized + Sync + Send + 'static> 
     pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
     pub proofs_of_space: ProofsMap,
     pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-    pub farmer_private_keys: Arc<Mutex<Vec<SecretKey>>>,
-    pub owner_secret_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
+    pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub owner_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
     pub config: Arc<FarmerServerConfig>,
     pub headers: Arc<HashMap<String, String>>,
@@ -87,11 +87,42 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                         if required_iters
                             < calculate_sp_interval_iters(&constants, sp.sub_slot_iters)?
                         {
+                            let sp_src_data = {
+                                if new_pos.include_source_signature_data || new_pos.farmer_reward_address_override.is_some() {
+                                    if let Some(sp_data) = sp.sp_source_data.as_ref(){
+                                        let (cc, rc) = if let Some(vdf) = sp_data.vdf_data.as_ref() {
+                                            (SignatureRequestSourceData{
+                                                kind: SigningDataKind::ChallengeChainVdf,
+                                                data: vdf.cc_vdf.to_bytes()
+                                            },SignatureRequestSourceData{
+                                                kind: SigningDataKind::RewardChainVdf,
+                                                data: vdf.rc_vdf.to_bytes()
+                                            })
+                                        } else if let Some(vdf) = sp_data.vdf_data.as_ref() {
+                                            (SignatureRequestSourceData{
+                                                kind: SigningDataKind::ChallengeChainVdf,
+                                                data: vdf.cc_vdf.to_bytes()
+                                            },SignatureRequestSourceData{
+                                                kind: SigningDataKind::RewardChainVdf,
+                                                data: vdf.rc_vdf.to_bytes()
+                                            })
+                                        } else {
+                                            return Err(Error::new(ErrorKind::InvalidInput, format!("Source Signature Did not contain any data, Cannot Sign Proof")));
+                                        };
+                                        Some(vec![Some(cc), Some(rc)])
+                                    } else {
+                                        return Err(Error::new(ErrorKind::InvalidInput, format!("Source Signature Data Request But was Null, Cannot Sign Proof")));
+                                    }
+                                } else {
+                                    None
+                                }
+                            };
                             let request = RequestSignatures {
                                 plot_identifier: new_pos.plot_identifier.clone(),
                                 challenge_hash: new_pos.challenge_hash,
                                 sp_hash: new_pos.sp_hash,
                                 messages: vec![sp.challenge_chain_sp, sp.reward_chain_sp],
+                                message_data: sp_src_data,
                             };
                             let mut farmer_pos = self.proofs_of_space.lock().await;
                             if farmer_pos.get(&new_pos.sp_hash).is_none() {
@@ -182,11 +213,22 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                 harvester_id: *peer_id,
                                             };
                                             let to_sign = hash_256(payload.to_bytes());
+                                            let sp_src_data = {
+                                                if new_pos.include_source_signature_data || new_pos.farmer_reward_address_override.is_some() {
+                                                    Some(vec![Some(SignatureRequestSourceData{
+                                                        kind: SigningDataKind::Partial,
+                                                        data: payload.to_bytes()
+                                                    })])
+                                                } else {
+                                                    None
+                                                }
+                                            };
                                             let request = RequestSignatures {
                                                 plot_identifier: new_pos.plot_identifier.clone(),
                                                 challenge_hash: new_pos.challenge_hash,
                                                 sp_hash: new_pos.sp_hash,
                                                 messages: vec![Bytes32::new(&to_sign)],
+                                                message_data: sp_src_data,
                                             };
                                             if let Some(peer) =
                                                 peers.lock().await.get(&peer_id).cloned()
@@ -233,7 +275,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                     )
                                                 })?;
                                                 for sk in
-                                                    self.farmer_private_keys.lock().await.iter()
+                                                    self.farmer_private_keys.values()
                                                 {
                                                     let pk = sk.sk_to_pk();
                                                     if pk.to_bytes()
@@ -297,8 +339,6 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                 }
                                                 if let Some(auth_key) = self
                                                     .owner_secret_keys
-                                                    .lock()
-                                                    .await
                                                     .get(&pool_config.owner_public_key)
                                                 {
                                                     let auth_sig = sign(auth_key, &to_sign);

@@ -625,7 +625,9 @@ impl WebsocketConnection {
                 .map_err(|e| Error::new(ErrorKind::Other, e))
         }
     }
-
+    pub async fn clear(&self) {
+        self.message_handlers.lock().await.clear()
+    }
     pub async fn shutdown(&mut self) -> Result<(), Error> {
         self.close(None).await
     }

@@ -15,6 +15,11 @@ pub const NUMBER_ZERO_BITS_PLOT_FILTER: i32 = 9;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ProofBytes(Vec<u8>);
+impl ProofBytes {
+    pub fn iter(&self) -> std::slice::Iter<'_, u8> {
+        self.0.iter()
+    }
+}
 impl ChiaSerialize for ProofBytes {
     fn to_bytes(&self) -> Vec<u8>
     where

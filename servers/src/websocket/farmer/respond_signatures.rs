@@ -26,23 +26,23 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
-pub struct RespondSignaturesHandle {
+pub struct RespondSignaturesHandle<T> {
     pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
     pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
     pub proofs_of_space: ProofsMap,
     pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-    pub pool_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
-    pub farmer_private_keys: Arc<Mutex<Vec<SecretKey>>>,
-    pub owner_secret_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
+    pub pool_public_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub owner_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
-    pub full_node_client: Arc<Mutex<Option<FarmerClient>>>,
+    pub full_node_client: Arc<Mutex<Option<FarmerClient<T>>>>,
     pub config: Arc<FarmerServerConfig>,
     pub headers: Arc<HashMap<String, String>>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
 }
 #[async_trait]
-impl MessageHandler for RespondSignaturesHandle {
+impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
@@ -110,7 +110,7 @@ impl MessageHandler for RespondSignaturesHandle {
                                 &response.message_signatures[1];
                             let reward_chain_sp_harv_sig = reward_chain_sp_harv_sig.try_into()?;
                             let local_pk = response.local_pk.into();
-                            for sk in self.farmer_private_keys.lock().await.iter() {
+                            for sk in self.farmer_private_keys.values() {
                                 let pk = sk.sk_to_pk();
                                 if pk.to_bytes() == *response.farmer_pk.to_sized_bytes() {
                                     let agg_pk =
@@ -219,7 +219,7 @@ impl MessageHandler for RespondSignaturesHandle {
                                         &pospace.pool_public_key
                                     {
                                         if let Some(sk) =
-                                            self.pool_public_keys.lock().await.get(pool_public_key)
+                                            self.pool_public_keys.get(pool_public_key)
                                         {
                                             let pool_target = PoolTarget {
                                                 max_height: 0,
@@ -251,12 +251,15 @@ impl MessageHandler for RespondSignaturesHandle {
                                             .to_signature()
                                             .to_bytes()
                                             .into(),
-                                        farmer_puzzle_hash: self
-                                            .config
-                                            .farmer_reward_payout_address,
+                                        farmer_puzzle_hash: if let Some(farmer_reward_address_override) = response.farmer_reward_address_override {
+                                            farmer_reward_address_override
+                                        } else {
+                                            self.config.farmer_reward_payout_address
+                                        },
                                         pool_target,
                                         pool_signature: pool_target_signature
                                             .map(|s| s.to_bytes().into()),
+                                        include_signature_source_data: response.include_source_signature_data || response.farmer_reward_address_override.is_some(),
                                     };
                                     if let Some(client) =
                                         self.full_node_client.lock().await.as_mut()
@@ -301,7 +304,7 @@ impl MessageHandler for RespondSignaturesHandle {
                             let foliage_transaction_block_sig_harvester =
                                 foliage_transaction_block_sig_harvester.try_into()?;
                             let local_pk = response.local_pk.into();
-                            for sk in self.farmer_private_keys.lock().await.iter() {
+                            for sk in self.farmer_private_keys.values() {
                                 let pk = sk.sk_to_pk();
                                 if pk.to_bytes() == *response.farmer_pk.to_sized_bytes() {
                                     let agg_pk =

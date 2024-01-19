@@ -36,18 +36,18 @@ pub struct FarmerServerConfig {
     pub pool_rewards_payout_address: Bytes32,
 }
 
-pub struct FarmerServer<T> {
+pub struct FarmerServer<T, S> {
     pub server: WebsocketServer,
-    pub shared_state: Arc<FarmerSharedState>,
+    pub shared_state: Arc<FarmerSharedState<S>>,
     pub pool_client: Arc<T>,
     pub config: Arc<FarmerServerConfig>,
 }
-impl<T: PoolClient + Sized + Sync + Send + 'static> FarmerServer<T> {
+impl<T: PoolClient + Sized + Sync + Send + 'static, S:  Sync + Send + 'static> FarmerServer<T, S> {
     pub fn new(
         config: FarmerServerConfig,
         pool_client: Arc<T>,
-        shared_state: Arc<FarmerSharedState>,
-        full_node_client: Arc<Mutex<Option<FarmerClient>>>,
+        shared_state: Arc<FarmerSharedState<S>>,
+        full_node_client: Arc<Mutex<Option<FarmerClient<S>>>>,
         additional_headers: Arc<HashMap<String, String>>,
     ) -> Result<Self, Error> {
         let config = Arc::new(config);
@@ -73,8 +73,8 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> FarmerServer<T> {
     fn handles(
         config: Arc<FarmerServerConfig>,
         pool_client: Arc<T>,
-        shared_state: Arc<FarmerSharedState>,
-        full_node_client: Arc<Mutex<Option<FarmerClient>>>,
+        shared_state: Arc<FarmerSharedState<S>>,
+        full_node_client: Arc<Mutex<Option<FarmerClient<S>>>>,
         additional_headers: Arc<HashMap<String, String>>,
     ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
         HashMap::from([
@@ -107,7 +107,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> FarmerServer<T> {
                         cache_time: shared_state.cache_time.clone(),
                         farmer_private_keys: shared_state.farmer_private_keys.clone(),
                         owner_secret_keys: shared_state.owner_secret_keys.clone(),
-                        pool_state: shared_state.pool_state.clone(),
+                        pool_state: shared_state.pool_states.clone(),
                         config: config.clone(),
                         headers: additional_headers.clone(),
                         #[cfg(feature = "metrics")]
@@ -130,7 +130,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> FarmerServer<T> {
                         pool_public_keys: shared_state.pool_public_keys.clone(),
                         farmer_private_keys: shared_state.farmer_private_keys.clone(),
                         owner_secret_keys: shared_state.owner_secret_keys.clone(),
-                        pool_state: shared_state.pool_state.clone(),
+                        pool_state: shared_state.pool_states.clone(),
                         full_node_client: full_node_client.clone(),
                         config,
                         headers: additional_headers.clone(),
