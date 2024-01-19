@@ -200,9 +200,15 @@ pub fn master_sk_to_pooling_authentication_sk(
     )
 }
 
-pub fn key_from_mnemonic(mnemonic: &str) -> Result<SecretKey, Error> {
+pub fn key_from_mnemonic_str(mnemonic: &str) -> Result<SecretKey, Error> {
     let mnemonic = Mnemonic::from_str(mnemonic)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+    let seed = mnemonic.to_seed("");
+    SecretKey::key_gen_v3(&seed, &[])
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+}
+
+pub fn key_from_mnemonic(mnemonic: &Mnemonic) -> Result<SecretKey, Error> {
     let seed = mnemonic.to_seed("");
     SecretKey::key_gen_v3(&seed, &[])
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
