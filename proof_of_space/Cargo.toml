@@ -28,7 +28,7 @@ rustc-hash = "1.1.0"
 sha2 = "0.10.8"
 simple_logger = "4.3.3"
 tokio = {version = "1.35.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
-winapi = "0.3.9"
+windows-sys = { version = "0.52.0", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["stable"] }
