@@ -174,9 +174,10 @@ pub fn generate_ca_signed_cert(
     cert_data: &[u8],
     key_path: &Path,
     key_data: &[u8],
+    overwrite: bool,
 ) -> Result<(Vec<u8>, Vec<u8>), Error> {
     let (cert_data, key_data) = generate_ca_signed_cert_data(cert_data, key_data)?;
-    write_ssl_cert_and_key(cert_path, &cert_data, key_path, &key_data, true)?;
+    write_ssl_cert_and_key(cert_path, &cert_data, key_path, &key_data, overwrite)?;
     Ok((cert_data, key_data))
 }
 
@@ -187,24 +188,31 @@ fn write_ssl_cert_and_key(
     key_data: &[u8],
     overwrite: bool,
 ) -> Result<(), Error> {
-    if cert_path.exists() && overwrite {
-        fs::remove_file(cert_path)?;
+    let cert_exists = cert_path.exists();
+    if !cert_exists || overwrite {
+        if cert_exists {
+            fs::remove_file(cert_path)?;
+        }
+        let mut crt = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(cert_path)?;
+        crt.write_all(cert_data)?;
+        crt.flush()?;
     }
-    let mut crt = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(cert_path)?;
-    crt.write_all(cert_data)?;
-    crt.flush()?;
-    if key_path.exists() && overwrite {
-        fs::remove_file(key_path)?;
+    let key_exists = key_path.exists();
+    if !key_exists || overwrite {
+        if key_exists {
+            fs::remove_file(key_path)?;
+        }
+        let mut key = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(key_path)?;
+        key.write_all(key_data)?;
+        key.flush()?;
     }
-    let mut key = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(key_path)?;
-    key.write_all(key_data)?;
-    key.flush()
+    Ok(())
 }
 
 pub fn generate_ca_signed_cert_data(
@@ -406,7 +414,7 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
             fs::read(private_ca_key_path)?,
         )
     };
-    info!("Generating Private Certs");
+    info!("Checking SSL Private Certs");
     generate_ssl_for_nodes(
         ssl_dir,
         &crt,
@@ -415,7 +423,7 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
         &ALL_PRIVATE_NODE_NAMES,
         overwrite,
     )?;
-    info!("Generating Public Certs");
+    info!("Checking SSL Public Certs");
     generate_ssl_for_nodes(
         ssl_dir,
         CHIA_CA_CRT.as_bytes(),
@@ -442,7 +450,7 @@ fn generate_ssl_for_nodes(
         if key_path.exists() && crt_path.exists() && !overwrite {
             continue;
         }
-        if let Err(e) = generate_ca_signed_cert(&crt_path, crt, &key_path, key) {
+        if let Err(e) = generate_ca_signed_cert(&crt_path, crt, &key_path, key, overwrite) {
             error!("Failed to write Cert Files: {:?}", e);
         }
     }

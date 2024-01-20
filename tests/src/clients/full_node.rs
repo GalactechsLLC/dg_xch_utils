@@ -17,8 +17,8 @@ pub async fn test_full_node_client() -> Result<(), Error> {
         .get_additions_and_removals_with_hints(&hinted_block.header_hash)
         .await
         .unwrap();
-    let items = client.get_all_mempool_items().await.unwrap();
-    let by_puz = client
+    let _ = client.get_all_mempool_items().await.unwrap();
+    let _ = client
         .get_coin_records_by_puzzle_hashes_paginated(
             &[Bytes32::from(
                 "1c69feee1fb42ffa6c60fcc222c3aa8fb6cc719937a83f5aa068dc7045e0a633",
@@ -118,7 +118,7 @@ pub async fn test_full_node_client() -> Result<(), Error> {
     Ok(())
 }
 
-async fn get_parent_spend(
+pub async fn get_parent_spend(
     client: &FullnodeClient,
     coin_record: &CoinRecord,
 ) -> Result<CoinSpend, Error> {
@@ -162,7 +162,7 @@ pub async fn test_farmer_ws_client() {
         software_version: None,
         additional_headers: None,
     });
-    let shared_state = Arc::new(FarmerSharedState {
+    let shared_state = Arc::new(FarmerSharedState::<()> {
         ..Default::default()
     });
     for _ in 0..simulate_count {
