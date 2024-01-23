@@ -6,7 +6,7 @@ use rand::Rng;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
-use rustls::server::{ClientCertVerified, ClientCertVerifier};
+use rustls::server::{ClientCertVerified, ClientCertVerifier, ParsedCertificate};
 use rustls::{DistinguishedName, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
@@ -434,6 +434,112 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
     )
 }
 
+pub fn validate_all_ssl(ssl_dir: &Path) -> bool {
+    let ca_dir = ssl_dir.join(Path::new("ca"));
+    if !ca_dir.exists() {
+        false
+    } else {
+        let private_ca_key_path = ca_dir.join("private_ca.key");
+        let private_ca_crt_path = ca_dir.join("private_ca.crt");
+        let chia_ca_crt_path = ca_dir.join("chia_ca.crt");
+        let chia_ca_key_path = ca_dir.join("chia_ca.key");
+        if !validate_cert(&private_ca_crt_path)
+            || !validate_cert(&chia_ca_crt_path)
+            || !validate_key(&private_ca_key_path)
+            || !validate_key(&chia_ca_key_path)
+        {
+            false
+        } else {
+            validate_node_paths(ssl_dir, "private", &ALL_PRIVATE_NODE_NAMES)
+                && validate_node_paths(ssl_dir, "public", &ALL_PUBLIC_NODE_NAMES)
+        }
+    }
+}
+
+fn validate_node_paths(ssl_dir: &Path, prefix: &str, nodes: &[&str]) -> bool {
+    for node_name in nodes {
+        let node_dir = ssl_dir.join(Path::new(*node_name));
+        if !node_dir.exists() {
+            return false;
+        } else {
+            let crt_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.crt")));
+            let key_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.key")));
+            if key_path.exists() && crt_path.exists() {
+                if !validate_cert(&crt_path) || !validate_key(&key_path) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn validate_cert(path: &Path) -> bool {
+    match File::open(path) {
+        Ok(cert_file) => {
+            let mut reader = BufReader::new(cert_file);
+            match certs(&mut reader) {
+                Ok(certs) => {
+                    for cert in certs.into_iter().map(rustls::Certificate) {
+                        if let Err(e) = ParsedCertificate::try_from(&cert) {
+                            error!("Error Parsing Cert: {e:?}");
+                            return false;
+                        }
+                    }
+                    true
+                }
+                Err(e) => {
+                    error!("Failed to read Cert File: {path:?}, {:?}", e);
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to read Cert File: {path:?}, {:?}", e);
+            false
+        }
+    }
+}
+
+fn validate_key(path: &Path) -> bool {
+    match File::open(path) {
+        Ok(cert_file) => {
+            let mut reader = BufReader::new(cert_file);
+            for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
+                match item {
+                    Ok(Item::RSAKey(key)) => {
+                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs1_der(&key) {
+                            error!("Error Validating Private Key: {path:?}, {e:?}");
+                            return false;
+                        }
+                    }
+                    Ok(Item::PKCS8Key(key)) => {
+                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs8_der(&key) {
+                            error!("Error Validating Private Key: {path:?}, {e:?}");
+                            return false;
+                        }
+                    }
+                    Ok(Item::ECKey(_)) => {
+                        error!("ECKey is not supported");
+                        return false;
+                    }
+                    Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
+                    _ => {
+                        error!("Unknown Item while loading private key")
+                    }
+                }
+            }
+            true
+        }
+        Err(e) => {
+            error!("Failed to read Cert File: {path:?}, {:?}", e);
+            false
+        }
+    }
+}
+
 fn generate_ssl_for_nodes(
     ssl_dir: &Path,
     crt: &[u8],
@@ -497,5 +603,11 @@ pub struct SslInfo {
 pub fn test_ssl() {
     use simple_logger::SimpleLogger;
     SimpleLogger::new().init().unwrap();
-    create_all_ssl("./ssl".as_ref(), true).unwrap();
+    let path = Path::new("/home/luna/ssl_test/");
+    create_all_ssl(path, false).unwrap();
+    if validate_all_ssl(path) {
+        info!("Validated SSL");
+    } else {
+        info!("Failed to Validated SSL");
+    }
 }
