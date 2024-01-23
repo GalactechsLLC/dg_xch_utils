@@ -225,7 +225,7 @@ pub enum RootCommands {
         last_id: Option<Bytes32>,
     },
     #[command(about = "Get CoinRecords by hint", long_about = None)]
-    GetCoinRecordsByPuzzleHashesPaginated{
+    GetCoinRecordsByPuzzleHashesPaginated {
         #[arg(long)]
         puzzle_hashes: Vec<Bytes32>,
         #[arg(long)]
