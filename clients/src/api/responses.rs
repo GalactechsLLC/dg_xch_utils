@@ -1,6 +1,6 @@
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord, PaginatedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -29,6 +29,13 @@ pub struct HintedAdditionsAndRemovalsResp {
     //non-standard
     pub additions: Vec<HintedCoinRecord>,
     pub removals: Vec<HintedCoinRecord>,
+    pub success: bool,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SingletonByLauncherIdResp {
+    //non-standard
+    pub coin_record: CoinRecord,
+    pub parent_spend: CoinSpend,
     pub success: bool,
 }
 
@@ -72,7 +79,7 @@ pub struct CoinHintsResp {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PaginatedCoinRecordAryResp {
     //non-standard
-    pub coin_records: Vec<CoinRecord>,
+    pub coin_records: Vec<PaginatedCoinRecord>,
     pub last_id: Option<Bytes32>,
     pub total_coin_count: Option<i32>,
     pub success: bool,
@@ -87,7 +94,7 @@ pub struct CoinSpendResp {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CoinSpendMapResp {
     //non-standard
-    pub coin_solutions: HashMap<Bytes32, CoinSpend>,
+    pub coin_solutions: HashMap<Bytes32, Option<CoinSpend>>,
     pub success: bool,
 }
 
@@ -140,13 +147,13 @@ pub struct MempoolItemAryResp {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MempoolItemsResp {
-    pub mempool_items: HashMap<String, MempoolItem>,
+    pub mempool_items: HashMap<Bytes32, MempoolItem>,
     pub success: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MempoolTXResp {
-    pub tx_ids: Vec<String>,
+    pub tx_ids: Vec<Bytes32>,
     pub success: bool,
 }
 

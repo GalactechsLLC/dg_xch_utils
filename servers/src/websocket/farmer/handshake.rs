@@ -14,12 +14,11 @@ use log::{debug, info};
 use std::collections::HashMap;
 use std::io::{Cursor, Error};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub struct HandshakeHandle {
     pub config: Arc<FarmerServerConfig>,
-    pub farmer_private_keys: Arc<Mutex<Vec<SecretKey>>>,
-    pub pool_public_keys: Arc<Mutex<HashMap<Bytes48, SecretKey>>>,
+    pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub pool_public_keys: Arc<HashMap<Bytes48, SecretKey>>,
 }
 #[async_trait]
 impl MessageHandler for HandshakeHandle {
@@ -62,14 +61,8 @@ impl MessageHandler for HandshakeHandle {
                 .await
                 .unwrap_or_default();
             if NodeType::Harvester as u8 == handshake.node_type {
-                let farmer_public_keys = self
-                    .farmer_private_keys
-                    .lock()
-                    .await
-                    .iter()
-                    .map(|k| k.sk_to_pk().to_bytes().into())
-                    .collect();
-                let pool_public_keys = self.pool_public_keys.lock().await.keys().cloned().collect();
+                let farmer_public_keys = self.farmer_private_keys.keys().copied().collect();
+                let pool_public_keys = self.pool_public_keys.keys().copied().collect();
                 info! {"Harvester Connected. Sending Keys: ({:?}n {:?})", &farmer_public_keys, &pool_public_keys}
                 peer.websocket
                     .lock()

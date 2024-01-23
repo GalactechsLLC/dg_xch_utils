@@ -5,7 +5,10 @@ use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use dg_xch_core::protocols::{
     ChiaMessageHandler, NodeType, PeerMap, SocketPeer, WebsocketConnection, WebsocketMsgStream,
 };
-use dg_xch_core::ssl::{load_certs, load_private_key, AllowAny, SslInfo};
+use dg_xch_core::ssl::{
+    generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
+    load_private_key_from_bytes, AllowAny, SslInfo, CHIA_CA_CRT, CHIA_CA_KEY,
+};
 use dg_xch_serialize::hash_256;
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
@@ -14,8 +17,8 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_tungstenite::{is_upgrade_request, upgrade, HyperWebsocket};
 use hyper_util::rt::TokioIo;
-use log::{debug, error, info};
-use rustls::{RootCertStore, ServerConfig};
+use log::{debug, error};
+use rustls::{Certificate, PrivateKey, RootCertStore, ServerConfig};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -28,12 +31,13 @@ use tokio::select;
 use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::tungstenite;
+use tokio_tungstenite::tungstenite::error::TlsError;
 use uuid::Uuid;
 
 pub struct WebsocketServerConfig {
     pub host: String,
     pub port: u16,
-    pub ssl_info: SslInfo,
+    pub ssl_info: Option<SslInfo>,
 }
 
 pub struct WebsocketServer {
@@ -48,7 +52,55 @@ impl WebsocketServer {
         peers: PeerMap,
         message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     ) -> Result<Self, Error> {
-        let server_config = Self::init(config)
+        let (certs, key, root_certs) = if let Some(ssl_info) = &config.ssl_info {
+            (
+                load_certs(&format!(
+                    "{}/{}",
+                    &ssl_info.root_path, &ssl_info.certs.private_crt
+                ))?,
+                load_private_key(&format!(
+                    "{}/{}",
+                    &ssl_info.root_path, &ssl_info.certs.private_key
+                ))?,
+                load_certs(&format!(
+                    "{}/{}",
+                    &ssl_info.root_path, &ssl_info.ca.private_crt
+                ))?,
+            )
+        } else {
+            let (cert_bytes, key_bytes) =
+                generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())?;
+            (
+                load_certs_from_bytes(&cert_bytes)?,
+                load_private_key_from_bytes(&key_bytes)?,
+                load_certs_from_bytes(CHIA_CA_CRT.as_bytes())?,
+            )
+        };
+        let server_config = Self::init(certs, key, root_certs)
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
+        let socket_address = Self::init_socket(config)?;
+        Ok(WebsocketServer {
+            socket_address,
+            server_config,
+            peers,
+            message_handlers,
+        })
+    }
+    pub fn with_ca(
+        config: &WebsocketServerConfig,
+        peers: PeerMap,
+        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        cert_data: &str,
+        key_data: &str,
+    ) -> Result<Self, Error> {
+        let (cert_bytes, key_bytes) =
+            generate_ca_signed_cert_data(cert_data.as_bytes(), key_data.as_bytes())?;
+        let (certs, key, root_certs) = (
+            load_certs_from_bytes(&cert_bytes)?,
+            load_private_key_from_bytes(&key_bytes)?,
+            load_certs_from_bytes(cert_data.as_bytes())?,
+        );
+        let server_config = Self::init(certs, key, root_certs)
             .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
         let socket_address = Self::init_socket(config)?;
         Ok(WebsocketServer {
@@ -72,36 +124,41 @@ impl WebsocketServer {
                 res = listener.accept() => {
                     match res {
                         Ok((stream, _)) => {
-                            info!("New Client Connection");
                             let peers = peers.clone();
                             let message_handlers = handlers.clone();
-                            let stream = acceptor.accept(stream).await?;
-                            let addr = stream.get_ref().0.peer_addr().ok();
-                            let mut peer_id = None;
-                            if let Some(certs) = stream.get_ref().1.peer_certificates() {
-                                if !certs.is_empty() {
-                                    peer_id = Some(Bytes32::new(&hash_256(&certs[0].0)));
+                            match acceptor.accept(stream).await {
+                                Ok(stream) => {
+                                    let addr = stream.get_ref().0.peer_addr().ok();
+                                    let mut peer_id = None;
+                                    if let Some(certs) = stream.get_ref().1.peer_certificates() {
+                                        if !certs.is_empty() {
+                                            peer_id = Some(Bytes32::new(&hash_256(&certs[0].0)));
+                                        }
+                                    }
+                                    let peer_id = Arc::new(peer_id);
+                                    let service = service_fn(move |req| {
+                                        let data = ConnectionData {
+                                            addr,
+                                            peer_id: peer_id.clone(),
+                                            req,
+                                            peers: peers.clone(),
+                                            message_handlers: message_handlers.clone(),
+                                            run: run.clone(),
+                                        };
+                                        connection_handler(data)
+                                    });
+                                    let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
+                                    tokio::spawn( async move {
+                                        if let Err(err) = connection.await {
+                                            error!("Error serving connection: {:?}", err);
+                                        }
+                                        Ok::<(), Error>(())
+                                    });
+                                }
+                                Err(e) => {
+                                    error!("Error accepting connection: {:?}", e);
                                 }
                             }
-                            let peer_id = Arc::new(peer_id);
-                            let service = service_fn(move |req| {
-                                let data = ConnectionData {
-                                    addr,
-                                    peer_id: peer_id.clone(),
-                                    req,
-                                    peers: peers.clone(),
-                                    message_handlers: message_handlers.clone(),
-                                    run: run.clone()
-                                };
-                                connection_handler(data)
-                            });
-                            let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
-                            tokio::spawn( async move {
-                                if let Err(err) = connection.await {
-                                    println!("Error serving connection: {:?}", err);
-                                }
-                                Ok::<(), Error>(())
-                            });
                         }
                         Err(e) => {
                             error!("Error accepting connection: {:?}", e);
@@ -114,20 +171,13 @@ impl WebsocketServer {
         Ok(())
     }
 
-    pub fn init(config: &WebsocketServerConfig) -> Result<Arc<ServerConfig>, Error> {
-        let certs = load_certs(&format!(
-            "{}/{}",
-            &config.ssl_info.root_path, &config.ssl_info.certs.private_crt
-        ))?;
-        let key = load_private_key(&format!(
-            "{}/{}",
-            &config.ssl_info.root_path, &config.ssl_info.certs.private_key
-        ))?;
+    pub fn init(
+        certs: Vec<Certificate>,
+        key: PrivateKey,
+        root_certs: Vec<Certificate>,
+    ) -> Result<Arc<ServerConfig>, Error> {
         let mut root_cert_store = RootCertStore::empty();
-        for cert in load_certs(&format!(
-            "{}/{}",
-            &config.ssl_info.root_path, &config.ssl_info.ca.private_crt
-        ))? {
+        for cert in root_certs {
             root_cert_store.add(&cert).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
@@ -186,7 +236,22 @@ async fn connection_handler(
             .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid SocketAddr"))?;
         let peer_id = Arc::new(
             data.peer_id
-                .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid Peer"))?,
+                .or_else(|| {
+                    if let Some(key) = data.req.headers().get("ssl-client-cert") {
+                        debug!("Using ssl-client header");
+                        Some(Bytes32::new(&hash_256(key.as_bytes())))
+                    } else if let Some(key) = data.req.headers().get("chia-client-cert") {
+                        Some(Bytes32::new(&hash_256(key.as_bytes())))
+                    } else {
+                        error!("Invalid Peer - No Cert or Header");
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    tungstenite::error::Error::Tls(TlsError::Rustls(
+                        rustls::Error::NoCertificatesPresented,
+                    ))
+                })?,
         );
         tokio::spawn(async move {
             if let Err(e) = handle_connection(

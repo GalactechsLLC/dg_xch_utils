@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord, PaginatedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -69,7 +69,7 @@ pub trait FullnodeAPI {
         end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, Error>;
     async fn get_coin_record_by_name(&self, name: &Bytes32) -> Result<Option<CoinRecord>, Error>;
-    async fn get_coin_record_by_names(
+    async fn get_coin_records_by_names(
         &self,
         names: &[Bytes32],
         include_spent_coins: bool,
@@ -97,8 +97,8 @@ pub trait FullnodeAPI {
         height: u32,
     ) -> Result<CoinSpend, Error>;
     async fn get_coin_spend(&self, coin_record: &CoinRecord) -> Result<CoinSpend, Error>;
-    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<String>, Error>;
-    async fn get_all_mempool_items(&self) -> Result<HashMap<String, MempoolItem>, Error>;
+    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<Bytes32>, Error>;
+    async fn get_all_mempool_items(&self) -> Result<HashMap<Bytes32, MempoolItem>, Error>;
     async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MempoolItem, Error>;
     async fn get_mempool_items_by_coin_name(
         &self,
@@ -118,6 +118,10 @@ pub trait FullnodeExtAPI {
         &self,
         header_hash: &Bytes32,
     ) -> Result<(Vec<HintedCoinRecord>, Vec<HintedCoinRecord>), Error>;
+    async fn get_singleton_by_launcher_id(
+        &self,
+        launcher_id: &Bytes32,
+    ) -> Result<(CoinRecord, CoinSpend), Error>;
     async fn get_coin_records_by_hints(
         &self,
         hints: &[Bytes32],
@@ -125,15 +129,24 @@ pub trait FullnodeExtAPI {
         start_height: u32,
         end_height: u32,
     ) -> Result<Vec<CoinRecord>, Error>;
+    async fn get_coin_records_by_hints_paginated(
+        &self,
+        hints: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+        page_size: u32,
+        last_id: Option<Bytes32>,
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error>;
     async fn get_coin_records_by_puzzle_hashes_paginated(
         &self,
         puzzle_hashes: &[Bytes32],
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-        page_size: Option<u32>,
+        page_size: u32,
         last_id: Option<Bytes32>,
-    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error>;
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error>;
     async fn get_hints_by_coin_ids(
         &self,
         coin_ids: &[Bytes32],
@@ -144,5 +157,5 @@ pub trait FullnodeExtAPI {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-    ) -> Result<HashMap<Bytes32, CoinSpend>, Error>;
+    ) -> Result<HashMap<Bytes32, Option<CoinSpend>>, Error>;
 }

@@ -1,26 +1,26 @@
 [package]
 name = "dg_xch_clients"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "RPC and Websocket Clients the Chia Blockchain"
 license = "Apache-2.0"
 homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
-repository = "https://github.com/GalactechsLLC/dg_xch_utils/clients"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
-async-trait = "0.1.74"
+async-trait = "0.1.77"
 blst = "0.3.11"
 dashmap = "5.5.3"
-dg_xch_core = {path = "../core", version = "2.0.0", features = ["paperclip"] }
-dg_xch_keys = {path = "../keys", version="2.0.0"}
-dg_xch_macros = {path = "../macros", version="2.0.0"}
-dg_xch_pos = {path = "../proof_of_space", version="2.0.0"}
-dg_xch_serialize = {path = "../serialize", version="2.0.0"}
-futures-util = "0.3.29"
+dg_xch_core = {path = "../core", version = "2.0.1", features = ["paperclip"] }
+dg_xch_keys = {path = "../keys", version="2.0.1"}
+dg_xch_macros = {path = "../macros", version="2.0.1"}
+dg_xch_pos = {path = "../proof_of_space", version="2.0.1"}
+dg_xch_serialize = {path = "../serialize", version="2.0.1"}
+futures-util = "0.3.30"
 hex = "0.4.3"
-hyper = {version="1.0.1", features=["full"]}
-hyper-util = {version="0.1.1", features=["full"]}
+hyper = {version="1.1.0", features=["full"]}
+hyper-util = {version="0.1.2", features=["full"]}
 log = "0.4.20"
 prometheus = {version="0.13.3", features=["protobuf"], optional = true}
 reqwest = {version="0.11.22", default-features = false, features =["rustls-tls-webpki-roots", "json"]}

@@ -6,7 +6,7 @@ use crate::api::responses::{
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord};
+use dg_xch_core::blockchain::coin_record::{CoinRecord, HintedCoinRecord, PaginatedCoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::mempool_item::MempoolItem;
@@ -27,15 +27,17 @@ use crate::api::responses::{
     AdditionsAndRemovalsResp, BlockRecordAryResp, BlockRecordResp, BlockchainStateResp,
     CoinRecordAryResp, CoinRecordResp, CoinSpendResp, FullBlockAryResp, FullBlockResp,
     InitialFreezePeriodResp, MempoolItemResp, MempoolItemsResp, MempoolTXResp, NetSpaceResp,
-    NetworkInfoResp, SignagePointOrEOSResp, TXResp, UnfinishedBlockAryResp,
+    NetworkInfoResp, SignagePointOrEOSResp, SingletonByLauncherIdResp, TXResp,
+    UnfinishedBlockAryResp,
 };
 use crate::rpc::{get_client, get_url, post};
+use crate::ClientSSLConfig;
 
 pub struct FullnodeClient {
     client: Client,
     pub host: String,
     pub port: u16,
-    pub ssl_path: Option<String>,
+    pub ssl_path: Option<ClientSSLConfig>,
     pub additional_headers: Option<HashMap<String, String>>,
 }
 
@@ -43,11 +45,12 @@ impl FullnodeClient {
     pub fn new(
         host: &str,
         port: u16,
-        ssl_path: Option<String>,
+        timeout: u64,
+        ssl_path: Option<ClientSSLConfig>,
         additional_headers: &Option<HashMap<String, String>>,
     ) -> Self {
         FullnodeClient {
-            client: get_client(ssl_path.clone()).unwrap_or_default(),
+            client: get_client(ssl_path.clone(), timeout).unwrap(),
             host: host.to_string(),
             port,
             ssl_path,
@@ -102,12 +105,9 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("end".to_string(), json!(end));
         request_body.insert(
             "exclude_header_hash".to_string(),
-            json!(if exclude_header_hash { "True" } else { "False" }),
+            json!(exclude_header_hash),
         );
-        request_body.insert(
-            "exclude_reorged".to_string(),
-            json!(if exclude_reorged { "True" } else { "False" }),
-        );
+        request_body.insert("exclude_reorged".to_string(), json!(exclude_reorged));
         Ok(post::<FullBlockAryResp>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_blocks"),
@@ -352,15 +352,15 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .coin_record)
     }
-    async fn get_coin_record_by_names(
+    async fn get_coin_records_by_names(
         &self,
-        name: &[Bytes32],
+        names: &[Bytes32],
         include_spent_coins: bool,
         start_height: u32,
         end_height: u32,
     ) -> Result<Vec<CoinRecord>, Error> {
         let mut request_body = Map::new();
-        request_body.insert("names".to_string(), json!(name));
+        request_body.insert("names".to_string(), json!(names));
         request_body.insert(
             "include_spent_coins".to_string(),
             json!(include_spent_coins),
@@ -369,7 +369,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("end_height".to_string(), json!(end_height));
         Ok(post::<CoinRecordAryResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_coin_record_by_names"),
+            &get_url(self.host.as_str(), self.port, "get_coin_records_by_names"),
             &request_body,
             &self.additional_headers,
         )
@@ -461,7 +461,7 @@ impl FullnodeAPI for FullnodeClient {
         self.get_puzzle_and_solution(&coin_record.coin.name(), coin_record.spent_block_index)
             .await
     }
-    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<String>, Error> {
+    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<Bytes32>, Error> {
         Ok(post::<MempoolTXResp>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_all_mempool_tx_ids"),
@@ -471,7 +471,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .tx_ids)
     }
-    async fn get_all_mempool_items(&self) -> Result<HashMap<String, MempoolItem>, Error> {
+    async fn get_all_mempool_items(&self) -> Result<HashMap<Bytes32, MempoolItem>, Error> {
         Ok(post::<MempoolItemsResp>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_all_mempool_items"),
@@ -537,6 +537,25 @@ impl FullnodeAPI for FullnodeClient {
 
 #[async_trait]
 impl FullnodeExtAPI for FullnodeClient {
+    async fn get_singleton_by_launcher_id(
+        &self,
+        launcher_id: &Bytes32,
+    ) -> Result<(CoinRecord, CoinSpend), Error> {
+        let mut request_body = Map::new();
+        request_body.insert("launcher_id".to_string(), json!(launcher_id));
+        let resp = post::<SingletonByLauncherIdResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_singleton_by_launcher_id",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?;
+        Ok((resp.coin_record, resp.parent_spend))
+    }
     async fn get_additions_and_removals_with_hints(
         &self,
         header_hash: &Bytes32,
@@ -582,17 +601,17 @@ impl FullnodeExtAPI for FullnodeClient {
         .coin_records)
     }
 
-    async fn get_coin_records_by_puzzle_hashes_paginated(
+    async fn get_coin_records_by_hints_paginated(
         &self,
-        puzzle_hashes: &[Bytes32],
+        hints: &[Bytes32],
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-        page_size: Option<u32>,
+        page_size: u32,
         last_id: Option<Bytes32>,
-    ) -> Result<(Vec<CoinRecord>, Option<Bytes32>, Option<i32>), Error> {
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error> {
         let mut request_body = Map::new();
-        request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
+        request_body.insert("hints".to_string(), json!(hints));
         request_body.insert(
             "include_spent_coins".to_string(),
             json!(include_spent_coins.unwrap_or(true)),
@@ -603,9 +622,46 @@ impl FullnodeExtAPI for FullnodeClient {
         if let Some(eh) = end_height {
             request_body.insert("end_height".to_string(), json!(eh));
         }
-        if let Some(ps) = page_size {
-            request_body.insert("page_size".to_string(), json!(ps));
+        request_body.insert("page_size".to_string(), json!(page_size));
+        if let Some(li) = last_id {
+            request_body.insert("last_id".to_string(), json!(li));
         }
+        let resp = post::<PaginatedCoinRecordAryResp>(
+            &self.client,
+            &get_url(
+                self.host.as_str(),
+                self.port,
+                "get_coin_records_by_hints_paginated",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?;
+
+        Ok((resp.coin_records, resp.last_id, resp.total_coin_count))
+    }
+
+    async fn get_coin_records_by_puzzle_hashes_paginated(
+        &self,
+        puzzle_hashes: &[Bytes32],
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+        page_size: u32,
+        last_id: Option<Bytes32>,
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error> {
+        let mut request_body = Map::new();
+        request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
+        if let Some(isc) = include_spent_coins {
+            request_body.insert("include_spent_coins".to_string(), json!(isc));
+        }
+        if let Some(sh) = start_height {
+            request_body.insert("start_height".to_string(), json!(sh));
+        }
+        if let Some(eh) = end_height {
+            request_body.insert("end_height".to_string(), json!(eh));
+        }
+        request_body.insert("page_size".to_string(), json!(page_size));
         if let Some(li) = last_id {
             request_body.insert("last_id".to_string(), json!(li));
         }
@@ -646,7 +702,7 @@ impl FullnodeExtAPI for FullnodeClient {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-    ) -> Result<HashMap<Bytes32, CoinSpend>, Error> {
+    ) -> Result<HashMap<Bytes32, Option<CoinSpend>>, Error> {
         let mut request_body = Map::new();
         request_body.insert("names".to_string(), json!(names));
         request_body.insert(
@@ -676,12 +732,20 @@ impl FullnodeExtAPI for FullnodeClient {
 
 #[tokio::test]
 async fn test_extended_functions() {
-    let fnc = FullnodeClient::new(
-        "localhost",
-        8555,
-        Some("~/.chia/mainnet/config/ssl".to_string()),
-        &None,
-    );
+    let fnc = FullnodeClient::new("localhost", 8555, 10, None, &None);
+    let by_puz = fnc
+        .get_coin_records_by_puzzle_hashes_paginated(
+            &[Bytes32::from(
+                "1c69feee1fb42ffa6c60fcc222c3aa8fb6cc719937a83f5aa068dc7045e0a633",
+            )],
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
     fnc.get_blockchain_state().await.unwrap();
     let (additions, _removals) = fnc
         .get_additions_and_removals_with_hints(&Bytes32::from(

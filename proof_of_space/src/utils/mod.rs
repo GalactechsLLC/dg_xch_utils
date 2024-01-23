@@ -24,9 +24,7 @@ use std::os::unix::fs::OpenOptionsExt;
 #[cfg(target_os = "windows")]
 use std::os::windows::fs::OpenOptionsExt;
 #[cfg(target_os = "windows")]
-use winapi::um::winbase::FILE_FLAG_NO_BUFFERING;
-#[cfg(target_os = "windows")]
-use winapi::um::winbase::FILE_FLAG_WRITE_THROUGH;
+use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_NO_BUFFERING, FILE_FLAG_WRITE_THROUGH};
 pub async fn open_read_only_async(filename: &Path) -> Result<tokio::fs::File, Error> {
     #[cfg(target_os = "dragonfly")]
     {

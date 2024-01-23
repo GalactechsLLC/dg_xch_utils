@@ -250,11 +250,11 @@ pub fn additions_for_npc(npc_result: NPCResult) -> Vec<Coin> {
     let mut additions: Vec<Coin> = vec![];
     if let Some(conds) = npc_result.conds {
         for spend in conds.spends {
-            for (puzzle_hash, amount, _) in spend.create_coin {
+            for coin in spend.create_coin {
                 additions.push(Coin {
                     parent_coin_info: spend.coin_id,
-                    puzzle_hash,
-                    amount,
+                    puzzle_hash: coin.puzzle_hash,
+                    amount: coin.amount,
                 });
             }
         }

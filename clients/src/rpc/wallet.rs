@@ -17,6 +17,7 @@ use crate::api::responses::{
     WalletInfoResp, WalletSyncResp,
 };
 use crate::rpc::{get_client, get_url, post};
+use crate::ClientSSLConfig;
 
 pub struct WalletClient {
     client: Client,
@@ -28,11 +29,12 @@ impl WalletClient {
     pub fn new(
         host: &str,
         port: u16,
-        ssl_path: Option<String>,
+        timeout: u64,
+        ssl_path: Option<ClientSSLConfig>,
         additional_headers: Option<HashMap<String, String>>,
     ) -> Self {
         WalletClient {
-            client: get_client(ssl_path).unwrap_or_default(),
+            client: get_client(ssl_path, timeout).unwrap_or_default(),
             host: host.to_string(),
             port,
             additional_headers,

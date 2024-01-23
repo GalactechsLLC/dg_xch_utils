@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use blst::min_pk::SecretKey;
 use dashmap::DashMap;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
+use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
@@ -25,7 +26,7 @@ use tokio::sync::Mutex;
 pub struct MemoryWalletConfig {
     pub fullnode_host: String,
     pub fullnode_port: u16,
-    pub fullnode_ssl_path: Option<String>,
+    pub fullnode_ssl_path: Option<ClientSSLConfig>,
     pub additional_headers: Option<HashMap<String, String>>,
 }
 
@@ -434,6 +435,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
         let fullnode_client = FullnodeClient::new(
             &config.fullnode_host.clone(),
             config.fullnode_port,
+            60,
             config.fullnode_ssl_path.clone(),
             &config.additional_headers.clone(),
         );

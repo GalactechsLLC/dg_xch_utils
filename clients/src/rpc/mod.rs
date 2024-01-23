@@ -1,13 +1,19 @@
 pub mod full_node;
 pub mod wallet;
 
+use crate::ClientSSLConfig;
 use dg_xch_core::protocols::shared::NoCertificateVerification;
-use dg_xch_core::ssl::{load_certs, load_private_key};
+use dg_xch_core::ssl::{
+    generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
+    load_private_key_from_bytes, CHIA_CA_CRT, CHIA_CA_KEY,
+};
 use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
+use std::cmp::min;
 use std::collections::HashMap;
+use std::env;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,27 +43,46 @@ pub fn get_url(host: &str, port: u16, request_uri: &str) -> String {
     )
 }
 
-pub fn get_client(ssl_path: Option<String>) -> Result<Client, Error> {
-    if let Some(ssl_path) = ssl_path {
-        let certs = load_certs(&format!("{}/{}", ssl_path, "/daemon/private_daemon.crt"))?;
-        let key = load_private_key(&format!("{}/{}", ssl_path, "/daemon/private_daemon.key"))?;
-        let config = ClientConfig::builder()
-            .with_safe_defaults()
-            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-            .with_client_auth_cert(certs, key)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
-        ClientBuilder::new()
-            .use_preconfigured_tls(config)
-            .timeout(Duration::from_secs(300))
-            .build()
-            .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))
+pub fn get_client(ssl_path: Option<ClientSSLConfig>, timeout: u64) -> Result<Client, Error> {
+    let (certs, key) = if let Some(ssl_info) = &ssl_path {
+        (
+            load_certs(&ssl_info.ssl_crt_path)?,
+            load_private_key(&ssl_info.ssl_key_path)?,
+        )
+    } else if let (Some(crt), Some(key)) = (
+        env::var("PRIVATE_CA_CRT").ok(),
+        env::var("PRIVATE_CA_KEY").ok(),
+    ) {
+        let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes())?;
+        (
+            load_certs_from_bytes(&cert_bytes)?,
+            load_private_key_from_bytes(&key_bytes)?,
+        )
+    } else if let (Some(crt), Some(key)) =
+        (env::var("PRIVATE_CRT").ok(), env::var("PRIVATE_KEY").ok())
+    {
+        (
+            load_certs_from_bytes(crt.as_bytes())?,
+            load_private_key_from_bytes(key.as_bytes())?,
+        )
     } else {
-        ClientBuilder::new()
-            .danger_accept_invalid_certs(true)
-            .timeout(Duration::from_secs(300))
-            .build()
-            .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))
-    }
+        let (cert_bytes, key_bytes) =
+            generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())?;
+        (
+            load_certs_from_bytes(&cert_bytes)?,
+            load_private_key_from_bytes(&key_bytes)?,
+        )
+    };
+    let config = ClientConfig::builder()
+        .with_safe_defaults()
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+        .with_client_auth_cert(certs, key)
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
+    ClientBuilder::new()
+        .use_preconfigured_tls(config)
+        .timeout(Duration::from_secs(timeout))
+        .build()
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))
 }
 
 pub async fn post<T>(
@@ -85,7 +110,11 @@ where
                 serde_json::from_str(body.as_str()).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
-                        format!("Failed to Parse Json {},\r\n {}", body, e),
+                        format!(
+                            "Failed to Parse Json {},\r\n {}",
+                            &body[0..min(body.len(), 1024)],
+                            e
+                        ),
                     )
                 })
             }
