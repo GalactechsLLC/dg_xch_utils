@@ -6,7 +6,7 @@ authors = ["James Hoerr"]
 description = "Core library for working with CLVM puzzles"
 license = "Apache-2.0"
 homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
-repository = "https://github.com/GalactechsLLC/dg_xch_utils/puzzles"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
 blst = { version = "0.3.11", features = ["portable"] }

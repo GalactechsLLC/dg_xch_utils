@@ -6,7 +6,7 @@ authors = ["James Hoerr"]
 description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
 license = "Apache-2.0"
 homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
-repository = "https://github.com/GalactechsLLC/dg_xch_utils/core"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
 async-trait = "0.1.77"

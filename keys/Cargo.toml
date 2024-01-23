@@ -6,7 +6,7 @@ authors = ["James Hoerr"]
 description = "Key Management Utils the Chia Blockchain"
 license = "Apache-2.0"
 homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
-repository = "https://github.com/GalactechsLLC/dg_xch_utils/keys"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
 bech32 = "0.9.1"

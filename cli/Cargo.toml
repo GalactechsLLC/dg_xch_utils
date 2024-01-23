@@ -6,7 +6,7 @@ authors = ["James Hoerr"]
 description = "CLI Utilities for the Chia Blockchain"
 license = "Apache-2.0"
 homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
-repository = "https://github.com/GalactechsLLC/dg_xch_utils/cli"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [lib]
 name = "dg_xch_cli"
