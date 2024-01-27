@@ -9,10 +9,28 @@ use std::fmt::Formatter;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Clone, Serialize, Deserialize, Debug)]
 pub struct MinMempoolFees {
-    pub cost_5000000: u64,
+    pub cost_5000000: f64,
 }
+
+impl PartialEq for MinMempoolFees {
+    fn eq(&self, other: &Self) -> bool {
+        if self.cost_5000000.is_infinite() && other.cost_5000000.is_infinite() {
+            true
+        } else if self.cost_5000000.is_infinite() || other.cost_5000000.is_infinite() {
+            false
+        } else if self.cost_5000000.is_nan() && other.cost_5000000.is_nan() {
+            true
+        } else if self.cost_5000000.is_nan() || other.cost_5000000.is_nan() {
+            false
+        } else {
+            self.cost_5000000 == other.cost_5000000
+        }
+    }
+}
+
+impl Eq for MinMempoolFees {}
 
 fn parse_u128<'de, D>(d: D) -> Result<u128, D::Error>
 where

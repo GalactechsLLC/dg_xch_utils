@@ -124,6 +124,10 @@ fn quality_benchmark(c: &mut Criterion, runtime: &Runtime) {
     });
 }
 
+pub fn load_10_provers(runtime: Runtime) {
+    let path = Path::new("/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot");
+}
+
 pub fn benches(runtime: Runtime) {
     let mut criterion = Criterion::default().configure_from_args();
     let mut criterion = criterion.sample_size(50);

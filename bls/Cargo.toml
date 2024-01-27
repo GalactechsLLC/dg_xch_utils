@@ -6,4 +6,4 @@ authors = ["James Hoerr"]
 description = "IN DEVELOPMENT - BLS12-381 Rust Implementation for dg_xch_utils"
 license = "Apache-2.0"
 homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
-repository = "https://github.com/GalactechsLLC/dg_xch_utils/bls"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"

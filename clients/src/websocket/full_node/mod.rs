@@ -16,7 +16,7 @@ impl FullnodeClient {
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let handles = Arc::new(Mutex::new(handles()));
-        let client = WsClient::new(client_config, NodeType::FullNode, handles, run).await?;
+        let client = WsClient::new(client_config, NodeType::FullNode, handles, run.clone()).await?;
         Ok(FullnodeClient { client })
     }
 

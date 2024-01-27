@@ -1127,6 +1127,8 @@ pub struct PoolWalletConfig {
     pub p2_singleton_puzzle_hash: Bytes32,
     #[serde(default)]
     pub owner_public_key: Bytes48,
+    #[serde(default)]
+    pub difficulty: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

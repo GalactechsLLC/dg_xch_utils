@@ -12,6 +12,8 @@ use paperclip::v2::models::{DataType, DataTypeFormat};
 use paperclip::v2::schema::TypedData;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sqlx::postgres::PgTypeInfo;
+use sqlx::{Postgres, Type};
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::ops::{Index, IndexMut, Range};
@@ -184,6 +186,18 @@ macro_rules! impl_sized_bytes {
                 }
             }
 
+            impl From<Vec<u8>> for $name {
+                fn from(bytes: Vec<u8>) -> Self {
+                    $name::new(&bytes)
+                }
+            }
+
+            impl From<Option<Vec<u8>>> for $name {
+                fn from(bytes: Option<Vec<u8>>) -> Self {
+                    $name::new(&bytes.unwrap_or_default())
+                }
+            }
+
             impl From<[u8; $size]> for $name {
                 fn from(bytes: [u8; $size]) -> Self {
                     $name::from_sized_bytes(bytes)
@@ -221,7 +235,7 @@ macro_rules! impl_sized_bytes {
                 type Error = Error;
 
                 fn try_from(value: Program) -> Result<Self, Self::Error> {
-                    let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Program is not a valid $name"))?;
+                    let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, format!("Program is not a valid {}",  stringify!($name))))?;
                     Ok(Self::new(&vec))
                 }
             }
@@ -230,7 +244,7 @@ macro_rules! impl_sized_bytes {
                 type Error = Error;
 
                 fn try_from(value: &Program) -> Result<Self, Self::Error> {
-                    let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Program is not a valid $name"))?;
+                    let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, format!("Program is not a valid {}",  stringify!($name))))?;
                     Ok(Self::new(&vec))
                 }
             }
@@ -288,10 +302,15 @@ macro_rules! impl_sized_bytes {
                     write!(f, "0x{}", encode(&self.bytes))
                 }
             }
-
         )*
     };
     ()=>{};
+}
+
+impl Type<Postgres> for Bytes32 {
+    fn type_info() -> PgTypeInfo {
+        PgTypeInfo::with_name("Bytes32")
+    }
 }
 
 impl_sized_bytes!(

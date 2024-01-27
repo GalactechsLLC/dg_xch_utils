@@ -71,6 +71,8 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
                             local_pk: local_sk.sk_to_pk().to_bytes().into(),
                             farmer_pk: memo.farmer_public_key,
                             message_signatures,
+                            include_source_signature_data: false,
+                            farmer_reward_address_override: None,
                         },
                         msg.id,
                     )

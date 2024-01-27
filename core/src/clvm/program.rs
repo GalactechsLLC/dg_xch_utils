@@ -446,6 +446,11 @@ impl Display for SerializedProgram {
         write!(f, "0x{}", encode(&self.buffer))
     }
 }
+impl AsRef<[u8]> for SerializedProgram {
+    fn as_ref(&self) -> &[u8] {
+        &self.buffer
+    }
+}
 impl Debug for SerializedProgram {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "0x{}", encode(&self.buffer))

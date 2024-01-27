@@ -1,9 +1,10 @@
 use crate::blockchain::proof_of_space::ProofOfSpace;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
+use bytes::Buf;
 use dg_xch_macros::ChiaSerial;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Display, Formatter};
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
 #[cfg(feature = "metrics")]
@@ -32,37 +33,172 @@ pub struct NewSignagePointHarvester {
     pub pool_difficulties: Vec<PoolDifficulty>,
     pub filter_prefix_bits: i8,
 }
-impl Display for NewSignagePointHarvester {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "NewSignagePointHarvester {{")?;
-        writeln!(f, "\tchallenge_hash: {:?},", self.challenge_hash)?;
-        writeln!(f, "\tdifficulty: {:?},", self.difficulty)?;
-        writeln!(f, "\tsub_slot_iters: {:?},", self.sub_slot_iters)?;
-        writeln!(f, "\tsignage_point_index: {:?},", self.signage_point_index)?;
-        writeln!(f, "\tsp_hash: {:?},", self.sp_hash)?;
-        writeln!(f, "\tpool_difficulties: {:?},", self.pool_difficulties)?;
-        writeln!(f, "\tfilter_prefix_bits: {:?},", self.filter_prefix_bits)?;
-        writeln!(f, "}}")
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct ProofOfSpaceFeeInfo {
+    pub applied_fee_threshold: u32,
+}
+
+#[derive(ChiaSerial, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum SigningDataKind {
+    FoliageBlockData = 1,
+    FoliageTransactionBlock = 2,
+    ChallengeChainVdf = 3,
+    RewardChainVdf = 4,
+    ChallengeChainSubSlot = 5,
+    RewardChainSubSlot = 6,
+    Partial = 7,
+    RewardChainBlockUnfinished = 9,
+    Unknown = 255,
+}
+impl From<u8> for SigningDataKind {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::FoliageBlockData,
+            2 => Self::FoliageTransactionBlock,
+            3 => Self::ChallengeChainVdf,
+            4 => Self::RewardChainVdf,
+            5 => Self::ChallengeChainSubSlot,
+            6 => Self::RewardChainSubSlot,
+            7 => Self::Partial,
+            8 => Self::RewardChainBlockUnfinished,
+            _ => Self::Unknown,
+        }
     }
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SignatureRequestSourceData {
+    pub kind: SigningDataKind,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct NewProofOfSpace {
     pub challenge_hash: Bytes32,
     pub sp_hash: Bytes32,
     pub plot_identifier: String,
     pub proof: ProofOfSpace,
     pub signage_point_index: u8,
+    pub include_source_signature_data: bool,
+    pub farmer_reward_address_override: Option<Bytes32>,
+    pub fee_info: Option<ProofOfSpaceFeeInfo>,
 }
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+impl dg_xch_serialize::ChiaSerialize for NewProofOfSpace {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.challenge_hash,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.sp_hash));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.plot_identifier,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.proof));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.signage_point_index,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.include_source_signature_data,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.farmer_reward_address_override,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.fee_info));
+        bytes
+    }
+    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
+    where
+        Self: Sized,
+    {
+        let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let sp_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let plot_identifier = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let proof = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let signage_point_index = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let include_source_signature_data = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            false
+        };
+        let farmer_reward_address_override = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
+        let fee_info = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
+        Ok(Self {
+            challenge_hash,
+            sp_hash,
+            plot_identifier,
+            proof,
+            signage_point_index,
+            include_source_signature_data,
+            farmer_reward_address_override,
+            fee_info,
+        })
+    }
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RequestSignatures {
     pub plot_identifier: String,
     pub challenge_hash: Bytes32,
     pub sp_hash: Bytes32,
     pub messages: Vec<Bytes32>,
+    pub message_data: Option<Vec<Option<SignatureRequestSourceData>>>,
+}
+impl dg_xch_serialize::ChiaSerialize for RequestSignatures {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.plot_identifier,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.challenge_hash,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.sp_hash));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.messages));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.message_data,
+        ));
+        bytes
+    }
+    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
+    where
+        Self: Sized,
+    {
+        let plot_identifier = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let sp_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let messages = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let message_data = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
+        Ok(Self {
+            plot_identifier,
+            challenge_hash,
+            sp_hash,
+            messages,
+            message_data,
+        })
+    }
 }
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RespondSignatures {
     pub plot_identifier: String,
     pub challenge_hash: Bytes32,
@@ -70,6 +206,68 @@ pub struct RespondSignatures {
     pub local_pk: Bytes48,
     pub farmer_pk: Bytes48,
     pub message_signatures: Vec<(Bytes32, Bytes96)>,
+    pub include_source_signature_data: bool,
+    pub farmer_reward_address_override: Option<Bytes32>,
+}
+
+impl dg_xch_serialize::ChiaSerialize for RespondSignatures {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.plot_identifier,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.challenge_hash,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.sp_hash));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.local_pk));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.farmer_pk));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.message_signatures,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.include_source_signature_data,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.farmer_reward_address_override,
+        ));
+        bytes
+    }
+    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
+    where
+        Self: Sized,
+    {
+        let plot_identifier = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let sp_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let local_pk = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let farmer_pk = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let message_signatures = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+        let include_source_signature_data = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            false
+        };
+        let farmer_reward_address_override = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
+        Ok(Self {
+            plot_identifier,
+            challenge_hash,
+            sp_hash,
+            local_pk,
+            farmer_pk,
+            message_signatures,
+            include_source_signature_data,
+            farmer_reward_address_override,
+        })
+    }
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]

@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::protocols::error::RecentErrors;
 use dg_xch_core::protocols::farmer::{FarmerIdentifier, RequestSignedValues};
-use dg_xch_core::protocols::harvester::RequestSignatures;
+use dg_xch_core::protocols::harvester::{
+    RequestSignatures, SignatureRequestSourceData, SigningDataKind,
+};
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
 use dg_xch_serialize::ChiaSerialize;
 use std::collections::HashMap;
@@ -38,6 +40,31 @@ impl MessageHandler for RequestSignedValuesHandle {
                 .await
                 .get(&identifier.peer_node_id)
             {
+                let mut foliage_block_data = None;
+                let mut foliage_transaction_block = None;
+                let mut reward_chain_block_unfinished = None;
+                let mut include_source_data = false;
+                if let Some(data) = request.foliage_block_data {
+                    include_source_data = true;
+                    foliage_block_data = Some(SignatureRequestSourceData {
+                        kind: SigningDataKind::FoliageBlockData,
+                        data: data.to_bytes(),
+                    });
+                }
+                if let Some(data) = request.foliage_transaction_block_data {
+                    include_source_data = true;
+                    foliage_transaction_block = Some(SignatureRequestSourceData {
+                        kind: SigningDataKind::FoliageTransactionBlock,
+                        data: data.to_bytes(),
+                    });
+                }
+                if let Some(data) = request.reward_chain_block_unfinished {
+                    include_source_data = true;
+                    reward_chain_block_unfinished = Some(SignatureRequestSourceData {
+                        kind: SigningDataKind::RewardChainBlockUnfinished,
+                        data: data.to_bytes(),
+                    });
+                }
                 let _ = peer
                     .websocket
                     .lock()
@@ -53,6 +80,15 @@ impl MessageHandler for RequestSignedValuesHandle {
                                     request.foliage_block_data_hash,
                                     request.foliage_transaction_block_hash,
                                 ],
+                                message_data: if include_source_data {
+                                    Some(vec![
+                                        foliage_block_data,
+                                        foliage_transaction_block,
+                                        reward_chain_block_unfinished,
+                                    ])
+                                } else {
+                                    None
+                                },
                             },
                             None,
                         )

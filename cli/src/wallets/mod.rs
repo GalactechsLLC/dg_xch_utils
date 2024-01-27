@@ -625,7 +625,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     }
 }
 
-fn compute_memos_for_spend(
+pub fn compute_memos_for_spend(
     coin_spend: &CoinSpend,
 ) -> Result<HashMap<Bytes32, Vec<Vec<u8>>>, Error> {
     let (_, result) = coin_spend
@@ -653,7 +653,7 @@ fn compute_memos_for_spend(
             let memo_list = memo_list
                 .as_list()
                 .into_iter()
-                .map(|v| v.serialized)
+                .map(|v| v.as_vec().unwrap_or_default())
                 .collect::<Vec<Vec<u8>>>();
             memos.insert(coin_added.name(), memo_list);
         }

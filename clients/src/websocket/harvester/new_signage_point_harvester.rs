@@ -52,7 +52,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
         }
         let mut cursor = Cursor::new(msg.data.clone());
         let harvester_point = NewSignagePointHarvester::from_bytes(&mut cursor)?;
-        trace!("{}", &harvester_point);
+        trace!("{:#?}", &harvester_point);
         let plot_counts = Arc::new(PlotCounts::default());
         let harvester_point = Arc::new(harvester_point);
         let constants = Arc::new(self.constants);
@@ -207,6 +207,9 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                     proof,
                                                     signage_point_index: harvester_point
                                                         .signage_point_index,
+                                                    include_source_signature_data: false,
+                                                    farmer_reward_address_override: None,
+                                                    fee_info: None,
                                                 },
                                                 None,
                                             )

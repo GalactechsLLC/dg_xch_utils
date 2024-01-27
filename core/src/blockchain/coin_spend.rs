@@ -16,6 +16,7 @@ pub struct CoinSpend {
     pub puzzle_reveal: SerializedProgram,
     pub solution: SerializedProgram,
 }
+
 impl CoinSpend {
     pub fn additions(&self) -> Result<Vec<Coin>, Error> {
         additions_for_solution(
@@ -29,7 +30,6 @@ impl CoinSpend {
         fee_for_solution(&self.puzzle_reveal, &self.solution, INFINITE_COST)
     }
 }
-
 pub fn compute_additions_with_cost(
     cs: &CoinSpend,
     max_cost: u64,

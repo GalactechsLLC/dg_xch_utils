@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 pub fn create_cold_wallet() -> Result<(), Error> {
     let mnemonic = Mnemonic::generate(24)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
-    let master_secret_key = key_from_mnemonic(&mnemonic.to_string())?;
+    let master_secret_key = key_from_mnemonic_str(&mnemonic.to_string())?;
     let master_public_key = master_secret_key.sk_to_pk();
     let fp = fingerprint(&master_public_key);
     info!("Fingerprint: {fp}");
@@ -110,7 +110,7 @@ pub async fn migrate_plot_nft(
         format!("https://{}", target_pool)
     };
     let pool_info = get_pool_info(&pool_url).await?;
-    let pool_wallet = PlotNFTWallet::new(key_from_mnemonic(mnemonic)?, client);
+    let pool_wallet = PlotNFTWallet::new(key_from_mnemonic_str(mnemonic)?, client);
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
     if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
         info!("Checking if PlotNFT needs migration");
