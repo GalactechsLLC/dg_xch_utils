@@ -195,24 +195,31 @@ fn write_ssl_cert_and_key(
     key_data: &str,
     overwrite: bool,
 ) -> Result<(), Error> {
-    if cert_path.exists() && overwrite {
-        fs::remove_file(cert_path)?;
+    let cert_exists = cert_path.exists();
+    if !cert_exists || overwrite {
+        if cert_exists {
+            fs::remove_file(cert_path)?;
+        }
+        let mut crt = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(cert_path)?;
+        crt.write_all(cert_data.as_bytes())?;
+        crt.flush()?;
     }
-    let mut crt = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(cert_path)?;
-    crt.write_all(cert_data.as_bytes())?;
-    crt.flush()?;
-    if key_path.exists() && overwrite {
-        fs::remove_file(key_path)?;
+    let key_exists = key_path.exists();
+    if !key_exists || overwrite {
+        if key_exists {
+            fs::remove_file(key_path)?;
+        }
+        let mut key = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(key_path)?;
+        key.write_all(key_data.as_bytes())?;
+        key.flush()?;
     }
-    let mut key = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(key_path)?;
-    key.write_all(key_data.as_bytes())?;
-    key.flush()
+    Ok(())
 }
 
 pub fn generate_ca_signed_cert_data(

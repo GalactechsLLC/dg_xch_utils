@@ -9,12 +9,30 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::cmp::max;
 use std::fmt;
+use std::fmt::{Debug, Display, Formatter};
 use std::io::{Cursor, Error, ErrorKind};
 
 pub const NUMBER_ZERO_BITS_PLOT_FILTER: i32 = 9;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProofBytes(Vec<u8>);
+
+impl ProofBytes {
+    pub fn iter(&self) -> std::slice::Iter<'_, u8> {
+        self.0.iter()
+    }
+}
+impl Display for ProofBytes {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&encode(&self.0))
+    }
+}
+impl Debug for ProofBytes {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&encode(&self.0))
+    }
+}
+
 impl ChiaSerialize for ProofBytes {
     fn to_bytes(&self) -> Vec<u8>
     where

@@ -153,6 +153,13 @@ macro_rules! impl_sized_bytes {
                 }
             }
 
+            impl Index<usize> for $name {
+                type Output = u8;
+                fn index(&self, index: usize) -> &Self::Output {
+                    &self.bytes[index]
+                }
+            }
+
             impl<N: AsPrimitive<usize>> Index<Range<N>> for $name {
                 type Output = [u8];
                 fn index(&self, index: Range<N>) -> &Self::Output {
