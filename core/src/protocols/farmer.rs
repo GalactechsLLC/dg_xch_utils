@@ -73,6 +73,9 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
             &self.signage_point_index,
         ));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.peak_height));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.sp_source_data,
+        ));
         bytes
     }
     fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>

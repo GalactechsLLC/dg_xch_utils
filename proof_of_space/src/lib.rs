@@ -74,14 +74,8 @@ pub fn verify_and_get_quality_string(
             warn!("Failed to Verify ProofOfSpace: New challenge is not challenge");
             return None;
         }
-        let prefix_bits = if height == 0 {
-            //Backwords compat with 1.8
-            calculate_prefix_bits(constants, height)
-        } else {
-            constants.number_zero_bits_plot_filter as i8
-        };
         if !passes_plot_filter(
-            prefix_bits,
+            calculate_prefix_bits(constants, height),
             &plot_id,
             original_challenge_hash,
             signage_point,
