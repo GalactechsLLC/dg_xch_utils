@@ -333,7 +333,7 @@ macro_rules! impl_sized_bytes_serial {
                 fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>) -> Result<Self, Error> where Self: Sized,
                 {
                     if bytes.remaining() < $size {
-                        Err(Error::new(ErrorKind::InvalidInput, format!("Failed to Parse $name, expected length $size, found {}",  bytes.remaining())))
+                        Err(Error::new(ErrorKind::InvalidInput, format!("Failed to Parse {}, expected length {}, found {}", stringify!($name),  $size, bytes.remaining())))
                     } else {
                         let mut buf = [0u8; $size];
                         bytes.read_exact(&mut buf)?;

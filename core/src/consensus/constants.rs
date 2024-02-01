@@ -281,8 +281,7 @@ pub static TESTNET_10: Lazy<ConsensusConstants> = Lazy::new(|| ConsensusConstant
 pub static TESTNET_11: Lazy<ConsensusConstants> = Lazy::new(|| ConsensusConstants {
     agg_sig_me_additional_data: hex::decode(
         "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615",
-    )
-    .expect("Failed to parse known good hex"),
+    ).expect("Failed to parse known good hex"),
     difficulty_constant_factor: 10052721566054,
     difficulty_starting: 30,
     epoch_blocks: 768,

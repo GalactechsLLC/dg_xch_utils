@@ -10,7 +10,7 @@ use dg_xch_core::blockchain::signage_point_or_eos::SignagePointOrEOS;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::tx_status::TXStatus;
-use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
+use dg_xch_core::blockchain::unfinished_header_block::UnfinishedHeaderBlock;
 use dg_xch_core::protocols::full_node::BlockCountMetrics;
 use dg_xch_core::protocols::full_node::FeeEstimate;
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ pub trait FullnodeAPI {
     async fn get_block_record_by_height(&self, height: u32) -> Result<BlockRecord, Error>;
     async fn get_block_record(&self, header_hash: &Bytes32) -> Result<BlockRecord, Error>;
     async fn get_block_records(&self, start: u32, end: u32) -> Result<Vec<BlockRecord>, Error>;
-    async fn get_unfinished_block_headers(&self) -> Result<Vec<UnfinishedBlock>, Error>;
+    async fn get_unfinished_block_headers(&self) -> Result<Vec<UnfinishedHeaderBlock>, Error>;
     async fn get_network_space(
         &self,
         older_block_header_hash: &Bytes32,

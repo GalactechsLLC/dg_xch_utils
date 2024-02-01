@@ -18,8 +18,14 @@ impl From<u64> for ConditionCost {
 }
 #[derive(ChiaSerial, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ConditionOpcode {
+    Unknown = 0,
     Remark = 1,
-    Unknown = 48,
+    AggSigParent = 43,
+    AggSigPuzzle = 44,
+    AggSigAmount = 45,
+    AggSigPuzzleAmount = 46,
+    AggSigParentAmount = 47,
+    AggSigParentPuzzle = 48,
     AggSigUnsafe = 49,
     AggSigMe = 50,
     CreateCoin = 51,
@@ -45,12 +51,19 @@ pub enum ConditionOpcode {
     AssertBeforeSecondsAbsolute = 85,
     AssertBeforeHeightRelative = 86,
     AssertBeforeHeightAbsolute = 87,
+    SoftFork = 90,
 }
 impl From<u8> for ConditionOpcode {
     fn from(value: u8) -> Self {
         match value {
+            0u8 => ConditionOpcode::Unknown,
             1u8 => ConditionOpcode::Remark,
-            48u8 => ConditionOpcode::Unknown,
+            43u8 => ConditionOpcode::AggSigParent,
+            44u8 => ConditionOpcode::AggSigPuzzle,
+            45u8 => ConditionOpcode::AggSigAmount,
+            46u8 => ConditionOpcode::AggSigPuzzleAmount,
+            47u8 => ConditionOpcode::AggSigParentAmount,
+            48u8 => ConditionOpcode::AggSigParentPuzzle,
             49u8 => ConditionOpcode::AggSigUnsafe,
             50u8 => ConditionOpcode::AggSigMe,
             51u8 => ConditionOpcode::CreateCoin,
@@ -76,6 +89,7 @@ impl From<u8> for ConditionOpcode {
             85u8 => ConditionOpcode::AssertBeforeSecondsAbsolute,
             86u8 => ConditionOpcode::AssertBeforeHeightRelative,
             87u8 => ConditionOpcode::AssertBeforeHeightAbsolute,
+            90u8 => ConditionOpcode::SoftFork,
             _ => ConditionOpcode::Unknown,
         }
     }

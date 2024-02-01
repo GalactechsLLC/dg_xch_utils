@@ -14,5 +14,6 @@ blst = { version = "0.3.11", features = ["portable"] }
 bip39 = {version= "2.0.0", features=["rand"] }
 dg_xch_core = {path = "../core", version = "2.0.1", features = ["paperclip"] }
 dg_xch_puzzles = {path = "../puzzles", version="2.0.1"}
+hex = "0.4.3"
 hkdf = "0.12.3"
 sha2 = "0.10.8"
