@@ -2,7 +2,7 @@ use bech32::{FromBase32, ToBase32, Variant};
 use bip39::Mnemonic;
 use blst::min_pk::{PublicKey, SecretKey};
 use blst::{blst_bendian_from_scalar, blst_scalar, blst_scalar_from_be_bytes, blst_sk_add_n_check};
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, hex_to_bytes, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, SizedBytes};
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
 use hkdf::Hkdf;
 use sha2::Digest;
@@ -251,12 +251,18 @@ pub fn parse_payout_address(s: &str) -> Result<String, Error> {
     if s.starts_with("xch") || s.starts_with("txch") {
         decode_puzzle_hash(s).map(|s| s.to_string())
     } else if s.len() == 64 {
-        match hex_to_bytes(s) { //Should be a pointless conversion, validates the string is hex
+        match hex_to_bytes(s) {
+            //Should be a pointless conversion, validates the string is hex
             Ok(h) => Ok(hex::encode(h)),
-            Err(e) =>
-                Err(Error::new(ErrorKind::InvalidInput, format!("Error Parsing Payout Address({s}): {e:?}")))
+            Err(e) => Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("Error Parsing Payout Address({s}): {e:?}"),
+            )),
         }
     } else {
-        Err(Error::new(ErrorKind::InvalidInput, "String does not appear to be a valid XCH Payout Address"))
+        Err(Error::new(
+            ErrorKind::InvalidInput,
+            "String does not appear to be a valid XCH Payout Address",
+        ))
     }
 }

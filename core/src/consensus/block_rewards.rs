@@ -1,7 +1,5 @@
-
 pub const MOJO_PER_CHIA: u64 = 1000000000000;
 pub const BLOCKS_PER_YEAR: u32 = 1681920;
-
 
 pub const fn calculate_pool_reward(height: u32) -> u64 {
     /*
@@ -62,14 +60,46 @@ fn test_reward_heights() {
     //Farmer Rewards
     assert_eq!(calculate_base_farmer_reward(0), 2_625_000_000_000_000_000);
     assert_eq!(calculate_base_farmer_reward(1), 250_000_000_000);
-    assert_eq!(calculate_base_farmer_reward(3 * BLOCKS_PER_YEAR), 125_000_000_000);
-    assert_eq!(calculate_base_farmer_reward(6 * BLOCKS_PER_YEAR), 62_500_000_000);
-    assert_eq!(calculate_base_farmer_reward(9 * BLOCKS_PER_YEAR), 31_250_000_000);
-    assert_eq!(calculate_base_farmer_reward(12 * BLOCKS_PER_YEAR), 15_625_000_000);
+    assert_eq!(
+        calculate_base_farmer_reward(3 * BLOCKS_PER_YEAR),
+        125_000_000_000
+    );
+    assert_eq!(
+        calculate_base_farmer_reward(6 * BLOCKS_PER_YEAR),
+        62_500_000_000
+    );
+    assert_eq!(
+        calculate_base_farmer_reward(9 * BLOCKS_PER_YEAR),
+        31_250_000_000
+    );
+    assert_eq!(
+        calculate_base_farmer_reward(12 * BLOCKS_PER_YEAR),
+        15_625_000_000
+    );
     //Added Together Are Correct Total
-    assert_eq!(calculate_base_farmer_reward(1 * BLOCKS_PER_YEAR) + calculate_pool_reward(1 * BLOCKS_PER_YEAR), 2_000_000_000_000);
-    assert_eq!(calculate_base_farmer_reward(3 * BLOCKS_PER_YEAR) + calculate_pool_reward(3 * BLOCKS_PER_YEAR), 1_000_000_000_000);
-    assert_eq!(calculate_base_farmer_reward(6 * BLOCKS_PER_YEAR) + calculate_pool_reward(6 * BLOCKS_PER_YEAR), 500_000_000_000);
-    assert_eq!(calculate_base_farmer_reward(9 * BLOCKS_PER_YEAR) + calculate_pool_reward(9 * BLOCKS_PER_YEAR), 250_000_000_000);
-    assert_eq!(calculate_base_farmer_reward(12 * BLOCKS_PER_YEAR) + calculate_pool_reward(12 * BLOCKS_PER_YEAR), 125_000_000_000);
+    assert_eq!(
+        calculate_base_farmer_reward(1 * BLOCKS_PER_YEAR)
+            + calculate_pool_reward(1 * BLOCKS_PER_YEAR),
+        2_000_000_000_000
+    );
+    assert_eq!(
+        calculate_base_farmer_reward(3 * BLOCKS_PER_YEAR)
+            + calculate_pool_reward(3 * BLOCKS_PER_YEAR),
+        1_000_000_000_000
+    );
+    assert_eq!(
+        calculate_base_farmer_reward(6 * BLOCKS_PER_YEAR)
+            + calculate_pool_reward(6 * BLOCKS_PER_YEAR),
+        500_000_000_000
+    );
+    assert_eq!(
+        calculate_base_farmer_reward(9 * BLOCKS_PER_YEAR)
+            + calculate_pool_reward(9 * BLOCKS_PER_YEAR),
+        250_000_000_000
+    );
+    assert_eq!(
+        calculate_base_farmer_reward(12 * BLOCKS_PER_YEAR)
+            + calculate_pool_reward(12 * BLOCKS_PER_YEAR),
+        125_000_000_000
+    );
 }
