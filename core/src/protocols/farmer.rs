@@ -210,7 +210,7 @@ pub struct RequestSignedValues {
     pub foliage_transaction_block_hash: Bytes32,
     pub foliage_block_data: Option<FoliageBlockData>,
     pub foliage_transaction_block_data: Option<FoliageTransactionBlock>,
-    pub reward_chain_block_unfinished: Option<RewardChainBlockUnfinished>,
+    pub rc_block_unfinished: Option<RewardChainBlockUnfinished>,
 }
 impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
     fn to_bytes(&self) -> Vec<u8> {
@@ -231,7 +231,7 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
             &self.foliage_transaction_block_data,
         ));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
-            &self.reward_chain_block_unfinished,
+            &self.rc_block_unfinished,
         ));
         bytes
     }
@@ -256,7 +256,7 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
             debug!("You are connected to an old node version, Please update your Fullnode.");
             None
         };
-        let reward_chain_block_unfinished = if bytes.remaining() > 0 {
+        let rc_block_unfinished = if bytes.remaining() > 0 {
             //Maintain Compatibility with Pre Chip 22 Nodes for now
             dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
         } else {
@@ -269,7 +269,7 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
             foliage_transaction_block_hash,
             foliage_block_data,
             foliage_transaction_block_data,
-            reward_chain_block_unfinished,
+            rc_block_unfinished,
         })
     }
 }

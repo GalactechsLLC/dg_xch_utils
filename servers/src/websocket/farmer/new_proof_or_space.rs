@@ -135,6 +135,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                 sp_hash: new_pos.sp_hash,
                                 messages: vec![sp.challenge_chain_sp, sp.reward_chain_sp],
                                 message_data: sp_src_data,
+                                rc_block_unfinished: None,
                             };
                             let mut farmer_pos = self.proofs_of_space.lock().await;
                             if farmer_pos.get(&new_pos.sp_hash).is_none() {
@@ -245,6 +246,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                 sp_hash: new_pos.sp_hash,
                                                 messages: vec![Bytes32::new(&to_sign)],
                                                 message_data: sp_src_data,
+                                                rc_block_unfinished: None,
                                             };
                                             if let Some(peer) =
                                                 peers.lock().await.get(&peer_id).cloned()
