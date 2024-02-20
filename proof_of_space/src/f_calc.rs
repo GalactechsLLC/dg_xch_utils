@@ -183,8 +183,8 @@ impl FXCalculator {
     }
     pub fn find_matches(
         &mut self,
-        bucket_l: &Vec<PlotEntry>,
-        bucket_r: &Vec<PlotEntry>,
+        bucket_l: &[PlotEntry],
+        bucket_r: &[PlotEntry],
         mut idx_l: Option<&mut [u16]>,
         mut idx_r: Option<&mut [u16]>,
     ) -> i32 {

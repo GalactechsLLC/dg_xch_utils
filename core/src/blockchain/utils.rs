@@ -43,9 +43,8 @@ pub fn fee_for_solution(
     }
 }
 
-pub fn atom_to_int(bytes: &Vec<u8>) -> BigInt {
-    let len = bytes.len();
-    if len == 0 {
+pub fn atom_to_int(bytes: &[u8]) -> BigInt {
+    if bytes.is_empty() {
         0.into()
     } else {
         BigInt::from_signed_bytes_be(bytes)

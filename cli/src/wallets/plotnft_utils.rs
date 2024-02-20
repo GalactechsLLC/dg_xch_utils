@@ -487,7 +487,6 @@ pub async fn scrounge_for_plotnfts(
     let counter = Arc::new(Mutex::new(0usize));
     let total = spent.len();
     let first_10: Vec<CoinRecord> = (0..std::cmp::min(10, total))
-        .into_iter()
         .map(|_| spent.remove(0))
         .collect();
     info!("Loading {total} Coin Spends");
