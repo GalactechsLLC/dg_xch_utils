@@ -32,24 +32,26 @@ use std::future::Future;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::select;
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 
 pub struct PlotNFTWallet {
     info: WalletInfo<MemoryWalletStore>,
     pub config: MemoryWalletConfig,
-    fullnode_client: FullnodeClient,
+    fullnode_client: Arc<FullnodeClient>,
 }
 #[async_trait]
 impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     fn create(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Self {
         Self {
-            fullnode_client: FullnodeClient::new(
+            fullnode_client: Arc::new(FullnodeClient::new(
                 &config.fullnode_host,
                 config.fullnode_port,
                 60,
                 config.fullnode_ssl_path.clone(),
                 &config.additional_headers,
-            ),
+            )),
             info,
             config,
         }
@@ -83,7 +85,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
             puzzle_hashes.push(ph);
         }
         let (spend, unspent) =
-            scrounge_for_standard_coins(&self.fullnode_client, &puzzle_hashes).await?;
+            scrounge_for_standard_coins(self.fullnode_client.clone(), &puzzle_hashes).await?;
         let mut store = self.info.wallet_store.lock().await;
         store.spent_coins.clear();
         store.unspent_coins.clear();
@@ -280,7 +282,7 @@ impl PlotNFTWallet {
 }
 
 pub async fn generate_travel_transaction_without_fee<F, Fut>(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     key_fn: F,
     plot_nft: &PlotNft,
     target_pool_state: &PoolState,
@@ -378,7 +380,7 @@ where
 }
 
 pub async fn get_current_pool_state(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     launcher_id: &Bytes32,
 ) -> Result<(PoolState, CoinSpend), Error> {
     let mut last_spend: CoinSpend;
@@ -446,7 +448,7 @@ pub async fn get_current_pool_state(
 }
 
 pub async fn scrounge_for_plotnft_by_key(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     master_secret_key: &SecretKey,
 ) -> Result<Vec<PlotNft>, Error> {
     let mut page = 0;
@@ -465,37 +467,87 @@ pub async fn scrounge_for_plotnft_by_key(
             let ph = puzzle_hash_for_pk(&pub_key)?;
             puzzle_hashes.push(ph);
         }
-        plotnfs.extend(scrounge_for_plotnfts(client, &puzzle_hashes).await?);
+        plotnfs.extend(scrounge_for_plotnfts(client.clone(), &puzzle_hashes).await?);
         page += 1;
     }
     Ok(plotnfs)
 }
 
 pub async fn scrounge_for_plotnfts(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     puzzle_hashes: &[Bytes32],
 ) -> Result<Vec<PlotNft>, Error> {
+    info!("Fetching Coins for {} Puzzle Hashes", puzzle_hashes.len());
     let hashes = client
         .get_coin_records_by_puzzle_hashes(puzzle_hashes, Some(true), None, None)
         .await?;
-    let spent: Vec<CoinRecord> = hashes.into_iter().filter(|c| c.spent).collect();
-    let mut plotnfts = vec![];
-    for spent_coin in spent {
-        let coin_spend = client.get_coin_spend(&spent_coin).await?;
-        for child in coin_spend.additions()? {
-            if child.puzzle_hash == *SINGLETON_LAUNCHER_HASH {
-                let launcher_id = child.name();
-                if let Some(plotnft) = get_plotnft_by_launcher_id(client, &launcher_id).await? {
-                    plotnfts.push(plotnft);
+    let mut spent: Vec<CoinRecord> = hashes.into_iter().filter(|c| c.spent).collect();
+    let plotnfts = Arc::new(Mutex::new(vec![]));
+    let mut thread_pool: JoinSet<Result<(), Error>> = JoinSet::new();
+    let counter = Arc::new(Mutex::new(0usize));
+    let total = spent.len();
+    let first_10: Vec<CoinRecord> = (0..std::cmp::min(10, total))
+        .into_iter()
+        .map(|_| spent.remove(0))
+        .collect();
+    info!("Loading {total} Coin Spends");
+    for spent_coin in first_10 {
+        let plotnfts = plotnfts.clone();
+        let client = client.clone();
+        let counter = counter.clone();
+        thread_pool.spawn(async move {
+            let coin_spend = client.get_coin_spend(&spent_coin).await?;
+            for child in coin_spend.additions()? {
+                if child.puzzle_hash == *SINGLETON_LAUNCHER_HASH {
+                    let launcher_id = child.name();
+                    if let Some(plotnft) =
+                        get_plotnft_by_launcher_id(client.clone(), &launcher_id).await?
+                    {
+                        plotnfts.lock().await.push(plotnft);
+                    }
+                    *counter.lock().await += 1;
                 }
+            }
+            Ok(())
+        });
+    }
+    loop {
+        select! {
+            val = thread_pool.join_next() => {
+                info!("Finished: {} / {total}", *counter.lock().await);
+                let plotnfts = plotnfts.clone();
+                let client = client.clone();
+                let counter = counter.clone();
+                if let Some(spent_coin) = spent.pop() {
+                    thread_pool.spawn(async move {
+                        let coin_spend = client.get_coin_spend(&spent_coin).await?;
+                        for child in coin_spend.additions()? {
+                            if child.puzzle_hash == *SINGLETON_LAUNCHER_HASH {
+                                let launcher_id = child.name();
+                                if let Some(plotnft) = get_plotnft_by_launcher_id(client.clone(), &launcher_id).await? {
+                                    plotnfts.lock().await.push(plotnft);
+                                }
+                            }
+                        }
+                        *counter.lock().await += 1;
+                        Ok(())
+                    });
+                    continue;
+                }
+                if val.is_none() {
+                    break;
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                info!("Finished: {} / {total}", *counter.lock().await);
             }
         }
     }
-    Ok(plotnfts)
+    Ok(Arc::try_unwrap(plotnfts).unwrap().into_inner())
 }
 
 pub async fn scrounge_for_standard_coins(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     puzzle_hashes: &[Bytes32],
 ) -> Result<(Vec<CoinRecord>, Vec<CoinRecord>), Error> {
     let records = client
@@ -514,7 +566,7 @@ pub async fn scrounge_for_standard_coins(
 }
 
 pub async fn get_pool_state(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     launcher_id: &Bytes32,
 ) -> Result<PoolState, Error> {
     if let Some(plotnft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
@@ -528,7 +580,7 @@ pub async fn get_pool_state(
 }
 
 pub async fn get_plotnft_by_launcher_id(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     launcher_id: &Bytes32,
 ) -> Result<Option<PlotNft>, Error> {
     let launcher_coin = client.get_coin_record_by_name(launcher_id).await?;
@@ -575,7 +627,7 @@ pub async fn get_plotnft_by_launcher_id(
 }
 
 pub async fn submit_next_state_spend_bundle(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     pool_wallet: &PlotNFTWallet,
     plot_nft: &PlotNft,
     target_pool_state: &PoolState,
@@ -629,14 +681,14 @@ pub async fn submit_next_state_spend_bundle(
 }
 
 pub async fn submit_next_state_spend_bundle_with_key(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     secret_key: &SecretKey,
     plot_nft: &PlotNft,
     target_pool_state: &PoolState,
     constants: &ConsensusConstants,
 ) -> Result<(), Error> {
     let (travel_record, _) = generate_travel_transaction_without_fee(
-        client,
+        client.clone(),
         |_| async { Ok(secret_key.clone()) },
         plot_nft,
         target_pool_state,
