@@ -20,10 +20,10 @@ path = "src/main.rs"
 async-trait = "0.1.77"
 bip39 = {version= "2.0.0", features=["rand"] }
 blst = { version = "0.3.11", features = ["portable"] }
-clap = { version = "4.4.18", features = ["derive"] }
+clap = { version = "4.5.1", features = ["derive"] }
 dashmap = "5.5.3"
 dg_xch_clients = {path = "../clients", version="2.0.1"}
-dg_xch_core = {path = "../core", version = "2.0.1", features = ["paperclip"] }
+dg_xch_core = {path = "../core", version = "2.0.1", default-features = false}
 dg_xch_keys = {path = "../keys", version="2.0.1"}
 dg_xch_pos = {path = "../proof_of_space", version="2.0.1"}
 dg_xch_puzzles = {path = "../puzzles", version="2.0.1"}
@@ -31,10 +31,10 @@ dg_xch_serialize= {path = "../serialize", version="2.0.1"}
 hex = "0.4.3"
 lazy_static = "1.4.0"
 log = "0.4.20"
-num-traits = "0.2.17"
+num-traits = "0.2.18"
 rand = "0.8.5"
 rayon = "1.8.1"
-serde = "1.0.195"
-serde_json = "1.0.111"
+serde = "1.0.197"
+serde_json = "1.0.114"
 simple_logger = "4.3.3"
-tokio = {version = "1.35.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+tokio = {version = "1.36.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
