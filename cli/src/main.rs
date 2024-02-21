@@ -593,17 +593,12 @@ async fn main() -> Result<(), Error> {
         }
         RootCommands::CreatePoolLoginLink {
             target_pool,
-            launcher_ids,
-            auth_keys,
+            launcher_id,
+            auth_key,
         } => {
             let url = create_pool_login_url(
                 &target_pool,
-                auth_keys
-                    .iter()
-                    .map(|v| SecretKey::from_bytes(v.as_ref()).expect("Failed to parse Auth Key"))
-                    .zip(launcher_ids)
-                    .collect::<Vec<(SecretKey, Bytes32)>>()
-                    .as_slice(),
+                &[(auth_key.into(), launcher_id)]
             )
             .await?;
             println!("{}", url);
