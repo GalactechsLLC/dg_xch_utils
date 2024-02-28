@@ -42,7 +42,6 @@ impl MessageHandler for RequestSignedValuesHandle {
             {
                 let mut foliage_block_data = None;
                 let mut foliage_transaction_block = None;
-                let mut reward_chain_block_unfinished = None;
                 let mut include_source_data = false;
                 if let Some(data) = request.foliage_block_data {
                     include_source_data = true;
@@ -55,13 +54,6 @@ impl MessageHandler for RequestSignedValuesHandle {
                     include_source_data = true;
                     foliage_transaction_block = Some(SignatureRequestSourceData {
                         kind: SigningDataKind::FoliageTransactionBlock,
-                        data: data.to_bytes(),
-                    });
-                }
-                if let Some(data) = request.reward_chain_block_unfinished {
-                    include_source_data = true;
-                    reward_chain_block_unfinished = Some(SignatureRequestSourceData {
-                        kind: SigningDataKind::RewardChainBlockUnfinished,
                         data: data.to_bytes(),
                     });
                 }
@@ -81,14 +73,11 @@ impl MessageHandler for RequestSignedValuesHandle {
                                     request.foliage_transaction_block_hash,
                                 ],
                                 message_data: if include_source_data {
-                                    Some(vec![
-                                        foliage_block_data,
-                                        foliage_transaction_block,
-                                        reward_chain_block_unfinished,
-                                    ])
+                                    Some(vec![foliage_block_data, foliage_transaction_block])
                                 } else {
                                     None
                                 },
+                                rc_block_unfinished: request.rc_block_unfinished,
                             },
                             None,
                         )

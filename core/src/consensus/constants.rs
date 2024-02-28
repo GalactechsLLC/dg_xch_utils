@@ -278,6 +278,36 @@ pub static TESTNET_10: Lazy<ConsensusConstants> = Lazy::new(|| ConsensusConstant
     is_testnet: true,
     ..Default::default()
 });
+pub static TESTNET_11: Lazy<ConsensusConstants> = Lazy::new(|| ConsensusConstants {
+    agg_sig_me_additional_data: hex::decode(
+        "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615",
+    )
+    .expect("Failed to parse known good hex"),
+    difficulty_constant_factor: 10052721566054,
+    difficulty_starting: 30,
+    epoch_blocks: 768,
+    genesis_challenge: Bytes32::from(
+        "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615",
+    ),
+    genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        "08296fc227decd043aee855741444538e4cc9a31772c4d1a9e6242d1e777e42a",
+    ),
+    genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        "3ef7c233fc0785f3c0cae5992c1d35e7c955ca37a423571c1607ba392a9d12f7",
+    ),
+    mempool_block_buffer: BigInt::from(10),
+    min_plot_size: 18,
+    sub_slot_iters_starting: 67108864,
+    //Forks activated from the beginning on this network
+    hard_fork_height: 0,
+    hard_fork_fix_height: 0,
+    plot_filter_128_height: 6029568,
+    plot_filter_64_height: 11075328,
+    plot_filter_32_height: 16121088,
+    bech32_prefix: String::from("txch"),
+    is_testnet: true,
+    ..Default::default()
+});
 pub static CONSENSUS_CONSTANTS_MAP: Lazy<HashMap<String, ConsensusConstants>> = Lazy::new(|| {
     HashMap::from([
         ("testnet0".to_string(), TESTNET_0.clone()),
@@ -287,6 +317,7 @@ pub static CONSENSUS_CONSTANTS_MAP: Lazy<HashMap<String, ConsensusConstants>> = 
         ("testnet4".to_string(), TESTNET_5.clone()),
         ("testnet7".to_string(), TESTNET_7.clone()),
         ("testnet10".to_string(), TESTNET_10.clone()),
+        ("testnet11".to_string(), TESTNET_11.clone()),
         ("mainnet".to_string(), MAINNET.clone()),
     ])
 });

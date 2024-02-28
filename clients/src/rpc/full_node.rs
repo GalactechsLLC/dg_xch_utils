@@ -15,7 +15,7 @@ use dg_xch_core::blockchain::signage_point_or_eos::SignagePointOrEOS;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::tx_status::TXStatus;
-use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
+use dg_xch_core::blockchain::unfinished_header_block::UnfinishedHeaderBlock;
 use dg_xch_core::protocols::full_node::BlockCountMetrics;
 use dg_xch_core::protocols::full_node::FeeEstimate;
 use reqwest::Client;
@@ -157,7 +157,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .block_records)
     }
-    async fn get_unfinished_block_headers(&self) -> Result<Vec<UnfinishedBlock>, Error> {
+    async fn get_unfinished_block_headers(&self) -> Result<Vec<UnfinishedHeaderBlock>, Error> {
         Ok(post::<UnfinishedBlockAryResp>(
             &self.client,
             &get_url(

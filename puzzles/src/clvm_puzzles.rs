@@ -4,6 +4,8 @@ use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use dg_xch_core::blockchain::utils::atom_to_int;
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
 use dg_xch_core::clvm::sexp::{AtomBuf, IntoSExp, SExp};
+use dg_xch_core::consensus::block_rewards::calculate_pool_reward;
+use dg_xch_core::consensus::coinbase::pool_parent_id;
 use dg_xch_core::plots::PlotNftExtraData;
 use dg_xch_core::pool::PoolState;
 use dg_xch_serialize::ChiaSerialize;
@@ -214,6 +216,120 @@ pub fn is_pool_waitingroom_inner_puzzle(inner_puzzle: &Program) -> Result<bool, 
 pub fn is_pool_member_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error> {
     let inner_f = get_template_singleton_inner_puzzle(inner_puzzle)?;
     Ok(POOL_MEMBER_MOD.clone() == inner_f)
+}
+
+pub fn create_absorb_spend(
+    last_coin_spend: &CoinSpend,
+    current: &PoolState,
+    launcher_coin: &Coin,
+    height: u32,
+    genesis_challenge: &Bytes32,
+    delay_time: u64,
+    delay_ph: &Bytes32,
+) -> Result<Vec<CoinSpend>, Error> {
+    let inner_puzzle: Program = pool_state_to_inner_puzzle(
+        current,
+        &launcher_coin.name(),
+        genesis_challenge,
+        delay_time,
+        delay_ph,
+    )?;
+    let reward_amount = calculate_pool_reward(height);
+    let inner_sol = if is_pool_member_inner_puzzle(&inner_puzzle)? {
+        //inner sol is (spend_type, pool_reward_amount, pool_reward_height, extra_data)
+        Program::to(vec![reward_amount.to_sexp(), height.to_sexp()])
+    } else if is_pool_waitingroom_inner_puzzle(&inner_puzzle)? {
+        //inner sol is (spend_type, destination_puzhash, pool_reward_amount, pool_reward_height, extra_data)
+        Program::to(vec![0.to_sexp(), reward_amount.to_sexp(), height.to_sexp()])
+    } else {
+        return Err(Error::new(ErrorKind::InvalidInput, ""));
+    };
+    //full sol = (parent_info, my_amount, inner_solution)
+    if let Some(coin) = get_most_recent_singleton_coin_from_coin_spend(last_coin_spend)? {
+        let parent_info = if coin.parent_coin_info == launcher_coin.name() {
+            Program::to(vec![
+                launcher_coin.parent_coin_info.to_sexp(),
+                launcher_coin.amount.to_sexp(),
+            ])
+        } else {
+            let p = last_coin_spend.puzzle_reveal.to_program();
+            if let Some(last_coin_spend_inner_puzzle) = get_inner_puzzle_from_puzzle(&p)? {
+                Program::to(vec![
+                    last_coin_spend.coin.parent_coin_info.to_sexp(),
+                    last_coin_spend_inner_puzzle.tree_hash().to_sexp(),
+                    last_coin_spend.coin.amount.to_sexp(),
+                ])
+            } else {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "Invalid Inner Puzzle when calculating parent info",
+                ));
+            }
+        };
+        let full_solution: SerializedProgram = SerializedProgram::from(Program::to(vec![
+            parent_info.to_sexp(),
+            last_coin_spend.coin.amount.to_sexp(),
+            inner_sol.to_sexp(),
+        ]));
+        let full_puzzle: SerializedProgram =
+            SerializedProgram::from(create_full_puzzle(&inner_puzzle, &launcher_coin.name())?);
+        let full_puzzle_program = full_puzzle.to_program();
+        if coin.puzzle_hash != full_puzzle_program.tree_hash() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Coin puzzleHash and Puzzle Treehash are not Equal",
+            ));
+        }
+        let reward_parent = pool_parent_id(height, genesis_challenge);
+        let p2_singleton_puzzle: SerializedProgram =
+            SerializedProgram::from(create_p2_singleton_puzzle(
+                &SINGLETON_MOD_HASH,
+                &launcher_coin.name(),
+                delay_time,
+                delay_ph,
+            )?);
+        let p2_singleton_puzzle_tree_hash = p2_singleton_puzzle.to_program().tree_hash();
+        let reward_coin = Coin {
+            parent_coin_info: reward_parent,
+            puzzle_hash: p2_singleton_puzzle_tree_hash,
+            amount: reward_amount,
+        };
+        let p2_singleton_solution: SerializedProgram = SerializedProgram::from(Program::to(vec![
+            inner_puzzle.tree_hash(),
+            reward_coin.name(),
+        ]));
+
+        if reward_coin.puzzle_hash != p2_singleton_puzzle_tree_hash {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Coin puzzleHash and Puzzle Treehash are not Equal",
+            ));
+        }
+        if get_inner_puzzle_from_puzzle(&full_puzzle_program)?.is_none() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Failed to get inner puzzle from full puzzle",
+            ));
+        }
+        let coin_spends = vec![
+            CoinSpend {
+                coin,
+                puzzle_reveal: full_puzzle,
+                solution: full_solution,
+            },
+            CoinSpend {
+                coin: reward_coin,
+                puzzle_reveal: p2_singleton_puzzle,
+                solution: p2_singleton_solution,
+            },
+        ];
+        Ok(coin_spends)
+    } else {
+        Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Failed to find most recent singleton coin from coin spend",
+        ))
+    }
 }
 
 pub fn create_travel_spend(

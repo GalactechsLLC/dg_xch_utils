@@ -584,6 +584,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     Announcement {
                         origin_info: coin.name(),
                         message,
+                        morph_bytes: None,
                     }
                     .name(),
                 );

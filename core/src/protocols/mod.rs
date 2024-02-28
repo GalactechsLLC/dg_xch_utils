@@ -648,7 +648,7 @@ impl ReadStream {
                         Some(Ok(msg)) => {
                             match msg {
                                 Message::Binary(bin_data) => {
-                                    let mut cursor = Cursor::new(bin_data);
+                                    let mut cursor = Cursor::new(&bin_data);
                                     match ChiaMessage::from_bytes(&mut cursor) {
                                         Ok(chia_msg) => {
                                             let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
@@ -660,7 +660,11 @@ impl ReadStream {
                                                     let peer_id = self.peer_id.clone();
                                                     let peers = self.peers.clone();
                                                     let v_arc_c = v.handle.clone();
-                                                    tokio::spawn(async move { v_arc_c.handle(msg_arc_c, peer_id, peers).await });
+                                                    tokio::spawn(async move {
+                                                        if let Err(e) = v_arc_c.handle(msg_arc_c.clone(), peer_id, peers).await {
+                                                            error!("Error Handling Message({:#?}): {e:?}", msg_arc_c.msg_type);
+                                                        }
+                                                    });
                                                     matched = true;
                                                 }
                                             }

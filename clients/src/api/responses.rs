@@ -8,7 +8,7 @@ use dg_xch_core::blockchain::signage_point::SignagePoint;
 use dg_xch_core::blockchain::subslot_bundle::SubSlotBundle;
 use dg_xch_core::blockchain::transaction_record::TransactionRecord;
 use dg_xch_core::blockchain::tx_status::TXStatus;
-use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
+use dg_xch_core::blockchain::unfinished_header_block::UnfinishedHeaderBlock;
 use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
 use dg_xch_core::protocols::full_node::BlockCountMetrics;
@@ -199,7 +199,7 @@ pub struct TransactionRecordResp {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UnfinishedBlockAryResp {
-    pub headers: Vec<UnfinishedBlock>,
+    pub headers: Vec<UnfinishedHeaderBlock>,
     pub success: bool,
 }
 

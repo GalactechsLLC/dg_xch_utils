@@ -107,15 +107,15 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                     data: vdf.rc_vdf.to_bytes(),
                                                 },
                                             )
-                                        } else if let Some(vdf) = sp_data.vdf_data.as_ref() {
+                                        } else if let Some(vdf) = sp_data.sub_slot_data.as_ref() {
                                             (
                                                 SignatureRequestSourceData {
-                                                    kind: SigningDataKind::ChallengeChainVdf,
-                                                    data: vdf.cc_vdf.to_bytes(),
+                                                    kind: SigningDataKind::ChallengeChainSubSlot,
+                                                    data: vdf.cc_sub_slot.to_bytes(),
                                                 },
                                                 SignatureRequestSourceData {
-                                                    kind: SigningDataKind::RewardChainVdf,
-                                                    data: vdf.rc_vdf.to_bytes(),
+                                                    kind: SigningDataKind::RewardChainSubSlot,
+                                                    data: vdf.rc_sub_slot.to_bytes(),
                                                 },
                                             )
                                         } else {
@@ -135,6 +135,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                 sp_hash: new_pos.sp_hash,
                                 messages: vec![sp.challenge_chain_sp, sp.reward_chain_sp],
                                 message_data: sp_src_data,
+                                rc_block_unfinished: None,
                             };
                             let mut farmer_pos = self.proofs_of_space.lock().await;
                             if farmer_pos.get(&new_pos.sp_hash).is_none() {
@@ -245,6 +246,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                 sp_hash: new_pos.sp_hash,
                                                 messages: vec![Bytes32::new(&to_sign)],
                                                 message_data: sp_src_data,
+                                                rc_block_unfinished: None,
                                             };
                                             if let Some(peer) =
                                                 peers.lock().await.get(&peer_id).cloned()
@@ -522,6 +524,8 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                     warn!("No authentication sk for {p2_singleton_puzzle_hash}");
                                                     return Ok(());
                                                 }
+                                            } else {
+                                                warn!("No peer to sign partial");
                                             }
                                         } else {
                                             warn!("No pool specific authentication_token_timeout has been set for {p2_singleton_puzzle_hash}, check communication with the pool.");

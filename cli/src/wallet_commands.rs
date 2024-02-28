@@ -21,6 +21,7 @@ use log::{debug, error, info};
 use std::collections::{HashMap, HashSet};
 use std::io::{Error, ErrorKind};
 use std::ops::Add;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub fn create_cold_wallet() -> Result<(), Error> {
@@ -98,7 +99,7 @@ pub fn keys_for_coinspends(
 }
 
 pub async fn migrate_plot_nft(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     target_pool: &str,
     launcher_id: &Bytes32,
     mnemonic: &str,
@@ -110,9 +111,9 @@ pub async fn migrate_plot_nft(
         format!("https://{}", target_pool)
     };
     let pool_info = get_pool_info(&pool_url).await?;
-    let pool_wallet = PlotNFTWallet::new(key_from_mnemonic_str(mnemonic)?, client);
+    let pool_wallet = PlotNFTWallet::new(key_from_mnemonic_str(mnemonic)?, client.as_ref());
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
-    if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
+    if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client.clone(), launcher_id).await? {
         info!("Checking if PlotNFT needs migration");
         if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url)
             || (plot_nft.pool_state.pool_url.as_ref() == Some(&pool_url)
@@ -128,7 +129,7 @@ pub async fn migrate_plot_nft(
                     return Err(Error::new(ErrorKind::Other, "Failed to Sync"));
                 }
                 submit_next_state_spend_bundle(
-                    client,
+                    client.clone(),
                     &pool_wallet,
                     &plot_nft,
                     &target_pool_state,
@@ -143,9 +144,9 @@ pub async fn migrate_plot_nft(
                         .as_ref()
                         .unwrap_or(&String::from("None"))
                 );
-                wait_for_plot_nft_ready_state(client, launcher_id).await;
+                wait_for_plot_nft_ready_state(client.clone(), launcher_id).await;
                 info!("Reloading PlotNFT Info");
-                plot_nft = get_plotnft_by_launcher_id(client, launcher_id)
+                plot_nft = get_plotnft_by_launcher_id(client.clone(), launcher_id)
                     .await?
                     .ok_or_else(|| {
                         error!("Failed to reload plot_nft after first spend");
@@ -161,7 +162,7 @@ pub async fn migrate_plot_nft(
                 return Err(Error::new(ErrorKind::Other, "Failed to Sync"));
             }
             submit_next_state_spend_bundle(
-                client,
+                client.clone(),
                 &pool_wallet,
                 &plot_nft,
                 &target_pool_state,
@@ -179,7 +180,7 @@ pub async fn migrate_plot_nft(
     Ok(())
 }
 pub async fn migrate_plot_nft_with_owner_key(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     target_pool: &str,
     launcher_id: &Bytes32,
     owner_key: &SecretKey,
@@ -191,7 +192,7 @@ pub async fn migrate_plot_nft_with_owner_key(
     };
     let pool_info = get_pool_info(&pool_url).await?;
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
-    if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
+    if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client.clone(), launcher_id).await? {
         info!("Checking if PlotNFT needs migration");
         if plot_nft.pool_state.pool_url.as_ref() != Some(&pool_url)
             || (plot_nft.pool_state.pool_url.as_ref() == Some(&pool_url)
@@ -203,7 +204,7 @@ pub async fn migrate_plot_nft_with_owner_key(
             if plot_nft.pool_state.state == FARMING_TO_POOL {
                 info!("Creating Leaving Pool Spend");
                 submit_next_state_spend_bundle_with_key(
-                    client,
+                    client.clone(),
                     owner_key,
                     &plot_nft,
                     &target_pool_state,
@@ -218,9 +219,9 @@ pub async fn migrate_plot_nft_with_owner_key(
                         .as_ref()
                         .unwrap_or(&String::from("None"))
                 );
-                wait_for_plot_nft_ready_state(client, launcher_id).await;
+                wait_for_plot_nft_ready_state(client.clone(), launcher_id).await;
                 info!("Reloading PlotNFT Info");
-                plot_nft = get_plotnft_by_launcher_id(client, launcher_id)
+                plot_nft = get_plotnft_by_launcher_id(client.clone(), launcher_id)
                     .await?
                     .ok_or_else(|| {
                         error!("Failed to reload plot_nft after first spend");
@@ -232,7 +233,7 @@ pub async fn migrate_plot_nft_with_owner_key(
             }
             info!("Creating Farming to Pool Spend");
             submit_next_state_spend_bundle_with_key(
-                client,
+                client.clone(),
                 owner_key,
                 &plot_nft,
                 &target_pool_state,
@@ -240,7 +241,7 @@ pub async fn migrate_plot_nft_with_owner_key(
             )
             .await?;
             info!("Waiting for PlotNFT State to be Buried for Joining {pool_url}");
-            wait_for_num_blocks(client, 20, 600).await;
+            wait_for_num_blocks(client.clone(), 20, 600).await;
         } else {
             info!("PlotNFT Already on Selected Pool");
         }
@@ -250,9 +251,9 @@ pub async fn migrate_plot_nft_with_owner_key(
     Ok(())
 }
 
-async fn wait_for_plot_nft_ready_state(client: &FullnodeClient, launcher_id: &Bytes32) {
+async fn wait_for_plot_nft_ready_state(client: Arc<FullnodeClient>, launcher_id: &Bytes32) {
     loop {
-        match get_plotnft_ready_state(client, launcher_id).await {
+        match get_plotnft_ready_state(client.clone(), launcher_id).await {
             Ok(is_ready) => {
                 if is_ready {
                     break;
@@ -271,7 +272,7 @@ async fn wait_for_plot_nft_ready_state(client: &FullnodeClient, launcher_id: &By
     }
 }
 
-async fn wait_for_num_blocks(client: &FullnodeClient, height: u32, timeout_seconds: u64) {
+async fn wait_for_num_blocks(client: Arc<FullnodeClient>, height: u32, timeout_seconds: u64) {
     let mut start_height = None;
     let end_time = Instant::now().add(Duration::from_secs(timeout_seconds));
     loop {
@@ -368,7 +369,7 @@ fn validate_pool_info(pool_info: &GetPoolInfoResponse) -> Result<(), Error> {
 }
 
 pub async fn get_plotnft_ready_state(
-    client: &FullnodeClient,
+    client: Arc<FullnodeClient>,
     launcher_id: &Bytes32,
 ) -> Result<bool, Error> {
     let mut peak = None;

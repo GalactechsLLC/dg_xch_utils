@@ -1,4 +1,5 @@
 use crate::blockchain::proof_of_space::ProofOfSpace;
+use crate::blockchain::reward_chain_block_unfinished::RewardChainBlockUnfinished;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use bytes::Buf;
 use dg_xch_macros::ChiaSerial;
@@ -48,7 +49,6 @@ pub enum SigningDataKind {
     ChallengeChainSubSlot = 5,
     RewardChainSubSlot = 6,
     Partial = 7,
-    RewardChainBlockUnfinished = 9,
     Unknown = 255,
 }
 impl From<u8> for SigningDataKind {
@@ -61,7 +61,6 @@ impl From<u8> for SigningDataKind {
             5 => Self::ChallengeChainSubSlot,
             6 => Self::RewardChainSubSlot,
             7 => Self::Partial,
-            8 => Self::RewardChainBlockUnfinished,
             _ => Self::Unknown,
         }
     }
@@ -156,6 +155,7 @@ pub struct RequestSignatures {
     pub sp_hash: Bytes32,
     pub messages: Vec<Bytes32>,
     pub message_data: Option<Vec<Option<SignatureRequestSourceData>>>,
+    pub rc_block_unfinished: Option<RewardChainBlockUnfinished>,
 }
 impl dg_xch_serialize::ChiaSerialize for RequestSignatures {
     fn to_bytes(&self) -> Vec<u8> {
@@ -170,6 +170,9 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignatures {
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.messages));
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.message_data,
+        ));
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.rc_block_unfinished,
         ));
         bytes
     }
@@ -188,12 +191,20 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignatures {
             debug!("You are connected to an old node version, Please update your Fullnode.");
             None
         };
+        let rc_block_unfinished = if bytes.remaining() > 0 {
+            //Maintain Compatibility with Pre Chip 22 for now
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?
+        } else {
+            debug!("You are connected to an old node version, Please update your Fullnode.");
+            None
+        };
         Ok(Self {
             plot_identifier,
             challenge_hash,
             sp_hash,
             messages,
             message_data,
+            rc_block_unfinished,
         })
     }
 }

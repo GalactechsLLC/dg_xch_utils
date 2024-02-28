@@ -4,7 +4,7 @@ use rustls::{Certificate, DigitallySignedStruct, ServerName};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
-pub const PROTOCOL_VERSION: &str = "0.0.34";
+pub const PROTOCOL_VERSION: &str = "0.0.36";
 
 pub enum Capability {
     Base = 1,

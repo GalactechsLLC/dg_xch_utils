@@ -9,8 +9,8 @@ pub struct CoinRecord {
     pub coin: Coin,
     pub confirmed_block_index: u32,
     pub spent_block_index: u32,
-    pub timestamp: u64,
     pub coinbase: bool,
+    pub timestamp: u64,
     pub spent: bool,
 }
 

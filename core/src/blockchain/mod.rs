@@ -42,6 +42,7 @@ pub mod transaction_record;
 pub mod transactions_info;
 pub mod tx_status;
 pub mod unfinished_block;
+pub mod unfinished_header_block;
 pub mod unsized_bytes;
 pub mod utils;
 pub mod vdf_info;

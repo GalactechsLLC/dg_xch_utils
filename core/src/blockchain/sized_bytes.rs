@@ -12,7 +12,9 @@ use paperclip::v2::models::{DataType, DataTypeFormat};
 use paperclip::v2::schema::TypedData;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+#[cfg(feature = "postgres")]
 use sqlx::postgres::PgTypeInfo;
+#[cfg(feature = "postgres")]
 use sqlx::{Postgres, Type};
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Read};
@@ -152,6 +154,13 @@ macro_rules! impl_sized_bytes {
                     S: Serializer,
                 {
                     serializer.serialize_str(self.to_string().as_str())
+                }
+            }
+
+            impl Index<usize> for $name {
+                type Output = u8;
+                fn index(&self, index: usize) -> &Self::Output {
+                    &self.bytes[index]
                 }
             }
 
@@ -295,15 +304,16 @@ macro_rules! impl_sized_bytes {
                     write!(f, "0x{}", encode(&self.bytes))
                 }
             }
+
+            #[cfg(feature = "postgres")]
+            impl Type<Postgres> for $name {
+                fn type_info() -> PgTypeInfo {
+                    PgTypeInfo::with_name(stringify!($name))
+                }
+            }
         )*
     };
     ()=>{};
-}
-
-impl Type<Postgres> for Bytes32 {
-    fn type_info() -> PgTypeInfo {
-        PgTypeInfo::with_name("Bytes32")
-    }
 }
 
 impl_sized_bytes!(
@@ -326,7 +336,7 @@ macro_rules! impl_sized_bytes_serial {
                 fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>) -> Result<Self, Error> where Self: Sized,
                 {
                     if bytes.remaining() < $size {
-                        Err(Error::new(ErrorKind::InvalidInput, format!("Failed to Parse $name, expected length $size, found {}",  bytes.remaining())))
+                        Err(Error::new(ErrorKind::InvalidInput, format!("Failed to Parse {}, expected length {}, found {}", stringify!($name),  $size, bytes.remaining())))
                     } else {
                         let mut buf = [0u8; $size];
                         bytes.read_exact(&mut buf)?;
