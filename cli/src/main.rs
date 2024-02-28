@@ -596,11 +596,8 @@ async fn main() -> Result<(), Error> {
             launcher_id,
             auth_key,
         } => {
-            let url = create_pool_login_url(
-                &target_pool,
-                &[(auth_key.into(), launcher_id)]
-            )
-            .await?;
+            let url =
+                create_pool_login_url(&target_pool, &[(auth_key.into(), launcher_id)]).await?;
             println!("{}", url);
         }
         RootCommands::CreateWallet { action } => match action {

@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_serialize"
-version = "2.0.1"
+version = "2.0.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Low Level Support Package for dg_xch_utils"
