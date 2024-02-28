@@ -251,7 +251,7 @@ pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, 
 pub fn parse_payout_address(s: &str) -> Result<String, Error> {
     if s.starts_with("xch") || s.starts_with("txch") {
         decode_puzzle_hash(s).map(|b| prep_hex_str(&b.to_string()))
-    } else if s.len() == 64 {
+    } else if prep_hex_str(s).len() == 64 {
         match hex_to_bytes(s) {
             //Should be a pointless conversion, validates the string is hex
             Ok(h) => Ok(hex::encode(h)),
