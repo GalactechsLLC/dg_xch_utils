@@ -1,6 +1,6 @@
 use crate::api::full_node::{FullnodeAPI, FullnodeExtAPI};
 use crate::api::responses::{
-    BlockCountMetricsResp, CoinHintsResp, CoinSpendMapResp, FeeEstimateResp,
+    BlockCountMetricsResp, CoinHintsResp, CoinSpendMapResp,
     HintedAdditionsAndRemovalsResp, MempoolItemAryResp, PaginatedCoinRecordAryResp,
 };
 use async_trait::async_trait;
@@ -515,23 +515,26 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_fee_estimate(
         &self,
         cost: Option<u64>,
+        spend_bundle: Option<SpendBundle>,
+        spend_type: Option<String>,
         target_times: &[u64],
     ) -> Result<FeeEstimate, Error> {
         let mut request_body = Map::new();
-        request_body.insert("target_times".to_string(), json!(target_times));
         request_body.insert("cost".to_string(), json!(cost));
-        Ok(post::<FeeEstimateResp>(
+        request_body.insert("spend_bundle".to_string(), json!(spend_bundle));
+        request_body.insert("spend_type".to_string(), json!(spend_type));
+        request_body.insert("target_times".to_string(), json!(target_times));
+        post::<FeeEstimate>(
             &self.client,
             &get_url(
                 self.host.as_str(),
                 self.port,
-                "get_mempool_items_by_coin_name",
+                "get_fee_estimate",
             ),
             &request_body,
             &self.additional_headers,
         )
-        .await?
-        .fee_estimate)
+        .await
     }
 }
 

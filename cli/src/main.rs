@@ -15,6 +15,7 @@ use log::{error, info, LevelFilter};
 use simple_logger::SimpleLogger;
 use std::env;
 use std::io::Error;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -564,9 +565,9 @@ async fn main() -> Result<(), Error> {
             mnemonic,
             fee,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
             migrate_plot_nft(
-                &client,
+                client,
                 &target_pool,
                 &launcher_id,
                 &mnemonic,
@@ -579,32 +580,24 @@ async fn main() -> Result<(), Error> {
             launcher_id,
             owner_key,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
             let owner_key = SecretKey::from_bytes(Bytes32::from(&owner_key).as_ref())
                 .expect("Failed to Parse Owner Secret Key");
-            migrate_plot_nft_with_owner_key(&client, &target_pool, &launcher_id, &owner_key).await?
+            migrate_plot_nft_with_owner_key(client, &target_pool, &launcher_id, &owner_key).await?
         }
         RootCommands::GetPlotnftState { launcher_id } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
-            get_plotnft_ready_state(&client, &launcher_id)
+            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
+            get_plotnft_ready_state(client, &launcher_id)
                 .await
                 .map(|_| ())?
         }
         RootCommands::CreatePoolLoginLink {
             target_pool,
-            launcher_ids,
-            auth_keys,
+            launcher_id,
+            auth_key,
         } => {
-            let url = create_pool_login_url(
-                &target_pool,
-                auth_keys
-                    .iter()
-                    .map(|v| SecretKey::from_bytes(v.as_ref()).expect("Failed to parse Auth Key"))
-                    .zip(launcher_ids)
-                    .collect::<Vec<(SecretKey, Bytes32)>>()
-                    .as_slice(),
-            )
-            .await?;
+            let url =
+                create_pool_login_url(&target_pool, &[(auth_key.into(), launcher_id)]).await?;
             println!("{}", url);
         }
         RootCommands::CreateWallet { action } => match action {

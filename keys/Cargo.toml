@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_keys"
-version = "2.0.1"
+version = "2.0.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Key Management Utils the Chia Blockchain"
@@ -12,8 +12,8 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 bech32 = "0.9.1"
 blst = { version = "0.3.11", features = ["portable"] }
 bip39 = {version= "2.0.0", features=["rand"] }
-dg_xch_core = {path = "../core", version = "2.0.1", features = ["paperclip"] }
-dg_xch_puzzles = {path = "../puzzles", version="2.0.1"}
+dg_xch_core = {path = "../core", version = "2.0.2", default-features = false }
+dg_xch_puzzles = {path = "../puzzles", version="2.0.2"}
 hex = "0.4.3"
-hkdf = "0.12.3"
+hkdf = "0.12.4"
 sha2 = "0.10.8"

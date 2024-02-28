@@ -12,7 +12,9 @@ use paperclip::v2::models::{DataType, DataTypeFormat};
 use paperclip::v2::schema::TypedData;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+#[cfg(feature = "postgres")]
 use sqlx::postgres::PgTypeInfo;
+#[cfg(feature = "postgres")]
 use sqlx::{Postgres, Type};
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Read};
@@ -302,15 +304,16 @@ macro_rules! impl_sized_bytes {
                     write!(f, "0x{}", encode(&self.bytes))
                 }
             }
+
+            #[cfg(feature = "postgres")]
+            impl Type<Postgres> for $name {
+                fn type_info() -> PgTypeInfo {
+                    PgTypeInfo::with_name(stringify!($name))
+                }
+            }
         )*
     };
     ()=>{};
-}
-
-impl Type<Postgres> for Bytes32 {
-    fn type_info() -> PgTypeInfo {
-        PgTypeInfo::with_name("Bytes32")
-    }
 }
 
 impl_sized_bytes!(

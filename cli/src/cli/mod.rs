@@ -283,12 +283,12 @@ pub enum RootCommands {
     },
     #[command(about = "Create Login link for Pool", long_about = None)]
     CreatePoolLoginLink {
-        #[arg(long)]
+        #[arg(short, long)]
         target_pool: String,
-        #[arg(long, num_args = 1.., value_delimiter = ',')]
-        launcher_ids: Vec<Bytes32>,
-        #[arg(long, num_args = 1.., value_delimiter = ',')]
-        auth_keys: Vec<Bytes32>,
+        #[arg(short, long)]
+        launcher_id: Bytes32,
+        #[arg(short, long)]
+        auth_key: Bytes32,
     },
     #[command(about = "Create a cold wallet or a PlotNFT wallet", long_about = None)]
     CreateWallet {

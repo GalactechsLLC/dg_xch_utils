@@ -12,7 +12,6 @@ use dg_xch_core::blockchain::unfinished_header_block::UnfinishedHeaderBlock;
 use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
 use dg_xch_core::protocols::full_node::BlockCountMetrics;
-use dg_xch_core::protocols::full_node::FeeEstimate;
 
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use serde::{Deserialize, Serialize};
@@ -95,12 +94,6 @@ pub struct CoinSpendResp {
 pub struct CoinSpendMapResp {
     //non-standard
     pub coin_solutions: HashMap<Bytes32, Option<CoinSpend>>,
-    pub success: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FeeEstimateResp {
-    pub fee_estimate: FeeEstimate,
     pub success: bool,
 }
 
