@@ -1,7 +1,7 @@
 use crate::api::full_node::{FullnodeAPI, FullnodeExtAPI};
 use crate::api::responses::{
-    BlockCountMetricsResp, CoinHintsResp, CoinSpendMapResp,
-    HintedAdditionsAndRemovalsResp, MempoolItemAryResp, PaginatedCoinRecordAryResp,
+    BlockCountMetricsResp, CoinHintsResp, CoinSpendMapResp, HintedAdditionsAndRemovalsResp,
+    MempoolItemAryResp, PaginatedCoinRecordAryResp,
 };
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
@@ -526,11 +526,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("target_times".to_string(), json!(target_times));
         post::<FeeEstimate>(
             &self.client,
-            &get_url(
-                self.host.as_str(),
-                self.port,
-                "get_fee_estimate",
-            ),
+            &get_url(self.host.as_str(), self.port, "get_fee_estimate"),
             &request_body,
             &self.additional_headers,
         )

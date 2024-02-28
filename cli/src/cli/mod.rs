@@ -184,6 +184,10 @@ pub enum RootCommands {
         #[arg(long)]
         cost: Option<u64>,
         #[arg(long)]
+        spend_bundle: Option<String>,
+        #[arg(long)]
+        spend_type: Option<String>,
+        #[arg(long)]
         target_times: Vec<u64>,
     },
     //END FULLNODE API
