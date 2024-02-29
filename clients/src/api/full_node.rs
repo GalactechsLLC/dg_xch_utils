@@ -107,6 +107,8 @@ pub trait FullnodeAPI {
     async fn get_fee_estimate(
         &self,
         cost: Option<u64>,
+        spend_bundle: Option<SpendBundle>,
+        spend_type: Option<String>,
         target_times: &[u64],
     ) -> Result<FeeEstimate, Error>;
 }

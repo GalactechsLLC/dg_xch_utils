@@ -11,10 +11,13 @@ use dg_xch_clients::api::pool::create_pool_login_url;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::blockchain::spend_bundle::SpendBundle;
+use dg_xch_serialize::ChiaSerialize;
+use hex::decode;
 use log::{error, info, LevelFilter};
 use simple_logger::SimpleLogger;
 use std::env;
-use std::io::Error;
+use std::io::{Cursor, Error};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -408,9 +411,31 @@ async fn main() -> Result<(), Error> {
                 }
             }
         }
-        RootCommands::GetFeeEstimate { cost, target_times } => {
+        RootCommands::GetFeeEstimate {
+            cost,
+            spend_bundle,
+            spend_type,
+            target_times,
+        } => {
             let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
-            let results = client.get_fee_estimate(cost, &target_times).await?;
+            let results = client
+                .get_fee_estimate(
+                    cost,
+                    spend_bundle.map(|s| {
+                        if s.starts_with("0x") {
+                            let mut cur = Cursor::new(
+                                decode(s).expect("String is not valid SpendBundle Hex"),
+                            );
+                            SpendBundle::from_bytes(&mut cur)
+                                .expect("String is not valid SpendBundle Hex")
+                        } else {
+                            serde_json::from_str(&s).expect("String is not a valid SpendBundle")
+                        }
+                    }),
+                    spend_type,
+                    &target_times,
+                )
+                .await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
                     info!("{json}");
