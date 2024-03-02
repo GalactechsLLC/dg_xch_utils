@@ -17,7 +17,7 @@ use dg_xch_core::protocols::farmer::{
 use dg_xch_core::protocols::harvester::RespondSignatures;
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
 use dg_xch_pos::verify_and_get_quality_string;
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hyper_tungstenite::tungstenite::Message;
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
@@ -46,11 +46,17 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
-        _peer_id: Arc<Bytes32>,
-        _peers: PeerMap,
+        peer_id: Arc<Bytes32>,
+        peers: PeerMap,
     ) -> Result<(), Error> {
         let mut cursor = Cursor::new(&msg.data);
-        let response = RespondSignatures::from_bytes(&mut cursor)?;
+        let peer = peers.read().await.get(&peer_id).cloned();
+        let protocol_version = if let Some(peer) = peer.as_ref() {
+            *peer.protocol_version.read().await
+        } else {
+            ChiaProtocolVersion::default()
+        };
+        let response = RespondSignatures::from_bytes(&mut cursor, protocol_version)?;
         if let Some(sps) = self.signage_points.lock().await.get(&response.sp_hash) {
             if sps.is_empty() {
                 error!("Missing Signage Points for {}", &response.sp_hash);
@@ -226,8 +232,11 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                     .config
                                                     .pool_rewards_payout_address,
                                             };
-                                            let pool_target_signature =
-                                                sign(sk, &pool_target.to_bytes());
+                                            let pool_target_signature = sign(
+                                                sk,
+                                                &pool_target
+                                                    .to_bytes(ChiaProtocolVersion::default()),
+                                            );
                                             (Some(pool_target), Some(pool_target_signature))
                                         } else {
                                             error!("Don't have the private key for the pool key used by harvester: {pool_public_key}");
@@ -277,10 +286,13 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .send(Message::Binary(
                                                 ChiaMessage::new(
                                                     ProtocolMessageTypes::DeclareProofOfSpace,
+                                                    client.client.client_config.protocol_version,
                                                     &request,
                                                     None,
                                                 )
-                                                .to_bytes(),
+                                                .to_bytes(
+                                                    client.client.client_config.protocol_version,
+                                                ),
                                             ))
                                             .await;
                                         info!("Declaring Proof of Space: {:?}", request);
@@ -432,10 +444,13 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .send(Message::Binary(
                                                 ChiaMessage::new(
                                                     ProtocolMessageTypes::SignedValues,
+                                                    client.client.client_config.protocol_version,
                                                     &request,
                                                     None,
                                                 )
-                                                .to_bytes(),
+                                                .to_bytes(
+                                                    client.client.client_config.protocol_version,
+                                                ),
                                             ))
                                             .await;
                                         info!("Sending Signed Values: {:?}", request);

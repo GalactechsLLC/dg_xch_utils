@@ -12,7 +12,7 @@ use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::decode;
 use log::{error, info, LevelFilter};
 use simple_logger::SimpleLogger;
@@ -426,7 +426,7 @@ async fn main() -> Result<(), Error> {
                             let mut cur = Cursor::new(
                                 decode(s).expect("String is not valid SpendBundle Hex"),
                             );
-                            SpendBundle::from_bytes(&mut cur)
+                            SpendBundle::from_bytes(&mut cur, ChiaProtocolVersion::default())
                                 .expect("String is not valid SpendBundle Hex")
                         } else {
                             serde_json::from_str(&s).expect("String is not a valid SpendBundle")

@@ -8,7 +8,7 @@ use dg_xch_core::protocols::pool::{
     GetPoolInfoResponse, PoolError, PoolErrorCode, PostFarmerRequest, PostFarmerResponse,
     PostPartialRequest, PostPartialResponse, PutFarmerRequest, PutFarmerResponse,
 };
-use dg_xch_serialize::{hash_256, ChiaSerialize};
+use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use log::warn;
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
@@ -243,7 +243,7 @@ pub async fn create_pool_login_parts(
             target_puzzle_hash: pool_info.target_puzzle_hash,
             authentication_token: current_auth_token,
         };
-        let to_sign = hash_256(payload.to_bytes());
+        let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
         let sig = sign(sec_key, &to_sign);
         sigs.push(sig);
     }

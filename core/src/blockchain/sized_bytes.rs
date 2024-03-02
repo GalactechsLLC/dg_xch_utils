@@ -1,6 +1,7 @@
 use crate::clvm::program::Program;
 use blst::min_pk::{PublicKey, SecretKey, Signature};
 use bytes::Buf;
+use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
 use hex::FromHexError;
 use hex::{decode, encode};
@@ -330,10 +331,10 @@ macro_rules! impl_sized_bytes_serial {
     ($($name: ident, $size:expr);*) => {
         $(
             impl ChiaSerialize for $name {
-                fn to_bytes(&self) -> Vec<u8> {
+                fn to_bytes(&self, _version: ChiaProtocolVersion) -> Vec<u8> {
                     self.to_sized_bytes().to_vec()
                 }
-                fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>) -> Result<Self, Error> where Self: Sized,
+                fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>, _version: ChiaProtocolVersion) -> Result<Self, Error> where Self: Sized,
                 {
                     if bytes.remaining() < $size {
                         Err(Error::new(ErrorKind::InvalidInput, format!("Failed to Parse {}, expected length {}, found {}", stringify!($name),  $size, bytes.remaining())))

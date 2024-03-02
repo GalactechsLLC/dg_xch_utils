@@ -72,112 +72,112 @@ impl From<u8> for PoolErrorCode {
 }
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PoolError {
-    pub error_code: u8,
-    pub error_message: String,
+    pub error_code: u8,        //Min Version 0.0.34
+    pub error_message: String, //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct AuthenticationPayload {
-    pub method_name: String,
-    pub launcher_id: Bytes32,
-    pub target_puzzle_hash: Bytes32,
-    pub authentication_token: u64,
+    pub method_name: String,         //Min Version 0.0.34
+    pub launcher_id: Bytes32,        //Min Version 0.0.34
+    pub target_puzzle_hash: Bytes32, //Min Version 0.0.34
+    pub authentication_token: u64,   //Min Version 0.0.34
 }
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct GetPoolInfoResponse {
-    pub name: String,
-    pub logo_url: String,
-    pub minimum_difficulty: u64,
-    pub relative_lock_height: u32,
-    pub protocol_version: u8,
-    pub fee: String,
-    pub description: String,
-    pub target_puzzle_hash: Bytes32,
-    pub authentication_token_timeout: u8,
+    pub name: String,                     //Min Version 0.0.34
+    pub logo_url: String,                 //Min Version 0.0.34
+    pub minimum_difficulty: u64,          //Min Version 0.0.34
+    pub relative_lock_height: u32,        //Min Version 0.0.34
+    pub protocol_version: u8,             //Min Version 0.0.34
+    pub fee: String,                      //Min Version 0.0.34
+    pub description: String,              //Min Version 0.0.34
+    pub target_puzzle_hash: Bytes32,      //Min Version 0.0.34
+    pub authentication_token_timeout: u8, //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostPartialPayload {
-    pub launcher_id: Bytes32,
-    pub authentication_token: u64,
-    pub proof_of_space: ProofOfSpace,
-    pub sp_hash: Bytes32,
-    pub end_of_sub_slot: bool,
-    pub harvester_id: Bytes32,
+    pub launcher_id: Bytes32,         //Min Version 0.0.34
+    pub authentication_token: u64,    //Min Version 0.0.34
+    pub proof_of_space: ProofOfSpace, //Min Version 0.0.34
+    pub sp_hash: Bytes32,             //Min Version 0.0.34
+    pub end_of_sub_slot: bool,        //Min Version 0.0.34
+    pub harvester_id: Bytes32,        //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostPartialRequest {
-    pub payload: PostPartialPayload,
-    pub aggregate_signature: Bytes96,
+    pub payload: PostPartialPayload,  //Min Version 0.0.34
+    pub aggregate_signature: Bytes96, //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostPartialResponse {
-    pub new_difficulty: u64,
+    pub new_difficulty: u64, //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct GetFarmerRequest {
-    pub launcher_id: Bytes32,
-    pub authentication_token: u64,
-    pub signature: Bytes96,
+    pub launcher_id: Bytes32,      //Min Version 0.0.34
+    pub authentication_token: u64, //Min Version 0.0.34
+    pub signature: Bytes96,        //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct GetFarmerResponse {
-    pub authentication_public_key: Bytes48,
-    pub payout_instructions: String,
-    pub current_difficulty: u64,
-    pub current_points: u64,
+    pub authentication_public_key: Bytes48, //Min Version 0.0.34
+    pub payout_instructions: String,        //Min Version 0.0.34
+    pub current_difficulty: u64,            //Min Version 0.0.34
+    pub current_points: u64,                //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostFarmerPayload {
-    pub launcher_id: Bytes32,
-    pub authentication_token: u64,
-    pub authentication_public_key: Bytes48,
-    pub payout_instructions: String,
-    pub suggested_difficulty: Option<u64>,
+    pub launcher_id: Bytes32,               //Min Version 0.0.34
+    pub authentication_token: u64,          //Min Version 0.0.34
+    pub authentication_public_key: Bytes48, //Min Version 0.0.34
+    pub payout_instructions: String,        //Min Version 0.0.34
+    pub suggested_difficulty: Option<u64>,  //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostFarmerRequest {
-    pub payload: PostFarmerPayload,
-    pub signature: Bytes96,
+    pub payload: PostFarmerPayload, //Min Version 0.0.34
+    pub signature: Bytes96,         //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PostFarmerResponse {
-    pub welcome_message: String,
+    pub welcome_message: String, //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PutFarmerPayload {
-    pub launcher_id: Bytes32,
-    pub authentication_token: u64,
-    pub authentication_public_key: Option<Bytes48>,
-    pub payout_instructions: Option<String>,
-    pub suggested_difficulty: Option<u64>,
+    pub launcher_id: Bytes32,                       //Min Version 0.0.34
+    pub authentication_token: u64,                  //Min Version 0.0.34
+    pub authentication_public_key: Option<Bytes48>, //Min Version 0.0.34
+    pub payout_instructions: Option<String>,        //Min Version 0.0.34
+    pub suggested_difficulty: Option<u64>,          //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PutFarmerRequest {
-    pub payload: PutFarmerPayload,
-    pub signature: Bytes96,
+    pub payload: PutFarmerPayload, //Min Version 0.0.34
+    pub signature: Bytes96,        //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct PutFarmerResponse {
-    pub authentication_public_key: Option<bool>,
-    pub payout_instructions: Option<bool>,
-    pub suggested_difficulty: Option<bool>,
+    pub authentication_public_key: Option<bool>, //Min Version 0.0.34
+    pub payout_instructions: Option<bool>,       //Min Version 0.0.34
+    pub suggested_difficulty: Option<bool>,      //Min Version 0.0.34
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
-    pub error_code: u16,
-    pub error_message: Option<String>,
+    pub error_code: u16,               //Min Version 0.0.34
+    pub error_message: Option<String>, //Min Version 0.0.34
 }
 
 pub fn get_current_authentication_token(timeout: u8) -> u64 {
