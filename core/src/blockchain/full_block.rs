@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 pub struct FullBlock {
     pub finished_sub_slots: Vec<SubSlotBundle>,
     pub reward_chain_block: RewardChainBlock,
-    pub challenge_chain_sp_proof: VdfProof,
+    pub challenge_chain_sp_proof: Option<VdfProof>,
     pub challenge_chain_ip_proof: VdfProof,
     pub reward_chain_sp_proof: Option<VdfProof>,
     pub reward_chain_ip_proof: VdfProof,

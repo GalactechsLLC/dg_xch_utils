@@ -12,11 +12,22 @@ pub fn hash_256(input: impl AsRef<[u8]>) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-#[derive(Default, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    Ord,
+    PartialOrd,
+    Eq,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum ChiaProtocolVersion {
     Chia0_0_34 = 34, //Pre 2.0.0
-    #[default]
     Chia0_0_35 = 35, //2.0.0
+    #[default]
     Chia0_0_36 = 36, //2.2.0
 }
 impl Display for ChiaProtocolVersion {

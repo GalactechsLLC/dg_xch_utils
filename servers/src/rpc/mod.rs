@@ -3,6 +3,7 @@ use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
     load_private_key_from_bytes, AllowAny, SslInfo, CHIA_CA_CRT, CHIA_CA_KEY,
 };
+use http::request::Parts;
 use http_body_util::Full;
 use hyper::body::{Body, Bytes, Incoming, SizeHint};
 use hyper::header::HeaderValue;
@@ -27,7 +28,14 @@ use tokio_rustls::TlsAcceptor;
 
 #[async_trait]
 pub trait RpcHandler {
-    async fn handle(&self, req: RequestType) -> Result<Response<Full<Bytes>>, Error>;
+    async fn handle(&self, req: RequestType) -> Result<Response<Full<Bytes>>, (Parts, Error)>;
+}
+
+pub fn extract_parts_and_drop_body(req: RequestType) -> Parts {
+    match req {
+        RequestType::Stream(r) => r.into_parts().0,
+        RequestType::Sized(r) => r.into_parts().0,
+    }
 }
 
 pub enum RequestType {
@@ -58,7 +66,7 @@ impl RequestType {
 pub enum MiddleWareResult {
     Stream(Request<Incoming>),
     Sized(Request<Full<Bytes>>),
-    Failure(Response<Full<Bytes>>),
+    Failure(Parts, Response<Full<Bytes>>),
 }
 
 #[async_trait]
@@ -68,13 +76,16 @@ pub trait MiddleWare {
         req: RequestType,
         address: &SocketAddr,
     ) -> Result<MiddleWareResult, Error>;
+
+    async fn set_enabled(&self, enabled: bool);
+    async fn is_enabled(&self) -> bool;
 }
 
 #[derive(Default)]
 pub struct DefaultRpcHandler {}
 #[async_trait]
 impl RpcHandler for DefaultRpcHandler {
-    async fn handle(&self, _: RequestType) -> Result<Response<Full<Bytes>>, Error> {
+    async fn handle(&self, _: RequestType) -> Result<Response<Full<Bytes>>, (Parts, Error)> {
         Ok(Response::new(Full::new(Bytes::from(
             "HTTP NOT SUPPORTED ON THIS ENDPOINT",
         ))))
@@ -259,18 +270,24 @@ async fn connection_handler(
     address: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, Error> {
     let mut req = RequestType::Stream(req);
-    for middleware in server.middleware.clone().as_slice() {
-        match middleware.handle(req, &address).await? {
-            MiddleWareResult::Stream(r) => {
-                req = RequestType::Stream(r);
-            }
-            MiddleWareResult::Sized(r) => {
-                req = RequestType::Sized(r);
-            }
-            MiddleWareResult::Failure(res) => {
-                return Ok(res);
+    let middleware_arc = server.middleware.clone();
+    for middleware in middleware_arc.as_slice() {
+        if middleware.is_enabled().await {
+            match middleware.handle(req, &address).await? {
+                MiddleWareResult::Stream(r) => {
+                    req = RequestType::Stream(r);
+                }
+                MiddleWareResult::Sized(r) => {
+                    req = RequestType::Sized(r);
+                }
+                MiddleWareResult::Failure(_parts, res) => {
+                    return Ok(res);
+                }
             }
         }
     }
-    server.handler.handle(req).await
+    match server.handler.handle(req).await {
+        Ok(res) => Ok(res),
+        Err((_parts, e)) => Err(e),
+    }
 }

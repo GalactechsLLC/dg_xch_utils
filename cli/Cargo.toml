@@ -22,6 +22,7 @@ bip39 = {version= "2.0.0", features=["rand"] }
 blst = { version = "0.3.11", features = ["portable"] }
 clap = { version = "4.5.1", features = ["derive"] }
 dashmap = "5.5.3"
+dialoguer = "0.11.0"
 dg_xch_clients = {path = "../clients", version="2.0.2"}
 dg_xch_core = {path = "../core", version = "2.0.2", default-features = false}
 dg_xch_keys = {path = "../keys", version="2.0.2"}
