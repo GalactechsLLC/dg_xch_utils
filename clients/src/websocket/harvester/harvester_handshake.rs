@@ -3,7 +3,7 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::protocols::harvester::{HarvesterHandshake, HarvesterState};
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap};
 use dg_xch_pos::PlotManagerAsync;
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, info, warn};
 use std::io::{Cursor, Error};
 use std::sync::Arc;
@@ -18,11 +18,17 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for HarvesterHandshakeHan
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
-        _peer_id: Arc<Bytes32>,
-        _peers: PeerMap,
+        peer_id: Arc<Bytes32>,
+        peers: PeerMap,
     ) -> Result<(), Error> {
         let mut cursor = Cursor::new(msg.data.clone());
-        let handshake = HarvesterHandshake::from_bytes(&mut cursor)?;
+        let peer = peers.read().await.get(&peer_id).cloned();
+        let protocol_version = if let Some(peer) = peer.as_ref() {
+            *peer.protocol_version.read().await
+        } else {
+            ChiaProtocolVersion::default()
+        };
+        let handshake = HarvesterHandshake::from_bytes(&mut cursor, protocol_version)?;
         info!("Handshake from farmer: {:?}", handshake);
         if handshake.farmer_public_keys.is_empty() && handshake.pool_public_keys.is_empty() {
             warn!("Farmer Failed to send keys");

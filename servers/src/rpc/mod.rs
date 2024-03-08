@@ -3,13 +3,17 @@ use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
     load_private_key_from_bytes, AllowAny, SslInfo, CHIA_CA_CRT, CHIA_CA_KEY,
 };
+use http::request::Parts;
 use http_body_util::Full;
-use hyper::body::{Bytes, Incoming};
+use hyper::body::{Body, Bytes, Incoming, SizeHint};
+use hyper::header::HeaderValue;
 use hyper::server::conn::http1::Builder;
 use hyper::service::service_fn;
-use hyper::{Request, Response};
+use hyper::{HeaderMap, Request, Response, Uri};
 use hyper_util::rt::TokioIo;
 use log::error;
+#[cfg(feature = "metrics")]
+use prometheus::core::{AtomicU64, GenericCounter};
 use rustls::{RootCertStore, ServerConfig};
 use std::env;
 use std::io::{Error, ErrorKind};
@@ -24,14 +28,64 @@ use tokio_rustls::TlsAcceptor;
 
 #[async_trait]
 pub trait RpcHandler {
-    async fn handle(&self, req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Error>;
+    async fn handle(&self, req: RequestType) -> Result<Response<Full<Bytes>>, (Parts, Error)>;
+}
+
+pub fn extract_parts_and_drop_body(req: RequestType) -> Parts {
+    match req {
+        RequestType::Stream(r) => r.into_parts().0,
+        RequestType::Sized(r) => r.into_parts().0,
+    }
+}
+
+pub enum RequestType {
+    Stream(Request<Incoming>),
+    Sized(Request<Full<Bytes>>),
+}
+impl RequestType {
+    pub fn uri(&self) -> &Uri {
+        match self {
+            RequestType::Sized(r) => r.uri(),
+            RequestType::Stream(r) => r.uri(),
+        }
+    }
+    pub fn headers(&self) -> &HeaderMap<HeaderValue> {
+        match self {
+            RequestType::Sized(r) => r.headers(),
+            RequestType::Stream(r) => r.headers(),
+        }
+    }
+    pub fn size_hint(&self) -> SizeHint {
+        match self {
+            RequestType::Sized(r) => r.size_hint(),
+            RequestType::Stream(r) => r.size_hint(),
+        }
+    }
+}
+
+pub enum MiddleWareResult {
+    Stream(Request<Incoming>),
+    Sized(Request<Full<Bytes>>),
+    Failure(Parts, Response<Full<Bytes>>),
+}
+
+#[async_trait]
+pub trait MiddleWare {
+    async fn handle(
+        &self,
+        req: RequestType,
+        address: &SocketAddr,
+    ) -> Result<MiddleWareResult, Error>;
+
+    async fn set_enabled(&self, enabled: bool);
+    async fn is_enabled(&self) -> bool;
 }
 
 #[derive(Default)]
 pub struct DefaultRpcHandler {}
 #[async_trait]
 impl RpcHandler for DefaultRpcHandler {
-    async fn handle(&self, _: Request<Incoming>) -> Result<Response<Full<Bytes>>, Error> {
+    async fn handle(&self, _: RequestType) -> Result<Response<Full<Bytes>>, (Parts, Error)> {
         Ok(Response::new(Full::new(Bytes::from(
             "HTTP NOT SUPPORTED ON THIS ENDPOINT",
         ))))
@@ -44,15 +98,39 @@ pub struct RpcServerConfig {
     pub ssl_info: Option<SslInfo>,
 }
 
+#[cfg(feature = "metrics")]
+pub struct RpcMetrics {
+    pub handled_by_middleware: Arc<GenericCounter<AtomicU64>>,
+}
+
 pub struct RpcServer {
     pub socket_address: SocketAddr,
     pub server_config: Arc<ServerConfig>,
     pub handler: Arc<dyn RpcHandler + Send + Sync + 'static>,
+    pub middleware: Arc<Vec<Box<dyn MiddleWare + Send + Sync + 'static>>>,
+    #[cfg(feature = "metrics")]
+    pub metrics: Arc<RpcMetrics>,
 }
 impl RpcServer {
     pub fn new(
         config: &RpcServerConfig,
         handler: Arc<dyn RpcHandler + Send + Sync + 'static>,
+        #[cfg(feature = "metrics")] metrics: Arc<RpcMetrics>,
+    ) -> Result<Self, Error> {
+        let middleware: Vec<Box<dyn MiddleWare + Send + Sync + 'static>> = vec![];
+        Self::new_with_middleware(
+            config,
+            handler,
+            Arc::new(middleware),
+            #[cfg(feature = "metrics")]
+            metrics,
+        )
+    }
+    pub fn new_with_middleware(
+        config: &RpcServerConfig,
+        handler: Arc<dyn RpcHandler + Send + Sync + 'static>,
+        middleware: Arc<Vec<Box<dyn MiddleWare + Send + Sync + 'static>>>,
+        #[cfg(feature = "metrics")] metrics: Arc<RpcMetrics>,
     ) -> Result<Self, Error> {
         let server_config = Self::init(config)
             .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
@@ -61,6 +139,9 @@ impl RpcServer {
             socket_address,
             server_config,
             handler,
+            middleware,
+            #[cfg(feature = "metrics")]
+            metrics,
         })
     }
 
@@ -74,13 +155,13 @@ impl RpcServer {
             select!(
                 res = listener.accept() => {
                     match res {
-                        Ok((stream, _)) => {
+                        Ok((stream, address)) => {
                             match acceptor.accept(stream).await {
                                 Ok(stream) => {
                                     let server = server.clone();
                                     let service = service_fn(move |req| {
                                         let server = server.clone();
-                                        connection_handler(server, req)
+                                        connection_handler(server, req, address)
                                     });
                                     let connection = http.serve_connection(TokioIo::new(stream), service);
                                     tokio::spawn( async move {
@@ -186,6 +267,27 @@ impl RpcServer {
 async fn connection_handler(
     server: Arc<RpcServer>,
     req: Request<Incoming>,
+    address: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, Error> {
-    server.handler.handle(req).await
+    let mut req = RequestType::Stream(req);
+    let middleware_arc = server.middleware.clone();
+    for middleware in middleware_arc.as_slice() {
+        if middleware.is_enabled().await {
+            match middleware.handle(req, &address).await? {
+                MiddleWareResult::Stream(r) => {
+                    req = RequestType::Stream(r);
+                }
+                MiddleWareResult::Sized(r) => {
+                    req = RequestType::Sized(r);
+                }
+                MiddleWareResult::Failure(_parts, res) => {
+                    return Ok(res);
+                }
+            }
+        }
+    }
+    match server.handler.handle(req).await {
+        Ok(res) => Ok(res),
+        Err((_parts, e)) => Err(e),
+    }
 }

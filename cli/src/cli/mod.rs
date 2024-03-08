@@ -1,5 +1,10 @@
+use bip39::Mnemonic;
 use clap::{Parser, Subcommand};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dialoguer::theme::ColorfulTheme;
+use dialoguer::Input;
+use std::io::{Error, ErrorKind};
+use std::str::FromStr;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -25,6 +30,12 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum RootCommands {
+    //START OF FULLNODE API
+    #[command(about = "Get the current BlockchainState", long_about = None)]
+    PrintPlottingInfo {
+        #[arg(long)]
+        launcher_id: Option<Bytes32>,
+    },
     //START OF FULLNODE API
     #[command(about = "Get the current BlockchainState", long_about = None)]
     GetBlockchainState,
@@ -312,4 +323,31 @@ pub enum WalletAction {
     },
     #[command(about = "Creates a Cold wallet", long_about = None)]
     Cold,
+}
+
+pub fn prompt_for_mnemonic() -> Result<Mnemonic, Error> {
+    Mnemonic::from_str(
+        &Input::<String>::with_theme(&ColorfulTheme::default())
+            .with_prompt("Please Input Your Mnemonic: ")
+            .validate_with(|input: &String| -> Result<(), &str> {
+                if Mnemonic::from_str(input).is_ok() {
+                    Ok(())
+                } else {
+                    Err("You did not input a valid Mnemonic, Please try again.")
+                }
+            })
+            .interact_text()
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("Failed to read user Input for Mnemonic: {e:?}"),
+                )
+            })?,
+    )
+    .map_err(|e| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            format!("Failed to parse Mnemonic: {e:?}"),
+        )
+    })
 }

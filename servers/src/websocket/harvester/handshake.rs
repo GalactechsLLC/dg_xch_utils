@@ -2,13 +2,14 @@ use crate::version;
 use crate::websocket::harvester::HarvesterServerConfig;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use dg_xch_core::protocols::shared::{Handshake, CAPABILITIES, PROTOCOL_VERSION};
+use dg_xch_core::protocols::shared::{Handshake, CAPABILITIES};
 use dg_xch_core::protocols::{
     ChiaMessage, MessageHandler, NodeType, PeerMap, ProtocolMessageTypes,
 };
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hyper_tungstenite::tungstenite::Message;
 use std::io::{Cursor, Error, ErrorKind};
+use std::str::FromStr;
 use std::sync::Arc;
 
 pub struct HandshakeHandle {
@@ -22,19 +23,24 @@ impl MessageHandler for HandshakeHandle {
         peer_id: Arc<Bytes32>,
         peers: PeerMap,
     ) -> Result<(), Error> {
-        let mut cursor = Cursor::new(&msg.data);
-        let handshake = Handshake::from_bytes(&mut cursor)?;
-        if let Some(peer) = peers.lock().await.get_mut(&peer_id).cloned() {
-            *peer.node_type.lock().await = NodeType::from(handshake.node_type);
+        if let Some(peer) = peers.read().await.get(&peer_id).cloned() {
+            let mut cursor = Cursor::new(&msg.data);
+            let handshake =
+                Handshake::from_bytes(&mut cursor, *peer.protocol_version.read().await)?;
+            *peer.node_type.write().await = NodeType::from(handshake.node_type);
+            let protocol_version = ChiaProtocolVersion::from_str(&handshake.protocol_version)
+                .expect("ChiaProtocolVersion::from_str is Infallible");
+            *peer.protocol_version.write().await = protocol_version;
             peer.websocket
                 .lock()
                 .await
                 .send(Message::Binary(
                     ChiaMessage::new(
                         ProtocolMessageTypes::Handshake,
+                        protocol_version,
                         &Handshake {
                             network_id: self.config.network.clone(),
-                            protocol_version: PROTOCOL_VERSION.to_string(),
+                            protocol_version: protocol_version.to_string(),
                             software_version: version(),
                             server_port: self.config.websocket.port,
                             node_type: NodeType::Harvester as u8,
@@ -45,7 +51,7 @@ impl MessageHandler for HandshakeHandle {
                         },
                         msg.id,
                     )
-                    .to_bytes(),
+                    .to_bytes(protocol_version),
                 ))
                 .await
         } else {

@@ -6,18 +6,25 @@ use cli::*;
 use dg_xch_cli::wallet_commands::{
     create_cold_wallet, get_plotnft_ready_state, migrate_plot_nft, migrate_plot_nft_with_owner_key,
 };
+use dg_xch_cli::wallets::plotnft_utils::{get_plotnft_by_launcher_id, scrounge_for_plotnfts};
 use dg_xch_clients::api::full_node::{FullnodeAPI, FullnodeExtAPI};
 use dg_xch_clients::api::pool::create_pool_login_url;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_keys::{
+    encode_puzzle_hash, key_from_mnemonic, master_sk_to_farmer_sk, master_sk_to_pool_sk,
+    master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened,
+};
+use dg_xch_puzzles::clvm_puzzles::launcher_id_to_p2_puzzle_hash;
+use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::decode;
 use log::{error, info, LevelFilter};
 use simple_logger::SimpleLogger;
 use std::env;
-use std::io::{Cursor, Error};
+use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -44,6 +51,78 @@ async fn main() -> Result<(), Error> {
         ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
     });
     match cli.action {
+        RootCommands::PrintPlottingInfo { launcher_id } => {
+            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
+            let master_key = key_from_mnemonic(&prompt_for_mnemonic()?)?;
+            let mut page = 0;
+            let mut plotnfts = vec![];
+            if let Some(launcher_id) = launcher_id {
+                info!("Searching for NFT with LauncherID: {launcher_id}");
+                if let Some(plotnft) =
+                    get_plotnft_by_launcher_id(client.clone(), &launcher_id).await?
+                {
+                    plotnfts.push(plotnft);
+                } else {
+                    return Err(Error::new(
+                        ErrorKind::NotFound,
+                        "Failed to find a plotNFT with LauncherID: {launcher_id}",
+                    ));
+                }
+            } else {
+                info!("No LauncherID Specified, Searching for PlotNFTs...");
+                while page < 50 && plotnfts.is_empty() {
+                    let mut puzzle_hashes = vec![];
+                    for index in page * 50..(page + 1) * 50 {
+                        let wallet_sk = master_sk_to_wallet_sk_unhardened(&master_key, index)
+                            .map_err(|e| {
+                                Error::new(
+                                    ErrorKind::InvalidInput,
+                                    format!("Failed to parse Wallet SK: {:?}", e),
+                                )
+                            })?;
+                        let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
+                        puzzle_hashes.push(puzzle_hash_for_pk(&pub_key)?);
+                        let hardened_wallet_sk = master_sk_to_wallet_sk(&master_key, index)
+                            .map_err(|e| {
+                                Error::new(
+                                    ErrorKind::InvalidInput,
+                                    format!("Failed to parse Wallet SK: {:?}", e),
+                                )
+                            })?;
+                        let pub_key: Bytes48 = hardened_wallet_sk.sk_to_pk().to_bytes().into();
+                        puzzle_hashes.push(puzzle_hash_for_pk(&pub_key)?);
+                    }
+                    plotnfts.extend(scrounge_for_plotnfts(client.clone(), &puzzle_hashes).await?);
+                    page += 1;
+                }
+            }
+            let farmer_key =
+                Bytes48::from(master_sk_to_farmer_sk(&master_key)?.sk_to_pk().to_bytes());
+            let pool_key = Bytes48::from(master_sk_to_pool_sk(&master_key)?.sk_to_pk().to_bytes());
+            info!("{{");
+            info!("\tFarmerPublicKey(All Plots): {},", farmer_key);
+            info!("\tPoolPublicKey(OG Plots): {},", pool_key);
+            info!("\tPlotNfts(NFT Plots): {{");
+            let total = plotnfts.len();
+            for (index, plot_nft) in plotnfts.into_iter().enumerate() {
+                info!("\t  {{");
+                info!("\t    LauncherID: {},", plot_nft.launcher_id);
+                info!(
+                    "\t    ContractAddress: {}",
+                    encode_puzzle_hash(
+                        &launcher_id_to_p2_puzzle_hash(
+                            &plot_nft.launcher_id,
+                            plot_nft.delay_time as u64,
+                            &plot_nft.delay_puzzle_hash,
+                        )?,
+                        "xch"
+                    )?
+                );
+                info!("\t  }}{}", if index != total - 1 { "," } else { "" });
+            }
+            info!("\t}}");
+            info!("}}");
+        }
         RootCommands::GetBlockchainState => {
             let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
             let results = client.get_blockchain_state().await?;
@@ -426,7 +505,7 @@ async fn main() -> Result<(), Error> {
                             let mut cur = Cursor::new(
                                 decode(s).expect("String is not valid SpendBundle Hex"),
                             );
-                            SpendBundle::from_bytes(&mut cur)
+                            SpendBundle::from_bytes(&mut cur, ChiaProtocolVersion::default())
                                 .expect("String is not valid SpendBundle Hex")
                         } else {
                             serde_json::from_str(&s).expect("String is not a valid SpendBundle")

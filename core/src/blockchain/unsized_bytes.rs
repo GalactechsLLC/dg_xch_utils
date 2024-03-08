@@ -1,6 +1,6 @@
 use crate::blockchain::sized_bytes::{prep_hex_str, SizedBytes};
 use crate::clvm::program::Program;
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::{decode, encode};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -145,14 +145,17 @@ impl fmt::Debug for UnsizedBytes {
     }
 }
 impl ChiaSerialize for UnsizedBytes {
-    fn to_bytes(&self) -> Vec<u8> {
-        self.bytes.to_bytes()
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8> {
+        self.bytes.to_bytes(version)
     }
-    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>) -> Result<Self, Error>
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
     where
         Self: Sized,
     {
-        let bytes: Vec<u8> = Vec::from_bytes(bytes)?;
+        let bytes: Vec<u8> = Vec::from_bytes(bytes, version)?;
         Ok(Self { bytes })
     }
 }

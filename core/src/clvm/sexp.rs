@@ -3,6 +3,7 @@ use crate::blockchain::sized_bytes::*;
 use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
 use crate::clvm::program::Program;
+use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
 use num_bigint::BigInt;
@@ -463,7 +464,7 @@ impl IntoSExp for Program {
 
 impl IntoSExp for ConditionOpcode {
     fn to_sexp(self) -> SExp {
-        SExp::Atom(AtomBuf::new(self.to_bytes()))
+        SExp::Atom(AtomBuf::new(self.to_bytes(ChiaProtocolVersion::default())))
     }
 }
 

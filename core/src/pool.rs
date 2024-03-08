@@ -2,7 +2,7 @@ use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::clvm::program::Program;
 use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Error, ErrorKind};
@@ -65,7 +65,7 @@ impl PoolState {
                 .as_vec()
                 .unwrap_or_default(),
         );
-        Self::from_bytes(&mut cursor)
+        Self::from_bytes(&mut cursor, ChiaProtocolVersion::default())
     }
 }
 

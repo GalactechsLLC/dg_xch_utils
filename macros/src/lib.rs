@@ -13,10 +13,10 @@ pub fn derive_chia_serial(input: TokenStream) -> TokenStream {
     let (to_bytes, from_bytes) = create_to_bytes(input.data);
     let gen = quote! {
         impl dg_xch_serialize::ChiaSerialize for #name {
-            fn to_bytes(&self) -> Vec<u8> {
+            fn to_bytes(&self, macro_chia_protocol_version: dg_xch_serialize::ChiaProtocolVersion) -> Vec<u8> {
                 #to_bytes
             }
-            fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>) -> Result<Self, std::io::Error>
+            fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>, macro_chia_protocol_version: dg_xch_serialize::ChiaProtocolVersion) -> Result<Self, std::io::Error>
             where
                 Self: Sized,
             {
@@ -35,13 +35,13 @@ fn create_to_bytes(data: Data) -> (TokenStream2, TokenStream2) {
                     let to_bytes = fields.named.iter().map(|f| {
                         let name = &f.ident;
                         quote_spanned! {f.span()=>
-                            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.#name));
+                            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.#name, macro_chia_protocol_version));
                         }
                     });
                     let names = fields.named.iter().map(|f| {
                         let name = &f.ident;
                         quote_spanned! {f.span()=>
-                            let #name = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+                            let #name = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, macro_chia_protocol_version)?;
                         }
                     });
                     let assign = fields.named.iter().map(|f| {
@@ -68,13 +68,13 @@ fn create_to_bytes(data: Data) -> (TokenStream2, TokenStream2) {
                     let to_bytes = fields.unnamed.iter().enumerate().map(|(i, f)| {
                         let index = Index::from(i);
                         quote_spanned! {f.span()=>
-                            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.#index));
+                            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.#index, macro_chia_protocol_version));
                         }
                     });
                     let names = fields.unnamed.iter().enumerate().map(|(i, f)| {
                         let index = Index::from(i);
                         quote_spanned! {f.span()=>
-                            let #index = dg_xch_serialize::ChiaSerialize::from_bytes(bytes)?;
+                            let #index = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, macro_chia_protocol_version)?;
                         }
                     });
                     let assign = fields.unnamed.iter().enumerate().map(|(i, f)| {

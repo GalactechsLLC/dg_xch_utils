@@ -8,7 +8,7 @@ use dg_xch_core::consensus::block_rewards::calculate_pool_reward;
 use dg_xch_core::consensus::coinbase::pool_parent_id;
 use dg_xch_core::plots::PlotNftExtraData;
 use dg_xch_core::pool::PoolState;
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use lazy_static::lazy_static;
 use log::debug;
 use num_traits::{ToPrimitive, Zero};
@@ -350,7 +350,13 @@ pub fn create_travel_spend(
     )?;
     let inner_solution = if is_pool_member_inner_puzzle(&inner_puzzle)? {
         Program::to(vec![
-            vec![("p".to_sexp(), SExp::Atom(AtomBuf::new(target.to_bytes())))].to_sexp(),
+            vec![(
+                "p".to_sexp(),
+                SExp::Atom(AtomBuf::new(
+                    target.to_bytes(ChiaProtocolVersion::default()),
+                )),
+            )]
+            .to_sexp(),
             0.to_sexp(),
         ])
     } else if is_pool_waitingroom_inner_puzzle(&inner_puzzle)? {
@@ -364,11 +370,17 @@ pub fn create_travel_spend(
         debug!(
             "create_travel_spend: waitingroom: target PoolState bytes:\n{:?}\nhash:{}",
             target,
-            Program::to(target.to_bytes()).tree_hash()
+            Program::to(target.to_bytes(ChiaProtocolVersion::default())).tree_hash()
         );
         Program::to(vec![
             1.to_sexp(),
-            vec![("p".to_sexp(), SExp::Atom(AtomBuf::new(target.to_bytes())))].to_sexp(),
+            vec![(
+                "p".to_sexp(),
+                SExp::Atom(AtomBuf::new(
+                    target.to_bytes(ChiaProtocolVersion::default()),
+                )),
+            )]
+            .to_sexp(),
             destination_inner.tree_hash().to_sexp(),
         ]) // current or target
     } else {
@@ -538,7 +550,10 @@ pub fn pool_state_from_extra_data(extra_data: Program) -> Result<Option<PoolStat
             match state_bytes {
                 Some(byte_data) => {
                     let mut cursor = Cursor::new(byte_data);
-                    Ok(Some(PoolState::from_bytes(&mut cursor)?))
+                    Ok(Some(PoolState::from_bytes(
+                        &mut cursor,
+                        ChiaProtocolVersion::default(),
+                    )?))
                 }
                 None => Ok(None),
             }
