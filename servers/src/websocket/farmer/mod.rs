@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 mod handshake;
@@ -47,11 +47,11 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
         config: FarmerServerConfig,
         pool_client: Arc<T>,
         shared_state: Arc<FarmerSharedState<S>>,
-        full_node_client: Arc<Mutex<Option<FarmerClient<S>>>>,
+        full_node_client: Arc<RwLock<Option<FarmerClient<S>>>>,
         additional_headers: Arc<HashMap<String, String>>,
     ) -> Result<Self, Error> {
         let config = Arc::new(config);
-        let handles = Arc::new(Mutex::new(Self::handles(
+        let handles = Arc::new(RwLock::new(Self::handles(
             config.clone(),
             pool_client.clone(),
             shared_state.clone(),
@@ -74,7 +74,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
         config: Arc<FarmerServerConfig>,
         pool_client: Arc<T>,
         shared_state: Arc<FarmerSharedState<S>>,
-        full_node_client: Arc<Mutex<Option<FarmerClient<S>>>>,
+        full_node_client: Arc<RwLock<Option<FarmerClient<S>>>>,
         additional_headers: Arc<HashMap<String, String>>,
     ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
         HashMap::from([
@@ -106,7 +106,9 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                         proofs_of_space: shared_state.proofs_of_space.clone(),
                         cache_time: shared_state.cache_time.clone(),
                         farmer_private_keys: shared_state.farmer_private_keys.clone(),
-                        owner_secret_keys: shared_state.owner_secret_keys.clone(),
+                        auth_secret_keys: shared_state
+                            .owner_public_keys_to_auth_secret_keys
+                            .clone(),
                         pool_state: shared_state.pool_states.clone(),
                         config: config.clone(),
                         headers: additional_headers.clone(),
@@ -161,7 +163,9 @@ fn parse_payout_address(s: String) -> Result<String, Error> {
 }
 
 pub async fn get_farmer<T: PoolClient + Sized + Sync + Send>(
-    pool_config: &PoolWalletConfig,
+    launcher_id: Bytes32,
+    target_puzzle_hash: Bytes32,
+    pool_url: &str,
     authentication_token_timeout: u8,
     authentication_sk: &SecretKey,
     client: Arc<T>,
@@ -170,8 +174,8 @@ pub async fn get_farmer<T: PoolClient + Sized + Sync + Send>(
     let authentication_token = get_current_authentication_token(authentication_token_timeout);
     let msg = AuthenticationPayload {
         method_name: "get_farmer".to_string(),
-        launcher_id: pool_config.launcher_id,
-        target_puzzle_hash: pool_config.target_puzzle_hash,
+        launcher_id,
+        target_puzzle_hash,
         authentication_token,
     }
     .to_bytes();
@@ -186,9 +190,9 @@ pub async fn get_farmer<T: PoolClient + Sized + Sync + Send>(
     }
     client
         .get_farmer(
-            &pool_config.pool_url,
+            pool_url,
             GetFarmerRequest {
-                launcher_id: pool_config.launcher_id,
+                launcher_id,
                 authentication_token,
                 signature: signature.to_bytes().into(),
             },
@@ -295,27 +299,53 @@ pub async fn put_farmer<T: PoolClient + Sized + Sync + Send>(
 }
 
 pub async fn update_pool_farmer_info<T: PoolClient + Sized + Sync + Send>(
-    pool_state: &mut FarmerPoolState,
-    pool_config: &PoolWalletConfig,
+    pool_states: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
+    p2_singleton_puzzle_hash: &Bytes32,
     authentication_token_timeout: u8,
     authentication_sk: &SecretKey,
     client: Arc<T>,
     additional_headers: Arc<HashMap<String, String>>,
 ) -> Result<GetFarmerResponse, PoolError> {
+    let (pool_url, launcher_id, target_puzzle_hash) = if let Some(Some(config)) = pool_states
+        .read()
+        .await
+        .get(p2_singleton_puzzle_hash)
+        .map(|v| v.pool_config.as_ref())
+    {
+        (
+            config.pool_url.clone(),
+            config.launcher_id,
+            config.target_puzzle_hash,
+        )
+    } else {
+        return Err(PoolError {
+            error_code: PoolErrorCode::ServerException as u8,
+            error_message: format!("No Pool Config for {p2_singleton_puzzle_hash}"),
+        });
+    };
     let response = get_farmer(
-        pool_config,
+        launcher_id,
+        target_puzzle_hash,
+        &pool_url,
         authentication_token_timeout,
         authentication_sk,
         client,
         additional_headers,
     )
     .await?;
-    pool_state.current_difficulty = Some(response.current_difficulty);
-    pool_state.current_points = response.current_points;
-    info!(
-        "Updating Pool Difficulty: {:?} ",
-        pool_state.current_difficulty
-    );
-    info!("Updating Current Points: {:?} ", pool_state.current_points);
+    if let Some(pool_state) = pool_states.write().await.get_mut(p2_singleton_puzzle_hash) {
+        pool_state.current_difficulty = Some(response.current_difficulty);
+        pool_state.current_points = response.current_points;
+        info!(
+            "Updating Pool Difficulty: {:?} ",
+            pool_state.current_difficulty
+        );
+        info!("Updating Current Points: {:?} ", pool_state.current_points);
+    } else {
+        return Err(PoolError {
+            error_code: PoolErrorCode::ServerException as u8,
+            error_message: format!("No Pool Config for {p2_singleton_puzzle_hash}"),
+        });
+    };
     Ok(response)
 }

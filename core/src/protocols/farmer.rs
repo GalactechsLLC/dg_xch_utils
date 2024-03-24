@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SPSubSlotSourceData {
@@ -292,9 +292,9 @@ pub struct SignedValues {
     pub foliage_transaction_block_signature: Bytes96,
 }
 
-pub type ProofsMap = Arc<Mutex<HashMap<Bytes32, Vec<(String, ProofOfSpace)>>>>;
+pub type ProofsMap = Arc<RwLock<HashMap<Bytes32, Vec<(String, ProofOfSpace)>>>>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FarmerIdentifier {
     pub plot_identifier: String,
     pub challenge_hash: Bytes32,
@@ -363,22 +363,22 @@ impl Default for MostRecentSignagePoint {
 
 #[derive(Default, Clone)]
 pub struct FarmerSharedState<T> {
-    pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
+    pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
+    pub quality_to_identifiers: Arc<RwLock<HashMap<Bytes32, FarmerIdentifier>>>,
     pub proofs_of_space: ProofsMap,
-    pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-    pub pool_states: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
+    pub cache_time: Arc<RwLock<HashMap<Bytes32, Instant>>>,
+    pub pool_states: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
     pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub owner_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
-    pub auth_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub owner_public_keys_to_auth_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub pool_public_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub harvester_peers: PeerMap,
-    pub most_recent_sp: Arc<Mutex<MostRecentSignagePoint>>,
-    pub recent_errors: Arc<Mutex<RecentErrors<String>>>,
-    pub running_state: Arc<Mutex<FarmerRunningState>>,
+    pub most_recent_sp: Arc<RwLock<MostRecentSignagePoint>>,
+    pub recent_errors: Arc<RwLock<RecentErrors<String>>>,
+    pub running_state: Arc<RwLock<FarmerRunningState>>,
     pub data: Arc<T>,
     #[cfg(feature = "metrics")]
-    pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
+    pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
 }
 
 #[cfg(feature = "metrics")]

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 pub mod request_signed_values;
@@ -29,7 +29,7 @@ impl<T> FarmerClient<T> {
         let constants = CONSENSUS_CONSTANTS_MAP
             .get(&client_config.network_id)
             .unwrap_or(&MAINNET);
-        let handles = Arc::new(Mutex::new(handles(constants, shared_state.clone())));
+        let handles = Arc::new(RwLock::new(handles(constants, shared_state.clone())));
         let client = WsClient::new(client_config, NodeType::Farmer, handles, run).await?;
         Ok(FarmerClient {
             client,
@@ -38,7 +38,7 @@ impl<T> FarmerClient<T> {
     }
 
     pub async fn join(self) -> Result<(), Error> {
-        self.client.connection.lock().await.shutdown().await?;
+        self.client.connection.write().await.shutdown().await?;
         self.client.join().await
     }
 

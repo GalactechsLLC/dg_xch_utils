@@ -24,10 +24,10 @@ impl MessageHandler for HandshakeHandle {
     ) -> Result<(), Error> {
         let mut cursor = Cursor::new(&msg.data);
         let handshake = Handshake::from_bytes(&mut cursor)?;
-        if let Some(peer) = peers.lock().await.get_mut(&peer_id).cloned() {
-            *peer.node_type.lock().await = NodeType::from(handshake.node_type);
+        if let Some(peer) = peers.read().await.get(&peer_id).cloned() {
+            *peer.node_type.write().await = NodeType::from(handshake.node_type);
             peer.websocket
-                .lock()
+                .write()
                 .await
                 .send(Message::Binary(
                     ChiaMessage::new(

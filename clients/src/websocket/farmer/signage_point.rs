@@ -18,19 +18,19 @@ use std::collections::HashMap;
 use std::io::{Cursor, Error};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message;
 
 pub struct NewSignagePointHandle {
     pub constants: &'static ConsensusConstants,
     pub harvester_peers: PeerMap,
-    pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
-    pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-    pub running_state: Arc<Mutex<FarmerRunningState>>,
-    pub most_recent_sp: Arc<Mutex<MostRecentSignagePoint>>,
+    pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
+    pub pool_state: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
+    pub cache_time: Arc<RwLock<HashMap<Bytes32, Instant>>>,
+    pub running_state: Arc<RwLock<FarmerRunningState>>,
+    pub most_recent_sp: Arc<RwLock<MostRecentSignagePoint>>,
     #[cfg(feature = "metrics")]
-    pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
+    pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
 }
 #[async_trait]
 impl MessageHandler for NewSignagePointHandle {
@@ -43,7 +43,7 @@ impl MessageHandler for NewSignagePointHandle {
         let mut cursor = Cursor::new(&msg.data);
         let sp = NewSignagePoint::from_bytes(&mut cursor)?;
         let mut pool_difficulties = vec![];
-        for (p2_singleton_puzzle_hash, pool_dict) in self.pool_state.lock().await.iter() {
+        for (p2_singleton_puzzle_hash, pool_dict) in self.pool_state.read().await.iter() {
             if let Some(config) = &pool_dict.pool_config {
                 if config.pool_url.is_empty() {
                     //Self Pooling
@@ -85,19 +85,19 @@ impl MessageHandler for NewSignagePointHandle {
         );
         let peers: Vec<Arc<SocketPeer>> = self
             .harvester_peers
-            .lock()
+            .read()
             .await
             .values()
             .cloned()
             .collect();
         for peer in peers {
-            if *peer.node_type.lock().await == NodeType::Harvester {
-                let _ = peer.websocket.lock().await.send(msg.clone()).await;
+            if *peer.node_type.read().await == NodeType::Harvester {
+                let _ = peer.websocket.write().await.send(msg.clone()).await;
             }
         }
         {
             //Lock Scope
-            let mut signage_points = self.signage_points.lock().await;
+            let mut signage_points = self.signage_points.write().await;
             if signage_points.get(&sp.challenge_chain_sp).is_none() {
                 signage_points.insert(sp.challenge_chain_sp, vec![]);
             }
@@ -107,7 +107,7 @@ impl MessageHandler for NewSignagePointHandle {
             let now = Instant::now();
             let sums = self
                 .pool_state
-                .lock()
+                .write()
                 .await
                 .iter_mut()
                 .map(|(_, s)| {
@@ -121,7 +121,7 @@ impl MessageHandler for NewSignagePointHandle {
                     )
                 })
                 .collect::<Vec<(u64, u64)>>();
-            if let Some(r) = self.metrics.lock().await.as_mut() {
+            if let Some(r) = self.metrics.write().await.as_mut() {
                 if let Some(c) = &mut r.points_acknowledged_24h {
                     c.set(sums.iter().map(|(v, _)| *v).sum());
                 }
@@ -135,19 +135,19 @@ impl MessageHandler for NewSignagePointHandle {
         }
         if let Some(sps) = self
             .signage_points
-            .lock()
+            .write()
             .await
             .get_mut(&sp.challenge_chain_sp)
         {
             sps.push(sp.clone());
         }
-        *self.most_recent_sp.lock().await = MostRecentSignagePoint {
+        *self.most_recent_sp.write().await = MostRecentSignagePoint {
             hash: sp.challenge_chain_sp,
             index: sp.signage_point_index,
             timestamp: Instant::now(),
         };
         self.cache_time
-            .lock()
+            .write()
             .await
             .insert(sp.challenge_chain_sp, Instant::now());
         Ok(())
