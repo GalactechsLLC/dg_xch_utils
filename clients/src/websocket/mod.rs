@@ -32,7 +32,7 @@ use std::time::Duration;
 use std::{env, fs};
 use tokio::select;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
@@ -56,7 +56,7 @@ fn test_version() {
 }
 
 pub struct WsClient {
-    pub connection: Arc<Mutex<WebsocketConnection>>,
+    pub connection: Arc<RwLock<WebsocketConnection>>,
     pub client_config: Arc<WsClientConfig>,
     handle: JoinHandle<()>,
     run: Arc<AtomicBool>,
@@ -65,7 +65,7 @@ impl WsClient {
     pub async fn new(
         client_config: Arc<WsClientConfig>,
         node_type: NodeType,
-        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let (certs, key, cert_str) = if let Some(ssl_info) = &client_config.ssl_info {
@@ -113,7 +113,7 @@ impl WsClient {
     pub async fn with_ca(
         client_config: Arc<crate::websocket::WsClientConfig>,
         node_type: NodeType,
-        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
         cert_data: &[u8],
         key_data: &[u8],
@@ -142,7 +142,7 @@ impl WsClient {
     async fn build(
         client_config: Arc<crate::websocket::WsClientConfig>,
         node_type: NodeType,
-        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
         certs: Vec<Certificate>,
         key: PrivateKey,
@@ -205,18 +205,18 @@ impl WsClient {
                 format!("Error Connecting Client: {:?}", e),
             )
         })?;
-        let peers = Arc::new(Mutex::new(HashMap::new()));
+        let peers = Arc::new(RwLock::new(HashMap::new()));
         let (ws_con, mut stream) = WebsocketConnection::new(
             WebsocketMsgStream::Tls(stream),
             message_handlers,
             peer_id.clone(),
             peers.clone(),
         );
-        let connection = Arc::new(Mutex::new(ws_con));
-        peers.lock().await.insert(
+        let connection = Arc::new(RwLock::new(ws_con));
+        peers.write().await.insert(
             *peer_id.as_ref(),
             Arc::new(SocketPeer {
-                node_type: Arc::new(Mutex::new(NodeType::Harvester)),
+                node_type: Arc::new(RwLock::new(NodeType::Harvester)),
                 websocket: connection.clone(),
             }),
         );
@@ -233,7 +233,7 @@ impl WsClient {
 
     pub async fn shutdown(&mut self) -> Result<(), Error> {
         self.run.store(false, Ordering::Relaxed);
-        self.connection.lock().await.shutdown().await
+        self.connection.write().await.shutdown().await
     }
 
     pub async fn join(self) -> Result<(), Error> {
@@ -307,7 +307,7 @@ impl MessageHandler for OneShotHandler {
 }
 
 pub async fn oneshot<R: ChiaSerialize>(
-    connection: Arc<Mutex<WebsocketConnection>>,
+    connection: Arc<RwLock<WebsocketConnection>>,
     msg: ChiaMessage,
     resp_type: Option<ProtocolMessageTypes>,
     msg_id: Option<u16>,
@@ -328,7 +328,7 @@ pub async fn oneshot<R: ChiaSerialize>(
         handle: handle.clone(),
     };
     connection
-        .lock()
+        .write()
         .await
         .subscribe(handle.id, chia_handle)
         .await;
@@ -338,7 +338,7 @@ pub async fn oneshot<R: ChiaSerialize>(
         res
     });
     connection
-        .lock()
+        .write()
         .await
         .send(msg.into())
         .await
@@ -350,7 +350,7 @@ pub async fn oneshot<R: ChiaSerialize>(
         })?;
     select!(
         _ = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
-            connection.lock().await.unsubscribe(handle.id).await;
+            connection.write().await.unsubscribe(handle.id).await;
             Err(Error::new(
                 ErrorKind::Other,
                 "Timeout before oneshot completed",
@@ -360,7 +360,7 @@ pub async fn oneshot<R: ChiaSerialize>(
             let res = res?;
             if let Some(v) = res {
                 let mut cursor = Cursor::new(v);
-                connection.lock().await.unsubscribe(handle.id).await;
+                connection.write().await.unsubscribe(handle.id).await;
                 R::from_bytes(&mut cursor).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
@@ -368,7 +368,7 @@ pub async fn oneshot<R: ChiaSerialize>(
                     )
                 })
             } else {
-                connection.lock().await.unsubscribe(handle.id).await;
+                connection.write().await.unsubscribe(handle.id).await;
                 Err(Error::new(
                     ErrorKind::Other,
                     "Channel Closed before response received",

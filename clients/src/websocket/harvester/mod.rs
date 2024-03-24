@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 pub mod harvester_handshake;
 pub mod new_signage_point_harvester;
@@ -24,15 +24,15 @@ pub struct HarvesterClient {
 impl HarvesterClient {
     pub async fn new<T: PlotManagerAsync + Send + Sync + 'static>(
         client_config: Arc<WsClientConfig>,
-        plot_manager: Arc<Mutex<T>>,
+        plot_manager: Arc<RwLock<T>>,
         plots_ready: Arc<AtomicBool>,
-        harvester_state: Arc<Mutex<HarvesterState>>,
+        harvester_state: Arc<RwLock<HarvesterState>>,
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let constants = CONSENSUS_CONSTANTS_MAP
             .get(&client_config.network_id)
             .unwrap_or(&MAINNET);
-        let handles = Arc::new(Mutex::new(handles(
+        let handles = Arc::new(RwLock::new(handles(
             constants,
             plot_manager.clone(),
             plots_ready,
@@ -53,9 +53,9 @@ impl HarvesterClient {
 
 fn handles<T: PlotManagerAsync + Send + Sync + 'static>(
     constants: &'static ConsensusConstants,
-    plot_manager: Arc<Mutex<T>>,
+    plot_manager: Arc<RwLock<T>>,
     plots_ready: Arc<AtomicBool>,
-    harvester_state: Arc<Mutex<HarvesterState>>,
+    harvester_state: Arc<RwLock<HarvesterState>>,
 ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
     HashMap::from([
         (

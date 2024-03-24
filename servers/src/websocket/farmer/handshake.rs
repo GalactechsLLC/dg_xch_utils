@@ -31,14 +31,14 @@ impl MessageHandler for HandshakeHandle {
         let mut cursor = Cursor::new(&msg.data);
         let handshake = Handshake::from_bytes(&mut cursor)?;
         debug!("New Peer: {}", &peer_id);
-        if let Some(peer) = peers.lock().await.get(&peer_id).cloned() {
+        if let Some(peer) = peers.read().await.get(&peer_id).cloned() {
             let (network_id, server_port) = {
                 let cfg = self.config.clone();
                 (cfg.network.clone(), cfg.websocket.port)
             };
-            *peer.node_type.lock().await = NodeType::from(handshake.node_type);
+            *peer.node_type.write().await = NodeType::from(handshake.node_type);
             peer.websocket
-                .lock()
+                .write()
                 .await
                 .send(Message::Binary(
                     ChiaMessage::new(
@@ -65,7 +65,7 @@ impl MessageHandler for HandshakeHandle {
                 let pool_public_keys = self.pool_public_keys.keys().copied().collect();
                 info! {"Harvester Connected. Sending Keys: ({:?}n {:?})", &farmer_public_keys, &pool_public_keys}
                 peer.websocket
-                    .lock()
+                    .write()
                     .await
                     .send(Message::Binary(
                         ChiaMessage::new(

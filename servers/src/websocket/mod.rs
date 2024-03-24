@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::error::TlsError;
@@ -44,13 +44,13 @@ pub struct WebsocketServer {
     pub socket_address: SocketAddr,
     pub server_config: Arc<ServerConfig>,
     pub peers: PeerMap,
-    pub message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    pub message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
 }
 impl WebsocketServer {
     pub fn new(
         config: &WebsocketServerConfig,
         peers: PeerMap,
-        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     ) -> Result<Self, Error> {
         let (certs, key, root_certs) = if let Some(ssl_info) = &config.ssl_info {
             (
@@ -89,7 +89,7 @@ impl WebsocketServer {
     pub fn with_ca(
         config: &WebsocketServerConfig,
         peers: PeerMap,
-        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         cert_data: &str,
         key_data: &str,
     ) -> Result<Self, Error> {
@@ -222,7 +222,7 @@ struct ConnectionData {
     pub peer_id: Arc<Option<Bytes32>>,
     pub req: Request<Incoming>,
     pub peers: PeerMap,
-    pub message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    pub message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     pub run: Arc<AtomicBool>,
 }
 
@@ -280,7 +280,7 @@ async fn handle_connection(
     peer_id: Arc<Bytes32>,
     websocket: HyperWebsocket,
     peers: PeerMap,
-    message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     run: Arc<AtomicBool>,
 ) -> Result<(), tungstenite::error::Error> {
     let (websocket, mut stream) = WebsocketConnection::new(
@@ -289,16 +289,16 @@ async fn handle_connection(
         peer_id.clone(),
         peers.clone(),
     );
-    let removed = peers.lock().await.insert(
+    let removed = peers.write().await.insert(
         *peer_id,
         Arc::new(SocketPeer {
-            node_type: Arc::new(Mutex::new(NodeType::Unknown)),
-            websocket: Arc::new(Mutex::new(websocket)),
+            node_type: Arc::new(RwLock::new(NodeType::Unknown)),
+            websocket: Arc::new(RwLock::new(websocket)),
         }),
     );
     if let Some(removed) = removed {
         debug!("Sending Close to Peer");
-        let _ = removed.websocket.lock().await.close(None).await;
+        let _ = removed.websocket.write().await.close(None).await;
     }
     let _ = stream.run(run).await;
     Ok(())
