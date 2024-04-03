@@ -15,9 +15,9 @@ use dg_xch_macros::ChiaSerial;
 use hyper::body::Buf;
 use log::debug;
 #[cfg(feature = "metrics")]
-use prometheus::core::{AtomicU64, GenericCounter, GenericGauge};
+use prometheus::core::{AtomicU64, GenericGauge, GenericGaugeVec};
 #[cfg(feature = "metrics")]
-use prometheus::Registry;
+use prometheus::{Opts, Registry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -386,10 +386,10 @@ pub struct FarmerSharedState<T> {
 pub struct FarmerMetrics {
     pub start_time: Arc<Instant>,
     pub uptime: Option<GenericGauge<AtomicU64>>,
-    pub points_acknowledged_24h: Option<GenericGauge<AtomicU64>>,
-    pub points_found_24h: Option<GenericGauge<AtomicU64>>,
-    pub current_difficulty: Option<GenericGauge<AtomicU64>>,
-    pub proofs_declared: Option<GenericCounter<AtomicU64>>,
+    pub points_acknowledged_24h: Option<GenericGaugeVec<AtomicU64>>,
+    pub points_found_24h: Option<GenericGaugeVec<AtomicU64>>,
+    pub current_difficulty: Option<GenericGaugeVec<AtomicU64>>,
+    pub proofs_declared: Option<GenericGauge<AtomicU64>>,
     pub last_signage_point_index: Option<GenericGauge<AtomicU64>>,
 }
 #[cfg(feature = "metrics")]
@@ -402,33 +402,39 @@ impl FarmerMetrics {
                 Some(g)
             },
         );
-        let points_acknowledged_24h = GenericGauge::new(
+        let points_acknowledged_24h_opts = Opts::new(
             "points_acknowledged_24h",
             "Total points acknowledged by pool for all plot nfts",
+        );
+        let points_acknowledged_24h = GenericGaugeVec::new(
+            points_acknowledged_24h_opts,
+            &["launcher_id"],
         )
-        .map_or(None, |g: GenericGauge<AtomicU64>| {
+        .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
             registry.register(Box::new(g.clone())).unwrap_or(());
             Some(g)
         });
-        let points_found_24h = GenericGauge::new(
-            "points_found_24h",
-            "Total points fount for all plot nfts",
-        )
-        .map_or(None, |g: GenericGauge<AtomicU64>| {
-            registry.register(Box::new(g.clone())).unwrap_or(());
-            Some(g)
-        });
-        let current_difficulty = GenericGauge::new("current_difficulty", "Current Difficulty")
-            .map_or(None, |g: GenericGauge<AtomicU64>| {
+        let points_found_24h_opts =
+            Opts::new("points_found_24h", "Total points fount for all plot nfts");
+        let points_found_24h = GenericGaugeVec::new(points_found_24h_opts, &["launcher_id"])
+            .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
                 registry.register(Box::new(g.clone())).unwrap_or(());
                 Some(g)
             });
-        let proofs_declared =
-            GenericCounter::new("proofs_declared", "Proofs of Space declared by this farmer")
-                .map_or(None, |g: GenericCounter<AtomicU64>| {
-                    registry.register(Box::new(g.clone())).unwrap_or(());
-                    Some(g)
-                });
+        let current_difficulty_opts = Opts::new("current_difficulty", "Current Difficulty");
+        let current_difficulty = GenericGaugeVec::new(current_difficulty_opts, &["launcher_id"])
+            .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            });
+        let proofs_declared = GenericGauge::new(
+            "proofs_declared",
+            "Proofs of Space declared by this farmer",
+        )
+        .map_or(None, |g: GenericGauge<AtomicU64>| {
+            registry.register(Box::new(g.clone())).unwrap_or(());
+            Some(g)
+        });
         let last_signage_point_index = GenericGauge::new(
             "last_signage_point_index",
             "Index of Last Signage Point",

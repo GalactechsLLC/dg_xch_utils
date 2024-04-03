@@ -408,32 +408,6 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                             v.points_found_since_start += pool_dif;
                                             v.points_found_24h.push((Instant::now(), pool_dif));
                                         }
-                                        #[cfg(feature = "metrics")]
-                                        if let Some(r) = self.metrics.write().await.as_mut() {
-                                            use std::time::Duration;
-                                            let now = Instant::now();
-                                            if let Some(c) = &mut r.points_found_24h {
-                                                if let Some(v) = self
-                                                    .pool_state
-                                                    .write()
-                                                    .await
-                                                    .get_mut(p2_singleton_puzzle_hash)
-                                                {
-                                                    c.set(
-                                                        v.points_found_24h
-                                                            .iter()
-                                                            .filter(|v| {
-                                                                now.duration_since(v.0)
-                                                                    < Duration::from_secs(
-                                                                        60 * 60 * 24,
-                                                                    )
-                                                            })
-                                                            .map(|v| v.1)
-                                                            .sum(),
-                                                    )
-                                                }
-                                            }
-                                        }
                                         debug!("POST /partial request {:?}", &post_request);
                                         match self
                                             .pool_client
@@ -470,7 +444,11 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                             .await
                                                             .get_mut(p2_singleton_puzzle_hash)
                                                         {
-                                                            c.set(
+                                                            c.with_label_values(&[
+                                                                &p2_singleton_puzzle_hash
+                                                                    .to_string(),
+                                                            ])
+                                                            .set(
                                                                 v.points_acknowledged_24h
                                                                     .iter()
                                                                     .filter(|v| {
@@ -504,7 +482,10 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                                 if let Some(r) = self.metrics.write().await.as_mut()
                                                 {
                                                     if let Some(c) = &mut r.current_difficulty {
-                                                        c.set(resp.new_difficulty);
+                                                        c.with_label_values(&[
+                                                            &p2_singleton_puzzle_hash.to_string(),
+                                                        ])
+                                                        .set(resp.new_difficulty);
                                                     }
                                                 }
                                                 if let Some(v) = self

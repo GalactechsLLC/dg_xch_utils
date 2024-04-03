@@ -105,31 +105,23 @@ impl MessageHandler for NewSignagePointHandle {
         #[cfg(feature = "metrics")]
         {
             let now = Instant::now();
-            let sums = self
-                .pool_state
-                .write()
-                .await
-                .iter_mut()
-                .map(|(_, s)| {
-                    s.points_acknowledged_24h
-                        .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
-                    s.points_found_24h
-                        .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
-                    (
-                        s.points_acknowledged_24h.iter().map(|(_, v)| *v).sum(),
-                        s.points_found_24h.iter().map(|(_, v)| *v).sum(),
-                    )
-                })
-                .collect::<Vec<(u64, u64)>>();
-            if let Some(r) = self.metrics.write().await.as_mut() {
-                if let Some(c) = &mut r.points_acknowledged_24h {
-                    c.set(sums.iter().map(|(v, _)| *v).sum());
-                }
-                if let Some(c) = &mut r.points_found_24h {
-                    c.set(sums.iter().map(|(_, v)| *v).sum());
-                }
-                if let Some(c) = &mut r.last_signage_point_index {
-                    c.set(sp.signage_point_index as u64);
+            for (v, s) in self.pool_state.write().await.iter_mut() {
+                s.points_acknowledged_24h
+                    .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
+                s.points_found_24h
+                    .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
+                if let Some(r) = self.metrics.read().await.as_ref() {
+                    if let Some(c) = &r.points_acknowledged_24h {
+                        c.with_label_values(&[&v.to_string()])
+                            .set(s.points_acknowledged_24h.iter().map(|(_, v)| *v).sum());
+                    }
+                    if let Some(c) = &r.points_found_24h {
+                        c.with_label_values(&[&v.to_string()])
+                            .set(s.points_found_24h.iter().map(|(_, v)| *v).sum());
+                    }
+                    if let Some(c) = &r.last_signage_point_index {
+                        c.set(sp.signage_point_index as u64);
+                    }
                 }
             }
         }
