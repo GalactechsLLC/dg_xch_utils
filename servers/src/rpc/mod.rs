@@ -25,6 +25,8 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::select;
 use tokio_rustls::TlsAcceptor;
@@ -86,24 +88,6 @@ impl RpcRequest {
     }
 }
 
-// impl From<Request<Incoming>> for RpcRequest {
-//     fn from(value: Request<Incoming>) -> Self {
-//         Self {
-//             request_type: RequestType::Stream(value),
-//             response_headers: Default::default(),
-//         }
-//     }
-// }
-//
-// impl From<Request<Full<Bytes>>> for RpcRequest {
-//     fn from(value: Request<Full<Bytes>>) -> Self {
-//         Self {
-//             request_type: RequestType::Sized(value),
-//             response_headers: Default::default(),
-//         }
-//     }
-// }
-
 pub enum RequestType {
     Stream(Request<Incoming>),
     Sized(Request<Full<Bytes>>),
@@ -126,7 +110,7 @@ impl EndpointMetrics {
             total_requests: Arc::new(
                 GenericCounterVec::new(
                     Opts::new(
-                        format!("total_requests"),
+                        "total_requests",
                         "Total requests server has handled",
                     ),
                     labels,
@@ -139,7 +123,7 @@ impl EndpointMetrics {
             successful_requests: Arc::new(
                 GenericCounterVec::new(
                     Opts::new(
-                        format!("successful_requests"),
+                        "successful_requests",
                         "Total successful requests server has handled",
                     ),
                     labels,
@@ -152,7 +136,7 @@ impl EndpointMetrics {
             failed_requests: Arc::new(
                 GenericCounterVec::new(
                     Opts::new(
-                        format!("failed_requests"),
+                        "failed_requests",
                         "Total failed requests server has handled",
                     ),
                     labels,
@@ -165,7 +149,7 @@ impl EndpointMetrics {
             blocked_requests: Arc::new(
                 GenericCounterVec::new(
                     Opts::new(
-                        format!("blocked_requests"),
+                        "blocked_requests",
                         "Total blocked requests server has handled",
                     ),
                     labels,
