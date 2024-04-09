@@ -20,7 +20,7 @@ use std::io::{Cursor, Error};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -35,7 +35,7 @@ struct PlotCounts {
 }
 pub struct NewSignagePointHarvesterHandle<T: PlotManagerAsync> {
     pub constants: &'static ConsensusConstants,
-    pub plot_manager: Arc<Mutex<T>>,
+    pub plot_manager: Arc<RwLock<T>>,
     pub plots_ready: Arc<AtomicBool>,
 }
 #[async_trait]
@@ -63,7 +63,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
         let harvester_point = Arc::new(harvester_point);
         let constants = Arc::new(self.constants);
         let mut jobs = FuturesUnordered::new();
-        self.plot_manager.lock().await.plots().iter().map(|(path_info, plot_info)|{
+        self.plot_manager.read().await.plots().iter().map(|(path_info, plot_info)|{
             (path_info.clone(), plot_info.clone())
         }).for_each(|(path, plot_info)| {
             let data_arc = harvester_point.clone();
@@ -196,11 +196,11 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                 Ok(join_result) => match join_result {
                     Ok(read_result) => match read_result {
                         Ok((path, responses)) => {
-                            if let Some(client) = peer.as_ref() {
+                            if let Some(client) = peers.read().await.get(&peer_id).cloned() {
                                 for (quality, proof, (is_partial, c_level)) in responses {
                                     let _ = client
                                         .websocket
-                                        .lock()
+                                        .write()
                                         .await
                                         .send(Message::Binary(
                                             ChiaMessage::new(

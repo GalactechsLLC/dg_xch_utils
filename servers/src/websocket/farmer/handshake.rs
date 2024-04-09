@@ -48,7 +48,7 @@ impl MessageHandler for HandshakeHandle {
                 .expect("ChiaProtocolVersion::from_str is Infallible");
             *peer.protocol_version.write().await = protocol_version;
             peer.websocket
-                .lock()
+                .write()
                 .await
                 .send(Message::Binary(
                     ChiaMessage::new(
@@ -77,7 +77,7 @@ impl MessageHandler for HandshakeHandle {
                 let pool_public_keys = self.pool_public_keys.keys().copied().collect();
                 info! {"Harvester Connected. Sending Keys: ({:?}n {:?})", &farmer_public_keys, &pool_public_keys}
                 peer.websocket
-                    .lock()
+                    .write()
                     .await
                     .send(Message::Binary(
                         ChiaMessage::new(

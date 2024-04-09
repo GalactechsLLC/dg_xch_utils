@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 pub mod handshake;
@@ -27,7 +27,7 @@ impl HarvesterServer {
         #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
     ) -> Result<Self, Error> {
         let config = Arc::new(config);
-        let handles = Arc::new(Mutex::new(Self::handles(config.clone())));
+        let handles = Arc::new(RwLock::new(Self::handles(config.clone())));
         Ok(Self {
             server: WebsocketServer::new(
                 &config.websocket,

@@ -10,12 +10,12 @@ use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message;
 
 pub struct RequestSignedValuesHandle {
-    pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
-    pub recent_errors: Arc<Mutex<RecentErrors<String>>>,
+    pub quality_to_identifiers: Arc<RwLock<HashMap<Bytes32, FarmerIdentifier>>>,
+    pub recent_errors: Arc<RwLock<RecentErrors<String>>>,
     pub harvester_peers: PeerMap,
 }
 #[async_trait]
@@ -36,9 +36,10 @@ impl MessageHandler for RequestSignedValuesHandle {
         let request = RequestSignedValues::from_bytes(&mut cursor, protocol_version)?;
         if let Some(identifier) = self
             .quality_to_identifiers
-            .lock()
+            .read()
             .await
             .get(&request.quality_string)
+            .cloned()
         {
             if let Some(peer) = self
                 .harvester_peers
@@ -67,7 +68,7 @@ impl MessageHandler for RequestSignedValuesHandle {
                 }
                 let _ = peer
                     .websocket
-                    .lock()
+                    .write()
                     .await
                     .send(Message::Binary(
                         ChiaMessage::new(
@@ -97,7 +98,7 @@ impl MessageHandler for RequestSignedValuesHandle {
             Ok(())
         } else {
             self.recent_errors
-                .lock()
+                .write()
                 .await
                 .add(format!("Do not have quality {}", &request.quality_string));
             Err(Error::new(

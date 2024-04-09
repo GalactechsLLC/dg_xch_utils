@@ -11,11 +11,11 @@ use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, error};
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message;
 
 pub struct RequestSignaturesHandle<T> {
-    pub plot_manager: Arc<Mutex<T>>,
+    pub plot_manager: Arc<RwLock<T>>,
 }
 #[async_trait]
 impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHandle<T> {
@@ -35,7 +35,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
         };
         let request_signatures = RequestSignatures::from_bytes(&mut cursor, protocol_version)?;
         let file_name = request_signatures.plot_identifier.split_at(64).1;
-        let memo = match self.plot_manager.lock().await.plots().get(&PathInfo {
+        let memo = match self.plot_manager.read().await.plots().get(&PathInfo {
             path: Default::default(),
             file_name: file_name.to_string(),
         }) {
@@ -62,10 +62,10 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
             let sig = sign_prepend(&local_sk, msg.as_ref(), &agg_pk);
             message_signatures.push((msg, sig.to_bytes().into()));
         }
-        if let Some(peer) = peer {
+        if let Some(peer) = peers.read().await.get(peer_id.as_ref()).cloned() {
             let _ = peer
                 .websocket
-                .lock()
+                .write()
                 .await
                 .send(Message::Binary(
                     ChiaMessage::new(

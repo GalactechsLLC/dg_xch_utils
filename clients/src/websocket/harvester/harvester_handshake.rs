@@ -7,11 +7,11 @@ use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, info, warn};
 use std::io::{Cursor, Error};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 pub struct HarvesterHandshakeHandle<T: PlotManagerAsync> {
-    pub plot_manager: Arc<Mutex<T>>,
-    pub harvester_state: Arc<Mutex<HarvesterState>>,
+    pub plot_manager: Arc<RwLock<T>>,
+    pub harvester_state: Arc<RwLock<HarvesterState>>,
 }
 #[async_trait]
 impl<T: PlotManagerAsync + Send + Sync> MessageHandler for HarvesterHandshakeHandle<T> {
@@ -34,14 +34,14 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for HarvesterHandshakeHan
             warn!("Farmer Failed to send keys");
         } else {
             self.plot_manager
-                .lock()
+                .write()
                 .await
                 .set_public_keys(handshake.farmer_public_keys, handshake.pool_public_keys);
         }
         info!("Got Keys, Loading Plots.");
         match self
             .plot_manager
-            .lock()
+            .write()
             .await
             .load_plots(self.harvester_state.clone())
             .await

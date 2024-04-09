@@ -32,7 +32,7 @@ impl MessageHandler for HandshakeHandle {
                 .expect("ChiaProtocolVersion::from_str is Infallible");
             *peer.protocol_version.write().await = protocol_version;
             peer.websocket
-                .lock()
+                .write()
                 .await
                 .send(Message::Binary(
                     ChiaMessage::new(

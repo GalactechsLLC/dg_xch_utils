@@ -29,7 +29,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::select;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::error::ProtocolError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -520,7 +520,7 @@ pub type PeerMap = Arc<RwLock<HashMap<Bytes32, Arc<SocketPeer>>>>;
 pub struct SocketPeer {
     pub node_type: Arc<RwLock<NodeType>>,
     pub protocol_version: Arc<RwLock<ChiaProtocolVersion>>,
-    pub websocket: Arc<Mutex<WebsocketConnection>>,
+    pub websocket: Arc<RwLock<WebsocketConnection>>,
 }
 
 pub enum WebsocketMsgStream {
@@ -574,12 +574,12 @@ impl Sink<Message> for WebsocketMsgStream {
 
 pub struct WebsocketConnection {
     write: SplitSink<WebsocketMsgStream, Message>,
-    message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
 }
 impl WebsocketConnection {
     pub fn new(
         websocket: WebsocketMsgStream,
-        message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         peer_id: Arc<Bytes32>,
         peers: PeerMap,
     ) -> (Self, ReadStream) {
@@ -605,13 +605,13 @@ impl WebsocketConnection {
 
     pub async fn subscribe(&self, uuid: Uuid, handle: ChiaMessageHandler) {
         self.message_handlers
-            .lock()
+            .write()
             .await
             .insert(uuid, Arc::new(handle));
     }
 
     pub async fn unsubscribe(&self, uuid: Uuid) -> Option<Arc<ChiaMessageHandler>> {
-        self.message_handlers.lock().await.remove(&uuid)
+        self.message_handlers.write().await.remove(&uuid)
     }
 
     pub async fn close(&mut self, msg: Option<Message>) -> Result<(), Error> {
@@ -633,7 +633,7 @@ impl WebsocketConnection {
         }
     }
     pub async fn clear(&self) {
-        self.message_handlers.lock().await.clear()
+        self.message_handlers.write().await.clear()
     }
     pub async fn shutdown(&mut self) -> Result<(), Error> {
         self.close(None).await
@@ -642,7 +642,7 @@ impl WebsocketConnection {
 
 pub struct ReadStream {
     read: SplitStream<WebsocketMsgStream>,
-    message_handlers: Arc<Mutex<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     peer_id: Arc<Bytes32>,
     peers: PeerMap,
 }
@@ -666,7 +666,7 @@ impl ReadStream {
                                         Ok(chia_msg) => {
                                             let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
                                             let mut matched = false;
-                                            for v in self.message_handlers.lock().await.values()
+                                            for v in self.message_handlers.read().await.values()
                                                 .cloned().collect::<Vec<Arc<ChiaMessageHandler>>>() {
                                                 if v.filter.matches(msg_arc.clone()) {
                                                     let msg_arc_c = msg_arc.clone();

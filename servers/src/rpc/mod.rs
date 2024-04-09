@@ -27,7 +27,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::time::Instant;
 use tokio_rustls::TlsAcceptor;
 
 #[async_trait]
@@ -416,7 +415,7 @@ async fn connection_handler(
                     req = r;
                     continue;
                 }
-                MiddleWareResult::Failure(parts, res) => {
+                MiddleWareResult::Failure(_parts, res) => {
                     #[cfg(feature = "metrics")]
                     {
                         match res.status() {
@@ -424,8 +423,8 @@ async fn connection_handler(
                                 set_blocked_metrics(
                                     server.clone(),
                                     res.status().as_str(),
-                                    parts.method.as_str(),
-                                    parts.uri.path(),
+                                    _parts.method.as_str(),
+                                    _parts.uri.path(),
                                     start,
                                 );
                             }
@@ -433,8 +432,8 @@ async fn connection_handler(
                                 set_failed_metrics(
                                     server.clone(),
                                     res.status().as_str(),
-                                    parts.method.as_str(),
-                                    parts.uri.path(),
+                                    _parts.method.as_str(),
+                                    _parts.uri.path(),
                                     start,
                                 );
                             }

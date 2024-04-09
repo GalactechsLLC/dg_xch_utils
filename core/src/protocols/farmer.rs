@@ -15,14 +15,14 @@ use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::ChiaProtocolVersion;
 
 #[cfg(feature = "metrics")]
-use prometheus::core::{AtomicU64, GenericCounter, GenericGauge};
+use prometheus::core::{AtomicU64, GenericGauge, GenericGaugeVec};
 #[cfg(feature = "metrics")]
-use prometheus::Registry;
+use prometheus::{Opts, Registry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SPSubSlotSourceData {
@@ -334,9 +334,9 @@ pub struct SignedValues {
     pub foliage_transaction_block_signature: Bytes96, //Min Version 0.0.34
 }
 
-pub type ProofsMap = Arc<Mutex<HashMap<Bytes32, Vec<(String, ProofOfSpace)>>>>;
+pub type ProofsMap = Arc<RwLock<HashMap<Bytes32, Vec<(String, ProofOfSpace)>>>>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FarmerIdentifier {
     pub plot_identifier: String,
     pub challenge_hash: Bytes32,
@@ -405,22 +405,22 @@ impl Default for MostRecentSignagePoint {
 
 #[derive(Default, Clone)]
 pub struct FarmerSharedState<T> {
-    pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
+    pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
+    pub quality_to_identifiers: Arc<RwLock<HashMap<Bytes32, FarmerIdentifier>>>,
     pub proofs_of_space: ProofsMap,
-    pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
-    pub pool_states: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
+    pub cache_time: Arc<RwLock<HashMap<Bytes32, Instant>>>,
+    pub pool_states: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
     pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub owner_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
-    pub auth_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
+    pub owner_public_keys_to_auth_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub pool_public_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub harvester_peers: PeerMap,
-    pub most_recent_sp: Arc<Mutex<MostRecentSignagePoint>>,
-    pub recent_errors: Arc<Mutex<RecentErrors<String>>>,
-    pub running_state: Arc<Mutex<FarmerRunningState>>,
+    pub most_recent_sp: Arc<RwLock<MostRecentSignagePoint>>,
+    pub recent_errors: Arc<RwLock<RecentErrors<String>>>,
+    pub running_state: Arc<RwLock<FarmerRunningState>>,
     pub data: Arc<T>,
     #[cfg(feature = "metrics")]
-    pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
+    pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
 }
 
 #[cfg(feature = "metrics")]
@@ -428,10 +428,10 @@ pub struct FarmerSharedState<T> {
 pub struct FarmerMetrics {
     pub start_time: Arc<Instant>,
     pub uptime: Option<GenericGauge<AtomicU64>>,
-    pub points_acknowledged_24h: Option<GenericGauge<AtomicU64>>,
-    pub points_found_24h: Option<GenericGauge<AtomicU64>>,
-    pub current_difficulty: Option<GenericGauge<AtomicU64>>,
-    pub proofs_declared: Option<GenericCounter<AtomicU64>>,
+    pub points_acknowledged_24h: Option<GenericGaugeVec<AtomicU64>>,
+    pub points_found_24h: Option<GenericGaugeVec<AtomicU64>>,
+    pub current_difficulty: Option<GenericGaugeVec<AtomicU64>>,
+    pub proofs_declared: Option<GenericGauge<AtomicU64>>,
     pub last_signage_point_index: Option<GenericGauge<AtomicU64>>,
 }
 #[cfg(feature = "metrics")]
@@ -444,33 +444,39 @@ impl FarmerMetrics {
                 Some(g)
             },
         );
-        let points_acknowledged_24h = GenericGauge::new(
+        let points_acknowledged_24h_opts = Opts::new(
             "points_acknowledged_24h",
             "Total points acknowledged by pool for all plot nfts",
+        );
+        let points_acknowledged_24h = GenericGaugeVec::new(
+            points_acknowledged_24h_opts,
+            &["launcher_id"],
         )
-        .map_or(None, |g: GenericGauge<AtomicU64>| {
+        .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
             registry.register(Box::new(g.clone())).unwrap_or(());
             Some(g)
         });
-        let points_found_24h = GenericGauge::new(
-            "points_found_24h",
-            "Total points fount for all plot nfts",
-        )
-        .map_or(None, |g: GenericGauge<AtomicU64>| {
-            registry.register(Box::new(g.clone())).unwrap_or(());
-            Some(g)
-        });
-        let current_difficulty = GenericGauge::new("current_difficulty", "Current Difficulty")
-            .map_or(None, |g: GenericGauge<AtomicU64>| {
+        let points_found_24h_opts =
+            Opts::new("points_found_24h", "Total points fount for all plot nfts");
+        let points_found_24h = GenericGaugeVec::new(points_found_24h_opts, &["launcher_id"])
+            .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
                 registry.register(Box::new(g.clone())).unwrap_or(());
                 Some(g)
             });
-        let proofs_declared =
-            GenericCounter::new("proofs_declared", "Proofs of Space declared by this farmer")
-                .map_or(None, |g: GenericCounter<AtomicU64>| {
-                    registry.register(Box::new(g.clone())).unwrap_or(());
-                    Some(g)
-                });
+        let current_difficulty_opts = Opts::new("current_difficulty", "Current Difficulty");
+        let current_difficulty = GenericGaugeVec::new(current_difficulty_opts, &["launcher_id"])
+            .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
+                registry.register(Box::new(g.clone())).unwrap_or(());
+                Some(g)
+            });
+        let proofs_declared = GenericGauge::new(
+            "proofs_declared",
+            "Proofs of Space declared by this farmer",
+        )
+        .map_or(None, |g: GenericGauge<AtomicU64>| {
+            registry.register(Box::new(g.clone())).unwrap_or(());
+            Some(g)
+        });
         let last_signage_point_index = GenericGauge::new(
             "last_signage_point_index",
             "Index of Last Signage Point",
