@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 pub struct WalletClient {
@@ -15,13 +15,13 @@ impl WalletClient {
         client_config: Arc<WsClientConfig>,
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
-        let handles = Arc::new(Mutex::new(handles()));
+        let handles = Arc::new(RwLock::new(handles()));
         let client = WsClient::new(client_config, NodeType::Wallet, handles, run).await?;
         Ok(WalletClient { client })
     }
 
     pub async fn join(self) -> Result<(), Error> {
-        self.client.connection.lock().await.shutdown().await?;
+        self.client.connection.write().await.shutdown().await?;
         self.client.join().await
     }
 

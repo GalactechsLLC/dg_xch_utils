@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 pub mod handshake;
@@ -22,7 +22,7 @@ pub struct HarvesterServer {
 impl HarvesterServer {
     pub fn new(config: HarvesterServerConfig) -> Result<Self, Error> {
         let config = Arc::new(config);
-        let handles = Arc::new(Mutex::new(Self::handles(config.clone())));
+        let handles = Arc::new(RwLock::new(Self::handles(config.clone())));
         Ok(Self {
             server: WebsocketServer::new(&config.websocket, Default::default(), handles)?,
             config,

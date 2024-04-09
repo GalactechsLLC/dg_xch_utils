@@ -24,22 +24,22 @@ use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 pub struct RespondSignaturesHandle<T> {
-    pub signage_points: Arc<Mutex<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pub quality_to_identifiers: Arc<Mutex<HashMap<Bytes32, FarmerIdentifier>>>,
+    pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
+    pub quality_to_identifiers: Arc<RwLock<HashMap<Bytes32, FarmerIdentifier>>>,
     pub proofs_of_space: ProofsMap,
-    pub cache_time: Arc<Mutex<HashMap<Bytes32, Instant>>>,
+    pub cache_time: Arc<RwLock<HashMap<Bytes32, Instant>>>,
     pub pool_public_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub owner_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
-    pub pool_state: Arc<Mutex<HashMap<Bytes32, FarmerPoolState>>>,
-    pub full_node_client: Arc<Mutex<Option<FarmerClient<T>>>>,
+    pub pool_state: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
+    pub full_node_client: Arc<RwLock<Option<FarmerClient<T>>>>,
     pub config: Arc<FarmerServerConfig>,
     pub headers: Arc<HashMap<String, String>>,
     #[cfg(feature = "metrics")]
-    pub metrics: Arc<Mutex<Option<FarmerMetrics>>>,
+    pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
 }
 #[async_trait]
 impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
@@ -51,7 +51,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
     ) -> Result<(), Error> {
         let mut cursor = Cursor::new(&msg.data);
         let response = RespondSignatures::from_bytes(&mut cursor)?;
-        if let Some(sps) = self.signage_points.lock().await.get(&response.sp_hash) {
+        if let Some(sps) = self.signage_points.read().await.get(&response.sp_hash) {
             if sps.is_empty() {
                 error!("Missing Signage Points for {}", &response.sp_hash);
             } else {
@@ -74,20 +74,16 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                     assert!(is_sp_signatures);
                 }
                 let mut pospace = None;
-                {
-                    let locked = self.proofs_of_space.lock().await;
-                    let proofs = locked.get(&response.sp_hash);
-                    if let Some(proofs) = proofs {
-                        for (plot_identifier, candidate_pospace) in proofs {
-                            if *plot_identifier == response.plot_identifier {
-                                pospace = Some(candidate_pospace.clone());
-                                break;
-                            }
+                if let Some(proofs) = self.proofs_of_space.read().await.get(&response.sp_hash) {
+                    for (plot_identifier, candidate_pospace) in proofs {
+                        if *plot_identifier == response.plot_identifier {
+                            pospace = Some(candidate_pospace.clone());
+                            break;
                         }
-                    } else {
-                        debug!("Failed to load farmer proofs for {}", &response.sp_hash);
-                        return Ok(());
                     }
+                } else {
+                    debug!("Failed to load farmer proofs for {}", &response.sp_hash);
+                    return Ok(());
                 }
                 if let Some(pospace) = pospace {
                     let include_taproot = pospace.pool_contract_puzzle_hash.is_some();
@@ -267,12 +263,12 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             || response.farmer_reward_address_override.is_some(),
                                     };
                                     if let Some(client) =
-                                        self.full_node_client.lock().await.as_mut()
+                                        self.full_node_client.read().await.as_ref()
                                     {
                                         let _ = client
                                             .client
                                             .connection
-                                            .lock()
+                                            .write()
                                             .await
                                             .send(Message::Binary(
                                                 ChiaMessage::new(
@@ -285,7 +281,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .await;
                                         info!("Declaring Proof of Space: {:?}", request);
                                         #[cfg(feature = "metrics")]
-                                        if let Some(r) = self.metrics.lock().await.as_mut() {
+                                        if let Some(r) = self.metrics.write().await.as_mut() {
                                             if let Some(c) = &mut r.proofs_declared {
                                                 c.inc();
                                             }
@@ -422,12 +418,12 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                     };
 
                                     if let Some(client) =
-                                        self.full_node_client.lock().await.as_mut()
+                                        self.full_node_client.read().await.as_ref()
                                     {
                                         let _ = client
                                             .client
                                             .connection
-                                            .lock()
+                                            .write()
                                             .await
                                             .send(Message::Binary(
                                                 ChiaMessage::new(

@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 pub mod chacha8;
 pub mod constants;
@@ -136,7 +136,7 @@ pub trait PlotManagerAsync {
     fn set_public_keys(&mut self, farmer_public_keys: Vec<Bytes48>, pool_public_keys: Vec<Bytes48>);
     async fn load_plots(
         &mut self,
-        harvester_state: Arc<Mutex<HarvesterState>>,
+        harvester_state: Arc<RwLock<HarvesterState>>,
     ) -> Result<(), Error>;
     fn plots(&self) -> &HashMap<PathInfo, Arc<PlotInfo>>;
     fn plots_ready(&self) -> Arc<AtomicBool>;
