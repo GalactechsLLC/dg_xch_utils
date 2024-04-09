@@ -109,14 +109,10 @@ impl dg_xch_serialize::ChiaSerialize for NewProofOfSpace {
                 &self.include_source_signature_data,
                 version,
             ));
-        }
-        if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.farmer_reward_address_override,
                 version,
             ));
-        }
-        if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.fee_info,
                 version,
@@ -196,8 +192,6 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignatures {
                 &self.message_data,
                 version,
             ));
-        }
-        if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.rc_block_unfinished,
                 version,
@@ -281,8 +275,6 @@ impl dg_xch_serialize::ChiaSerialize for RespondSignatures {
                 &self.include_source_signature_data,
                 version,
             ));
-        }
-        if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.farmer_reward_address_override,
                 version,

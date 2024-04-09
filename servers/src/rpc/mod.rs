@@ -4,6 +4,7 @@ use dg_xch_core::ssl::{
     load_private_key_from_bytes, AllowAny, SslInfo, CHIA_CA_CRT, CHIA_CA_KEY,
 };
 use http::request::Parts;
+use http::{Method, StatusCode};
 use http_body_util::Full;
 use hyper::body::{Body, Bytes, Incoming, SizeHint};
 use hyper::header::HeaderValue;
@@ -13,7 +14,9 @@ use hyper::{HeaderMap, Request, Response, Uri};
 use hyper_util::rt::TokioIo;
 use log::error;
 #[cfg(feature = "metrics")]
-use prometheus::core::{AtomicU64, GenericCounter};
+use prometheus::core::{AtomicU64, GenericCounterVec};
+#[cfg(feature = "metrics")]
+use prometheus::{HistogramOpts, HistogramVec, Opts, Registry};
 use rustls::{RootCertStore, ServerConfig};
 use std::env;
 use std::io::{Error, ErrorKind};
@@ -24,48 +27,174 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::select;
+use tokio::time::Instant;
 use tokio_rustls::TlsAcceptor;
 
 #[async_trait]
 pub trait RpcHandler {
-    async fn handle(&self, req: RequestType) -> Result<Response<Full<Bytes>>, (Parts, Error)>;
+    async fn handle(
+        &self,
+        request: RpcRequest,
+        response: Response<Full<Bytes>>,
+        address: &SocketAddr,
+    ) -> Result<Response<Full<Bytes>>, (Parts, HeaderMap, Error)>;
 }
 
-pub fn extract_parts_and_drop_body(req: RequestType) -> Parts {
-    match req {
-        RequestType::Stream(r) => r.into_parts().0,
-        RequestType::Sized(r) => r.into_parts().0,
+pub fn extract_parts_and_drop_body(req: RpcRequest) -> (Parts, HeaderMap) {
+    match req.request_type {
+        RequestType::Stream(r) => (r.into_parts().0, req.response_headers),
+        RequestType::Sized(r) => (r.into_parts().0, req.response_headers),
     }
 }
 
-pub enum RequestType {
-    Stream(Request<Incoming>),
-    Sized(Request<Full<Bytes>>),
+pub struct RpcRequest {
+    pub request_type: RequestType,
+    pub response_headers: HeaderMap,
 }
-impl RequestType {
+impl RpcRequest {
+    pub fn get_best_guess_public_ip(&self, address: &SocketAddr) -> String {
+        if let Some(real_ip) = self.headers().get("x-real-ip") {
+            format!("{:?}", real_ip)
+        } else if let Some(forwards) = self.headers().get("x-forwarded-for") {
+            format!("{:?}", forwards)
+        } else {
+            address.to_string()
+        }
+    }
     pub fn uri(&self) -> &Uri {
-        match self {
+        match &self.request_type {
             RequestType::Sized(r) => r.uri(),
             RequestType::Stream(r) => r.uri(),
         }
     }
     pub fn headers(&self) -> &HeaderMap<HeaderValue> {
-        match self {
+        match &self.request_type {
             RequestType::Sized(r) => r.headers(),
             RequestType::Stream(r) => r.headers(),
         }
     }
+    pub fn method(&self) -> &Method {
+        match &self.request_type {
+            RequestType::Sized(r) => r.method(),
+            RequestType::Stream(r) => r.method(),
+        }
+    }
     pub fn size_hint(&self) -> SizeHint {
-        match self {
+        match &self.request_type {
             RequestType::Sized(r) => r.size_hint(),
             RequestType::Stream(r) => r.size_hint(),
         }
     }
 }
 
-pub enum MiddleWareResult {
+// impl From<Request<Incoming>> for RpcRequest {
+//     fn from(value: Request<Incoming>) -> Self {
+//         Self {
+//             request_type: RequestType::Stream(value),
+//             response_headers: Default::default(),
+//         }
+//     }
+// }
+//
+// impl From<Request<Full<Bytes>>> for RpcRequest {
+//     fn from(value: Request<Full<Bytes>>) -> Self {
+//         Self {
+//             request_type: RequestType::Sized(value),
+//             response_headers: Default::default(),
+//         }
+//     }
+// }
+
+pub enum RequestType {
     Stream(Request<Incoming>),
     Sized(Request<Full<Bytes>>),
+}
+
+#[cfg(feature = "metrics")]
+#[non_exhaustive]
+pub struct EndpointMetrics {
+    pub total_requests: Arc<GenericCounterVec<AtomicU64>>,
+    pub successful_requests: Arc<GenericCounterVec<AtomicU64>>,
+    pub failed_requests: Arc<GenericCounterVec<AtomicU64>>,
+    pub blocked_requests: Arc<GenericCounterVec<AtomicU64>>,
+    pub average_request_time: Arc<HistogramVec>,
+}
+#[cfg(feature = "metrics")]
+impl EndpointMetrics {
+    pub fn new(registry: &Registry) -> Result<Self, prometheus::Error> {
+        let labels = &["code", "method", "path"];
+        Ok(Self {
+            total_requests: Arc::new(
+                GenericCounterVec::new(
+                    Opts::new(
+                        format!("total_requests"),
+                        "Total requests server has handled",
+                    ),
+                    labels,
+                )
+                .map(|g: GenericCounterVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                    g
+                })?,
+            ),
+            successful_requests: Arc::new(
+                GenericCounterVec::new(
+                    Opts::new(
+                        format!("successful_requests"),
+                        "Total successful requests server has handled",
+                    ),
+                    labels,
+                )
+                .map(|g: GenericCounterVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                    g
+                })?,
+            ),
+            failed_requests: Arc::new(
+                GenericCounterVec::new(
+                    Opts::new(
+                        format!("failed_requests"),
+                        "Total failed requests server has handled",
+                    ),
+                    labels,
+                )
+                .map(|g: GenericCounterVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                    g
+                })?,
+            ),
+            blocked_requests: Arc::new(
+                GenericCounterVec::new(
+                    Opts::new(
+                        format!("blocked_requests"),
+                        "Total blocked requests server has handled",
+                    ),
+                    labels,
+                )
+                .map(|g: GenericCounterVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                    g
+                })?,
+            ),
+            average_request_time: Arc::new({
+                let opts = HistogramOpts::new("average_request_time", "Average Request Time");
+                HistogramVec::new(opts, labels).map(|h: HistogramVec| {
+                    registry.register(Box::new(h.clone())).unwrap_or(());
+                    h
+                })?
+            }),
+        })
+    }
+}
+
+#[cfg(feature = "metrics")]
+pub struct RpcMetrics {
+    pub request_metrics: Arc<EndpointMetrics>,
+}
+
+pub enum MiddleWareResult {
+    Continue(RpcRequest),
+    Bypass(RpcRequest),
     Failure(Parts, Response<Full<Bytes>>),
 }
 
@@ -73,22 +202,27 @@ pub enum MiddleWareResult {
 pub trait MiddleWare {
     async fn handle(
         &self,
-        req: RequestType,
+        req: RpcRequest,
         address: &SocketAddr,
     ) -> Result<MiddleWareResult, Error>;
 
-    async fn set_enabled(&self, enabled: bool);
-    async fn is_enabled(&self) -> bool;
+    fn name(&self) -> &str;
+    fn set_enabled(&self, enabled: bool);
+    fn is_enabled(&self) -> bool;
 }
 
 #[derive(Default)]
 pub struct DefaultRpcHandler {}
 #[async_trait]
 impl RpcHandler for DefaultRpcHandler {
-    async fn handle(&self, _: RequestType) -> Result<Response<Full<Bytes>>, (Parts, Error)> {
-        Ok(Response::new(Full::new(Bytes::from(
-            "HTTP NOT SUPPORTED ON THIS ENDPOINT",
-        ))))
+    async fn handle(
+        &self,
+        _: RpcRequest,
+        mut response: Response<Full<Bytes>>,
+        _: &SocketAddr,
+    ) -> Result<Response<Full<Bytes>>, (Parts, HeaderMap, Error)> {
+        *response.body_mut() = Full::new(Bytes::from("HTTP NOT SUPPORTED ON THIS ENDPOINT"));
+        Ok(response)
     }
 }
 
@@ -96,11 +230,6 @@ pub struct RpcServerConfig {
     pub host: String,
     pub port: u16,
     pub ssl_info: Option<SslInfo>,
-}
-
-#[cfg(feature = "metrics")]
-pub struct RpcMetrics {
-    pub handled_by_middleware: Arc<GenericCounter<AtomicU64>>,
 }
 
 pub struct RpcServer {
@@ -269,25 +398,181 @@ async fn connection_handler(
     req: Request<Incoming>,
     address: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, Error> {
-    let mut req = RequestType::Stream(req);
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+    let mut req: RpcRequest = RpcRequest {
+        request_type: RequestType::Stream(req),
+        response_headers: Default::default(),
+    };
     let middleware_arc = server.middleware.clone();
     for middleware in middleware_arc.as_slice() {
-        if middleware.is_enabled().await {
+        if middleware.is_enabled() {
             match middleware.handle(req, &address).await? {
-                MiddleWareResult::Stream(r) => {
-                    req = RequestType::Stream(r);
+                MiddleWareResult::Bypass(r) => {
+                    req = r;
+                    break;
                 }
-                MiddleWareResult::Sized(r) => {
-                    req = RequestType::Sized(r);
+                MiddleWareResult::Continue(r) => {
+                    req = r;
+                    continue;
                 }
-                MiddleWareResult::Failure(_parts, res) => {
+                MiddleWareResult::Failure(parts, res) => {
+                    #[cfg(feature = "metrics")]
+                    {
+                        match res.status() {
+                            StatusCode::PAYLOAD_TOO_LARGE | StatusCode::TOO_MANY_REQUESTS => {
+                                set_blocked_metrics(
+                                    server.clone(),
+                                    res.status().as_str(),
+                                    parts.method.as_str(),
+                                    parts.uri.path(),
+                                    start,
+                                );
+                            }
+                            _ => {
+                                set_failed_metrics(
+                                    server.clone(),
+                                    res.status().as_str(),
+                                    parts.method.as_str(),
+                                    parts.uri.path(),
+                                    start,
+                                );
+                            }
+                        }
+                    }
                     return Ok(res);
                 }
             }
         }
     }
-    match server.handler.handle(req).await {
-        Ok(res) => Ok(res),
-        Err((_parts, e)) => Err(e),
+    #[cfg(feature = "metrics")]
+    let (method, path) = { (req.method().to_string(), req.uri().path().to_string()) };
+    let response = Response::builder()
+        .header(
+            "Access-Control-Allow-Origin",
+            req.headers()
+                .get("origin")
+                .unwrap_or(&HeaderValue::from_static("*")),
+        )
+        .header(
+            "Access-Control-Allow-Credentials",
+            HeaderValue::from_static("true"),
+        )
+        .header(
+            "Access-Control-Allow-Methods",
+            HeaderValue::from_static("POST, GET"),
+        )
+        .body(Full::new(Bytes::new()))
+        .expect("Failed to create default request");
+    match server.handler.handle(req, response, &address).await {
+        Ok(response) => {
+            #[cfg(feature = "metrics")]
+            {
+                set_success_metrics(
+                    server.clone(),
+                    response.status().as_str(),
+                    &method,
+                    &path,
+                    start,
+                );
+            }
+            Ok(response)
+        }
+        Err((_parts, _headers, e)) => {
+            #[cfg(feature = "metrics")]
+            {
+                set_failed_metrics(
+                    server.clone(),
+                    StatusCode::INTERNAL_SERVER_ERROR.as_str(),
+                    &method,
+                    &path,
+                    start,
+                );
+            }
+            Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Access-Control-Allow-Origin", "*")
+                .body(Full::new(Bytes::from(format!("{e:?}"))))
+                .expect("Failed to create 500 body"))
+        }
     }
+}
+
+#[cfg(feature = "metrics")]
+pub fn set_failed_metrics(
+    server: Arc<RpcServer>,
+    code: &str,
+    method: &str,
+    path: &str,
+    start: Instant,
+) {
+    server
+        .metrics
+        .request_metrics
+        .failed_requests
+        .with_label_values(&[code, method, path])
+        .inc();
+    common_metrics(server, code, method, path, start);
+}
+
+#[cfg(feature = "metrics")]
+pub fn set_success_metrics(
+    server: Arc<RpcServer>,
+    code: &str,
+    method: &str,
+    path: &str,
+    start: Instant,
+) {
+    server
+        .metrics
+        .request_metrics
+        .successful_requests
+        .with_label_values(&[code, method, path])
+        .inc();
+    common_metrics(server, code, method, path, start);
+}
+
+#[cfg(feature = "metrics")]
+pub fn set_blocked_metrics(
+    server: Arc<RpcServer>,
+    code: &str,
+    method: &str,
+    path: &str,
+    start: Instant,
+) {
+    server
+        .metrics
+        .request_metrics
+        .blocked_requests
+        .with_label_values(&[code, method, path])
+        .inc();
+    common_metrics(server, code, method, path, start);
+}
+
+#[cfg(feature = "metrics")]
+pub fn common_metrics(
+    server: Arc<RpcServer>,
+    code: &str,
+    method: &str,
+    path: &str,
+    start: Instant,
+) {
+    server
+        .metrics
+        .request_metrics
+        .average_request_time
+        .with_label_values(&[code, method, path])
+        .observe(duration_to_seconds(Instant::now().duration_since(start)));
+    server
+        .metrics
+        .request_metrics
+        .total_requests
+        .with_label_values(&[code, method, path])
+        .inc();
+}
+
+#[inline]
+pub fn duration_to_seconds(d: Duration) -> f64 {
+    let nanos = f64::from(d.subsec_nanos()) / 1e9;
+    d.as_secs() as f64 + nanos
 }

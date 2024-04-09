@@ -268,14 +268,10 @@ impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
                 &self.foliage_block_data,
                 version,
             ));
-        }
-        if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.foliage_transaction_block_data,
                 version,
             ));
-        }
-        if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.rc_block_unfinished,
                 version,
