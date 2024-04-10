@@ -1,4 +1,6 @@
 use crate::websocket::harvester::handshake::HandshakeHandle;
+#[cfg(feature = "metrics")]
+use crate::websocket::WebSocketMetrics;
 use crate::websocket::{WebsocketServer, WebsocketServerConfig};
 use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
 use std::collections::HashMap;
@@ -20,11 +22,20 @@ pub struct HarvesterServer {
     pub config: Arc<HarvesterServerConfig>,
 }
 impl HarvesterServer {
-    pub fn new(config: HarvesterServerConfig) -> Result<Self, Error> {
+    pub fn new(
+        config: HarvesterServerConfig,
+        #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
+    ) -> Result<Self, Error> {
         let config = Arc::new(config);
         let handles = Arc::new(RwLock::new(Self::handles(config.clone())));
         Ok(Self {
-            server: WebsocketServer::new(&config.websocket, Default::default(), handles)?,
+            server: WebsocketServer::new(
+                &config.websocket,
+                Default::default(),
+                handles,
+                #[cfg(feature = "metrics")]
+                metrics,
+            )?,
             config,
         })
     }

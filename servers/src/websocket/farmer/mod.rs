@@ -1,5 +1,7 @@
 use crate::websocket::farmer::new_proof_or_space::NewProofOfSpaceHandle;
 use crate::websocket::farmer::respond_signatures::RespondSignaturesHandle;
+#[cfg(feature = "metrics")]
+use crate::websocket::WebSocketMetrics;
 use crate::websocket::{WebsocketServer, WebsocketServerConfig};
 use blst::min_pk::SecretKey;
 use dg_xch_clients::api::pool::PoolClient;
@@ -15,7 +17,7 @@ use dg_xch_core::protocols::pool::{
 };
 use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
 use dg_xch_keys::decode_puzzle_hash;
-use dg_xch_serialize::{hash_256, ChiaSerialize};
+use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use log::{error, info};
 use std::collections::HashMap;
 use std::io::Error;
@@ -49,6 +51,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
         shared_state: Arc<FarmerSharedState<S>>,
         full_node_client: Arc<RwLock<Option<FarmerClient<S>>>>,
         additional_headers: Arc<HashMap<String, String>>,
+        #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
     ) -> Result<Self, Error> {
         let config = Arc::new(config);
         let handles = Arc::new(RwLock::new(Self::handles(
@@ -63,6 +66,8 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                 &config.websocket,
                 shared_state.harvester_peers.clone(),
                 handles,
+                #[cfg(feature = "metrics")]
+                metrics,
             )?,
             shared_state,
             pool_client,
@@ -178,7 +183,7 @@ pub async fn get_farmer<T: PoolClient + Sized + Sync + Send>(
         target_puzzle_hash,
         authentication_token,
     }
-    .to_bytes();
+    .to_bytes(ChiaProtocolVersion::default());
     let to_sign = hash_256(&msg);
     let signature = sign(authentication_sk, &to_sign);
     if !verify_signature(&authentication_sk.sk_to_pk(), &to_sign, &signature) {
@@ -238,7 +243,7 @@ pub async fn post_farmer<T: PoolClient + Sized + Sync + Send>(
         )?,
         suggested_difficulty,
     };
-    let to_sign = hash_256(payload.to_bytes());
+    let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
     let signature = sign(owner_sk, &to_sign);
     if !verify_signature(&owner_sk.sk_to_pk(), &to_sign, &signature) {
         error!("Farmer POST Failed to Validate Signature");
@@ -276,7 +281,7 @@ pub async fn put_farmer<T: PoolClient + Sized + Sync + Send>(
         payout_instructions: parse_payout_address(payout_instructions.to_string()).ok(),
         suggested_difficulty,
     };
-    let to_sign = hash_256(payload.to_bytes());
+    let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
     let signature = sign(owner_sk, &to_sign);
     if !verify_signature(&owner_sk.sk_to_pk(), &to_sign, &signature) {
         error!("Local Failed to Validate Signature");

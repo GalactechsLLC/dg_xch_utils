@@ -5,7 +5,7 @@ use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
 use crate::clvm::program::Program;
 use blst::min_pk::{AggregateSignature, Signature};
 use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::{hash_256, ChiaSerialize};
+use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
@@ -17,7 +17,7 @@ pub struct SpendBundle {
 }
 impl SpendBundle {
     pub fn name(&self) -> Bytes32 {
-        Bytes32::new(&hash_256(self.to_bytes()))
+        Bytes32::new(&hash_256(self.to_bytes(ChiaProtocolVersion::default())))
     }
     pub fn aggregate(bundles: Vec<SpendBundle>) -> Result<Self, Error> {
         let mut coin_spends = vec![];

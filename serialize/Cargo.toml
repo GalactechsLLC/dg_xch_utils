@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_serialize"
-version = "2.0.2"
+version = "2.0.3"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Low Level Support Package for dg_xch_utils"
@@ -11,4 +11,5 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 [dependencies]
 bytes = "1.5.0"
 log = "0.4.20"
+serde = "1.0.197"
 sha2 = "0.10.8"

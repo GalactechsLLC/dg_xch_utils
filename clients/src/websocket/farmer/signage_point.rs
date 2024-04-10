@@ -12,7 +12,7 @@ use dg_xch_core::protocols::harvester::{NewSignagePointHarvester, PoolDifficulty
 use dg_xch_core::protocols::{
     ChiaMessage, MessageHandler, NodeType, PeerMap, ProtocolMessageTypes, SocketPeer,
 };
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::io::{Cursor, Error};
@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message;
 
 pub struct NewSignagePointHandle {
-    pub constants: &'static ConsensusConstants,
+    pub constants: Arc<ConsensusConstants>,
     pub harvester_peers: PeerMap,
     pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
     pub pool_state: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
@@ -37,11 +37,17 @@ impl MessageHandler for NewSignagePointHandle {
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
-        _peer_id: Arc<Bytes32>,
-        _peers: PeerMap,
+        peer_id: Arc<Bytes32>,
+        peers: PeerMap,
     ) -> Result<(), Error> {
         let mut cursor = Cursor::new(&msg.data);
-        let sp = NewSignagePoint::from_bytes(&mut cursor)?;
+        let peer = peers.read().await.get(&peer_id).cloned();
+        let protocol_version = if let Some(peer) = peer.as_ref() {
+            *peer.protocol_version.read().await
+        } else {
+            ChiaProtocolVersion::default()
+        };
+        let sp = NewSignagePoint::from_bytes(&mut cursor, protocol_version)?;
         let mut pool_difficulties = vec![];
         for (p2_singleton_puzzle_hash, pool_dict) in self.pool_state.read().await.iter() {
             if let Some(config) = &pool_dict.pool_config {
@@ -73,16 +79,8 @@ impl MessageHandler for NewSignagePointHandle {
             signage_point_index: sp.signage_point_index,
             sp_hash: sp.challenge_chain_sp,
             pool_difficulties,
-            filter_prefix_bits: calculate_prefix_bits(self.constants, sp.peak_height),
+            filter_prefix_bits: calculate_prefix_bits(self.constants.as_ref(), sp.peak_height),
         };
-        let msg = Message::Binary(
-            ChiaMessage::new(
-                ProtocolMessageTypes::NewSignagePointHarvester,
-                &harvester_point,
-                None,
-            )
-            .to_bytes(),
-        );
         let peers: Vec<Arc<SocketPeer>> = self
             .harvester_peers
             .read()
@@ -92,7 +90,24 @@ impl MessageHandler for NewSignagePointHandle {
             .collect();
         for peer in peers {
             if *peer.node_type.read().await == NodeType::Harvester {
-                let _ = peer.websocket.write().await.send(msg.clone()).await;
+                let protocol_version = *peer.protocol_version.read().await;
+                let _ = peer
+                    .websocket
+                    .write()
+                    .await
+                    .send(
+                        Message::Binary(
+                            ChiaMessage::new(
+                                ProtocolMessageTypes::NewSignagePointHarvester,
+                                protocol_version,
+                                &harvester_point,
+                                None,
+                            )
+                            .to_bytes(protocol_version),
+                        )
+                        .clone(),
+                    )
+                    .await;
             }
         }
         {

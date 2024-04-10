@@ -22,7 +22,7 @@ use dg_xch_puzzles::utils::{
     make_assert_puzzle_announcement, make_create_coin_announcement, make_create_coin_condition,
     make_create_puzzle_announcement, make_reserve_fee_condition,
 };
-use dg_xch_serialize::{hash_256, ChiaSerialize};
+use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, info};
 use num_traits::ToPrimitive;
 use std::cmp::max;
@@ -536,7 +536,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     );
                 }
                 let message = hash_256(message_list.iter().fold(vec![], |mut v, e| {
-                    v.extend(e.to_bytes());
+                    v.extend(e.to_bytes(ChiaProtocolVersion::default()));
                     v
                 }));
                 let coin_announcements = HashSet::from([message.clone()]);

@@ -6,9 +6,7 @@ pub mod wallet;
 use crate::ClientSSLConfig;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
-use dg_xch_core::protocols::shared::{
-    Handshake, NoCertificateVerification, CAPABILITIES, PROTOCOL_VERSION,
-};
+use dg_xch_core::protocols::shared::{Handshake, NoCertificateVerification, CAPABILITIES};
 use dg_xch_core::protocols::{
     ChiaMessage, ChiaMessageFilter, ChiaMessageHandler, MessageHandler, NodeType, SocketPeer,
     WebsocketConnection,
@@ -18,7 +16,7 @@ use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
     load_private_key_from_bytes, CHIA_CA_CRT, CHIA_CA_KEY,
 };
-use dg_xch_serialize::{hash_256, ChiaSerialize};
+use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use log::debug;
 use reqwest::header::{HeaderName, HeaderValue};
 use rustls::{Certificate, ClientConfig, PrivateKey};
@@ -217,17 +215,21 @@ impl WsClient {
             *peer_id.as_ref(),
             Arc::new(SocketPeer {
                 node_type: Arc::new(RwLock::new(NodeType::Harvester)),
+                protocol_version: Arc::new(RwLock::new(ChiaProtocolVersion::default())),
                 websocket: connection.clone(),
             }),
         );
         let handle_run = run.clone();
+        let protocol_version = client_config.protocol_version;
         let ws_client = WsClient {
             connection,
             client_config,
             handle: tokio::spawn(async move { stream.run(handle_run).await }),
             run,
         };
-        ws_client.perform_handshake(node_type).await?;
+        ws_client
+            .perform_handshake(node_type, protocol_version)
+            .await?;
         Ok(ws_client)
     }
 
@@ -246,14 +248,19 @@ impl WsClient {
         self.handle.is_finished()
     }
 
-    async fn perform_handshake(&self, node_type: NodeType) -> Result<Handshake, Error> {
+    async fn perform_handshake(
+        &self,
+        node_type: NodeType,
+        chia_protocol_version: ChiaProtocolVersion,
+    ) -> Result<Handshake, Error> {
         oneshot::<Handshake>(
             self.connection.clone(),
             ChiaMessage::new(
                 ProtocolMessageTypes::Handshake,
+                chia_protocol_version,
                 &Handshake {
                     network_id: self.client_config.network_id.to_string(),
-                    protocol_version: PROTOCOL_VERSION.to_string(),
+                    protocol_version: chia_protocol_version.to_string(),
                     software_version: version(),
                     server_port: self.client_config.port,
                     node_type: node_type as u8,
@@ -265,6 +272,7 @@ impl WsClient {
                 None,
             ),
             Some(ProtocolMessageTypes::Handshake),
+            chia_protocol_version,
             None,
             Some(15000),
         )
@@ -279,6 +287,7 @@ pub struct WsClientConfig {
     pub ssl_info: Option<ClientSSLConfig>,
     //Used to control software version sent to server, default is dg_xch_clients: VERSION
     pub software_version: Option<String>,
+    pub protocol_version: ChiaProtocolVersion,
     pub additional_headers: Option<HashMap<String, String>>,
 }
 
@@ -310,6 +319,7 @@ pub async fn oneshot<R: ChiaSerialize>(
     connection: Arc<RwLock<WebsocketConnection>>,
     msg: ChiaMessage,
     resp_type: Option<ProtocolMessageTypes>,
+    protocol_version: ChiaProtocolVersion,
     msg_id: Option<u16>,
     timeout: Option<u64>,
 ) -> Result<R, Error> {
@@ -360,8 +370,8 @@ pub async fn oneshot<R: ChiaSerialize>(
             let res = res?;
             if let Some(v) = res {
                 let mut cursor = Cursor::new(v);
-                connection.write().await.unsubscribe(handle.id).await;
-                R::from_bytes(&mut cursor).map_err(|e| {
+                connection.read().await.unsubscribe(handle.id).await;
+                R::from_bytes(&mut cursor, protocol_version).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
                         format!("Failed to parse msg: {:?}", e),

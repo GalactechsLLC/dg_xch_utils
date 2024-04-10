@@ -4,8 +4,6 @@ use rustls::{Certificate, DigitallySignedStruct, ServerName};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
-pub const PROTOCOL_VERSION: &str = "0.0.36";
-
 pub enum Capability {
     Base = 1,
     BlockHeaders = 2,
@@ -15,12 +13,13 @@ pub enum Capability {
 
 #[derive(ChiaSerial, Serialize, Deserialize, Debug, Clone)]
 pub struct Handshake {
-    pub network_id: String,
-    pub protocol_version: String,
-    pub software_version: String,
-    pub server_port: u16,
-    pub node_type: u8,
-    pub capabilities: Vec<(u16, String)>,
+    //Same for all Versions
+    pub network_id: String,               //Min Version 0.0.34
+    pub protocol_version: String,         //Min Version 0.0.34
+    pub software_version: String,         //Min Version 0.0.34
+    pub server_port: u16,                 //Min Version 0.0.34
+    pub node_type: u8,                    //Min Version 0.0.34
+    pub capabilities: Vec<(u16, String)>, //Min Version 0.0.34
 }
 
 pub const CAPABILITIES: [(u16, &str); 3] = [

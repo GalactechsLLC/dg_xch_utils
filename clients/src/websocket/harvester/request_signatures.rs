@@ -7,7 +7,7 @@ use dg_xch_core::protocols::harvester::{RequestSignatures, RespondSignatures};
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
 use dg_xch_keys::master_sk_to_local_sk;
 use dg_xch_pos::{PathInfo, PlotManagerAsync};
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, error};
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
@@ -27,7 +27,13 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
     ) -> Result<(), Error> {
         debug!("{:?}", msg.msg_type);
         let mut cursor = Cursor::new(msg.data.clone());
-        let request_signatures = RequestSignatures::from_bytes(&mut cursor)?;
+        let peer = peers.read().await.get(&peer_id).cloned();
+        let protocol_version = if let Some(peer) = peer.as_ref() {
+            *peer.protocol_version.read().await
+        } else {
+            ChiaProtocolVersion::default()
+        };
+        let request_signatures = RequestSignatures::from_bytes(&mut cursor, protocol_version)?;
         let file_name = request_signatures.plot_identifier.split_at(64).1;
         let memo = match self.plot_manager.read().await.plots().get(&PathInfo {
             path: Default::default(),
@@ -64,6 +70,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
                 .send(Message::Binary(
                     ChiaMessage::new(
                         ProtocolMessageTypes::RespondSignatures,
+                        protocol_version,
                         &RespondSignatures {
                             plot_identifier: request_signatures.plot_identifier,
                             challenge_hash: request_signatures.challenge_hash,
@@ -76,7 +83,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
                         },
                         msg.id,
                     )
-                    .to_bytes(),
+                    .to_bytes(protocol_version),
                 ))
                 .await;
         } else {

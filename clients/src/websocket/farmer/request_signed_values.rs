@@ -6,7 +6,7 @@ use dg_xch_core::protocols::harvester::{
     RequestSignatures, SignatureRequestSourceData, SigningDataKind,
 };
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
@@ -23,11 +23,17 @@ impl MessageHandler for RequestSignedValuesHandle {
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
-        _peer_id: Arc<Bytes32>,
-        _peers: PeerMap,
+        peer_id: Arc<Bytes32>,
+        peers: PeerMap,
     ) -> Result<(), Error> {
         let mut cursor = Cursor::new(&msg.data);
-        let request = RequestSignedValues::from_bytes(&mut cursor)?;
+        let peer = peers.read().await.get(&peer_id).cloned();
+        let protocol_version = if let Some(peer) = peer.as_ref() {
+            *peer.protocol_version.read().await
+        } else {
+            ChiaProtocolVersion::default()
+        };
+        let request = RequestSignedValues::from_bytes(&mut cursor, protocol_version)?;
         if let Some(identifier) = self
             .quality_to_identifiers
             .read()
@@ -42,6 +48,7 @@ impl MessageHandler for RequestSignedValuesHandle {
                 .get(&identifier.peer_node_id)
                 .cloned()
             {
+                let protocol_version = *peer.protocol_version.read().await;
                 let mut foliage_block_data = None;
                 let mut foliage_transaction_block = None;
                 let mut include_source_data = false;
@@ -49,14 +56,14 @@ impl MessageHandler for RequestSignedValuesHandle {
                     include_source_data = true;
                     foliage_block_data = Some(SignatureRequestSourceData {
                         kind: SigningDataKind::FoliageBlockData,
-                        data: data.to_bytes(),
+                        data: data.to_bytes(protocol_version),
                     });
                 }
                 if let Some(data) = request.foliage_transaction_block_data {
                     include_source_data = true;
                     foliage_transaction_block = Some(SignatureRequestSourceData {
                         kind: SigningDataKind::FoliageTransactionBlock,
-                        data: data.to_bytes(),
+                        data: data.to_bytes(protocol_version),
                     });
                 }
                 let _ = peer
@@ -66,6 +73,7 @@ impl MessageHandler for RequestSignedValuesHandle {
                     .send(Message::Binary(
                         ChiaMessage::new(
                             ProtocolMessageTypes::RequestSignatures,
+                            protocol_version,
                             &RequestSignatures {
                                 plot_identifier: identifier.plot_identifier.clone(),
                                 challenge_hash: identifier.challenge_hash,
@@ -83,7 +91,7 @@ impl MessageHandler for RequestSignedValuesHandle {
                             },
                             None,
                         )
-                        .to_bytes(),
+                        .to_bytes(protocol_version),
                     ))
                     .await;
             }

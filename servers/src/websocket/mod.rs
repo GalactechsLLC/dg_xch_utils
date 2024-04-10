@@ -9,7 +9,7 @@ use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
     load_private_key_from_bytes, AllowAny, SslInfo, CHIA_CA_CRT, CHIA_CA_KEY,
 };
-use dg_xch_serialize::hash_256;
+use dg_xch_serialize::{hash_256, ChiaProtocolVersion};
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1::Builder;
@@ -18,6 +18,8 @@ use hyper::{Request, Response};
 use hyper_tungstenite::{is_upgrade_request, upgrade, HyperWebsocket};
 use hyper_util::rt::TokioIo;
 use log::{debug, error};
+#[cfg(feature = "metrics")]
+use prometheus::core::{AtomicU64, GenericGauge};
 use rustls::{Certificate, PrivateKey, RootCertStore, ServerConfig};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
@@ -40,17 +42,25 @@ pub struct WebsocketServerConfig {
     pub ssl_info: Option<SslInfo>,
 }
 
+#[cfg(feature = "metrics")]
+pub struct WebSocketMetrics {
+    pub connected_clients: Arc<Option<GenericGauge<AtomicU64>>>,
+}
+
 pub struct WebsocketServer {
     pub socket_address: SocketAddr,
     pub server_config: Arc<ServerConfig>,
     pub peers: PeerMap,
     pub message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    #[cfg(feature = "metrics")]
+    pub metrics: Arc<Option<WebSocketMetrics>>,
 }
 impl WebsocketServer {
     pub fn new(
         config: &WebsocketServerConfig,
         peers: PeerMap,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+        #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
     ) -> Result<Self, Error> {
         let (certs, key, root_certs) = if let Some(ssl_info) = &config.ssl_info {
             (
@@ -84,6 +94,8 @@ impl WebsocketServer {
             server_config,
             peers,
             message_handlers,
+            #[cfg(feature = "metrics")]
+            metrics,
         })
     }
     pub fn with_ca(
@@ -92,6 +104,7 @@ impl WebsocketServer {
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         cert_data: &str,
         key_data: &str,
+        #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
     ) -> Result<Self, Error> {
         let (cert_bytes, key_bytes) =
             generate_ca_signed_cert_data(cert_data.as_bytes(), key_data.as_bytes())?;
@@ -108,6 +121,8 @@ impl WebsocketServer {
             server_config,
             peers,
             message_handlers,
+            #[cfg(feature = "metrics")]
+            metrics,
         })
     }
 
@@ -120,12 +135,16 @@ impl WebsocketServer {
             let run = run.clone();
             let peers = self.peers.clone();
             let handlers = self.message_handlers.clone();
+            #[cfg(feature = "metrics")]
+            let metrics = self.metrics.clone();
             select!(
                 res = listener.accept() => {
                     match res {
                         Ok((stream, _)) => {
                             let peers = peers.clone();
                             let message_handlers = handlers.clone();
+                            #[cfg(feature = "metrics")]
+                            let metrics = metrics.clone();
                             match acceptor.accept(stream).await {
                                 Ok(stream) => {
                                     let addr = stream.get_ref().0.peer_addr().ok();
@@ -145,7 +164,11 @@ impl WebsocketServer {
                                             message_handlers: message_handlers.clone(),
                                             run: run.clone(),
                                         };
-                                        connection_handler(data)
+                                        connection_handler(
+                                            data,
+                                             #[cfg(feature = "metrics")]
+                                            metrics.clone()
+                                        )
                                     });
                                     let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
                                     tokio::spawn( async move {
@@ -228,6 +251,7 @@ struct ConnectionData {
 
 async fn connection_handler(
     mut data: ConnectionData,
+    #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
 ) -> Result<Response<Full<Bytes>>, tungstenite::error::Error> {
     if is_upgrade_request(&data.req) {
         let (response, websocket) = upgrade(&mut data.req, None)?;
@@ -253,6 +277,12 @@ async fn connection_handler(
                     ))
                 })?,
         );
+        #[cfg(feature = "metrics")]
+        if let Some(metrics) = metrics.as_ref() {
+            if let Some(gauge) = metrics.connected_clients.as_ref() {
+                gauge.add(1);
+            }
+        }
         tokio::spawn(async move {
             if let Err(e) = handle_connection(
                 addr,
@@ -265,6 +295,12 @@ async fn connection_handler(
             .await
             {
                 error!("Error in websocket connection: {}", e);
+            }
+            #[cfg(feature = "metrics")]
+            if let Some(metrics) = metrics.as_ref() {
+                if let Some(gauge) = metrics.connected_clients.as_ref() {
+                    gauge.sub(1);
+                }
             }
         });
         Ok(response)
@@ -293,6 +329,7 @@ async fn handle_connection(
         *peer_id,
         Arc::new(SocketPeer {
             node_type: Arc::new(RwLock::new(NodeType::Unknown)),
+            protocol_version: Arc::new(RwLock::new(ChiaProtocolVersion::default())),
             websocket: Arc::new(RwLock::new(websocket)),
         }),
     );

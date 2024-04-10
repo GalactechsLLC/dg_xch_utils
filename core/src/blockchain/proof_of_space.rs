@@ -2,7 +2,7 @@ use crate::blockchain::sized_bytes::{prep_hex_str, Bytes32, Bytes48, SizedBytes}
 use crate::consensus::constants::ConsensusConstants;
 use blst::min_pk::{AggregatePublicKey, PublicKey, SecretKey};
 use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::{hash_256, ChiaSerialize};
+use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use hex::{decode, encode};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -34,18 +34,21 @@ impl Debug for ProofBytes {
 }
 
 impl ChiaSerialize for ProofBytes {
-    fn to_bytes(&self) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
     where
         Self: Sized,
     {
-        ChiaSerialize::to_bytes(&self.0)
+        ChiaSerialize::to_bytes(&self.0, version)
     }
 
-    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>) -> Result<Self, Error>
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
     where
         Self: Sized,
     {
-        Ok(Self(ChiaSerialize::from_bytes(bytes)?))
+        Ok(Self(ChiaSerialize::from_bytes(bytes, version)?))
     }
 }
 

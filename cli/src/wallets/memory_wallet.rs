@@ -208,12 +208,14 @@ impl WalletStore for MemoryWalletStore {
                 }
                 None => {
                     let mut smaller_coin_sum = 0; //coins smaller than target.
+                    let mut all_sum = 0; //coins smaller than target.
                     let mut smaller_coins = vec![];
                     for coin in &valid_spendable_coins {
                         if coin.amount < amount {
                             smaller_coin_sum += coin.amount;
+                            smaller_coins.push(coin.clone());
                         }
-                        smaller_coins.push(coin.clone());
+                        all_sum += coin.amount;
                     }
                     if smaller_coin_sum == amount
                         && smaller_coins.len() < max_num_coins
@@ -228,7 +230,7 @@ impl WalletStore for MemoryWalletStore {
                             debug!("Selected closest greater coin: {}", smallest_coin.name());
                             Ok(HashSet::from([smallest_coin]))
                         } else {
-                            return Err(Error::new(ErrorKind::InvalidInput, "Transaction of {amount} mojo would use more than {max_num_coins} coins. Try sending a smaller amount"));
+                            return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction of {amount} mojo is greater than available sum {all_sum} mojos.")));
                         }
                     } else if smaller_coin_sum > amount {
                         let mut coin_set = knapsack_coin_algorithm(
@@ -252,7 +254,7 @@ impl WalletStore for MemoryWalletStore {
                                 if let Some(greater_coin) = greater_coin {
                                     coin_set = Some(HashSet::from([greater_coin]));
                                 } else {
-                                    return Err(Error::new(ErrorKind::InvalidInput, "Transaction of {amount} mojo would use more than {max_num_coins} coins. Try sending a smaller amount"));
+                                    return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction of {amount} mojo would use more than {max_num_coins} coins. Try sending a smaller amount")));
                                 }
                             }
                         }
@@ -350,16 +352,12 @@ fn check_for_exact_match(coin_list: &[Coin], target: u64) -> Option<Coin> {
 }
 
 fn select_smallest_coin_over_target(target: u64, sorted_coin_list: &[Coin]) -> Option<Coin> {
-    if sorted_coin_list[0].amount < target {
-        None
-    } else {
-        for coin in sorted_coin_list.iter().rev() {
-            if coin.amount >= target {
-                return Some(coin.clone());
-            }
+    for coin in sorted_coin_list.iter() {
+        if coin.amount >= target {
+            return Some(coin.clone());
         }
-        None
     }
+    None
 }
 
 fn sum_largest_coins(target: u128, sorted_coins: &[Coin]) -> Option<HashSet<Coin>> {

@@ -12,6 +12,7 @@ use crate::blockchain::sized_bytes::Bytes32;
 use crate::utils::await_termination;
 use async_trait::async_trait;
 use dg_xch_macros::ChiaSerial;
+use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
 use futures_util::stream::{FusedStream, SplitSink, SplitStream};
 use futures_util::SinkExt;
@@ -463,17 +464,22 @@ pub struct ChiaMessage {
     pub data: Vec<u8>,
 }
 impl ChiaMessage {
-    pub fn new<T: ChiaSerialize>(msg_type: ProtocolMessageTypes, msg: &T, id: Option<u16>) -> Self {
+    pub fn new<T: ChiaSerialize>(
+        msg_type: ProtocolMessageTypes,
+        version: ChiaProtocolVersion,
+        msg: &T,
+        id: Option<u16>,
+    ) -> Self {
         ChiaMessage {
             msg_type,
             id,
-            data: msg.to_bytes(),
+            data: msg.to_bytes(version),
         }
     }
 }
 impl From<ChiaMessage> for Message {
     fn from(val: ChiaMessage) -> Self {
-        Message::Binary(val.to_bytes())
+        Message::Binary(val.to_bytes(ChiaProtocolVersion::default()))
     }
 }
 
@@ -513,6 +519,7 @@ pub type PeerMap = Arc<RwLock<HashMap<Bytes32, Arc<SocketPeer>>>>;
 
 pub struct SocketPeer {
     pub node_type: Arc<RwLock<NodeType>>,
+    pub protocol_version: Arc<RwLock<ChiaProtocolVersion>>,
     pub websocket: Arc<RwLock<WebsocketConnection>>,
 }
 
@@ -642,6 +649,12 @@ pub struct ReadStream {
 impl ReadStream {
     pub async fn run(&mut self, run: Arc<AtomicBool>) {
         loop {
+            let peer_self = self.peers.read().await.get(&self.peer_id).cloned();
+            let protocol_version = if let Some(peer) = peer_self.as_ref() {
+                *peer.protocol_version.read().await
+            } else {
+                ChiaProtocolVersion::default()
+            };
             select! {
                 msg = self.read.next() => {
                     match msg {
@@ -649,7 +662,7 @@ impl ReadStream {
                             match msg {
                                 Message::Binary(bin_data) => {
                                     let mut cursor = Cursor::new(&bin_data);
-                                    match ChiaMessage::from_bytes(&mut cursor) {
+                                    match ChiaMessage::from_bytes(&mut cursor, protocol_version) {
                                         Ok(chia_msg) => {
                                             let msg_arc: Arc<ChiaMessage> = Arc::new(chia_msg);
                                             let mut matched = false;

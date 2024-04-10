@@ -11,7 +11,7 @@ use dg_xch_core::protocols::harvester::{NewProofOfSpace, NewSignagePointHarveste
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
 use dg_xch_pos::verifier::proof_to_bytes;
 use dg_xch_pos::PlotManagerAsync;
-use dg_xch_serialize::ChiaSerialize;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use hex::encode;
@@ -50,8 +50,14 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
             info!("Plots Not Ready Yet, skipping");
             return Ok(());
         }
+        let peer = peers.read().await.get(&peer_id).cloned();
+        let protocol_version = if let Some(peer) = peer.as_ref() {
+            *peer.protocol_version.read().await
+        } else {
+            ChiaProtocolVersion::default()
+        };
         let mut cursor = Cursor::new(msg.data.clone());
-        let harvester_point = NewSignagePointHarvester::from_bytes(&mut cursor)?;
+        let harvester_point = NewSignagePointHarvester::from_bytes(&mut cursor, protocol_version)?;
         trace!("{:#?}", &harvester_point);
         let plot_counts = Arc::new(PlotCounts::default());
         let harvester_point = Arc::new(harvester_point);
@@ -145,7 +151,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                 "File: {:?} Plot ID: {}, challenge: {sp_challenge_hash}, Quality Str: {}, proof: {:?}",
                                                 path,
                                                 &plot_id,
-                                                encode(quality.to_bytes()),
+                                                encode(quality.to_bytes(protocol_version)),
                                                 encode(&proof_bytes)
                                             );
                                             responses.push((
@@ -199,11 +205,13 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                         .send(Message::Binary(
                                             ChiaMessage::new(
                                                 ProtocolMessageTypes::NewProofOfSpace,
+                                                protocol_version,
                                                 &NewProofOfSpace {
                                                     challenge_hash: harvester_point.challenge_hash,
                                                     sp_hash: harvester_point.sp_hash,
-                                                    plot_identifier: encode(quality.to_bytes())
-                                                        + path.file_name.as_str(),
+                                                    plot_identifier: encode(
+                                                        quality.to_bytes(protocol_version),
+                                                    ) + path.file_name.as_str(),
                                                     proof,
                                                     signage_point_index: harvester_point
                                                         .signage_point_index,
@@ -213,7 +221,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                 },
                                                 None,
                                             )
-                                            .to_bytes(),
+                                            .to_bytes(protocol_version),
                                         ))
                                         .await;
                                     if is_partial {

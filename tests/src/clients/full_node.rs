@@ -239,6 +239,7 @@ use uuid::Uuid;
 
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap};
+use dg_xch_serialize::ChiaProtocolVersion;
 
 pub struct NewSignagePointEcho {
     pub id: Uuid,
@@ -253,7 +254,7 @@ impl MessageHandler for NewSignagePointEcho {
     ) -> Result<(), Error> {
         use dg_xch_serialize::ChiaSerialize;
         let mut cursor = Cursor::new(&msg.data);
-        let sp = NewSignagePoint::from_bytes(&mut cursor)?;
+        let sp = NewSignagePoint::from_bytes(&mut cursor, ChiaProtocolVersion::default())?;
         println!(
             "New Signage Point({}): {:?}",
             sp.signage_point_index, sp.challenge_hash
