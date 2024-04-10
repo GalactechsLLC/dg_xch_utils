@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message;
 
 pub struct NewSignagePointHandle {
-    pub constants: &'static ConsensusConstants,
+    pub constants: Arc<ConsensusConstants>,
     pub harvester_peers: PeerMap,
     pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
     pub pool_state: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
@@ -79,7 +79,7 @@ impl MessageHandler for NewSignagePointHandle {
             signage_point_index: sp.signage_point_index,
             sp_hash: sp.challenge_chain_sp,
             pool_difficulties,
-            filter_prefix_bits: calculate_prefix_bits(self.constants, sp.peak_height),
+            filter_prefix_bits: calculate_prefix_bits(self.constants.as_ref(), sp.peak_height),
         };
         let peers: Vec<Arc<SocketPeer>> = self
             .harvester_peers

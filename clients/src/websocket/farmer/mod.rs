@@ -28,7 +28,8 @@ impl<T> FarmerClient<T> {
     ) -> Result<Self, Error> {
         let constants = CONSENSUS_CONSTANTS_MAP
             .get(&client_config.network_id)
-            .unwrap_or(&MAINNET);
+            .cloned()
+            .unwrap_or(MAINNET.clone());
         let handles = Arc::new(RwLock::new(handles(constants, shared_state.clone())));
         let client = WsClient::new(client_config, NodeType::Farmer, handles, run).await?;
         Ok(FarmerClient {
@@ -48,7 +49,7 @@ impl<T> FarmerClient<T> {
 }
 
 fn handles<T>(
-    constants: &'static ConsensusConstants,
+    constants: Arc<ConsensusConstants>,
     shared_state: Arc<FarmerSharedState<T>>,
 ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
     HashMap::from([

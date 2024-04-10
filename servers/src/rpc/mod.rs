@@ -109,10 +109,7 @@ impl EndpointMetrics {
         Ok(Self {
             total_requests: Arc::new(
                 GenericCounterVec::new(
-                    Opts::new(
-                        "total_requests",
-                        "Total requests server has handled",
-                    ),
+                    Opts::new("total_requests", "Total requests server has handled"),
                     labels,
                 )
                 .map(|g: GenericCounterVec<AtomicU64>| {
