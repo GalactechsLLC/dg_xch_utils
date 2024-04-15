@@ -63,7 +63,7 @@ pub struct WalletInfo<T: WalletStore> {
     pub id: u32,
     pub name: String,
     pub wallet_type: WalletType,
-    pub constants: ConsensusConstants,
+    pub constants: Arc<ConsensusConstants>,
     pub master_sk: SecretKey,
     pub wallet_store: Arc<Mutex<T>>,
     pub data: String, //JSON String to Store Extra Data for Wallets
