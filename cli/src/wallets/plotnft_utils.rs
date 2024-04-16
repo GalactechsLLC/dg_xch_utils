@@ -111,7 +111,11 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     }
 }
 impl PlotNFTWallet {
-    pub fn new(master_secret_key: SecretKey, client: &FullnodeClient, constants: Arc<ConsensusConstants>) -> Self {
+    pub fn new(
+        master_secret_key: SecretKey,
+        client: &FullnodeClient,
+        constants: Arc<ConsensusConstants>,
+    ) -> Self {
         Self::create(
             WalletInfo {
                 id: 1,
@@ -569,7 +573,9 @@ pub async fn get_pool_state(
     launcher_id: &Bytes32,
     last_known_coin_name: Option<Bytes32>,
 ) -> Result<PoolState, Error> {
-    if let Some(plotnft) = get_plotnft_by_launcher_id(client, launcher_id, last_known_coin_name).await? {
+    if let Some(plotnft) =
+        get_plotnft_by_launcher_id(client, launcher_id, last_known_coin_name).await?
+    {
         Ok(plotnft.pool_state)
     } else {
         Err(Error::new(
@@ -584,17 +590,26 @@ pub async fn get_plotnft_by_launcher_id(
     launcher_id: &Bytes32,
     last_known_coin_name: Option<Bytes32>,
 ) -> Result<Option<PlotNft>, Error> {
-    let starting_coin = client.get_coin_record_by_name(last_known_coin_name.as_ref().unwrap_or(launcher_id)).await?;
-    if let Some(starting_coin) = starting_coin {
+    if let Some(starting_coin) = client.get_coin_record_by_name(launcher_id).await? {
         let spend = client.get_coin_spend(&starting_coin).await?;
         let initial_extra_data = launcher_coin_spend_to_extra_data(&spend)?;
         let first_coin = get_most_recent_singleton_coin_from_coin_spend(&spend)?;
         if let Some(coin) = first_coin {
             info!("Found Launcher Coin, Starting to crawl Coin History");
             let mut last_not_null_state = initial_extra_data.pool_state.clone();
-            let mut singleton_coin = client.get_coin_record_by_name(&coin.name()).await?;
+            let mut singleton_coin = if let Some(last_known_coin_name) = last_known_coin_name {
+                client
+                    .get_coin_record_by_name(&last_known_coin_name)
+                    .await?
+            } else {
+                client.get_coin_record_by_name(&coin.name()).await?
+            };
             while let Some(sc) = &singleton_coin {
-                info!("Found Next Coin, {} at height {}", sc.coin.name(), sc.confirmed_block_index);
+                info!(
+                    "Found Next Coin, {} at height {}",
+                    sc.coin.name(),
+                    sc.confirmed_block_index
+                );
                 if sc.spent {
                     let last_spend = client.get_coin_spend(sc).await?;
                     let next_coin = get_most_recent_singleton_coin_from_coin_spend(&last_spend)?;

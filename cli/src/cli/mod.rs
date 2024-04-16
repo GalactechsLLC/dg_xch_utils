@@ -20,9 +20,12 @@ pub struct Cli {
     pub fullnode_port: Option<u16>,
 
     #[arg(long, value_name = "Wallet Hostname")]
-    wallet_host: Option<String>,
+    pub wallet_host: Option<String>,
     #[arg(long, value_name = "Wallet Port")]
-    wallet_port: Option<u16>,
+    pub wallet_port: Option<u16>,
+
+    #[arg(long, value_name = "Network to use, default to Mainnet")]
+    pub network: Option<String>,
 
     #[command(subcommand)]
     pub action: RootCommands,
@@ -278,6 +281,8 @@ pub enum RootCommands {
         #[arg(long)]
         launcher_id: Bytes32,
         #[arg(long)]
+        target_address: Bytes32,
+        #[arg(long)]
         mnemonic: String,
         #[arg(long)]
         fee: Option<u64>,
@@ -288,6 +293,8 @@ pub enum RootCommands {
         target_pool: String,
         #[arg(long)]
         launcher_id: Bytes32,
+        #[arg(long)]
+        target_address: Bytes32,
         #[arg(long)]
         owner_key: String,
     },

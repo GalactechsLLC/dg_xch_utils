@@ -10,9 +10,12 @@ use dg_xch_clients::api::pool::{DefaultPoolClient, PoolClient};
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
+use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
-use dg_xch_core::protocols::pool::{GetPoolInfoResponse, FARMING_TO_POOL, SELF_POOLING, POOL_PROTOCOL_VERSION};
+use dg_xch_core::protocols::pool::{
+    GetPoolInfoResponse, FARMING_TO_POOL, POOL_PROTOCOL_VERSION, SELF_POOLING,
+};
 use dg_xch_keys::*;
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     calculate_synthetic_secret_key, puzzle_hash_for_pk, DEFAULT_HIDDEN_PUZZLE_HASH,
@@ -23,7 +26,6 @@ use std::io::{Error, ErrorKind};
 use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use dg_xch_core::consensus::constants::ConsensusConstants;
 
 pub fn create_cold_wallet() -> Result<(), Error> {
     let mnemonic = Mnemonic::generate(24)
@@ -117,17 +119,18 @@ pub async fn migrate_plot_nft(
             format!("https://{}", target_pool)
         })
     };
-    let pool_wallet = PlotNFTWallet::new(key_from_mnemonic_str(mnemonic)?, client.as_ref(), constants);
+    let pool_wallet =
+        PlotNFTWallet::new(key_from_mnemonic_str(mnemonic)?, client.as_ref(), constants);
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
-    if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client.clone(), launcher_id, None).await? {
+    if let Some(mut plot_nft) =
+        get_plotnft_by_launcher_id(client.clone(), launcher_id, None).await?
+    {
         info!("Checking if PlotNFT needs migration");
-        if plot_nft.pool_state.pool_url != pool_url
-            || (plot_nft.pool_state.pool_url == pool_url
-                && plot_nft.pool_state.state != FARMING_TO_POOL)
+        if plot_nft.pool_state.pool_url != pool_url || plot_nft.pool_state.state != FARMING_TO_POOL
         {
             info!("Starting Migration");
             let target_pool_state =
-                create_and_validate_target_state(pool_url.clone(), &owner_ph, &plot_nft).await?;
+                create_and_validate_target_state(pool_url.clone(), owner_ph, &plot_nft).await?;
             if plot_nft.pool_state.state == FARMING_TO_POOL {
                 info!("Creating Leaving Pool Spend");
                 if fee > 0 && !pool_wallet.sync().await? {
@@ -150,17 +153,26 @@ pub async fn migrate_plot_nft(
                         .as_ref()
                         .unwrap_or(&String::from("None"))
                 );
-                wait_for_plot_nft_ready_state(client.clone(), launcher_id, Some(plot_nft.singleton_coin.coin.name())).await;
+                wait_for_plot_nft_ready_state(
+                    client.clone(),
+                    launcher_id,
+                    Some(plot_nft.singleton_coin.coin.name()),
+                )
+                .await;
                 info!("Reloading PlotNFT Info");
-                plot_nft = get_plotnft_by_launcher_id(client.clone(), launcher_id, Some(plot_nft.singleton_coin.coin.name()))
-                    .await?
-                    .ok_or_else(|| {
-                        error!("Failed to reload plot_nft after first spend");
-                        Error::new(
-                            ErrorKind::Other,
-                            "Failed to reload plot_nft after first spend",
-                        )
-                    })?;
+                plot_nft = get_plotnft_by_launcher_id(
+                    client.clone(),
+                    launcher_id,
+                    Some(plot_nft.singleton_coin.coin.name()),
+                )
+                .await?
+                .ok_or_else(|| {
+                    error!("Failed to reload plot_nft after first spend");
+                    Error::new(
+                        ErrorKind::Other,
+                        "Failed to reload plot_nft after first spend",
+                    )
+                })?;
             }
             info!("Creating Farming to Pool Spend");
             if fee > 0 && !pool_wallet.sync().await? {
@@ -175,8 +187,16 @@ pub async fn migrate_plot_nft(
                 fee,
             )
             .await?;
-            info!("Waiting for PlotNFT State to be Buried for Joining {}", pool_url.unwrap_or(String::from("Self Pooling")));
-            wait_for_plot_nft_ready_state(client, launcher_id, Some(plot_nft.singleton_coin.coin.name())).await;
+            info!(
+                "Waiting for PlotNFT State to be Buried for Joining {}",
+                pool_url.unwrap_or(String::from("Self Pooling"))
+            );
+            wait_for_plot_nft_ready_state(
+                client,
+                launcher_id,
+                Some(plot_nft.singleton_coin.coin.name()),
+            )
+            .await;
         } else {
             info!("PlotNFT Already on Selected Pool");
         }
@@ -202,11 +222,11 @@ pub async fn migrate_plot_nft_with_owner_key(
         })
     };
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
-    if let Some(mut plot_nft) = get_plotnft_by_launcher_id(client.clone(), launcher_id, None).await? {
+    if let Some(mut plot_nft) =
+        get_plotnft_by_launcher_id(client.clone(), launcher_id, None).await?
+    {
         info!("Checking if PlotNFT needs migration");
-        if plot_nft.pool_state.pool_url != pool_url
-            || (plot_nft.pool_state.pool_url == pool_url
-                && plot_nft.pool_state.state != FARMING_TO_POOL)
+        if plot_nft.pool_state.pool_url != pool_url || plot_nft.pool_state.state != FARMING_TO_POOL
         {
             info!("Starting Migration");
             let target_pool_state =
@@ -229,17 +249,26 @@ pub async fn migrate_plot_nft_with_owner_key(
                         .as_ref()
                         .unwrap_or(&String::from("None"))
                 );
-                wait_for_plot_nft_ready_state(client.clone(), launcher_id, Some(plot_nft.singleton_coin.coin.name())).await;
+                wait_for_plot_nft_ready_state(
+                    client.clone(),
+                    launcher_id,
+                    Some(plot_nft.singleton_coin.coin.name()),
+                )
+                .await;
                 info!("Reloading PlotNFT Info");
-                plot_nft = get_plotnft_by_launcher_id(client.clone(), launcher_id, Some(plot_nft.singleton_coin.coin.name()))
-                    .await?
-                    .ok_or_else(|| {
-                        error!("Failed to reload plot_nft after first spend");
-                        Error::new(
-                            ErrorKind::Other,
-                            "Failed to reload plot_nft after first spend",
-                        )
-                    })?;
+                plot_nft = get_plotnft_by_launcher_id(
+                    client.clone(),
+                    launcher_id,
+                    Some(plot_nft.singleton_coin.coin.name()),
+                )
+                .await?
+                .ok_or_else(|| {
+                    error!("Failed to reload plot_nft after first spend");
+                    Error::new(
+                        ErrorKind::Other,
+                        "Failed to reload plot_nft after first spend",
+                    )
+                })?;
             }
             info!("Creating Farming to Pool Spend");
             submit_next_state_spend_bundle_with_key(
@@ -250,7 +279,10 @@ pub async fn migrate_plot_nft_with_owner_key(
                 &Default::default(),
             )
             .await?;
-            info!("Waiting for PlotNFT State to be Buried for Joining {}", pool_url.unwrap_or(String::from("Self Pooling")));
+            info!(
+                "Waiting for PlotNFT State to be Buried for Joining {}",
+                pool_url.unwrap_or(String::from("Self Pooling"))
+            );
             wait_for_num_blocks(client.clone(), 20, 600).await;
         } else {
             info!("PlotNFT Already on Selected Pool");
@@ -261,7 +293,11 @@ pub async fn migrate_plot_nft_with_owner_key(
     Ok(())
 }
 
-async fn wait_for_plot_nft_ready_state(client: Arc<FullnodeClient>, launcher_id: &Bytes32, last_known_coin_name: Option<Bytes32>) {
+async fn wait_for_plot_nft_ready_state(
+    client: Arc<FullnodeClient>,
+    launcher_id: &Bytes32,
+    last_known_coin_name: Option<Bytes32>,
+) {
     loop {
         match get_plotnft_ready_state(client.clone(), launcher_id, last_known_coin_name).await {
             Ok(is_ready) => {

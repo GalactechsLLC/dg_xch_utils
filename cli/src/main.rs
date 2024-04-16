@@ -13,6 +13,7 @@ use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
+use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS_MAP, MAINNET};
 use dg_xch_keys::{
     encode_puzzle_hash, key_from_mnemonic, master_sk_to_farmer_sk, master_sk_to_pool_sk,
     master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened,
@@ -50,6 +51,14 @@ async fn main() -> Result<(), Error> {
         ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
         ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
     });
+    let constants = if let Some(network) = cli.network {
+        CONSENSUS_CONSTANTS_MAP
+            .get(&network)
+            .cloned()
+            .unwrap_or_else(|| MAINNET.clone())
+    } else {
+        MAINNET.clone()
+    };
     match cli.action {
         RootCommands::PrintPlottingInfo { launcher_id } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
@@ -59,7 +68,7 @@ async fn main() -> Result<(), Error> {
             if let Some(launcher_id) = launcher_id {
                 info!("Searching for NFT with LauncherID: {launcher_id}");
                 if let Some(plotnft) =
-                    get_plotnft_by_launcher_id(client.clone(), &launcher_id).await?
+                    get_plotnft_by_launcher_id(client.clone(), &launcher_id, None).await?
                 {
                     plotnfts.push(plotnft);
                 } else {
@@ -666,6 +675,7 @@ async fn main() -> Result<(), Error> {
         RootCommands::MovePlotNFT {
             target_pool,
             launcher_id,
+            target_address,
             mnemonic,
             fee,
         } => {
@@ -674,7 +684,9 @@ async fn main() -> Result<(), Error> {
                 client,
                 &target_pool,
                 &launcher_id,
+                &target_address,
                 &mnemonic,
+                constants.clone(),
                 fee.unwrap_or_default(),
             )
             .await?
@@ -682,16 +694,24 @@ async fn main() -> Result<(), Error> {
         RootCommands::MovePlotNFTWithOwnerKey {
             target_pool,
             launcher_id,
+            target_address,
             owner_key,
         } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
             let owner_key = SecretKey::from_bytes(Bytes32::from(&owner_key).as_ref())
                 .expect("Failed to Parse Owner Secret Key");
-            migrate_plot_nft_with_owner_key(client, &target_pool, &launcher_id, &owner_key).await?
+            migrate_plot_nft_with_owner_key(
+                client,
+                &target_pool,
+                &launcher_id,
+                &target_address,
+                &owner_key,
+            )
+            .await?
         }
         RootCommands::GetPlotnftState { launcher_id } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
-            get_plotnft_ready_state(client, &launcher_id)
+            get_plotnft_ready_state(client, &launcher_id, None)
                 .await
                 .map(|_| ())?
         }
