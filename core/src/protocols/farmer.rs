@@ -388,6 +388,7 @@ pub enum FarmerRunningState {
     Migrating,
 }
 
+#[derive(Copy, Clone)]
 pub struct MostRecentSignagePoint {
     pub hash: Bytes32,
     pub index: u8,
