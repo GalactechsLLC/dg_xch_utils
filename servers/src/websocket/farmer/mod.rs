@@ -131,16 +131,11 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                     }),
                     Arc::new(RespondSignaturesHandle {
                         signage_points: shared_state.signage_points.clone(),
-                        quality_to_identifiers: shared_state.quality_to_identifiers.clone(),
                         proofs_of_space: shared_state.proofs_of_space.clone(),
-                        cache_time: shared_state.cache_time.clone(),
                         pool_public_keys: shared_state.pool_public_keys.clone(),
                         farmer_private_keys: shared_state.farmer_private_keys.clone(),
-                        owner_secret_keys: shared_state.owner_secret_keys.clone(),
-                        pool_state: shared_state.pool_states.clone(),
                         full_node_client: full_node_client.clone(),
                         config,
-                        headers: additional_headers.clone(),
                         #[cfg(feature = "metrics")]
                         metrics: shared_state.metrics.clone(),
                     }),
