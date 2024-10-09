@@ -83,16 +83,6 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .block)
     }
-    async fn get_block_count_metrics(&self) -> Result<BlockCountMetrics, Error> {
-        Ok(post::<BlockCountMetricsResp>(
-            &self.client,
-            &get_url(self.host.as_str(), self.port, "get_block_count_metrics"),
-            &Map::new(),
-            &self.additional_headers,
-        )
-        .await?
-        .metrics)
-    }
     async fn get_blocks(
         &self,
         start: u32,
@@ -119,6 +109,16 @@ impl FullnodeAPI for FullnodeClient {
     }
     async fn get_all_blocks(&self, start: u32, end: u32) -> Result<Vec<FullBlock>, Error> {
         self.get_blocks(start, end, true, false).await
+    }
+    async fn get_block_count_metrics(&self) -> Result<BlockCountMetrics, Error> {
+        Ok(post::<BlockCountMetricsResp>(
+            &self.client,
+            &get_url(self.host.as_str(), self.port, "get_block_count_metrics"),
+            &Map::new(),
+            &self.additional_headers,
+        )
+        .await?
+        .metrics)
     }
     async fn get_block_record_by_height(&self, height: u32) -> Result<BlockRecord, Error> {
         let mut request_body = Map::new();
@@ -740,7 +740,7 @@ async fn test_extended_functions() {
             None,
             None,
             None,
-            None,
+            10,
             None,
         )
         .await
@@ -767,7 +767,7 @@ async fn test_extended_functions() {
         assert!(coin_hints.values().any(|v| v == h));
     }
     let by_hints = fnc
-        .get_coin_records_by_hints(&hints, true, 4540000, 4542825)
+        .get_coin_records_by_hints_paginated(&hints, Some(true), Some(4540000), Some(4542825), 10, None)
         .await
         .unwrap();
     assert!(!by_hints.is_empty());
@@ -777,7 +777,7 @@ async fn test_extended_functions() {
             Some(true),
             Some(4540000),
             Some(4542825),
-            Some(2),
+            2,
             None,
         )
         .await

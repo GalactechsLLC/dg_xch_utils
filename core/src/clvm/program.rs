@@ -57,10 +57,7 @@ impl Program {
         }
     }
     pub fn null() -> Self {
-        let serial = match sexp_to_bytes(&SNULL) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
+        let serial = sexp_to_bytes(&SNULL).unwrap_or_default();
         Program {
             serialized: serial,
             sexp: SNULL.clone(),
@@ -68,18 +65,12 @@ impl Program {
     }
     pub fn to<T: IntoSExp>(vals: T) -> Self {
         let sexp = vals.to_sexp();
-        let serialized = match sexp_to_bytes(&sexp) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
+        let serialized = sexp_to_bytes(&sexp).unwrap_or_default();
         Program { serialized, sexp }
     }
     pub fn first(&self) -> Result<Self, Error> {
         let first = self.sexp.first()?;
-        let serialized = match sexp_to_bytes(first) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
+        let serialized = sexp_to_bytes(first).unwrap_or_default();
         Ok(Program {
             serialized,
             sexp: first.clone(),
@@ -87,10 +78,7 @@ impl Program {
     }
     pub fn rest(&self) -> Result<Self, Error> {
         let rest = self.sexp.rest()?;
-        let serialized = match sexp_to_bytes(rest) {
-            Ok(bytes) => bytes,
-            Err(_) => vec![],
-        };
+        let serialized = sexp_to_bytes(rest).unwrap_or_default();
         Ok(Program {
             serialized,
             sexp: rest.clone(),

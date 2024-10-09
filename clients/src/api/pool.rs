@@ -9,7 +9,7 @@ use dg_xch_core::protocols::pool::{
     PostPartialRequest, PostPartialResponse, PutFarmerRequest, PutFarmerResponse,
 };
 use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
-use log::{debug, info, warn};
+use log::{debug, warn};
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
