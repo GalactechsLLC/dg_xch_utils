@@ -11,8 +11,7 @@ use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS_MAP, MAINNET};
 #[cfg(feature = "metrics")]
 use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
-    DeclareProofOfSpace, NewSignagePoint, ProofsMap,
-    SignedValues,
+    DeclareProofOfSpace, NewSignagePoint, ProofsMap, SignedValues,
 };
 use dg_xch_core::protocols::harvester::RespondSignatures;
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};

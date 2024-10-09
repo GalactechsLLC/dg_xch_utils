@@ -78,8 +78,7 @@ fn test_reward_heights() {
     );
     //Added Together Are Correct Total
     assert_eq!(
-        calculate_base_farmer_reward(BLOCKS_PER_YEAR)
-            + calculate_pool_reward(BLOCKS_PER_YEAR),
+        calculate_base_farmer_reward(BLOCKS_PER_YEAR) + calculate_pool_reward(BLOCKS_PER_YEAR),
         2_000_000_000_000
     );
     assert_eq!(

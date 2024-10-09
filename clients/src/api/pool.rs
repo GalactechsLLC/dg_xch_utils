@@ -147,39 +147,33 @@ async fn send_request<T: Serialize + Debug, R: DeserializeOwned>(
     let future = match mode {
         RequestMode::Json(t) => {
             let (client, request) = request_builder.json(&t).build_split();
-            let request = request.map_err(|e| {
-                PoolError {
-                    error_code: PoolErrorCode::RequestFailed as u8,
-                    error_message: e.to_string(),
-                }
+            let request = request.map_err(|e| PoolError {
+                error_code: PoolErrorCode::RequestFailed as u8,
+                error_message: e.to_string(),
             })?;
             debug!("Sending request {request:?}");
             debug!("Request Data {t:?}");
             client.execute(request)
-        },
+        }
         RequestMode::Query(t) => {
             let (client, request) = request_builder.query(&t).build_split();
-            let request = request.map_err(|e| {
-                PoolError {
-                    error_code: PoolErrorCode::RequestFailed as u8,
-                    error_message: e.to_string(),
-                }
+            let request = request.map_err(|e| PoolError {
+                error_code: PoolErrorCode::RequestFailed as u8,
+                error_message: e.to_string(),
             })?;
             debug!("Sending request {request:?}");
             debug!("Request Data {t:?}");
             client.execute(request)
-        },
+        }
         RequestMode::Send => {
             let (client, request) = request_builder.build_split();
-            let request = request.map_err(|e| {
-                PoolError {
-                    error_code: PoolErrorCode::RequestFailed as u8,
-                    error_message: e.to_string(),
-                }
+            let request = request.map_err(|e| PoolError {
+                error_code: PoolErrorCode::RequestFailed as u8,
+                error_message: e.to_string(),
             })?;
             debug!("Sending request {request:?}");
             client.execute(request)
-        },
+        }
     };
     match future.await {
         Ok(resp) => match resp.status() {
@@ -192,9 +186,9 @@ async fn send_request<T: Serialize + Debug, R: DeserializeOwned>(
                             Ok(r) => Ok(r),
                             Err(e) => {
                                 warn!(
-                                "Failed to parse {method} response, Invalid Json: {:?}, {}",
-                                e, body
-                            );
+                                    "Failed to parse {method} response, Invalid Json: {:?}, {}",
+                                    e, body
+                                );
                                 Err(PoolError {
                                     error_code: PoolErrorCode::RequestFailed as u8,
                                     error_message: e.to_string(),
@@ -202,7 +196,7 @@ async fn send_request<T: Serialize + Debug, R: DeserializeOwned>(
                             }
                         },
                     }
-                },
+                }
                 Err(e) => {
                     warn!("Failed to {method}, Invalid Body: {:?}", e);
                     Err(PoolError {

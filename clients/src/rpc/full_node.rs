@@ -767,7 +767,14 @@ async fn test_extended_functions() {
         assert!(coin_hints.values().any(|v| v == h));
     }
     let by_hints = fnc
-        .get_coin_records_by_hints_paginated(&hints, Some(true), Some(4540000), Some(4542825), 10, None)
+        .get_coin_records_by_hints_paginated(
+            &hints,
+            Some(true),
+            Some(4540000),
+            Some(4542825),
+            10,
+            None,
+        )
         .await
         .unwrap();
     assert!(!by_hints.is_empty());
