@@ -9,11 +9,12 @@ use dg_xch_core::protocols::pool::{
     PostPartialRequest, PostPartialResponse, PutFarmerRequest, PutFarmerResponse,
 };
 use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
-use log::warn;
+use log::{debug, info, warn};
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::io::{Error, ErrorKind};
 
 #[async_trait]
@@ -131,7 +132,7 @@ impl PoolClient for DefaultPoolClient {
     }
 }
 
-async fn send_request<T: Serialize, R: DeserializeOwned>(
+async fn send_request<T: Serialize + Debug, R: DeserializeOwned>(
     mut request_builder: RequestBuilder,
     method: &str,
     headers: &Option<HashMap<String, String>>,
@@ -142,29 +143,65 @@ async fn send_request<T: Serialize, R: DeserializeOwned>(
             request_builder = request_builder.header(k, v);
         }
     }
+
     let future = match mode {
-        RequestMode::Json(t) => request_builder.json(&t).send(),
-        RequestMode::Query(t) => request_builder.query(&t).send(),
-        RequestMode::Send => request_builder.send(),
+        RequestMode::Json(t) => {
+            let (client, request) = request_builder.json(&t).build_split();
+            let request = request.map_err(|e| {
+                PoolError {
+                    error_code: PoolErrorCode::RequestFailed as u8,
+                    error_message: e.to_string(),
+                }
+            })?;
+            debug!("Sending request {request:?}");
+            debug!("Request Data {t:?}");
+            client.execute(request)
+        },
+        RequestMode::Query(t) => {
+            let (client, request) = request_builder.query(&t).build_split();
+            let request = request.map_err(|e| {
+                PoolError {
+                    error_code: PoolErrorCode::RequestFailed as u8,
+                    error_message: e.to_string(),
+                }
+            })?;
+            debug!("Sending request {request:?}");
+            debug!("Request Data {t:?}");
+            client.execute(request)
+        },
+        RequestMode::Send => {
+            let (client, request) = request_builder.build_split();
+            let request = request.map_err(|e| {
+                PoolError {
+                    error_code: PoolErrorCode::RequestFailed as u8,
+                    error_message: e.to_string(),
+                }
+            })?;
+            debug!("Sending request {request:?}");
+            client.execute(request)
+        },
     };
     match future.await {
         Ok(resp) => match resp.status() {
             reqwest::StatusCode::OK => match resp.text().await {
-                Ok(body) => match serde_json::from_str::<PoolError>(body.as_str()) {
-                    Ok(e) => Err(e),
-                    Err(_) => match serde_json::from_str(&body) {
-                        Ok(r) => Ok(r),
-                        Err(e) => {
-                            warn!(
+                Ok(body) => {
+                    debug!("Got Response from Pool: {body}");
+                    match serde_json::from_str::<PoolError>(body.as_str()) {
+                        Ok(e) => Err(e),
+                        Err(_) => match serde_json::from_str(&body) {
+                            Ok(r) => Ok(r),
+                            Err(e) => {
+                                warn!(
                                 "Failed to parse {method} response, Invalid Json: {:?}, {}",
                                 e, body
                             );
-                            Err(PoolError {
-                                error_code: PoolErrorCode::RequestFailed as u8,
-                                error_message: e.to_string(),
-                            })
-                        }
-                    },
+                                Err(PoolError {
+                                    error_code: PoolErrorCode::RequestFailed as u8,
+                                    error_message: e.to_string(),
+                                })
+                            }
+                        },
+                    }
                 },
                 Err(e) => {
                     warn!("Failed to {method}, Invalid Body: {:?}", e);
