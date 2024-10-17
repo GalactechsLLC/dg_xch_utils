@@ -8,11 +8,14 @@ use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::coin_spend::{compute_additions_with_cost, CoinSpend};
+use dg_xch_core::blockchain::condition_with_args::ConditionWithArgs;
+use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
 use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::blockchain::wallet_type::WalletType;
+use dg_xch_core::clvm::program::Program;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
@@ -109,15 +112,37 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     fn wallet_store(&self) -> Arc<Mutex<MemoryWalletStore>> {
         self.info.wallet_store.clone()
     }
+
+    async fn create_spend_bundle(
+        &self,
+        _payments: &[PendingPayment],
+        _input_coins: &[CoinRecord],
+        _change_puzzle_hash: Option<Bytes32>,
+        _allow_excess: bool,
+        _fee: i64,
+        _surplus: i64,
+        _origin_id: Option<Bytes32>,
+        _coins_to_assert: &[Bytes32],
+        _coin_announcements_to_assert: Vec<ConditionWithArgs>,
+        _puzzle_announcements_to_assert: Vec<ConditionWithArgs>,
+        _additional_conditions: Vec<ConditionWithArgs>,
+        _solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
+    ) -> Result<SpendBundle, Error> {
+        todo!()
+    }
 }
 impl PlotNFTWallet {
-    pub fn new(master_secret_key: SecretKey, client: &FullnodeClient) -> Self {
+    pub fn new(
+        master_secret_key: SecretKey,
+        client: &FullnodeClient,
+        constants: Arc<ConsensusConstants>,
+    ) -> Self {
         Self::create(
             WalletInfo {
                 id: 1,
                 name: "pooling_wallet".to_string(),
                 wallet_type: WalletType::PoolingWallet,
-                constants: Default::default(),
+                constants,
                 master_sk: master_secret_key.clone(),
                 wallet_store: Arc::new(Mutex::new(MemoryWalletStore::new(master_secret_key, 0))),
                 data: "".to_string(),
@@ -500,7 +525,7 @@ pub async fn scrounge_for_plotnfts(
                 if child.puzzle_hash == *SINGLETON_LAUNCHER_HASH {
                     let launcher_id = child.name();
                     if let Some(plotnft) =
-                        get_plotnft_by_launcher_id(client.clone(), &launcher_id).await?
+                        get_plotnft_by_launcher_id(client.clone(), &launcher_id, None).await?
                     {
                         plotnfts.lock().await.push(plotnft);
                     }
@@ -523,7 +548,7 @@ pub async fn scrounge_for_plotnfts(
                         for child in coin_spend.additions()? {
                             if child.puzzle_hash == *SINGLETON_LAUNCHER_HASH {
                                 let launcher_id = child.name();
-                                if let Some(plotnft) = get_plotnft_by_launcher_id(client.clone(), &launcher_id).await? {
+                                if let Some(plotnft) = get_plotnft_by_launcher_id(client.clone(), &launcher_id, None).await? {
                                     plotnfts.lock().await.push(plotnft);
                                 }
                             }
@@ -567,8 +592,11 @@ pub async fn scrounge_for_standard_coins(
 pub async fn get_pool_state(
     client: Arc<FullnodeClient>,
     launcher_id: &Bytes32,
+    last_known_coin_name: Option<Bytes32>,
 ) -> Result<PoolState, Error> {
-    if let Some(plotnft) = get_plotnft_by_launcher_id(client, launcher_id).await? {
+    if let Some(plotnft) =
+        get_plotnft_by_launcher_id(client, launcher_id, last_known_coin_name).await?
+    {
         Ok(plotnft.pool_state)
     } else {
         Err(Error::new(
@@ -581,16 +609,28 @@ pub async fn get_pool_state(
 pub async fn get_plotnft_by_launcher_id(
     client: Arc<FullnodeClient>,
     launcher_id: &Bytes32,
+    last_known_coin_name: Option<Bytes32>,
 ) -> Result<Option<PlotNft>, Error> {
-    let launcher_coin = client.get_coin_record_by_name(launcher_id).await?;
-    if let Some(launcher_coin) = launcher_coin {
-        let spend = client.get_coin_spend(&launcher_coin).await?;
+    if let Some(starting_coin) = client.get_coin_record_by_name(launcher_id).await? {
+        let spend = client.get_coin_spend(&starting_coin).await?;
         let initial_extra_data = launcher_coin_spend_to_extra_data(&spend)?;
         let first_coin = get_most_recent_singleton_coin_from_coin_spend(&spend)?;
         if let Some(coin) = first_coin {
+            info!("Found Launcher Coin, Starting to crawl Coin History");
             let mut last_not_null_state = initial_extra_data.pool_state.clone();
-            let mut singleton_coin = client.get_coin_record_by_name(&coin.name()).await?;
+            let mut singleton_coin = if let Some(last_known_coin_name) = last_known_coin_name {
+                client
+                    .get_coin_record_by_name(&last_known_coin_name)
+                    .await?
+            } else {
+                client.get_coin_record_by_name(&coin.name()).await?
+            };
             while let Some(sc) = &singleton_coin {
+                info!(
+                    "Found Next Coin, {} at height {}",
+                    sc.coin.name(),
+                    sc.confirmed_block_index
+                );
                 if sc.spent {
                     let last_spend = client.get_coin_spend(sc).await?;
                     let next_coin = get_most_recent_singleton_coin_from_coin_spend(&last_spend)?;

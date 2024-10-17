@@ -27,16 +27,6 @@ pub struct K32Meta3 {
     m0: u64,
     m1: u64,
 }
-trait FromMeta4 {
-    fn from_meta4(s: K32Meta4) -> Vec<Self>
-    where
-        Self: Sized;
-}
-impl FromMeta4 for K32Meta4 {
-    fn from_meta4(s: K32Meta4) -> Vec<Self> {
-        vec![s]
-    }
-}
 impl Add<Self> for K32Meta3 {
     type Output = Self;
     fn add(self, _: Self) -> Self::Output {

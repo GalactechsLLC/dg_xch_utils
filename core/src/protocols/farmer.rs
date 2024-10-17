@@ -388,6 +388,7 @@ pub enum FarmerRunningState {
     Migrating,
 }
 
+#[derive(Copy, Clone)]
 pub struct MostRecentSignagePoint {
     pub hash: Bytes32,
     pub index: u8,
@@ -418,6 +419,7 @@ pub struct FarmerSharedState<T> {
     pub most_recent_sp: Arc<RwLock<MostRecentSignagePoint>>,
     pub recent_errors: Arc<RwLock<RecentErrors<String>>>,
     pub running_state: Arc<RwLock<FarmerRunningState>>,
+    pub missing_keys: Arc<RwLock<Bytes48>>,
     pub data: Arc<T>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,

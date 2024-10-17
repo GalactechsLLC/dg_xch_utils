@@ -1,5 +1,7 @@
-use crate::wallets::common::DerivationRecord;
-use crate::wallets::{SecretKeyStore, Wallet, WalletInfo, WalletStore};
+use crate::wallets::common::{sign_coin_spends, DerivationRecord};
+use crate::wallets::{
+    make_solution_from_conditions, SecretKeyStore, Wallet, WalletInfo, WalletStore,
+};
 use async_trait::async_trait;
 use blst::min_pk::SecretKey;
 use dashmap::DashMap;
@@ -8,13 +10,21 @@ use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
+use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
+use dg_xch_core::blockchain::condition_with_args::ConditionWithArgs;
+use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
+use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::wallet_type::WalletType;
+use dg_xch_core::clvm::program::{Program, SerializedProgram, NULL};
+use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_keys::{master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened};
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     calculate_synthetic_secret_key, puzzle_hash_for_pk, DEFAULT_HIDDEN_PUZZLE_HASH,
 };
+use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, error, info};
+use num_traits::ToPrimitive;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
@@ -426,7 +436,31 @@ pub struct MemoryWallet {
     pub config: MemoryWalletConfig,
     pub fullnode_client: FullnodeClient,
 }
-impl MemoryWallet {}
+impl MemoryWallet {
+    pub fn new(
+        master_secret_key: SecretKey,
+        client: &FullnodeClient,
+        constants: Arc<ConsensusConstants>,
+    ) -> Self {
+        Self::create(
+            WalletInfo {
+                id: 1,
+                name: "memory_wallet".to_string(),
+                wallet_type: WalletType::StandardWallet,
+                constants,
+                master_sk: master_secret_key.clone(),
+                wallet_store: Arc::new(Mutex::new(MemoryWalletStore::new(master_secret_key, 0))),
+                data: "".to_string(),
+            },
+            MemoryWalletConfig {
+                fullnode_host: client.host.clone(),
+                fullnode_port: client.port,
+                fullnode_ssl_path: client.ssl_path.clone(),
+                additional_headers: client.additional_headers.clone(),
+            },
+        )
+    }
+}
 #[async_trait]
 impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
     fn create(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Self {
@@ -462,5 +496,174 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
 
     fn wallet_store(&self) -> Arc<Mutex<MemoryWalletStore>> {
         self.info.wallet_store.clone()
+    }
+
+    async fn create_spend_bundle(
+        &self,
+        payments: &[PendingPayment],
+        input_coins: &[CoinRecord],
+        change_puzzle_hash: Option<Bytes32>,
+        allow_excess: bool,
+        fee: i64,
+        surplus: i64,
+        origin_id: Option<Bytes32>,
+        coins_to_assert: &[Bytes32],
+        coin_announcements_to_assert: Vec<ConditionWithArgs>,
+        puzzle_announcements_to_assert: Vec<ConditionWithArgs>,
+        additional_conditions: Vec<ConditionWithArgs>,
+        solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
+    ) -> Result<SpendBundle, Error> {
+        let make_solution_fn = |conditions: Vec<ConditionWithArgs>| -> Program {
+            let standard_solution = make_solution_from_conditions(conditions);
+            if let Some(solution_transformer) = &solution_transformer {
+                solution_transformer(standard_solution)
+            } else {
+                standard_solution
+            }
+        };
+        let mut coins = input_coins.to_vec();
+        let total_coin_value: u64 = coins.iter().map(|c| c.coin.amount).sum();
+        let total_payment_value: u64 = payments.iter().map(|p| p.amount).sum();
+        let change = total_coin_value as i64 - total_payment_value as i64 - fee - surplus;
+        if change_puzzle_hash.is_none() && change > 0 && !allow_excess {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Found change but not Change Puzzle Hash was provided.",
+            ));
+        }
+        let mut spends = vec![];
+        let origin_index = match origin_id {
+            Some(origin_id) => {
+                match coins
+                    .iter()
+                    .enumerate()
+                    .find(|(_, val)| val.coin.coin_id() == origin_id)
+                {
+                    Some((index, _)) => index as i64,
+                    None => -1i64,
+                }
+            }
+            None => 0i64,
+        };
+        if origin_index == -1 {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Origin ID Not in Coin List",
+            ));
+        }
+        if origin_index != 0 {
+            let origin_coin = coins.remove(origin_index as usize);
+            coins.insert(0, origin_coin);
+        }
+        let mut primary_assert_coin_announcement: Option<ConditionWithArgs> = None;
+        let mut first = true;
+        for coin in coins.iter() {
+            let mut solution = None;
+            // create output for origin coin
+            if first {
+                first = false;
+                let mut conditions = vec![];
+                let mut created_coins = vec![];
+                for payment in payments {
+                    let send_create_coin_condition = payment.to_create_coin_condition();
+                    conditions.push(send_create_coin_condition);
+                    created_coins.push(Coin {
+                        parent_coin_info: coin.coin.coin_id(),
+                        puzzle_hash: payment.puzzle_hash,
+                        amount: payment.amount,
+                    });
+                }
+                if change > 0 {
+                    if let Some(change_puzzle_hash) = change_puzzle_hash {
+                        conditions.push(ConditionWithArgs {
+                            opcode: ConditionOpcode::CreateCoin,
+                            vars: vec![
+                                change_puzzle_hash.to_bytes(ChiaProtocolVersion::default()),
+                                change.to_bytes(ChiaProtocolVersion::default()),
+                            ],
+                        });
+                        created_coins.push(Coin {
+                            parent_coin_info: coin.coin.coin_id(),
+                            puzzle_hash: change_puzzle_hash,
+                            amount: change as u64,
+                        });
+                    }
+                }
+                if fee > 0 {
+                    conditions.push(ConditionWithArgs {
+                        opcode: ConditionOpcode::ReserveFee,
+                        vars: vec![fee.to_bytes(ChiaProtocolVersion::default())],
+                    });
+                }
+                conditions.extend(coin_announcements_to_assert.clone());
+                conditions.extend(puzzle_announcements_to_assert.clone());
+                conditions.extend(additional_conditions.clone());
+                let existing_coins_message = coins.iter().fold(vec![], |mut v, coin| {
+                    v.extend(coin.coin.coin_id().as_slice());
+                    v
+                });
+                let created_coins_message = created_coins.iter().fold(vec![], |mut v, coin| {
+                    v.extend(coin.coin_id().as_slice());
+                    v
+                });
+                let mut to_hash = existing_coins_message.clone();
+                to_hash.extend(created_coins_message.as_slice());
+                let message = hash_256(to_hash);
+                conditions.push(ConditionWithArgs {
+                    opcode: ConditionOpcode::CreateCoinAnnouncement,
+                    vars: vec![message.clone()],
+                });
+                for coin_id_to_assert in coins_to_assert.iter() {
+                    conditions.push(ConditionWithArgs {
+                        opcode: ConditionOpcode::AssertCoinAnnouncement,
+                        vars: vec![
+                            coin_id_to_assert.to_bytes(ChiaProtocolVersion::default()),
+                            message.clone(),
+                        ],
+                    });
+                }
+                primary_assert_coin_announcement = Some(ConditionWithArgs {
+                    opcode: ConditionOpcode::AssertCoinAnnouncement,
+                    vars: vec![
+                        coin.coin.coin_id().to_bytes(ChiaProtocolVersion::default()),
+                        message.clone(),
+                    ],
+                });
+                solution = Some(make_solution_fn(conditions));
+            } else if let Some(primary_assert_coin_announcement) = &primary_assert_coin_announcement
+            {
+                let args = vec![primary_assert_coin_announcement.clone()];
+                solution = Some(make_solution_fn(args));
+            }
+            let puzzle = self.puzzle_for_puzzle_hash(&coin.coin.puzzle_hash).await?;
+            let coin_spend = CoinSpend {
+                coin: coin.coin.clone(),
+                puzzle_reveal: SerializedProgram::from(puzzle),
+                solution: SerializedProgram::from(solution.unwrap_or(NULL.clone())),
+            };
+            spends.push(coin_spend);
+        }
+        let spend_bundle = sign_coin_spends(
+            spends,
+            |pub_key| {
+                let pub_key = *pub_key;
+                let wallet_store = self.wallet_store().clone();
+                async move {
+                    wallet_store
+                        .lock()
+                        .await
+                        .secret_key_for_public_key(&pub_key)
+                        .await
+                }
+            },
+            &self.wallet_info().constants.agg_sig_me_additional_data,
+            self.wallet_info()
+                .constants
+                .max_block_cost_clvm
+                .to_u64()
+                .unwrap(),
+        )
+        .await?;
+        Ok(spend_bundle)
     }
 }

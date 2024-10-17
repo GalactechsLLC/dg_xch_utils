@@ -6,15 +6,15 @@ const CONS_CHARS: [u8; 3] = [b'(', b'.', b')'];
 const SPACE_CHARS: [u8; 2] = [b' ', b'\t'];
 
 pub const START_CONS: Token = Token {
-    bytes: &[b'('],
+    bytes: b"(",
     index: 0,
 };
 pub const DOT_CONS: Token = Token {
-    bytes: &[b'.'],
+    bytes: b".",
     index: 0,
 };
 pub const END_CONS: Token = Token {
-    bytes: &[b')'],
+    bytes: b")",
     index: 0,
 };
 #[derive(Debug)]
