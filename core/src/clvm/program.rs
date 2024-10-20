@@ -464,7 +464,7 @@ impl SerializedProgram {
     }
     pub fn from_hex(hex_str: &str) -> Result<SerializedProgram, Error> {
         Ok(SerializedProgram {
-            buffer: hex_to_bytes(hex_str).map_err(|_| {
+            buffer: hex_to_bytes(hex_str.trim()).map_err(|_| {
                 Error::new(
                     ErrorKind::InvalidData,
                     "Failed to convert str to SerializedProgram",

@@ -8,14 +8,18 @@ use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::{CatCoinRecord, CoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
+use dg_xch_core::blockchain::condition_with_args::ConditionWithArgs;
+use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
 use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzlehash, WalletType};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
+use dg_xch_core::clvm::sexp::NULL;
 use dg_xch_core::clvm::utils::INFINITE_COST;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_keys::{master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened};
+use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle;
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     puzzle_for_pk, puzzle_hash_for_pk, solution_for_conditions,
 };
@@ -425,8 +429,24 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         puzzle_for_pk(public_key)
     }
     fn puzzle_hash_for_pk(&self, public_key: &Bytes48) -> Result<Bytes32, Error> {
-        dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk(public_key)
+        p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk(public_key)
     }
+    #[allow(clippy::too_many_arguments)]
+    async fn create_spend_bundle(
+        &self,
+        payments: &[PendingPayment],
+        input_coins: &[CoinRecord],
+        change_puzzle_hash: Option<Bytes32>,
+        allow_excess: bool,
+        fee: i64,
+        surplus: i64,
+        origin_id: Option<Bytes32>,
+        coins_to_assert: &[Bytes32],
+        coin_announcements_to_assert: Vec<ConditionWithArgs>,
+        puzzle_announcements_to_assert: Vec<ConditionWithArgs>,
+        additional_conditions: Vec<ConditionWithArgs>,
+        solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
+    ) -> Result<SpendBundle, Error>;
     #[allow(clippy::too_many_arguments)]
     fn make_solution(
         &self,
@@ -1016,4 +1036,20 @@ pub fn compute_memos_for_spend(
         }
     }
     Ok(memos)
+}
+#[must_use]
+pub fn make_solution_from_program(program: Program) -> Program {
+    Program::to(vec![NULL.clone(), program.sexp, NULL.clone()])
+}
+#[must_use]
+pub fn make_solution_from_conditions(conditions: &[ConditionWithArgs]) -> Program {
+    make_solution_from_program(Program::to(vec![
+        Program::to(0x01),
+        Program::to(
+            conditions
+                .iter()
+                .map(|c| Program::new(c.to_bytes(ChiaProtocolVersion::default())))
+                .collect::<Vec<Program>>(),
+        ),
+    ]))
 }
