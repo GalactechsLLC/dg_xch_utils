@@ -150,6 +150,7 @@ pub enum ProtocolMessageTypes {
     RespondFeeEstimates = 90,
 }
 impl From<u8> for ProtocolMessageTypes {
+    #[allow(clippy::too_many_lines)]
     fn from(byte: u8) -> Self {
         match byte {
             i if i == ProtocolMessageTypes::Handshake as u8 => ProtocolMessageTypes::Handshake,
@@ -489,7 +490,7 @@ pub struct ChiaMessageFilter {
     pub id: Option<u16>,
 }
 impl ChiaMessageFilter {
-    pub fn matches(&self, msg: Arc<ChiaMessage>) -> bool {
+    pub fn matches(&self, msg: &ChiaMessage) -> bool {
         if self.id.is_some() && self.id != msg.id {
             return false;
         }
@@ -633,7 +634,7 @@ impl WebsocketConnection {
         }
     }
     pub async fn clear(&self) {
-        self.message_handlers.write().await.clear()
+        self.message_handlers.write().await.clear();
     }
     pub async fn shutdown(&mut self) -> Result<(), Error> {
         self.close(None).await
@@ -668,7 +669,7 @@ impl ReadStream {
                                             let mut matched = false;
                                             for v in self.message_handlers.read().await.values()
                                                 .cloned().collect::<Vec<Arc<ChiaMessageHandler>>>() {
-                                                if v.filter.matches(msg_arc.clone()) {
+                                                if v.filter.matches(msg_arc.as_ref()) {
                                                     let msg_arc_c = msg_arc.clone();
                                                     let peer_id = self.peer_id.clone();
                                                     let peers = self.peers.clone();
@@ -720,14 +721,13 @@ impl ReadStream {
                 _ = await_termination() => {
                     return;
                 }
-                _ = async {
+                () = async {
                     loop {
                         if !run.load(Ordering::Relaxed){
                             debug!("Server is exiting");
                             return;
-                        } else {
-                            tokio::time::sleep(Duration::from_millis(100)).await
                         }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 } => {
                     return;

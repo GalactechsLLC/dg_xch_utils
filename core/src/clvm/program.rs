@@ -1,4 +1,4 @@
-use crate::blockchain::sized_bytes::*;
+use crate::blockchain::sized_bytes::{Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes, hex_to_bytes};
 use crate::clvm::curry_utils::curry;
 use crate::clvm::dialect::ChiaDialect;
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
@@ -48,7 +48,7 @@ impl Program {
         match sexp_from_bytes(&serialized) {
             Ok(sexp) => Program { serialized, sexp },
             Err(e) => {
-                println!("Error building Program: {:?}", e);
+                println!("Error building Program: {e:?}");
                 Program {
                     serialized: vec![],
                     sexp: SNULL.clone(),
@@ -106,13 +106,10 @@ impl Program {
     }
 
     pub fn tree_hash(&self) -> Bytes32 {
-        let sexp = match sexp_from_bytes(&self.serialized) {
-            Ok(node) => node,
-            Err(e) => {
-                println!("ERROR: {:?}", e);
-                SNULL.clone()
-            }
-        };
+        let sexp = sexp_from_bytes(&self.serialized).unwrap_or_else(|e| {
+            println!("ERROR: {e:?}");
+            SNULL.clone()
+        });
         Bytes32::new(&tree_hash(&sexp))
     }
     pub fn curry(&self, args: &[Program]) -> Result<Program, Error> {
@@ -120,20 +117,20 @@ impl Program {
     }
 
     pub fn uncurry(&self) -> Result<(Program, Program), Error> {
-        fn inner_match(o: SExp, expected: &[u8]) -> Result<(), Error> {
-            if o.atom()? != expected {
+        fn inner_match(o: &SExp, expected: &[u8]) -> Result<(), Error> {
+            if o.atom()? == expected {
+                Ok(())
+            } else {
                 Err(Error::new(
                     ErrorKind::InvalidData,
                     format!("expected: {}", encode(expected)),
                 ))
-            } else {
-                Ok(())
             }
         }
         {
             //(2 (1 . <mod>) <args>)
             let as_list = self.as_list();
-            inner_match(as_list[0].clone().to_sexp() /*ev*/, b"\x02")?;
+            inner_match(&as_list[0].clone().to_sexp() /*ev*/, b"\x02")?;
             let q_pair = as_list[1].as_pair().ok_or_else(|| {
                 //quoted_inner
                 Error::new(
@@ -141,13 +138,13 @@ impl Program {
                     format!("expected pair found atom: {}", as_list[1]),
                 )
             })?;
-            inner_match(q_pair.0.to_sexp(), b"\x01")?;
+            inner_match(&q_pair.0.to_sexp(), b"\x01")?;
             let mut args = vec![];
             let mut args_list = as_list[2].clone();
             while args_list.is_pair() {
                 //(4(1. < arg >) < rest >)
                 let as_list = args_list.as_list();
-                inner_match(as_list[0].clone().to_sexp(), b"\x04")?;
+                inner_match(&as_list[0].clone().to_sexp(), b"\x04")?;
                 let q_pair = as_list[1].as_pair().ok_or_else(|| {
                     //quoted_inner
                     Error::new(
@@ -155,11 +152,11 @@ impl Program {
                         format!("expected pair found atom: {}", as_list[1]),
                     )
                 })?;
-                inner_match(q_pair.0.to_sexp(), b"\x01")?;
+                inner_match(&q_pair.0.to_sexp(), b"\x01")?;
                 args.push(q_pair.1.to_sexp());
                 args_list = as_list[2].clone();
             }
-            inner_match(args_list.to_sexp(), b"\x01")?;
+            inner_match(&args_list.to_sexp(), b"\x01")?;
             Ok((Program::to(q_pair.1), Program::to(args)))
         }
         .or_else(|_: Error| Ok((self.clone(), Program::to(0))))
@@ -207,14 +204,14 @@ impl Program {
                 Ok(s) => Some(Program::new(s)),
                 Err(_) => None,
             },
-            _ => None,
+            SExp::Pair(_) => None,
         }
     }
 
     pub fn as_vec(&self) -> Option<Vec<u8>> {
         match &self.sexp {
             SExp::Atom(vec) => Some(vec.data.clone()),
-            _ => None,
+            SExp::Pair(_) => None,
         }
     }
 
@@ -231,7 +228,7 @@ impl Program {
                 };
                 Some((left, right))
             }
-            _ => None,
+            SExp::Atom(_) => None,
         }
     }
 
@@ -239,7 +236,7 @@ impl Program {
         match sexp_to_bytes(&SExp::Pair((&self.sexp, &other.sexp).into())) {
             Ok(bytes) => Program::new(bytes),
             Err(e) => {
-                println!("{:?}", e);
+                println!("{e:?}");
                 Program::null()
             }
         }
@@ -396,9 +393,8 @@ macro_rules! impl_ints {
                     let as_atom = self.as_vec().ok_or(Error::new(ErrorKind::InvalidInput, "Invalid program for $name"))?;
                     if as_atom.len() > $size {
                         return Err(Error::new(ErrorKind::InvalidInput, "Invalid program for $name"));
-                    } else {
-                        Ok($name::from_le_bytes(as_atom.as_slice().try_into().map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid program for $name: {:?}", e)))?))
                     }
+                    Ok($name::from_le_bytes(as_atom.as_slice().try_into().map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid program for $name: {:?}", e)))?))
                 }
             }
             impl TryInto<$name> for Program {

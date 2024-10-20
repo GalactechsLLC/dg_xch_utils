@@ -1,6 +1,6 @@
 use crate::wallets::common::sign_coin_spend;
 use crate::wallets::memory_wallet::{MemoryWalletConfig, MemoryWalletStore};
-use crate::wallets::{Wallet, WalletInfo};
+use crate::wallets::{Wallet, WalletInfo, WalletStore};
 use async_trait::async_trait;
 use blst::min_pk::SecretKey;
 use dg_xch_clients::api::full_node::FullnodeAPI;
@@ -56,6 +56,17 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
             config,
         }
     }
+    fn create_simulator(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Self {
+        Self {
+            fullnode_client: Arc::new(FullnodeClient::new_simulator(
+                &config.fullnode_host,
+                config.fullnode_port,
+                60,
+            )),
+            info,
+            config,
+        }
+    }
 
     fn name(&self) -> &str {
         &self.info.name
@@ -86,15 +97,10 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
         }
         let (spend, unspent) =
             scrounge_for_standard_coins(self.fullnode_client.clone(), &puzzle_hashes).await?;
-        let mut store = self.info.wallet_store.lock().await;
-        store.spent_coins.clear();
-        store.unspent_coins.clear();
-        store
-            .spent_coins
-            .extend(spend.into_iter().map(|v| (v.coin.name(), v)));
-        store
-            .unspent_coins
-            .extend(unspent.into_iter().map(|v| (v.coin.name(), v)));
+        let store = self.info.wallet_store.lock().await;
+        let coins = store.standard_coins();
+        coins.lock().await.extend(spend.into_iter());
+        coins.lock().await.extend(unspent.into_iter());
         Ok(true)
     }
 

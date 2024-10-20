@@ -7,7 +7,7 @@ use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
 use rustls::server::{ClientCertVerified, ClientCertVerifier, ParsedCertificate};
-use rustls::{DistinguishedName, PrivateKey, RootCertStore};
+use rustls::{DistinguishedName, PrivateKey};
 use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -30,12 +30,10 @@ use x509_cert::spki::SubjectPublicKeyInfo;
 use x509_cert::time::{Time, Validity};
 use x509_cert::Certificate;
 
-pub struct AllowAny {
-    _roots: RootCertStore,
-}
+pub struct AllowAny {}
 impl AllowAny {
-    pub fn new(_roots: RootCertStore) -> Arc<Self> {
-        Arc::new(Self { _roots })
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self { })
     }
 }
 
@@ -141,12 +139,12 @@ pub fn load_private_key(filename: &str) -> Result<PrivateKey, Error> {
     let mut reader = BufReader::new(keyfile);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
-            Ok(Item::RSAKey(key)) | Ok(Item::PKCS8Key(key)) | Ok(Item::ECKey(key)) => {
+            Ok(Item::RSAKey(key) | Item::PKCS8Key(key) | Item::ECKey(key)) => {
                 return Ok(PrivateKey(key));
             }
             Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
             _ => {
-                error!("Unknown Item while loading private key")
+                error!("Unknown Item while loading private key");
             }
         }
     }
@@ -157,12 +155,12 @@ pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKey, Error> {
     let mut reader = BufReader::new(bytes);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
-            Ok(Item::RSAKey(key)) | Ok(Item::PKCS8Key(key)) | Ok(Item::ECKey(key)) => {
+            Ok(Item::RSAKey(key) | Item::PKCS8Key(key) | Item::ECKey(key)) => {
                 return Ok(PrivateKey(key));
             }
             Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
             _ => {
-                error!("Unknown Item while loading private key")
+                error!("Unknown Item while loading private key");
             }
         }
     }
@@ -284,7 +282,7 @@ pub fn generate_ca_signed_cert_data(
 
 pub fn make_ca_cert(cert_path: &Path, key_path: &Path) -> Result<(Vec<u8>, Vec<u8>), Error> {
     let (cert_data, key_data) = make_ca_cert_data()
-        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
     write_ssl_cert_and_key(cert_path, &cert_data, key_path, &key_data, true)?;
     Ok((cert_data, key_data))
 }
@@ -357,7 +355,7 @@ pub fn create_all_ssl_memory() -> Result<MemorySSL, Error> {
     let mut public_map = HashMap::new();
     let mut private_map = HashMap::new();
     let (ca_cert_data, ca_key_data) = make_ca_cert_data()
-        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
     info!("Generating Private Certs");
     let private_certs =
         generate_ssl_for_nodes_in_memory(&ca_cert_data, &ca_key_data, &ALL_PRIVATE_NODE_NAMES)?;
@@ -436,9 +434,7 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
 
 pub fn validate_all_ssl(ssl_dir: &Path) -> bool {
     let ca_dir = ssl_dir.join(Path::new("ca"));
-    if !ca_dir.exists() {
-        false
-    } else {
+    if ca_dir.exists() {
         let private_ca_key_path = ca_dir.join("private_ca.key");
         let private_ca_crt_path = ca_dir.join("private_ca.crt");
         let chia_ca_crt_path = ca_dir.join("chia_ca.crt");
@@ -453,6 +449,8 @@ pub fn validate_all_ssl(ssl_dir: &Path) -> bool {
             validate_node_paths(ssl_dir, "private", &ALL_PRIVATE_NODE_NAMES)
                 && validate_node_paths(ssl_dir, "public", &ALL_PUBLIC_NODE_NAMES)
         }
+    } else {
+        false
     }
 }
 
@@ -461,16 +459,15 @@ fn validate_node_paths(ssl_dir: &Path, prefix: &str, nodes: &[&str]) -> bool {
         let node_dir = ssl_dir.join(Path::new(*node_name));
         if !node_dir.exists() {
             return false;
-        } else {
-            let crt_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.crt")));
-            let key_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.key")));
-            if key_path.exists() && crt_path.exists() {
-                if !validate_cert(&crt_path) || !validate_key(&key_path) {
-                    return false;
-                }
-            } else {
+        }
+        let crt_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.crt")));
+        let key_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.key")));
+        if key_path.exists() && crt_path.exists() {
+            if !validate_cert(&crt_path) || !validate_key(&key_path) {
                 return false;
             }
+        } else {
+            return false;
         }
     }
     true
@@ -527,7 +524,7 @@ fn validate_key(path: &Path) -> bool {
                     }
                     Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
                     _ => {
-                        error!("Unknown Item while loading private key")
+                        error!("Unknown Item while loading private key");
                     }
                 }
             }
@@ -572,10 +569,10 @@ pub fn generate_ssl_for_nodes_in_memory(
     for node_name in nodes {
         let (cert, key) = generate_ca_signed_cert_data(crt, key)?;
         map.insert(
-            node_name.to_string(),
+            (*node_name).to_string(),
             MemoryNodeSSL {
-                cert: cert.to_vec(),
-                key: key.to_vec(),
+                cert,
+                key,
             },
         );
     }

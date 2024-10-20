@@ -2,7 +2,7 @@ use crate::blockchain::sized_bytes::Bytes32;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SubEpochSummary {
     pub prev_subepoch_summary_hash: Bytes32,
     pub reward_chain_hash: Bytes32,

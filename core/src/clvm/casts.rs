@@ -63,10 +63,10 @@ pub fn bigint_to_bytes(v_: &BigInt, signed: bool) -> Result<Vec<u8>, Error> {
     let (_sign, u32_digits) = v.to_u32_digits();
     for (i, n) in u32_digits.iter().take(byte4_length).enumerate() {
         let word_idx = byte4_length - i - 1;
-        let num = *n as u64;
+        let num = u64::from(*n);
         let pointer = extra_byte + byte4_remain + word_idx * 4;
         let setval = if v.is_negative() {
-            (1_u64 << 32) - num - dec as u64
+            (1_u64 << 32) - num - u64::from(dec)
         } else {
             num
         };

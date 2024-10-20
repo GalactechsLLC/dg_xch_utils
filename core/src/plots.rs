@@ -28,8 +28,7 @@ pub enum PlotTable {
 impl PlotTable {
     pub fn lower(&self) -> &Self {
         match self {
-            PlotTable::Table1 => &PlotTable::Table1,
-            PlotTable::Table2 => &PlotTable::Table1,
+            PlotTable::Table1 | PlotTable::Table2 => &PlotTable::Table1,
             PlotTable::Table3 => &PlotTable::Table2,
             PlotTable::Table4 => &PlotTable::Table3,
             PlotTable::Table5 => &PlotTable::Table4,
@@ -202,9 +201,8 @@ impl PlotHeader {
     }
     pub fn plot_flags(&self) -> u32 {
         match self {
-            PlotHeader::V1(_) => 0,
+            PlotHeader::V1(_) | PlotHeader::GHv2_5(_) => 0,
             PlotHeader::V2(h) => h.plot_flags,
-            PlotHeader::GHv2_5(_) => 0,
         }
     }
     pub fn compression_level(&self) -> u8 {
@@ -344,8 +342,8 @@ pub struct PlotNftExtraData {
     pub delay_puzzle_hash: Bytes32,
 }
 impl PlotNftExtraData {
-    pub fn from_program(program: Program) -> Result<Self, Error> {
-        let pool_state = PoolState::from_extra_data_program(&program)?;
+    pub fn from_program(program: &Program) -> Result<Self, Error> {
+        let pool_state = PoolState::from_extra_data_program(program)?;
         let extra_data_program_list = program.as_list();
         let delay_time_programs: Vec<Program> = extra_data_program_list
             .iter()

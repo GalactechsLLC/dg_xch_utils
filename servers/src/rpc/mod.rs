@@ -344,7 +344,7 @@ impl RpcServer {
         Ok(Arc::new(
             ServerConfig::builder()
                 .with_safe_defaults()
-                .with_client_cert_verifier(AllowAny::new(root_cert_store))
+                .with_client_cert_verifier(AllowAny::new())
                 .with_single_cert(certs, key)
                 .map_err(|e| {
                     Error::new(

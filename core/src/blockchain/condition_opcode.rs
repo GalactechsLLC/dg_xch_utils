@@ -2,16 +2,17 @@ use crate::clvm::program::Program;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ConditionCost {
-    AggSig = 1200000, // the cost of one G1 subgroup check + aggregated signature validation
-    CreateCoin = 1800000,
+    AggSig = 1_200_000, // the cost of one G1 subgroup check + aggregated signature validation
+    CreateCoin = 1_800_000,
     Unknown = 0,
 }
 impl From<u64> for ConditionCost {
     fn from(value: u64) -> Self {
         match value {
-            1200000 => ConditionCost::AggSig,
-            1800000 => ConditionCost::CreateCoin,
+            1_200_000 => ConditionCost::AggSig,
+            1_800_000 => ConditionCost::CreateCoin,
             _ => ConditionCost::Unknown,
         }
     }
@@ -56,7 +57,6 @@ pub enum ConditionOpcode {
 impl From<u8> for ConditionOpcode {
     fn from(value: u8) -> Self {
         match value {
-            0u8 => ConditionOpcode::Unknown,
             1u8 => ConditionOpcode::Remark,
             43u8 => ConditionOpcode::AggSigParent,
             44u8 => ConditionOpcode::AggSigPuzzle,

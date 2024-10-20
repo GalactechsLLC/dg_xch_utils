@@ -7,13 +7,14 @@ use std::io::{Error, ErrorKind};
 
 const MAX_SINGLE_BYTE: u8 = 0x7f;
 const CONS_BOX_MARKER: u8 = 0xff;
-const MAX_DECODE_SIZE: u64 = 0x400000000;
+const MAX_DECODE_SIZE: u64 = 0x0004_0000_0000;
 
 enum ParserOp {
     Exp,
     Cons,
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
     let mut stream = Cursor::new(bytes);
     let mut byte_buf = [0; 1];
@@ -84,6 +85,7 @@ pub fn sexp_to_bytes(sexp: &SExp) -> std::io::Result<Vec<u8>> {
     Ok(buffer.into_inner())
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn encode_size(f: &mut dyn Write, size: u64) -> Result<(), Error> {
     if size < 0x40 {
         f.write_all(&[(0x80 | size) as u8])?;

@@ -13,7 +13,7 @@ impl<T: Clone + Serialize> RecentErrors<T> {
         Self {
             depth,
             cache_duration,
-            errors: Default::default(),
+            errors: VecDeque::default(),
         }
     }
     pub fn add(&mut self, t: T) {

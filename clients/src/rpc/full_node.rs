@@ -1,8 +1,17 @@
 use crate::api::full_node::{FullnodeAPI, FullnodeExtAPI};
 use crate::api::responses::{
+    AdditionsAndRemovalsResp, BlockRecordAryResp, BlockRecordResp, BlockchainStateResp,
+    CoinRecordAryResp, CoinRecordResp, CoinSpendResp, FullBlockAryResp, FullBlockResp,
+    InitialFreezePeriodResp, MempoolItemResp, MempoolItemsResp, MempoolTXResp, NetSpaceResp,
+    NetworkInfoResp, SignagePointOrEOSResp, SingletonByLauncherIdResp, TXResp,
+    UnfinishedBlockAryResp,
+};
+use crate::api::responses::{
     BlockCountMetricsResp, CoinHintsResp, CoinSpendMapResp, HintedAdditionsAndRemovalsResp,
     MempoolItemAryResp, PaginatedCoinRecordAryResp,
 };
+use crate::rpc::{get_client, get_http_client, get_insecure_url, get_url, post};
+use crate::ClientSSLConfig;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
@@ -22,16 +31,9 @@ use reqwest::Client;
 use serde_json::{json, Map};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
+use std::sync::Arc;
 
-use crate::api::responses::{
-    AdditionsAndRemovalsResp, BlockRecordAryResp, BlockRecordResp, BlockchainStateResp,
-    CoinRecordAryResp, CoinRecordResp, CoinSpendResp, FullBlockAryResp, FullBlockResp,
-    InitialFreezePeriodResp, MempoolItemResp, MempoolItemsResp, MempoolTXResp, NetSpaceResp,
-    NetworkInfoResp, SignagePointOrEOSResp, SingletonByLauncherIdResp, TXResp,
-    UnfinishedBlockAryResp,
-};
-use crate::rpc::{get_client, get_url, post};
-use crate::ClientSSLConfig;
+pub type UrlFunction = Arc<dyn Fn(&str, u16, &str) -> String + Send + Sync + 'static>;
 
 pub struct FullnodeClient {
     client: Client,
@@ -39,6 +41,7 @@ pub struct FullnodeClient {
     pub port: u16,
     pub ssl_path: Option<ClientSSLConfig>,
     pub additional_headers: Option<HashMap<String, String>>,
+    url_function: UrlFunction,
 }
 
 impl FullnodeClient {
@@ -55,6 +58,17 @@ impl FullnodeClient {
             port,
             ssl_path,
             additional_headers: additional_headers.clone(),
+            url_function: Arc::new(get_url),
+        }
+    }
+    pub fn new_simulator(host: &str, port: u16, timeout: u64) -> Self {
+        FullnodeClient {
+            client: get_http_client(timeout).unwrap(),
+            host: host.to_string(),
+            port,
+            ssl_path: None,
+            additional_headers: None,
+            url_function: Arc::new(get_insecure_url),
         }
     }
 }
@@ -64,7 +78,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_blockchain_state(&self) -> Result<BlockchainState, Error> {
         Ok(post::<BlockchainStateResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_blockchain_state"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_blockchain_state"),
             &Map::new(),
             &self.additional_headers,
         )
@@ -76,7 +90,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("header_hash".to_string(), json!(header_hash));
         Ok(post::<FullBlockResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_block"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_block"),
             &request_body,
             &self.additional_headers,
         )
@@ -100,7 +114,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("exclude_reorged".to_string(), json!(exclude_reorged));
         Ok(post::<FullBlockAryResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_blocks"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_blocks"),
             &request_body,
             &self.additional_headers,
         )
@@ -113,7 +127,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_block_count_metrics(&self) -> Result<BlockCountMetrics, Error> {
         Ok(post::<BlockCountMetricsResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_block_count_metrics"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_block_count_metrics"),
             &Map::new(),
             &self.additional_headers,
         )
@@ -125,7 +139,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("height".to_string(), json!(height));
         Ok(post::<BlockRecordResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_block_record_by_height"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_block_record_by_height"),
             &request_body,
             &self.additional_headers,
         )
@@ -137,7 +151,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("header_hash".to_string(), json!(header_hash));
         Ok(post::<BlockRecordResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_block_record"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_block_record"),
             &request_body,
             &self.additional_headers,
         )
@@ -150,7 +164,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("end".to_string(), json!(end));
         Ok(post::<BlockRecordAryResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_block_records"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_block_records"),
             &request_body,
             &self.additional_headers,
         )
@@ -160,7 +174,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_unfinished_block_headers(&self) -> Result<Vec<UnfinishedHeaderBlock>, Error> {
         Ok(post::<UnfinishedBlockAryResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_unfinished_block_headers",
@@ -187,7 +201,7 @@ impl FullnodeAPI for FullnodeClient {
         );
         Ok(post::<NetSpaceResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_network_space"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_network_space"),
             &request_body,
             &self.additional_headers,
         )
@@ -212,7 +226,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("header_hash".to_string(), json!(header_hash));
         let resp = post::<AdditionsAndRemovalsResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_additions_and_removals"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_additions_and_removals"),
             &request_body,
             &self.additional_headers,
         )
@@ -222,7 +236,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_initial_freeze_period(&self) -> Result<u64, Error> {
         Ok(post::<InitialFreezePeriodResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_initial_freeze_period"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_initial_freeze_period"),
             &Map::new(),
             &self.additional_headers,
         )
@@ -232,7 +246,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_network_info(&self) -> Result<NetworkInfo, Error> {
         let resp = post::<NetworkInfoResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_network_info"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_network_info"),
             &Map::new(),
             &self.additional_headers,
         )
@@ -258,7 +272,7 @@ impl FullnodeAPI for FullnodeClient {
         }
         let resp = post::<SignagePointOrEOSResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_recent_signage_point_or_eos",
@@ -297,7 +311,7 @@ impl FullnodeAPI for FullnodeClient {
         }
         Ok(post::<CoinRecordAryResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_coin_records_by_puzzle_hash",
@@ -329,7 +343,7 @@ impl FullnodeAPI for FullnodeClient {
         }
         Ok(post::<CoinRecordAryResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_coin_records_by_puzzle_hashes",
@@ -345,7 +359,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("name".to_string(), json!(name));
         Ok(post::<CoinRecordResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_coin_record_by_name"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_coin_record_by_name"),
             &request_body,
             &self.additional_headers,
         )
@@ -369,7 +383,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("end_height".to_string(), json!(end_height));
         Ok(post::<CoinRecordAryResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_coin_records_by_names"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_coin_records_by_names"),
             &request_body,
             &self.additional_headers,
         )
@@ -393,7 +407,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("end_height".to_string(), json!(end_height));
         Ok(post::<CoinRecordAryResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_coin_records_by_parent_ids",
@@ -421,7 +435,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("end_height".to_string(), json!(end_height));
         Ok(post::<CoinRecordAryResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_coin_records_by_hint"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_coin_records_by_hint"),
             &request_body,
             &self.additional_headers,
         )
@@ -433,7 +447,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("spend_bundle".to_string(), json!(spend_bundle));
         Ok(post::<TXResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "push_tx"),
+            &(self.url_function)(self.host.as_str(), self.port, "push_tx"),
             &request_body,
             &self.additional_headers,
         )
@@ -450,7 +464,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("height".to_string(), json!(height));
         Ok(post::<CoinSpendResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_puzzle_and_solution"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_puzzle_and_solution"),
             &request_body,
             &self.additional_headers,
         )
@@ -464,7 +478,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_all_mempool_tx_ids(&self) -> Result<Vec<Bytes32>, Error> {
         Ok(post::<MempoolTXResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_all_mempool_tx_ids"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_all_mempool_tx_ids"),
             &Map::new(),
             &self.additional_headers,
         )
@@ -474,7 +488,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_all_mempool_items(&self) -> Result<HashMap<Bytes32, MempoolItem>, Error> {
         Ok(post::<MempoolItemsResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_all_mempool_items"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_all_mempool_items"),
             &Map::new(),
             &self.additional_headers,
         )
@@ -486,7 +500,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("tx_id".to_string(), json!(tx_id));
         Ok(post::<MempoolItemResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_mempool_item_by_tx_id"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_mempool_item_by_tx_id"),
             &request_body,
             &self.additional_headers,
         )
@@ -501,7 +515,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("coin_name".to_string(), json!(coin_name));
         Ok(post::<MempoolItemAryResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_mempool_items_by_coin_name",
@@ -526,7 +540,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("target_times".to_string(), json!(target_times));
         post::<FeeEstimate>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_fee_estimate"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_fee_estimate"),
             &request_body,
             &self.additional_headers,
         )
@@ -544,7 +558,7 @@ impl FullnodeExtAPI for FullnodeClient {
         request_body.insert("launcher_id".to_string(), json!(launcher_id));
         let resp = post::<SingletonByLauncherIdResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_singleton_by_launcher_id",
@@ -563,7 +577,7 @@ impl FullnodeExtAPI for FullnodeClient {
         request_body.insert("header_hash".to_string(), json!(header_hash));
         let resp = post::<HintedAdditionsAndRemovalsResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_additions_and_removals_with_hints",
@@ -578,21 +592,27 @@ impl FullnodeExtAPI for FullnodeClient {
     async fn get_coin_records_by_hints(
         &self,
         hints: &[Bytes32],
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, Error> {
         let mut request_body = Map::new();
         request_body.insert("hints".to_string(), json!(hints));
-        request_body.insert(
-            "include_spent_coins".to_string(),
-            json!(include_spent_coins),
-        );
-        request_body.insert("start_height".to_string(), json!(start_height));
-        request_body.insert("end_height".to_string(), json!(end_height));
+        if let Some(include_spent_coins) = include_spent_coins {
+            request_body.insert(
+                "include_spent_coins".to_string(),
+                json!(include_spent_coins),
+            );
+        }
+        if let Some(start_height) = start_height {
+            request_body.insert("start_height".to_string(), json!(start_height));
+        }
+        if let Some(end_height) = end_height {
+            request_body.insert("end_height".to_string(), json!(end_height));
+        }
         Ok(post::<CoinRecordAryResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_coin_records_by_hints"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_coin_records_by_hints"),
             &request_body,
             &self.additional_headers,
         )
@@ -627,7 +647,7 @@ impl FullnodeExtAPI for FullnodeClient {
         }
         let resp = post::<PaginatedCoinRecordAryResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_coin_records_by_hints_paginated",
@@ -666,7 +686,7 @@ impl FullnodeExtAPI for FullnodeClient {
         }
         let resp = post::<PaginatedCoinRecordAryResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_coin_records_by_puzzle_hashes_paginated",
@@ -687,7 +707,7 @@ impl FullnodeExtAPI for FullnodeClient {
         request_body.insert("coin_ids".to_string(), json!(coin_ids));
         Ok(post::<CoinHintsResp>(
             &self.client,
-            &get_url(self.host.as_str(), self.port, "get_hints_by_coin_ids"),
+            &(self.url_function)(self.host.as_str(), self.port, "get_hints_by_coin_ids"),
             &request_body,
             &self.additional_headers,
         )
@@ -716,7 +736,7 @@ impl FullnodeExtAPI for FullnodeClient {
         }
         Ok(post::<CoinSpendMapResp>(
             &self.client,
-            &get_url(
+            &(self.url_function)(
                 self.host.as_str(),
                 self.port,
                 "get_puzzles_and_solutions_by_names",
@@ -732,7 +752,7 @@ impl FullnodeExtAPI for FullnodeClient {
 #[tokio::test]
 async fn test_extended_functions() {
     let fnc = FullnodeClient::new("localhost", 8555, 10, None, &None);
-    let by_puz = fnc
+    let _by_puz = fnc
         .get_coin_records_by_puzzle_hashes_paginated(
             &[Bytes32::from(
                 "1c69feee1fb42ffa6c60fcc222c3aa8fb6cc719937a83f5aa068dc7045e0a633",
@@ -766,7 +786,7 @@ async fn test_extended_functions() {
     for h in &hints {
         assert!(coin_hints.values().any(|v| v == h));
     }
-    let by_hints = fnc
+    let (coin_records, _last_id, _total_coin_count) = fnc
         .get_coin_records_by_hints_paginated(
             &hints,
             Some(true),
@@ -777,7 +797,7 @@ async fn test_extended_functions() {
         )
         .await
         .unwrap();
-    assert!(!by_hints.is_empty());
+    assert!(!coin_records.is_empty());
     let by_puz = fnc
         .get_coin_records_by_puzzle_hashes_paginated(
             &puz_hashes,
@@ -790,7 +810,7 @@ async fn test_extended_functions() {
         .await
         .unwrap();
     assert!(!by_puz.0.is_empty());
-    assert!(by_puz.0.iter().all(|v| by_hints.contains(v)));
+    assert!(by_puz.0.iter().all(|v| coin_records.contains(v)));
     assert!(!fnc
         .get_puzzles_and_solutions_by_names(&coin_ids, Some(true), Some(4540000), Some(4542825))
         .await

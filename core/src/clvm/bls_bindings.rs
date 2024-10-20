@@ -40,7 +40,7 @@ pub fn aggregate_verify_signature(
             true,
             &new_msgs
                 .iter()
-                .map(|m| m.as_slice())
+                .map(Vec::as_slice)
                 .collect::<Vec<&[u8]>>(),
             AUG_SCHEME_DST,
             &keys.iter().collect::<Vec<&PublicKey>>(),

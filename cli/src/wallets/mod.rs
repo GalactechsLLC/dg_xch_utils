@@ -5,17 +5,19 @@ use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin::Coin;
+use dg_xch_core::blockchain::coin_record::{CatCoinRecord, CoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
 use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzlehash, WalletType};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
 use dg_xch_core::clvm::utils::INFINITE_COST;
 use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_keys::{master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened};
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
-    puzzle_for_pk, solution_for_conditions,
+    puzzle_for_pk, puzzle_hash_for_pk, solution_for_conditions,
 };
 use dg_xch_puzzles::utils::{
     make_assert_absolute_seconds_exceeds_condition, make_assert_coin_announcement,
@@ -25,6 +27,8 @@ use dg_xch_puzzles::utils::{
 use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, info};
 use num_traits::ToPrimitive;
+use rand::prelude::StdRng;
+use rand::{Rng, SeedableRng};
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -72,19 +76,99 @@ pub struct WalletInfo<T: WalletStore> {
 #[async_trait]
 pub trait WalletStore {
     fn get_master_sk(&self) -> &SecretKey;
-    async fn get_max_send_amount(&self) -> u128;
+    fn standard_coins(&self) -> Arc<Mutex<Vec<CoinRecord>>>;
+    fn cat_coins(&self) -> Arc<Mutex<Vec<CatCoinRecord>>>;
+    fn secret_key_store(&self) -> &SecretKeyStore;
+    fn current_index(&self) -> u32;
+    fn next_index(&self) -> u32;
     async fn get_confirmed_balance(&self) -> u128;
     async fn get_unconfirmed_balance(&self) -> u128;
-    async fn get_spendable_balance(&self) -> u128;
     async fn get_pending_change_balance(&self) -> u128;
-    async fn get_unused_derivation_record(&self, hardened: bool)
-        -> Result<DerivationRecord, Error>;
-    async fn get_derivation_record(&self, hardened: bool) -> Result<DerivationRecord, Error>;
+    async fn populate_secret_key_for_puzzle_hash(
+        &self,
+        puz_hash: &Bytes32,
+    ) -> Result<Bytes48, Error>;
+
+    async fn add_puzzle_hash_and_keys(
+        &self,
+        puzzle_hash: Bytes32,
+        keys: (Bytes32, Bytes48),
+    ) -> Option<(Bytes32, Bytes48)>;
+    async fn get_max_send_amount(&self) -> u128 {
+        let unspent: Vec<CoinRecord> = self
+            .standard_coins()
+            .lock()
+            .await
+            .iter()
+            .filter(|v| !v.spent)
+            .copied()
+            .collect();
+        if unspent.is_empty() {
+            0
+        } else {
+            unspent.iter().map(|v| v.coin.amount as u128).sum()
+        }
+    }
+
+    async fn get_spendable_balance(&self) -> u128 {
+        self.get_max_send_amount().await
+    }
+    async fn get_puzzle_hashes(
+        &self,
+        start: u32,
+        count: u32,
+        hardened: bool,
+    ) -> Result<Vec<Bytes32>, Error> {
+        let mut puz_hashes = vec![];
+        for i in start..start + count {
+            puz_hashes.push(
+                self.get_derivation_record_at_index(i, hardened)
+                    .await?
+                    .puzzle_hash,
+            )
+        }
+        Ok(puz_hashes)
+    }
+    fn wallet_sk(&self, index: u32, hardened: bool) -> Result<SecretKey, Error> {
+        if hardened {
+            master_sk_to_wallet_sk(self.get_master_sk(), index)
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {:?}", e)))
+        } else {
+            master_sk_to_wallet_sk_unhardened(self.get_master_sk(), index)
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {:?}", e)))
+        }
+    }
     async fn get_derivation_record_at_index(
         &self,
         index: u32,
         hardened: bool,
-    ) -> Result<DerivationRecord, Error>;
+    ) -> Result<DerivationRecord, Error> {
+        let wallet_sk = self.wallet_sk(index, hardened)?;
+        let pubkey = Bytes48::from(wallet_sk.sk_to_pk().to_bytes());
+        let puzzle_hash = puzzle_hash_for_pk(&pubkey)?;
+        self.add_puzzle_hash_and_keys(puzzle_hash, (Bytes32::from(wallet_sk), pubkey))
+            .await;
+        Ok(DerivationRecord {
+            index,
+            puzzle_hash,
+            pubkey,
+            wallet_type: WalletType::StandardWallet,
+            wallet_id: 1,
+            hardened,
+        })
+    }
+    async fn get_unused_derivation_record(
+        &self,
+        hardened: bool,
+    ) -> Result<DerivationRecord, Error> {
+        self.get_derivation_record_at_index(self.next_index(), hardened)
+            .await
+    }
+    async fn get_derivation_record(&self, hardened: bool) -> Result<DerivationRecord, Error> {
+        self.get_derivation_record_at_index(self.current_index(), hardened)
+            .await
+    }
+
     async fn select_coins(
         &self,
         amount: u64,
@@ -92,15 +176,136 @@ pub trait WalletStore {
         min_coin_amount: Option<u64>,
         max_coin_amount: u64,
         exclude_coin_amounts: Option<&[u64]>,
-    ) -> Result<HashSet<Coin>, Error>;
-    async fn populate_secret_key_for_puzzle_hash(
-        &self,
-        puz_hash: &Bytes32,
-    ) -> Result<Bytes48, Error>;
+    ) -> Result<HashSet<Coin>, Error> {
+        let spendable_amount = self.get_spendable_balance().await;
+        let exclude = exclude.unwrap_or_default();
+        let min_coin_amount = min_coin_amount.unwrap_or(0);
+        let exclude_coin_amounts = exclude_coin_amounts.unwrap_or_default();
+        if amount as u128 > spendable_amount {
+            Err(Error::new(ErrorKind::InvalidInput, format!("Can't select amount higher than our spendable balance.  Amount: {amount}, spendable: {spendable_amount}")))
+        } else {
+            debug!("About to select coins for amount {amount}");
+            let max_num_coins = 500;
+            let mut sum_spendable_coins = 0;
+            let mut valid_spendable_coins: Vec<Coin> = vec![];
+            for coin_record in self
+                .standard_coins()
+                .lock()
+                .await
+                .iter()
+                .filter(|v| !v.spent)
+            {
+                if exclude.contains(&coin_record.coin) {
+                    continue;
+                }
+                if coin_record.coin.amount < min_coin_amount
+                    || coin_record.coin.amount > max_coin_amount
+                {
+                    continue;
+                }
+                if exclude_coin_amounts.contains(&coin_record.coin.amount) {
+                    continue;
+                }
+                sum_spendable_coins += coin_record.coin.amount;
+                valid_spendable_coins.push(coin_record.coin);
+            }
+            if sum_spendable_coins < amount {
+                return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction for {amount} is greater than spendable balance of {sum_spendable_coins}. There may be other transactions pending or our minimum coin amount is too high.")));
+            }
+            if amount == 0 && sum_spendable_coins == 0 {
+                return Err(Error::new(ErrorKind::InvalidInput, "No coins available to spend, you can not create a coin with an amount of 0, without already having coins."));
+            }
+            valid_spendable_coins.sort_by(|f, s| f.amount.cmp(&s.amount));
+            match check_for_exact_match(&valid_spendable_coins, amount) {
+                Some(c) => {
+                    info!("Selected coin with an exact match: {:?}", c);
+                    Ok(HashSet::from([c]))
+                }
+                None => {
+                    let mut smaller_coin_sum = 0; //coins smaller than target.
+                    let mut all_sum = 0; //coins smaller than target.
+                    let mut smaller_coins = vec![];
+                    for coin in &valid_spendable_coins {
+                        if coin.amount < amount {
+                            smaller_coin_sum += coin.amount;
+                            smaller_coins.push(*coin);
+                        }
+                        all_sum += coin.amount;
+                    }
+                    if smaller_coin_sum == amount
+                        && smaller_coins.len() < max_num_coins
+                        && amount != 0
+                    {
+                        debug!("Selected all smaller coins because they equate to an exact match of the target: {:?}", smaller_coins);
+                        Ok(HashSet::from_iter(smaller_coins.iter().cloned()))
+                    } else if smaller_coin_sum < amount {
+                        let smallest_coin =
+                            select_smallest_coin_over_target(amount, &valid_spendable_coins);
+                        if let Some(smallest_coin) = smallest_coin {
+                            debug!("Selected closest greater coin: {}", smallest_coin.name());
+                            Ok(HashSet::from([smallest_coin]))
+                        } else {
+                            return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction of {amount} mojo is greater than available sum {all_sum} mojos.")));
+                        }
+                    } else if smaller_coin_sum > amount {
+                        let mut coin_set = knapsack_coin_algorithm(
+                            &smaller_coins,
+                            amount,
+                            max_coin_amount,
+                            max_num_coins,
+                            None,
+                        );
+                        debug!("Selected coins from knapsack algorithm: {:?}", coin_set);
+                        if coin_set.is_none() {
+                            coin_set = sum_largest_coins(amount as u128, &smaller_coins);
+                            if coin_set.is_none()
+                                || coin_set.as_ref().map(|v| v.len()).unwrap_or_default()
+                                    > max_num_coins
+                            {
+                                let greater_coin = select_smallest_coin_over_target(
+                                    amount,
+                                    &valid_spendable_coins,
+                                );
+                                if let Some(greater_coin) = greater_coin {
+                                    coin_set = Some(HashSet::from([greater_coin]));
+                                } else {
+                                    return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction of {amount} mojo would use more than {max_num_coins} coins. Try sending a smaller amount")));
+                                }
+                            }
+                        }
+                        coin_set.ok_or_else(|| {
+                            Error::new(
+                                ErrorKind::InvalidInput,
+                                "Failed to select coins for transaction",
+                            )
+                        })
+                    } else {
+                        match select_smallest_coin_over_target(amount, &valid_spendable_coins) {
+                            Some(coin) => {
+                                debug!("Resorted to selecting smallest coin over target due to dust.: {:?}", coin);
+                                Ok(HashSet::from([coin]))
+                            }
+                            None => Err(Error::new(
+                                ErrorKind::InvalidInput,
+                                "Too many coins are required to make this transaction",
+                            )),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     async fn populate_secret_keys_for_coin_spends(
         &self,
         coin_spends: &[CoinSpend],
-    ) -> Result<(), Error>;
+    ) -> Result<(), Error> {
+        for coin_spend in coin_spends {
+            self.populate_secret_key_for_puzzle_hash(&coin_spend.coin.puzzle_hash)
+                .await?;
+        }
+        Ok(())
+    }
     async fn secret_key_for_public_key(&self, public_key: &Bytes48) -> Result<SecretKey, Error>;
     fn mapping_function<'a, F>(
         &'a self,
@@ -110,9 +315,88 @@ pub trait WalletStore {
     }
 }
 
+fn check_for_exact_match(coin_list: &[Coin], target: u64) -> Option<Coin> {
+    for coin in coin_list {
+        if coin.amount == target {
+            return Some(*coin);
+        }
+    }
+    None
+}
+
+fn select_smallest_coin_over_target(target: u64, sorted_coin_list: &[Coin]) -> Option<Coin> {
+    for coin in sorted_coin_list.iter() {
+        if coin.amount >= target {
+            return Some(*coin);
+        }
+    }
+    None
+}
+
+fn sum_largest_coins(target: u128, sorted_coins: &[Coin]) -> Option<HashSet<Coin>> {
+    let mut total_value = 0u128;
+    let mut selected_coins = HashSet::default();
+    for coin in sorted_coins {
+        total_value += coin.amount as u128;
+        selected_coins.insert(*coin);
+        if total_value >= target {
+            return Some(selected_coins);
+        }
+    }
+    None
+}
+
+fn knapsack_coin_algorithm(
+    smaller_coins: &[Coin],
+    target: u64,
+    max_coin_amount: u64,
+    max_num_coins: usize,
+    seed: Option<&[u8]>,
+) -> Option<HashSet<Coin>> {
+    let mut best_set_sum = max_coin_amount;
+    let mut best_set_of_coins: Option<HashSet<Coin>> = None;
+    let seed = Bytes32::new(seed.unwrap_or(b"knapsack seed"));
+    let mut rand = StdRng::from_seed(*seed.to_sized_bytes());
+    for _ in 0..1000 {
+        let mut selected_coins = HashSet::default();
+        let mut selected_coins_sum = 0;
+        let mut n_pass = 0;
+        let mut target_reached = false;
+        while n_pass < 2 && !target_reached {
+            for coin in smaller_coins {
+                if (n_pass == 0 && rand.gen::<bool>())
+                    || (n_pass == 1 && !selected_coins.contains(coin))
+                {
+                    if selected_coins.len() > max_num_coins {
+                        break;
+                    }
+                    selected_coins_sum += coin.amount;
+                    selected_coins.insert(*coin);
+                    match selected_coins_sum.cmp(&target) {
+                        std::cmp::Ordering::Greater => {
+                            target_reached = true;
+                            if selected_coins_sum < best_set_sum {
+                                best_set_of_coins = Some(selected_coins.clone());
+                                best_set_sum = selected_coins_sum;
+                                selected_coins_sum -= coin.amount;
+                                selected_coins.remove(coin);
+                            }
+                        }
+                        std::cmp::Ordering::Less => {}
+                        std::cmp::Ordering::Equal => return Some(selected_coins),
+                    }
+                }
+            }
+            n_pass += 1;
+        }
+    }
+    best_set_of_coins
+}
+
 #[async_trait]
 pub trait Wallet<T: WalletStore + Send + Sync, C> {
     fn create(info: WalletInfo<T>, config: C) -> Self;
+    fn create_simulator(info: WalletInfo<T>, config: C) -> Self;
     fn name(&self) -> &str;
     async fn sync(&self) -> Result<bool, Error>;
     fn is_synced(&self) -> bool;
@@ -120,6 +404,25 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     fn wallet_store(&self) -> Arc<Mutex<T>>;
     fn require_derivation_paths(&self) -> bool {
         true
+    }
+    async fn puzzle_hashes(
+        &self,
+        start_index: usize,
+        count: usize,
+        hardened: bool,
+    ) -> Result<Vec<Bytes32>, Error> {
+        let mut hashes = vec![];
+        for i in start_index..start_index + count {
+            hashes.push(
+                self.wallet_store()
+                    .lock()
+                    .await
+                    .get_derivation_record_at_index(i as u32, hardened)
+                    .await?
+                    .puzzle_hash,
+            )
+        }
+        Ok(hashes)
     }
     fn puzzle_for_pk(&self, public_key: &Bytes48) -> Result<Program, Error> {
         puzzle_for_pk(public_key)
@@ -230,7 +533,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 .wallet_store()
                 .lock()
                 .await
-                .get_unused_derivation_record(false)
+                .get_derivation_record(false)
                 .await?;
             dr.puzzle_hash
         })
@@ -251,6 +554,58 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     }
     async fn convert_puzzle_hash(&self, puzzle_hash: Bytes32) -> Bytes32 {
         puzzle_hash
+    }
+    async fn generate_simple_signed_transaction(
+        &self,
+        mojos: u64,
+        fee_mojos: u64,
+        to_address: Bytes32,
+    ) -> Result<TransactionRecord, Error> {
+        self.generate_signed_transaction(
+            mojos,
+            &to_address,
+            fee_mojos,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+    async fn generate_simple_unsigned_transaction(
+        &self,
+        mojos: u64,
+        fee_mojos: u64,
+        to_address: Bytes32,
+    ) -> Result<Vec<CoinSpend>, Error> {
+        self.generate_unsigned_transaction(
+            mojos,
+            &to_address,
+            fee_mojos,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
     }
     #[allow(clippy::too_many_arguments)]
     async fn generate_signed_transaction(
@@ -591,7 +946,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 info!("Reveal: {} ", hex::encode(&puzzle.serialized));
                 info!("Solution: {} ", hex::encode(&solution.serialized));
                 spends.push(CoinSpend {
-                    coin: coin.clone(),
+                    coin: *coin,
                     puzzle_reveal: SerializedProgram::from_bytes(&puzzle.serialized),
                     solution: SerializedProgram::from_bytes(&solution.serialized),
                 });

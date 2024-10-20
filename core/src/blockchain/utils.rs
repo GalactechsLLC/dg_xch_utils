@@ -51,8 +51,8 @@ pub fn atom_to_int(bytes: &[u8]) -> BigInt {
     }
 }
 
-pub fn pkm_pairs_for_conditions_dict(
-    conditions_dict: HashMap<ConditionOpcode, Vec<ConditionWithArgs>>,
+pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
+    conditions_dict: &HashMap<ConditionOpcode, Vec<ConditionWithArgs>, S>,
     coin_name: Bytes32,
     additional_data: &[u8],
 ) -> Result<Vec<(Bytes48, Vec<u8>)>, Error> {

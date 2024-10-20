@@ -42,7 +42,7 @@ impl Dialect for ChiaDialect {
                             format!("unimplemented operator: {:?}", o),
                         ));
                     } else {
-                        op_unknown(o, &argument_list, max_cost)
+                        op_unknown(&o, &argument_list, max_cost)
                     };
                 }
                 let f = match b[0] {
@@ -93,11 +93,11 @@ impl Dialect for ChiaDialect {
                                 format!("unimplemented operator: {:?}", o),
                             ))
                         } else {
-                            op_unknown(o, &argument_list, max_cost)
+                            op_unknown(&o, &argument_list, max_cost)
                         };
                     }
                 };
-                f(argument_list, max_cost)
+                f(&argument_list, max_cost)
             }
             SExp::Pair(_) => Err(Error::new(
                 ErrorKind::InvalidData,

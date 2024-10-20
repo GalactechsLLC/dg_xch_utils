@@ -5,7 +5,7 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::hash::{Hash, Hasher};
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Coin {
     pub parent_coin_info: Bytes32,
     pub puzzle_hash: Bytes32,
@@ -20,7 +20,7 @@ impl Coin {
         hasher.update(self.parent_coin_info);
         hasher.update(self.puzzle_hash);
         let amount_bytes = self.amount.to_be_bytes();
-        if self.amount >= 0x8000000000000000_u64 {
+        if self.amount >= 0x8000_0000_0000_0000_u64 {
             hasher.update([0_u8]);
             hasher.update(amount_bytes);
         } else {
@@ -36,6 +36,6 @@ impl Coin {
 }
 impl Hash for Coin {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write(self.name().as_slice())
+        state.write(self.name().as_slice());
     }
 }

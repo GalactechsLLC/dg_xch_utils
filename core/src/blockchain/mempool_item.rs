@@ -75,6 +75,6 @@ impl Ord for MempoolItem {
 }
 impl Hash for MempoolItem {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write(self.spend_bundle_name.as_slice())
+        state.write(self.spend_bundle_name.as_slice());
     }
 }

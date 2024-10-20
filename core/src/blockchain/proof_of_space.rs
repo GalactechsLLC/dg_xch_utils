@@ -17,9 +17,11 @@ pub const NUMBER_ZERO_BITS_PLOT_FILTER: i32 = 9;
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProofBytes(Vec<u8>);
 
-impl ProofBytes {
-    pub fn iter(&self) -> std::slice::Iter<'_, u8> {
-        self.0.iter()
+impl IntoIterator for ProofBytes {
+    type Item = u8;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 impl Display for ProofBytes {
@@ -240,13 +242,13 @@ pub fn generate_taproot_sk(
     let mut taproot_message = vec![];
     let mut agg = AggregatePublicKey::from_public_key(local_pk);
     agg.add_public_key(farmer_pk, false)
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
     taproot_message.extend(agg.to_public_key().to_bytes());
     taproot_message.extend(local_pk.to_bytes());
     taproot_message.extend(farmer_pk.to_bytes());
     let taproot_hash = hash_256(&taproot_message);
     SecretKey::key_gen_v3(&taproot_hash, &[])
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
 pub fn generate_plot_public_key(
@@ -258,13 +260,13 @@ pub fn generate_plot_public_key(
     if include_taproot {
         let taproot_sk = generate_taproot_sk(local_pk, farmer_pk)?;
         agg.add_public_key(farmer_pk, false)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
         agg.add_public_key(&taproot_sk.sk_to_pk(), false)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
         Ok(agg.to_public_key())
     } else {
         agg.add_public_key(farmer_pk, false)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
         Ok(agg.to_public_key())
     }
 }

@@ -12,7 +12,6 @@ impl From<u8> for TXStatus {
         match value {
             1 => TXStatus::SUCCESS,
             2 => TXStatus::PENDING,
-            3 => TXStatus::FAILED,
             _ => TXStatus::FAILED,
         }
     }

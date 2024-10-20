@@ -47,10 +47,9 @@ pub fn u64_to_bytes(v: u64) -> Vec<u8> {
             if trim {
                 if b == u8::MIN {
                     continue;
-                } else {
-                    rtn.push(b);
-                    trim = false;
                 }
+                rtn.push(b);
+                trim = false;
             } else {
                 rtn.push(b);
             }
@@ -406,7 +405,7 @@ impl TryFrom<&Bytes96> for Signature {
 
     fn try_from(val: &Bytes96) -> Result<Signature, Error> {
         Signature::from_bytes(val.to_sized_bytes())
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
     }
 }
 
@@ -415,7 +414,7 @@ impl TryFrom<Bytes96> for Signature {
 
     fn try_from(val: Bytes96) -> Result<Signature, Error> {
         Signature::from_bytes(val.to_sized_bytes())
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
     }
 }
 impl From<Signature> for Bytes96 {

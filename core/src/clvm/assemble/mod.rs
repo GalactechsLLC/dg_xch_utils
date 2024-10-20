@@ -44,13 +44,13 @@ pub fn handle_cons(token: &Token, tokens: &mut Reader) -> Result<SExp, Error> {
             if token == DOT_CONS {
                 let rest = tokenize_exp(tokens)?;
                 if let Some(token) = tokens.next() {
-                    if token != END_CONS {
+                    if token == END_CONS {
+                        Ok(first.cons(rest))
+                    } else {
                         Err(Error::new(
                             ErrorKind::InvalidData,
                             format!("Illegal dot expression at position: {}", token.index),
                         ))
-                    } else {
-                        Ok(first.cons(rest))
                     }
                 } else {
                     Err(Error::new(
@@ -89,7 +89,7 @@ pub fn handle_token(token: &Token, tokens: &mut Reader) -> Result<SExp, Error> {
                 .ok_or_else(|| {
                     Error::new(
                         ErrorKind::Other,
-                        format!("Failed to parse Token: {:?}", token),
+                        format!("Failed to parse Token: {token:?}"),
                     )
                 }),
         }
@@ -139,14 +139,14 @@ pub fn handle_hex(token: &Token) -> Result<Option<SExp>, Error> {
         let as_hex = String::from_utf8(bytes).map_err(|e| {
             Error::new(
                 ErrorKind::InvalidInput,
-                format!("Invalid Hex Value: {:?}", e),
+                format!("Invalid Hex Value: {e:?}"),
             )
         })?;
         Ok(Some(SExp::Atom(AtomBuf::new(decode(as_hex).map_err(
             |e| {
                 Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Invalid Hex Value: {:?}", e),
+                    format!("Invalid Hex Value: {e:?}"),
                 )
             },
         )?))))

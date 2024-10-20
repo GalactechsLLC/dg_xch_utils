@@ -27,10 +27,10 @@ impl SpendBundle {
             signatures.push(bundle.aggregated_signature.try_into()?);
         }
         let aggregated_signature = if signatures.is_empty() {
-            Default::default()
+            Bytes96::default()
         } else {
             AggregateSignature::aggregate(&signatures.iter().collect::<Vec<&Signature>>(), true)
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?
                 .to_signature()
                 .into()
         };
@@ -43,7 +43,7 @@ impl SpendBundle {
     pub fn empty() -> Self {
         SpendBundle {
             coin_spends: vec![],
-            aggregated_signature: Default::default(),
+            aggregated_signature: Bytes96::default(),
         }
     }
 
@@ -53,7 +53,7 @@ impl SpendBundle {
             let (_, output) = spend
                 .puzzle_reveal
                 .run_with_cost(u64::MAX, &spend.solution.to_program())?;
-            conditions.extend(output.as_list())
+            conditions.extend(output.as_list());
         }
         Ok(conditions)
     }
@@ -66,7 +66,7 @@ impl SpendBundle {
     }
 
     pub fn removals(&self) -> Vec<Coin> {
-        self.coin_spends.iter().map(|c| &c.coin).cloned().collect()
+        self.coin_spends.iter().map(|c| &c.coin).copied().collect()
     }
 
     pub fn coins(&self) -> Vec<Coin> {
@@ -75,7 +75,7 @@ impl SpendBundle {
 
     pub fn net_additions(&self) -> Result<Vec<Coin>, Error> {
         let removals: HashSet<Bytes32> =
-            HashSet::from_iter(self.removals().into_iter().map(|c| c.name()));
+            self.removals().into_iter().map(|c| c.name()).collect();
         Ok(self
             .additions()?
             .into_iter()
@@ -89,10 +89,10 @@ impl SpendBundle {
             sigs.push((&self.aggregated_signature).try_into()?);
         }
         self.aggregated_signature = if sigs.is_empty() {
-            Default::default()
+            Bytes96::default()
         } else {
             AggregateSignature::aggregate(&sigs.iter().collect::<Vec<&Signature>>(), true)
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?
                 .to_signature()
                 .into()
         };
@@ -109,7 +109,7 @@ impl SpendBundle {
         }
         self.aggregated_signature =
             AggregateSignature::aggregate(&sigs.iter().collect::<Vec<&Signature>>(), true)
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?
                 .to_signature()
                 .into();
         Ok(self)

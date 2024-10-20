@@ -1,5 +1,5 @@
-pub const MOJO_PER_CHIA: u64 = 1000000000000;
-pub const BLOCKS_PER_YEAR: u32 = 1681920;
+pub const MOJO_PER_CHIA: u64 = 1_000_000_000_000;
+pub const BLOCKS_PER_YEAR: u32 = 1_681_920;
 
 pub const fn calculate_pool_reward(height: u32) -> u64 {
     /*
@@ -10,17 +10,17 @@ pub const fn calculate_pool_reward(height: u32) -> u64 {
     rates increase continuously.
     */
     if height == 0 {
-        (7000000000000 / 8) * 21000000
+        (7_000_000_000_000 / 8) * 21_000_000
     } else if height < 3 * BLOCKS_PER_YEAR {
-        7000000000000 / 4
+        7_000_000_000_000 / 4
     } else if height < 6 * BLOCKS_PER_YEAR {
-        7000000000000 / 8
+        7_000_000_000_000 / 8
     } else if height < 9 * BLOCKS_PER_YEAR {
-        7000000000000 / 16
+        7_000_000_000_000 / 16
     } else if height < 12 * BLOCKS_PER_YEAR {
-        7000000000000 / 32
+        7_000_000_000_000 / 32
     } else {
-        7000000000000 / 64
+        7_000_000_000_000 / 64
     }
 }
 
@@ -34,17 +34,17 @@ pub const fn calculate_base_farmer_reward(height: u32) -> u64 {
     rates increase continuously.
     */
     if height == 0 {
-        (1000000000000 / 8) * 21000000
+        (1_000_000_000_000 / 8) * 21_000_000
     } else if height < 3 * BLOCKS_PER_YEAR {
-        1000000000000 / 4
+        1_000_000_000_000 / 4
     } else if height < 6 * BLOCKS_PER_YEAR {
-        1000000000000 / 8
+        1_000_000_000_000 / 8
     } else if height < 9 * BLOCKS_PER_YEAR {
-        1000000000000 / 16
+        1_000_000_000_000 / 16
     } else if height < 12 * BLOCKS_PER_YEAR {
-        1000000000000 / 32
+        1_000_000_000_000 / 32
     } else {
-        1000000000000 / 64
+        1_000_000_000_000 / 64
     }
 }
 

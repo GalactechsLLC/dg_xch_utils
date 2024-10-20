@@ -9,7 +9,7 @@ use std::fmt::Formatter;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-#[derive(ChiaSerial, Clone, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct MinMempoolFees {
     pub cost_5000000: f64,
 }
@@ -48,7 +48,7 @@ where
         where
             E: Error,
         {
-            u128::from_u8(v as u8).ok_or_else(|| Error::custom("Invalid Value"))
+            u128::from_u8(u8::from(v)).ok_or_else(|| Error::custom("Invalid Value"))
         }
 
         fn visit_i8<E>(self, v: i8) -> Result<Self::Value, E>

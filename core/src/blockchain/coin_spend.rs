@@ -45,36 +45,35 @@ pub fn compute_additions_with_cost(
                 ErrorKind::Other,
                 "BLOCK_COST_EXCEEDS_MAX compute_additions() for CoinSpend",
             ));
-        } else {
-            let atoms = cond.as_list();
-            if atoms.is_empty() {
-                return Err(Error::new(ErrorKind::Other, "Atoms List is Empty"));
-            }
-            let op = &atoms[0];
-            if [ConditionOpcode::AggSigMe, ConditionOpcode::AggSigUnsafe].contains(&op.into()) {
-                cost += ConditionCost::AggSig as u64;
-                continue;
-            }
-            if ConditionOpcode::from(op) != ConditionOpcode::CreateCoin {
-                continue;
-            }
-            cost += ConditionCost::CreateCoin as u64;
-            if atoms.len() < 3 {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "Invalid Number ot Atoms in Program",
-                ));
-            }
-            let puzzle_hash = Bytes32::new(&atoms[1].as_vec().unwrap_or_default());
-            let amount = atoms[2].as_int()?;
-            ret.push(Coin {
-                parent_coin_info,
-                puzzle_hash,
-                amount: amount
-                    .to_u64()
-                    .expect("Expected a positive amount when computing additions"),
-            });
         }
+        let atoms = cond.as_list();
+        if atoms.is_empty() {
+            return Err(Error::new(ErrorKind::Other, "Atoms List is Empty"));
+        }
+        let op = &atoms[0];
+        if [ConditionOpcode::AggSigMe, ConditionOpcode::AggSigUnsafe].contains(&op.into()) {
+            cost += ConditionCost::AggSig as u64;
+            continue;
+        }
+        if ConditionOpcode::from(op) != ConditionOpcode::CreateCoin {
+            continue;
+        }
+        cost += ConditionCost::CreateCoin as u64;
+        if atoms.len() < 3 {
+            return Err(Error::new(
+                ErrorKind::Other,
+                "Invalid Number ot Atoms in Program",
+            ));
+        }
+        let puzzle_hash = Bytes32::new(&atoms[1].as_vec().unwrap_or_default());
+        let amount = atoms[2].as_int()?;
+        ret.push(Coin {
+            parent_coin_info,
+            puzzle_hash,
+            amount: amount
+                .to_u64()
+                .expect("Expected a positive amount when computing additions"),
+        });
     }
     Ok((ret, cost))
 }

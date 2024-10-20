@@ -31,7 +31,7 @@ const fn daemon_port() -> u16 {
     55400
 }
 const fn daemon_max_message_size() -> u32 {
-    50000000
+    50_000_000
 }
 const fn daemon_heartbeat() -> u32 {
     300
@@ -59,7 +59,7 @@ fn data_layer_database_path() -> String {
     "data_layer/db/data_layer_CHALLENGE.sqlite".to_string()
 }
 const fn data_layer_fee() -> usize {
-    1000000000
+    1_000_000_000
 }
 fn data_layer_host_ip() -> String {
     "0.0.0.0".to_string()
@@ -74,7 +74,7 @@ const fn data_layer_rpc_port() -> u16 {
     8562
 }
 const fn data_layer_rpc_server_max_request_body_size() -> usize {
-    26214400
+    26_214_400
 }
 fn data_layer_server_files_location() -> String {
     "data_layer/db/server_files_location_CHALLENGE".to_string()
@@ -183,16 +183,16 @@ const fn full_node_max_sync_wait() -> usize {
     30
 }
 const fn full_node_max_subscribe_items() -> usize {
-    200000
+    200_000
 }
 const fn full_node_max_subscribe_response_items() -> usize {
-    100000
+    100_000
 }
 const fn full_node_trusted_max_subscribe_items() -> usize {
-    2000000
+    2_000_000
 }
 const fn full_node_trusted_max_subscribe_response_items() -> usize {
-    500000
+    500_000
 }
 fn full_node_ssl() -> CombinedSsl {
     CombinedSsl {
@@ -301,7 +301,7 @@ fn seeder_bootstrap_peers() -> Vec<String> {
     vec!["node.chia.net".to_string()]
 }
 const fn seeder_minimum_height() -> usize {
-    240000
+    240_000
 }
 const fn seeder_minimum_version_count() -> usize {
     100
@@ -354,7 +354,7 @@ fn vdf_clients() -> VdfClients {
             "localhost".to_string(),
             "127.0.0.1".to_string(),
         ],
-        ips_estimate: 150000,
+        ips_estimate: 150_000,
     }
 }
 fn vdf_server() -> PeerConfig {
@@ -418,10 +418,10 @@ const fn wallet_spam_filter_after_n_txs() -> usize {
     200
 }
 const fn wallet_xch_spam_amount() -> usize {
-    1000000
+    1_000_000
 }
 const fn wallet_required_notification_amount() -> usize {
-    10000000
+    10_000_000
 }
 fn wallet_ssl() -> CombinedSsl {
     CombinedSsl {
@@ -509,25 +509,25 @@ impl Default for ChiaConfig {
             daemon_allow_tls_1_2: false,
             inbound_rate_limit_percent: inbound_rate_limit_percent(),
             outbound_rate_limit_percent: outbound_rate_limit_percent(),
-            network_overrides: Default::default(),
+            network_overrides: NetworkOverrides::default(),
             selected_network: selected_network(),
             alerts_url: alerts_url(),
             chia_alerts_pubkey: chia_alerts_pubkey(),
             private_ssl_ca: private_ssl_ca(),
             chia_ssl_ca: chia_ssl_ca(),
             daemon_ssl: daemon_ssl(),
-            logging: Default::default(),
-            seeder: Default::default(),
-            harvester: Default::default(),
-            pool: Default::default(),
-            farmer: Default::default(),
-            timelord_launcher: Default::default(),
-            timelord: Default::default(),
-            full_node: Default::default(),
-            ui: Default::default(),
-            wallet: Default::default(),
-            data_layer: Default::default(),
-            simulator: Default::default(),
+            logging: LoggingConfig::default(),
+            seeder: SeederConfig::default(),
+            harvester: HarvesterConfig::default(),
+            pool: PoolConfig::default(),
+            farmer: FarmerConfig::default(),
+            timelord_launcher: TimelordLauncherConfig::default(),
+            timelord: TimelordConfig::default(),
+            full_node: FullnodeConfig::default(),
+            ui: UiConfig::default(),
+            wallet: WalletConfig::default(),
+            data_layer: DataLayerConfig::default(),
+            simulator: SimulatorConfig::default(),
         }
     }
 }
@@ -620,9 +620,9 @@ impl Default for DataLayerConfig {
             rpc_server_max_request_body_size: data_layer_rpc_server_max_request_body_size(),
             fee: data_layer_fee(),
             log_sqlite_cmds: false,
-            logging: Default::default(),
+            logging: LoggingConfig::default(),
             ssl: data_layer_ssl(),
-            plugins: Default::default(),
+            plugins: DatalayerPlugins::default(),
         }
     }
 }
@@ -736,7 +736,7 @@ impl Default for WalletConfig {
             db_readers: wallet_db_readers(),
             connect_to_unknown_peers: true,
             initial_num_public_keys: wallet_initial_num_public_keys(),
-            reuse_public_key_for_change: Default::default(),
+            reuse_public_key_for_change: HashMap::default(),
             dns_servers: dns_servers(),
             full_node_peers: full_node_peers(),
             nft_metadata_cache_path: wallet_nft_metadata_cache_path(),
@@ -755,7 +755,7 @@ impl Default for WalletConfig {
             recent_peer_threshold: wallet_recent_peer_threshold(),
             introducer_peer: introducer_peer(),
             ssl: wallet_ssl(),
-            trusted_peers: Default::default(),
+            trusted_peers: HashMap::default(),
             short_sync_blocks_behind_threshold: wallet_short_sync_blocks_behind_threshold(),
             inbound_rate_limit_percent: wallet_inbound_rate_limit_percent(),
             outbound_rate_limit_percent: wallet_outbound_rate_limit_percent(),
@@ -767,7 +767,7 @@ impl Default for WalletConfig {
             xch_spam_amount: wallet_xch_spam_amount(),
             enable_notifications: true,
             required_notification_amount: wallet_required_notification_amount(),
-            auto_claim: Default::default(),
+            auto_claim: AutoClaimConfig::default(),
         }
     }
 }
@@ -982,7 +982,7 @@ impl Default for FullnodeConfig {
             logging: logging(),
             network_overrides: network_overrides(),
             selected_network: selected_network(),
-            trusted_peers: Default::default(),
+            trusted_peers: HashMap::default(),
             ssl: full_node_ssl(),
             use_chia_loop_policy: true,
         }
@@ -1101,7 +1101,7 @@ impl Default for FarmerConfig {
             full_node_peers: full_node_peers(),
             port: farmer_port(),
             pool_public_keys: vec![],
-            xch_target_address: Default::default(),
+            xch_target_address: Bytes32::default(),
             start_rpc_server: true,
             rpc_port: farmer_rpc_port(),
             pool_share_threshold: farmer_pool_share_threshold(),
@@ -1150,7 +1150,7 @@ impl Default for PoolConfig {
             logging: logging(),
             network_overrides: network_overrides(),
             selected_network: selected_network(),
-            xch_target_address: Default::default(),
+            xch_target_address: Bytes32::default(),
             pool_list: vec![],
         }
     }
@@ -1232,7 +1232,7 @@ impl Default for HarvesterConfig {
             start_rpc_server: true,
             rpc_port: harvester_rpc_port(),
             num_threads: harvester_num_threads(),
-            plots_refresh_parameter: Default::default(),
+            plots_refresh_parameter: PlotRefreshParameter::default(),
             parallel_read: true,
             logging: logging(),
             network_overrides: network_overrides(),
@@ -1286,11 +1286,11 @@ impl Default for Soa {
     fn default() -> Self {
         Soa {
             rname: "hostmaster.example.com".to_string(),
-            serial_number: 1619105223,
-            refresh: 10800,
-            retry: 10800,
-            expire: 604800,
-            minimum: 1800,
+            serial_number: 1_619_105_223,
+            refresh: 10_800,
+            retry: 10_800,
+            expire: 604_800,
+            minimum: 1_800,
         }
     }
 }
@@ -1344,7 +1344,7 @@ impl Default for SeederConfig {
             domain_name: seeder_domain_name(),
             nameserver: seeder_nameserver(),
             ttl: seeder_ttl(),
-            soa: Default::default(),
+            soa: Soa::default(),
             network_overrides: network_overrides(),
             selected_network: selected_network(),
             logging: logging(),
@@ -1372,7 +1372,7 @@ impl Default for LoggingConfig {
             log_filename: "log/debug.log".to_string(),
             log_level: "WARNING".to_string(),
             log_maxfilesrotation: 7,
-            log_maxbytesrotation: 52428800,
+            log_maxbytesrotation: 52_428_800,
             log_use_gzip: false,
             log_syslog: false,
             log_syslog_host: "localhost".to_string(),
@@ -1455,6 +1455,7 @@ pub struct ConstantsOverrides {
     pub testnet11: Option<ConsensusOverrides>,
 }
 impl Default for ConstantsOverrides {
+    #[allow(clippy::too_many_lines)]
     fn default() -> Self {
         ConstantsOverrides {
             mainnet: Some(ConsensusOverrides {
@@ -1483,7 +1484,7 @@ impl Default for ConstantsOverrides {
                 ..Default::default()
             }),
             testnet2: Some(ConsensusOverrides {
-                difficulty_constant_factor: Some(10052721566054),
+                difficulty_constant_factor: Some(10_052_721_566_054),
                 genesis_challenge: Some(Bytes32::from(
                     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
                 )),
@@ -1497,7 +1498,7 @@ impl Default for ConstantsOverrides {
                 ..Default::default()
             }),
             testnet3: Some(ConsensusOverrides {
-                difficulty_constant_factor: Some(10052721566054),
+                difficulty_constant_factor: Some(10_052_721_566_054),
                 genesis_challenge: Some(Bytes32::from(
                     "ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
                 )),
@@ -1512,7 +1513,7 @@ impl Default for ConstantsOverrides {
                 ..Default::default()
             }),
             testnet4: Some(ConsensusOverrides {
-                difficulty_constant_factor: Some(10052721566054),
+                difficulty_constant_factor: Some(10_052_721_566_054),
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(Bytes32::from(
@@ -1529,7 +1530,7 @@ impl Default for ConstantsOverrides {
                 ..Default::default()
             }),
             testnet5: Some(ConsensusOverrides {
-                difficulty_constant_factor: Some(10052721566054),
+                difficulty_constant_factor: Some(10_052_721_566_054),
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(Bytes32::from(
@@ -1546,7 +1547,7 @@ impl Default for ConstantsOverrides {
                 ..Default::default()
             }),
             testnet7: Some(ConsensusOverrides {
-                difficulty_constant_factor: Some(10052721566054),
+                difficulty_constant_factor: Some(10_052_721_566_054),
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(Bytes32::from(
@@ -1566,7 +1567,7 @@ impl Default for ConstantsOverrides {
                 agg_sig_me_additional_data: Some(Bytes32::from(
                     "ae83525ba8d1dd3f09b277de18ca3e43fc0af20d20c4b3e92ef2a48bd291ccb2",
                 )),
-                difficulty_constant_factor: Some(10052721566054),
+                difficulty_constant_factor: Some(10_052_721_566_054),
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(Bytes32::from(
@@ -1580,19 +1581,19 @@ impl Default for ConstantsOverrides {
                 )),
                 mempool_block_buffer: Some(BigInt::from(10)),
                 min_plot_size: Some(18),
-                soft_fork2_height: Some(3000000),
-                hard_fork_height: Some(2997292),
-                hard_fork_fix_height: Some(3426000),
-                plot_filter_128_height: Some(3061804),
-                plot_filter_64_height: Some(8010796),
-                plot_filter_32_height: Some(13056556),
+                soft_fork2_height: Some(3_000_000),
+                hard_fork_height: Some(2_997_292),
+                hard_fork_fix_height: Some(3_426_000),
+                plot_filter_128_height: Some(3_061_804),
+                plot_filter_64_height: Some(8_010_796),
+                plot_filter_32_height: Some(13_056_556),
                 ..Default::default()
             }),
             testnet11: Some(ConsensusOverrides {
                 agg_sig_me_additional_data: Some(Bytes32::from(
                     "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615",
                 )),
-                difficulty_constant_factor: Some(10052721566054),
+                difficulty_constant_factor: Some(10_052_721_566_054),
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(Bytes32::from(
@@ -1608,9 +1609,9 @@ impl Default for ConstantsOverrides {
                 min_plot_size: Some(18),
                 hard_fork_height: Some(0),
                 hard_fork_fix_height: Some(0),
-                plot_filter_128_height: Some(6029568),
-                plot_filter_64_height: Some(11075328),
-                plot_filter_32_height: Some(16121088),
+                plot_filter_128_height: Some(6_029_568),
+                plot_filter_64_height: Some(11_075_328),
+                plot_filter_32_height: Some(16_121_088),
                 ..Default::default()
             }),
         }

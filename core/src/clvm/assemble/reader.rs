@@ -80,7 +80,7 @@ impl<'a> Iterator for Reader<'a> {
             let chr = &self.stream[self.index];
             if CONS_CHARS.contains(chr) {
                 let token = Token {
-                    bytes: &self.stream[self.index..self.index + 1],
+                    bytes: &self.stream[self.index..=self.index],
                     index: self.index,
                 };
                 self.index += 1;

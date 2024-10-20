@@ -397,7 +397,7 @@ pub struct MostRecentSignagePoint {
 impl Default for MostRecentSignagePoint {
     fn default() -> Self {
         MostRecentSignagePoint {
-            hash: Default::default(),
+            hash: Bytes32::default(),
             index: 0,
             timestamp: Instant::now(),
         }

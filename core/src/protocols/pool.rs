@@ -65,7 +65,6 @@ impl From<u8> for PoolErrorCode {
             13 => PoolErrorCode::InvalidPayoutInstructions,
             14 => PoolErrorCode::InvalidSingleton,
             15 => PoolErrorCode::DelayTimeTooShort,
-            16 => PoolErrorCode::RequestFailed,
             _ => PoolErrorCode::RequestFailed,
         }
     }
@@ -182,7 +181,7 @@ pub struct ErrorResponse {
 
 pub fn get_current_authentication_token(timeout: u8) -> u64 {
     let now: u64 = OffsetDateTime::now_utc().unix_timestamp() as u64;
-    now / 60 / timeout as u64
+    now / 60 / u64::from(timeout)
 }
 
 pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
@@ -192,5 +191,5 @@ pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
     } else {
         cur_token - token
     };
-    dif <= timeout as u64
+    dif <= u64::from(timeout)
 }
