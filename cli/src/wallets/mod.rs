@@ -46,12 +46,14 @@ pub struct SecretKeyStore {
     keys: DashMap<Bytes48, Bytes32>,
 }
 impl SecretKeyStore {
+    #[must_use]
     pub fn save_secret_key(&self, secret_key: &SecretKey) -> Option<Bytes32> {
         self.keys.insert(
             Bytes48::from(secret_key.sk_to_pk()),
             Bytes32::from(secret_key.to_bytes()),
         )
     }
+    #[must_use]
     pub fn secret_key_for_public_key(&self, pub_key: &Bytes48) -> Option<Ref<Bytes48, Bytes32>> {
         self.keys.get(pub_key)
     }
@@ -125,17 +127,17 @@ pub trait WalletStore {
                 self.get_derivation_record_at_index(i, hardened)
                     .await?
                     .puzzle_hash,
-            )
+            );
         }
         Ok(puz_hashes)
     }
     fn wallet_sk(&self, index: u32, hardened: bool) -> Result<SecretKey, Error> {
         if hardened {
             master_sk_to_wallet_sk(self.get_master_sk(), index)
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {:?}", e)))
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {e:?}")))
         } else {
             master_sk_to_wallet_sk_unhardened(self.get_master_sk(), index)
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {:?}", e)))
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {e:?}")))
         }
     }
     async fn get_derivation_record_at_index(
@@ -169,6 +171,7 @@ pub trait WalletStore {
             .await
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn select_coins(
         &self,
         amount: u64,
@@ -216,80 +219,73 @@ pub trait WalletStore {
                 return Err(Error::new(ErrorKind::InvalidInput, "No coins available to spend, you can not create a coin with an amount of 0, without already having coins."));
             }
             valid_spendable_coins.sort_by(|f, s| f.amount.cmp(&s.amount));
-            match check_for_exact_match(&valid_spendable_coins, amount) {
-                Some(c) => {
-                    info!("Selected coin with an exact match: {:?}", c);
-                    Ok(HashSet::from([c]))
-                }
-                None => {
-                    let mut smaller_coin_sum = 0; //coins smaller than target.
-                    let mut all_sum = 0; //coins smaller than target.
-                    let mut smaller_coins = vec![];
-                    for coin in &valid_spendable_coins {
-                        if coin.amount < amount {
-                            smaller_coin_sum += coin.amount;
-                            smaller_coins.push(*coin);
-                        }
-                        all_sum += coin.amount;
+            if let Some(c) = check_for_exact_match(&valid_spendable_coins, amount) {
+                info!("Selected coin with an exact match: {:?}", c);
+                Ok(HashSet::from([c]))
+            } else {
+                let mut smaller_coin_sum = 0; //coins smaller than target.
+                let mut all_sum = 0; //coins smaller than target.
+                let mut smaller_coins = vec![];
+                for coin in &valid_spendable_coins {
+                    if coin.amount < amount {
+                        smaller_coin_sum += coin.amount;
+                        smaller_coins.push(*coin);
                     }
-                    if smaller_coin_sum == amount
-                        && smaller_coins.len() < max_num_coins
-                        && amount != 0
-                    {
-                        debug!("Selected all smaller coins because they equate to an exact match of the target: {:?}", smaller_coins);
-                        Ok(HashSet::from_iter(smaller_coins.iter().cloned()))
-                    } else if smaller_coin_sum < amount {
-                        let smallest_coin =
-                            select_smallest_coin_over_target(amount, &valid_spendable_coins);
-                        if let Some(smallest_coin) = smallest_coin {
-                            debug!("Selected closest greater coin: {}", smallest_coin.name());
-                            Ok(HashSet::from([smallest_coin]))
-                        } else {
-                            return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction of {amount} mojo is greater than available sum {all_sum} mojos.")));
-                        }
-                    } else if smaller_coin_sum > amount {
-                        let mut coin_set = knapsack_coin_algorithm(
-                            &smaller_coins,
-                            amount,
-                            max_coin_amount,
-                            max_num_coins,
-                            None,
-                        );
-                        debug!("Selected coins from knapsack algorithm: {:?}", coin_set);
-                        if coin_set.is_none() {
-                            coin_set = sum_largest_coins(amount as u128, &smaller_coins);
-                            if coin_set.is_none()
-                                || coin_set.as_ref().map(|v| v.len()).unwrap_or_default()
-                                    > max_num_coins
-                            {
-                                let greater_coin = select_smallest_coin_over_target(
-                                    amount,
-                                    &valid_spendable_coins,
-                                );
-                                if let Some(greater_coin) = greater_coin {
-                                    coin_set = Some(HashSet::from([greater_coin]));
-                                } else {
-                                    return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction of {amount} mojo would use more than {max_num_coins} coins. Try sending a smaller amount")));
-                                }
-                            }
-                        }
-                        coin_set.ok_or_else(|| {
-                            Error::new(
-                                ErrorKind::InvalidInput,
-                                "Failed to select coins for transaction",
-                            )
-                        })
+                    all_sum += coin.amount;
+                }
+                if smaller_coin_sum == amount && smaller_coins.len() < max_num_coins && amount != 0
+                {
+                    debug!("Selected all smaller coins because they equate to an exact match of the target: {:?}", smaller_coins);
+                    Ok(smaller_coins.iter().copied().collect())
+                } else if smaller_coin_sum < amount {
+                    let smallest_coin =
+                        select_smallest_coin_over_target(amount, &valid_spendable_coins);
+                    if let Some(smallest_coin) = smallest_coin {
+                        debug!("Selected closest greater coin: {}", smallest_coin.name());
+                        Ok(HashSet::from([smallest_coin]))
                     } else {
-                        match select_smallest_coin_over_target(amount, &valid_spendable_coins) {
-                            Some(coin) => {
-                                debug!("Resorted to selecting smallest coin over target due to dust.: {:?}", coin);
-                                Ok(HashSet::from([coin]))
+                        return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction of {amount} mojo is greater than available sum {all_sum} mojos.")));
+                    }
+                } else if smaller_coin_sum > amount {
+                    let mut coin_set = knapsack_coin_algorithm(
+                        &smaller_coins,
+                        amount,
+                        max_coin_amount,
+                        max_num_coins,
+                        None,
+                    );
+                    debug!("Selected coins from knapsack algorithm: {:?}", coin_set);
+                    if coin_set.is_none() {
+                        coin_set = sum_largest_coins(amount as u128, &smaller_coins);
+                        if coin_set.is_none()
+                            || coin_set.as_ref().map(HashSet::len).unwrap_or_default()
+                                > max_num_coins
+                        {
+                            let greater_coin =
+                                select_smallest_coin_over_target(amount, &valid_spendable_coins);
+                            if let Some(greater_coin) = greater_coin {
+                                coin_set = Some(HashSet::from([greater_coin]));
+                            } else {
+                                return Err(Error::new(ErrorKind::InvalidInput, format!("Transaction of {amount} mojo would use more than {max_num_coins} coins. Try sending a smaller amount")));
                             }
-                            None => Err(Error::new(
-                                ErrorKind::InvalidInput,
-                                "Too many coins are required to make this transaction",
-                            )),
                         }
+                    }
+                    coin_set.ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::InvalidInput,
+                            "Failed to select coins for transaction",
+                        )
+                    })
+                } else {
+                    match select_smallest_coin_over_target(amount, &valid_spendable_coins) {
+                        Some(coin) => {
+                            debug!("Resorted to selecting smallest coin over target due to dust.: {:?}", coin);
+                            Ok(HashSet::from([coin]))
+                        }
+                        None => Err(Error::new(
+                            ErrorKind::InvalidInput,
+                            "Too many coins are required to make this transaction",
+                        )),
                     }
                 }
             }
@@ -325,7 +321,7 @@ fn check_for_exact_match(coin_list: &[Coin], target: u64) -> Option<Coin> {
 }
 
 fn select_smallest_coin_over_target(target: u64, sorted_coin_list: &[Coin]) -> Option<Coin> {
-    for coin in sorted_coin_list.iter() {
+    for coin in sorted_coin_list {
         if coin.amount >= target {
             return Some(*coin);
         }
@@ -405,6 +401,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     fn require_derivation_paths(&self) -> bool {
         true
     }
+    #[allow(clippy::cast_possible_truncation)]
     async fn puzzle_hashes(
         &self,
         start_index: usize,
@@ -420,7 +417,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     .get_derivation_record_at_index(i as u32, hardened)
                     .await?
                     .puzzle_hash,
-            )
+            );
         }
         Ok(hashes)
     }
@@ -460,22 +457,22 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         }
         if let Some(coin_announcements) = coin_announcements {
             for announcement in coin_announcements {
-                condition_list.push(make_create_coin_announcement(&announcement))
+                condition_list.push(make_create_coin_announcement(&announcement));
             }
         }
         if let Some(coin_announcements_to_assert) = coin_announcements_to_assert {
             for announcement_hash in coin_announcements_to_assert {
-                condition_list.push(make_assert_coin_announcement(&announcement_hash))
+                condition_list.push(make_assert_coin_announcement(&announcement_hash));
             }
         }
         if let Some(puzzle_announcements) = puzzle_announcements {
             for announcement in puzzle_announcements {
-                condition_list.push(make_create_puzzle_announcement(&announcement))
+                condition_list.push(make_create_puzzle_announcement(&announcement));
             }
         }
         if let Some(puzzle_announcements_to_assert) = puzzle_announcements_to_assert {
             for announcement_hash in puzzle_announcements_to_assert {
-                condition_list.push(make_assert_puzzle_announcement(&announcement_hash))
+                condition_list.push(make_assert_puzzle_announcement(&announcement_hash));
             }
         }
         solution_for_conditions(condition_list)
@@ -487,7 +484,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     ) -> Result<HashMap<Bytes32, Vec<Vec<u8>>>, Error> {
         let mut memos: HashMap<Bytes32, Vec<Vec<u8>>> = HashMap::default();
         for coin_spend in &spend_bundle.coin_spends {
-            for (coin_name, coin_memos) in compute_memos_for_spend(coin_spend)?.into_iter() {
+            for (coin_name, coin_memos) in compute_memos_for_spend(coin_spend)? {
                 match memos.remove(&coin_name) {
                     Some(mut existing_memos) => {
                         existing_memos.extend(coin_memos);
@@ -719,6 +716,10 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         })
     }
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     async fn generate_unsigned_transaction(
         &self,
         amount: u64,
@@ -744,9 +745,9 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             for primary in primaries {
                 primaries_amount += primary.amount;
             }
-            total_amount = amount as u128 + fee as u128 + primaries_amount as u128
+            total_amount = amount as u128 + fee as u128 + primaries_amount as u128;
         } else {
-            total_amount = amount as u128 + fee as u128
+            total_amount = amount as u128 + fee as u128;
         }
         let reuse_puzhash = reuse_puzhash.unwrap_or(true);
         let total_balance = self
@@ -795,7 +796,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         }
         assert!(!coins_set.is_empty());
         info!("Found Coins to use: {:?}", coins_set);
-        let spend_value: i128 = coins_set.iter().map(|v| v.amount as i128).sum::<i128>();
+        let spend_value: i128 = coins_set.iter().map(|v| i128::from(v.amount)).sum::<i128>();
         info!("spend_value is {spend_value} and total_amount is {total_amount}");
         let mut change = spend_value - total_amount as i128;
         if negative_change_allowed {
@@ -805,12 +806,12 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         let coin_announcements_bytes = coin_announcements_to_consume
             .unwrap_or_default()
             .iter()
-            .map(|a| a.name())
+            .map(Announcement::name)
             .collect::<Vec<Bytes32>>();
         let puzzle_announcements_bytes = puzzle_announcements_to_consume
             .unwrap_or_default()
             .iter()
-            .map(|a| a.name())
+            .map(Announcement::name)
             .collect::<Vec<Bytes32>>();
         let mut spends: Vec<CoinSpend> = vec![];
         let mut primary_announcement_hash = None;
@@ -827,7 +828,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 puzzle_hash: *puzzle_hash,
                 amount,
             });
-            let as_set: HashSet<Primary> = HashSet::from_iter(all_primaries_list.iter().copied());
+            let as_set: HashSet<Primary> = all_primaries_list.iter().copied().collect();
             if all_primaries_list.len() != as_set.len() {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -862,7 +863,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                         let mut change_puzzle_hash = coin.puzzle_hash;
                         for primary in &primaries {
                             if change_puzzle_hash == primary.puzzlehash
-                                && change == primary.amount as i128
+                                && change == i128::from(primary.amount)
                             {
                                 //We cannot create two coins has same id, create a new puzhash for the change:
                                 change_puzzle_hash = self.get_new_puzzlehash().await?;
@@ -879,7 +880,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                         memos: vec![],
                     });
                 }
-                let mut message_list: Vec<Bytes32> = coins_set.iter().map(|c| c.name()).collect();
+                let mut message_list: Vec<Bytes32> = coins_set.iter().map(Coin::name).collect();
                 for primary in &primaries {
                     message_list.push(
                         Coin {
@@ -974,7 +975,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 coin,
                 puzzle_reveal: SerializedProgram::from_bytes(&puzzle.serialized),
                 solution: SerializedProgram::from_bytes(&solution.serialized),
-            })
+            });
         }
         info!("Spends is {:?}", spends);
         Ok(spends)

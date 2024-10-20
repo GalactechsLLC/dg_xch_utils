@@ -58,6 +58,7 @@ pub struct MetaOut {
     pub multiplier: usize,
 }
 
+#[must_use]
 pub const fn get_meta_in(table: PlotTable) -> MetaIn {
     match table {
         PlotTable::Table1 => MetaIn {
@@ -74,7 +75,7 @@ pub const fn get_meta_in(table: PlotTable) -> MetaIn {
                 multiplier: (size_a + size_b) / 4,
             }
         }
-        PlotTable::Table3 => {
+        PlotTable::Table3 | PlotTable::Table7 => {
             let size_a = size_of::<u64>();
             let size_b = 0;
             MetaIn {
@@ -83,16 +84,7 @@ pub const fn get_meta_in(table: PlotTable) -> MetaIn {
                 multiplier: (size_a + size_b) / 4,
             }
         }
-        PlotTable::Table4 => {
-            let size_a = size_of::<u64>();
-            let size_b = size_of::<u64>();
-            MetaIn {
-                size_a,
-                size_b,
-                multiplier: (size_a + size_b) / 4,
-            }
-        }
-        PlotTable::Table5 => {
+        PlotTable::Table4 | PlotTable::Table5 => {
             let size_a = size_of::<u64>();
             let size_b = size_of::<u64>();
             MetaIn {
@@ -110,21 +102,13 @@ pub const fn get_meta_in(table: PlotTable) -> MetaIn {
                 multiplier: (size_a + size_b) / 4,
             }
         }
-        PlotTable::Table7 => {
-            let size_a = size_of::<u64>();
-            let size_b = 0;
-            MetaIn {
-                size_a,
-                size_b,
-                multiplier: (size_a + size_b) / 4,
-            }
-        }
         _ => {
             panic!("Illegal Table MetaIn Lookup")
         }
     }
 }
 
+#[must_use]
 pub const fn get_meta_out(table: PlotTable) -> MetaOut {
     match table {
         PlotTable::Table1 => {
@@ -218,6 +202,7 @@ pub enum ForwardPropResult {
     Continue,
 }
 impl ForwardPropResult {
+    #[must_use]
     pub fn as_byte(&self) -> u8 {
         match self {
             ForwardPropResult::Failed(_) => 0,
@@ -242,15 +227,18 @@ pub struct ProofTable {
     groups: [Group; 16],
 }
 impl<'a> ProofTable {
+    #[must_use]
     pub fn get_group_pairs(&'a self, group_index: usize) -> &'a [Pair] {
         let group = &self.groups[group_index];
         &self.pairs.as_slice()[group.offset as usize..group.count as usize]
     }
 
+    #[must_use]
     pub fn get_used_table_pairs(&'a self) -> &'a [Pair] {
         &self.pairs.as_slice()[0..self.length as usize]
     }
 
+    #[must_use]
     pub fn get_free_table_pairs(&'a self) -> &'a [Pair] {
         &self.pairs.as_slice()[self.length as usize..(self.capacity - self.length) as usize]
     }
@@ -282,12 +270,14 @@ pub struct Pair {
     right: u32,
 }
 impl Pair {
+    #[must_use]
     pub fn add_offset(mut self, offset: u32) -> Self {
         self.left += offset;
         self.right += offset;
         self
     }
 
+    #[must_use]
     pub fn sub_offset(mut self, offset: u32) -> Self {
         self.left -= offset;
         self.right -= offset;

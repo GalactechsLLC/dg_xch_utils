@@ -42,7 +42,10 @@ pub fn calculate_sp_iters(
     if u32::from(signage_point_index) >= constants.num_sps_sub_slot {
         Err(Error::new(ErrorKind::InvalidData, "SP index too high"))
     } else {
-        Ok(calculate_sp_interval_iters(constants, sub_slot_iters)? * u64::from(signage_point_index))
+        Ok(
+            calculate_sp_interval_iters(constants, sub_slot_iters)?
+                * u64::from(signage_point_index),
+        )
     }
 }
 
@@ -75,10 +78,12 @@ pub const ITERS_LIMIT: u64 = POOL_SUB_SLOT_ITERS / 64;
 
 static TWO_POW_256: Lazy<BigUint> = Lazy::new(|| BigUint::from(2u64).pow(256));
 
+#[must_use]
 pub fn expected_plot_size(k: u8) -> u64 {
     ((2 * u64::from(k)) + 1) * 2u64.pow(u32::from(k) - 1)
 }
 
+#[must_use]
 pub fn calculate_iterations_quality(
     difficulty_constant_factor: u128,
     quality_string: &Bytes32,

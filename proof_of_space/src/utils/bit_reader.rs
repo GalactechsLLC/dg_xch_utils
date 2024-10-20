@@ -12,11 +12,13 @@ pub struct BitReader {
     last_size: usize,
 }
 impl BitReader {
+    #[must_use]
     pub fn new(value: u64, length: usize) -> Self {
         let mut s = Self::default();
         s.append_value(value, length);
         s
     }
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             buffer: Vec::with_capacity(capacity),
@@ -26,6 +28,7 @@ impl BitReader {
         }
     }
 
+    #[must_use]
     pub fn values(&self) -> Vec<u64> {
         let mut rtn = Vec::new();
         // Return if nothing to work on
@@ -41,6 +44,7 @@ impl BitReader {
         rtn
     }
 
+    #[must_use]
     pub fn from_bytes_be(big_endian_bytes: &[u8], bit_size: usize) -> Self {
         if big_endian_bytes.is_empty() {
             Self::with_capacity(0)
@@ -67,7 +71,7 @@ impl BitReader {
                 let mut bucket_size = 0;
                 let mut j = i;
                 while j < i + size_of::<u64>() && j < num_bytes {
-                    val = (val << 8) + big_endian_bytes[j] as u64;
+                    val = (val << 8) + u64::from(big_endian_bytes[j]);
                     bucket_size += 8;
                     j += 1;
                 }
@@ -77,6 +81,8 @@ impl BitReader {
             reader
         }
     }
+    #[allow(clippy::cast_possible_wrap)]
+    #[must_use]
     pub fn from_bytes_be_offset(
         big_endian_bytes: &[u8],
         bit_size: usize,
@@ -101,7 +107,7 @@ impl BitReader {
                 let mut field = u64::from_be_bytes(u64_buf);
                 let first_field_avail = 64 - bit_offset;
                 let first_field_bits = min(first_field_avail, bit_size);
-                let mask = 0xFFFFFFFFFFFFFFFF >> (64 - first_field_bits);
+                let mask = 0xFFFF_FFFF_FFFF_FFFF >> (64 - first_field_bits);
                 field = field >> (first_field_avail - first_field_bits) & mask;
                 reader.append_value(field, first_field_bits);
                 big_endian_bytes = &big_endian_bytes[size_of::<u64>()..];
@@ -130,6 +136,7 @@ impl BitReader {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     pub fn append_value(&mut self, value: u64, length: usize) {
         if self.buffer.is_empty() || self.last_size == 64 {
             self.buffer.push(value);
@@ -153,6 +160,7 @@ impl BitReader {
         self.size += length;
     }
 
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut rtn = Vec::new();
         // Return if nothing to work on
@@ -169,6 +177,8 @@ impl BitReader {
         rtn
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[must_use]
     pub fn slice_to_int(&self, start_index: usize, end_index: usize) -> u64 {
         if start_index >> 6 == end_index >> 6 {
             let mut res: u64 = self.buffer[start_index >> 6];
@@ -200,6 +210,7 @@ impl BitReader {
             result
         }
     }
+    #[must_use]
     pub fn first_u64(&self) -> u64 {
         if self.buffer.is_empty() {
             0
@@ -224,6 +235,7 @@ impl BitReader {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn _read_u64(&self, bit_count: usize, position: usize) -> u64 {
         debug_assert!(bit_count <= 64);
         let mut start_index = position;
@@ -271,6 +283,7 @@ impl BitReader {
         }
     }
 
+    #[must_use]
     pub fn get_size(&self) -> usize {
         if self.buffer.is_empty() {
             0
@@ -279,10 +292,13 @@ impl BitReader {
         }
     }
 
+    #[must_use]
     pub fn slice(&self, start_index: usize) -> Self {
         self.range(start_index, self.get_size())
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[must_use]
     pub fn range(&self, start_index: usize, end_index: usize) -> Self {
         let mut start_index = start_index;
         let mut end_index = end_index;
@@ -339,6 +355,9 @@ impl BitReader {
     }
 }
 impl Seek for BitReader {
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         match pos {
             SeekFrom::Start(p) => {
@@ -398,40 +417,40 @@ impl ops::Add<BitReader> for BitReader {
 impl ops::Add<&BitReader> for BitReader {
     type Output = BitReader;
 
-    fn add(self, _rhs: &BitReader) -> BitReader {
+    fn add(self, rhs: &BitReader) -> BitReader {
         let mut rtn = self;
-        if !_rhs.buffer.is_empty() {
+        if !rhs.buffer.is_empty() {
             let mut i = 0;
-            while i < _rhs.buffer.len() - 1 {
-                rtn.append_value(_rhs.buffer[i], 64);
+            while i < rhs.buffer.len() - 1 {
+                rtn.append_value(rhs.buffer[i], 64);
                 i += 1;
             }
-            rtn.append_value(_rhs.buffer[_rhs.buffer.len() - 1], _rhs.last_size);
+            rtn.append_value(rhs.buffer[rhs.buffer.len() - 1], rhs.last_size);
         }
         rtn
     }
 }
 impl ops::AddAssign<&BitReader> for BitReader {
-    fn add_assign(&mut self, _rhs: &BitReader) {
-        if !_rhs.buffer.is_empty() {
+    fn add_assign(&mut self, rhs: &BitReader) {
+        if !rhs.buffer.is_empty() {
             let mut i = 0;
-            while i < _rhs.buffer.len() - 1 {
-                self.append_value(_rhs.buffer[i], 64);
+            while i < rhs.buffer.len() - 1 {
+                self.append_value(rhs.buffer[i], 64);
                 i += 1;
             }
-            self.append_value(_rhs.buffer[_rhs.buffer.len() - 1], _rhs.last_size);
+            self.append_value(rhs.buffer[rhs.buffer.len() - 1], rhs.last_size);
         }
     }
 }
 impl ops::AddAssign<&mut BitReader> for BitReader {
-    fn add_assign(&mut self, _rhs: &mut BitReader) {
-        if !_rhs.buffer.is_empty() {
+    fn add_assign(&mut self, rhs: &mut BitReader) {
+        if !rhs.buffer.is_empty() {
             let mut i = 0;
-            while i < _rhs.buffer.len() - 1 {
-                self.append_value(_rhs.buffer[i], 64);
+            while i < rhs.buffer.len() - 1 {
+                self.append_value(rhs.buffer[i], 64);
                 i += 1;
             }
-            self.append_value(_rhs.buffer[_rhs.buffer.len() - 1], _rhs.last_size);
+            self.append_value(rhs.buffer[rhs.buffer.len() - 1], rhs.last_size);
         }
     }
 }

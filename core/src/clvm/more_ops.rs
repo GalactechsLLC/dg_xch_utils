@@ -88,9 +88,9 @@ fn limbs_for_int(v: &BigInt) -> usize {
     ((v.bits() + 7) / 8) as usize
 }
 
-fn new_atom_and_cost(cost: u64, buf: &[u8]) -> Result<(u64, SExp), Error> {
+fn new_atom_and_cost(cost: u64, buf: &[u8]) -> (u64, SExp) {
     let c = buf.len() as u64 * MALLOC_COST_PER_BYTE;
-    Ok((cost + c, SExp::Atom(buf.to_vec().into())))
+    (cost + c, SExp::Atom(buf.to_vec().into()))
 }
 
 fn malloc_cost(cost: u64, ptr: SExp) -> Result<(u64, SExp), Error> {
@@ -108,7 +108,7 @@ pub fn op_unknown(o: &SExp, args: &SExp, max_cost: u64) -> Result<(u64, SExp), E
     }
     let cost_function = (op[op.len() - 1] & 0b1100_0000) >> 6;
     let cost_multiplier: u64 = match u32_from_u8(&op[0..op.len() - 1]) {
-        Some(v) => v as u64,
+        Some(v) => u64::from(v),
         None => {
             return Err(Error::new(
                 ErrorKind::Unsupported,
@@ -117,11 +117,10 @@ pub fn op_unknown(o: &SExp, args: &SExp, max_cost: u64) -> Result<(u64, SExp), E
         }
     };
     let mut cost = match cost_function {
-        0 => 1,
         1 => {
             let mut cost = ARITH_BASE_COST;
             let mut byte_count: u64 = 0;
-            for arg in args.iter() {
+            for arg in args {
                 cost += ARITH_COST_PER_ARG;
                 let blob = int_atom(arg, "unknown op")?;
                 byte_count += blob.len() as u64;
@@ -133,7 +132,7 @@ pub fn op_unknown(o: &SExp, args: &SExp, max_cost: u64) -> Result<(u64, SExp), E
             let mut cost = MUL_BASE_COST;
             let mut first_iter: bool = true;
             let mut l0: u64 = 0;
-            for arg in args.iter() {
+            for arg in args {
                 let blob = int_atom(arg, "unknown op")?;
                 if first_iter {
                     l0 = blob.len() as u64;
@@ -152,7 +151,7 @@ pub fn op_unknown(o: &SExp, args: &SExp, max_cost: u64) -> Result<(u64, SExp), E
         3 => {
             let mut cost = CONCAT_BASE_COST;
             let mut total_size: u64 = 0;
-            for arg in args.iter() {
+            for arg in args {
                 cost += CONCAT_COST_PER_ARG;
                 let blob = atom(arg, "unknown op")?;
                 total_size += blob.len() as u64;
@@ -164,10 +163,10 @@ pub fn op_unknown(o: &SExp, args: &SExp, max_cost: u64) -> Result<(u64, SExp), E
     };
     check_cost(cost, max_cost)?;
     cost *= cost_multiplier + 1;
-    if cost > u32::MAX as u64 {
+    if cost > u64::from(u32::MAX) {
         Err(Error::new(
             ErrorKind::Unsupported,
-            format!("Invalid Operator: {:?}", o),
+            format!("Invalid Operator: {o:?}"),
         ))
     } else {
         Ok((cost, NULL.clone()))
@@ -178,7 +177,7 @@ pub fn op_sha256(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     let mut cost = SHA256_BASE_COST;
     let mut byte_count: usize = 0;
     let mut hasher = Sha256::new();
-    for arg in args.iter() {
+    for arg in args {
         cost += SHA256_COST_PER_ARG;
         check_cost(cost + byte_count as u64 * SHA256_COST_PER_BYTE, max_cost)?;
         let blob = atom(arg, "sha256")?;
@@ -186,14 +185,14 @@ pub fn op_sha256(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
         hasher.update(blob);
     }
     cost += byte_count as u64 * SHA256_COST_PER_BYTE;
-    new_atom_and_cost(cost, &hasher.finalize())
+    Ok(new_atom_and_cost(cost, &hasher.finalize()))
 }
 
 pub fn op_add(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     let mut cost = ARITH_BASE_COST;
     let mut byte_count: usize = 0;
     let mut total: BigInt = 0.into();
-    for arg in args.iter() {
+    for arg in args {
         cost += ARITH_COST_PER_ARG;
         check_cost(cost + (byte_count as u64 * ARITH_COST_PER_BYTE), max_cost)?;
         let blob = int_atom(arg, "+")?;
@@ -211,7 +210,7 @@ pub fn op_subtract(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     let mut byte_count: usize = 0;
     let mut total: BigInt = 0.into();
     let mut is_first = true;
-    for arg in args.iter() {
+    for arg in args {
         cost += ARITH_COST_PER_ARG;
         check_cost(cost + byte_count as u64 * ARITH_COST_PER_BYTE, max_cost)?;
         let blob = int_atom(arg, "-")?;
@@ -234,7 +233,7 @@ pub fn op_multiply(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     let mut first_iter: bool = true;
     let mut total: BigInt = 1.into();
     let mut l0: usize = 0;
-    for arg in args.iter() {
+    for arg in args {
         check_cost(cost, max_cost)?;
         let blob = int_atom(arg, "*")?;
         if first_iter {
@@ -258,7 +257,7 @@ pub fn op_multiply(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_div_impl(args: &SExp, mempool: bool) -> Result<(u64, SExp), Error> {
-    let (a0, l0, a1, l1) = two_ints(&args, "/")?;
+    let (a0, l0, a1, l1) = two_ints(args, "/")?;
     let cost = DIV_BASE_COST + ((l0 + l1) as u64) * DIV_COST_PER_BYTE;
     if a1.sign() == Sign::NoSign {
         Err(Error::new(
@@ -269,10 +268,7 @@ pub fn op_div_impl(args: &SExp, mempool: bool) -> Result<(u64, SExp), Error> {
         if mempool && (a0.sign() == Sign::Minus || a1.sign() == Sign::Minus) {
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                format!(
-                    "div operator with negative operands is deprecated: {:?}",
-                    args
-                ),
+                format!("div operator with negative operands is deprecated: {args:?}"),
             ));
         }
         let (mut q, r) = a0.div_mod_floor(&a1);
@@ -294,7 +290,7 @@ pub fn op_div_deprecated(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Err
 }
 
 pub fn op_divmod(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    let (a0, l0, a1, l1) = two_ints(&args, "divmod")?;
+    let (a0, l0, a1, l1) = two_ints(args, "divmod")?;
     let cost = DIV_MOD_BASE_COST + ((l0 + l1) as u64) * DIV_MOD_COST_PER_BYTE;
     if a1.sign() == Sign::NoSign {
         Err(Error::new(
@@ -313,7 +309,7 @@ pub fn op_divmod(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_gr(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 2, ">")?;
+    check_arg_count(args, 2, ">")?;
     let a0 = args.first()?;
     let a1 = args.rest()?.first()?;
     let v0 = int_atom(a0, ">")?;
@@ -330,7 +326,7 @@ pub fn op_gr(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_gr_bytes(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 2, ">s")?;
+    check_arg_count(args, 2, ">s")?;
     let a0 = args.first()?;
     let a1 = args.rest()?.first()?;
     let v0 = atom(a0, ">s")?;
@@ -340,7 +336,7 @@ pub fn op_gr_bytes(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_strlen(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 1, "strlen")?;
+    check_arg_count(args, 1, "strlen")?;
     let a0 = args.first()?;
     let v0 = atom(a0, "strlen")?;
     let size = v0.len();
@@ -350,12 +346,15 @@ pub fn op_strlen(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
     malloc_cost(cost, size_node)
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_sign_loss)]
+#[allow(clippy::cast_possible_wrap)]
 pub fn op_substr(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    let ac = arg_count(&args, 3);
+    let ac = arg_count(args, 3);
     if !(2..=3).contains(&ac) {
         return Err(Error::new(
             ErrorKind::Unsupported,
-            format!("substr takes exactly 2 or 3 arguments: {:?}", args),
+            format!("substr takes exactly 2 or 3 arguments: {args:?}"),
         ));
     }
     let a0 = args.first()?;
@@ -373,7 +372,7 @@ pub fn op_substr(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
     if i2 < 0 || i1 < 0 || i2 as usize > size || i2 < i1 {
         Err(Error::new(
             ErrorKind::Unsupported,
-            format!("invalid indices for substr: {:?}", args),
+            format!("invalid indices for substr: {args:?}"),
         ))
     } else {
         let r = new_substr(a0, i1 as usize, i2 as usize)?;
@@ -386,14 +385,14 @@ pub fn op_concat(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     let mut cost = CONCAT_BASE_COST;
     let mut total_size: usize = 0;
     let mut terms = Vec::<&SExp>::new();
-    for arg in args.iter() {
+    for arg in args {
         cost += CONCAT_COST_PER_ARG;
         check_cost(cost + total_size as u64 * CONCAT_COST_PER_BYTE, max_cost)?;
         match arg {
             SExp::Pair(_) => {
                 return Err(Error::new(
                     ErrorKind::Unsupported,
-                    format!("concat on list: {:?}", arg),
+                    format!("concat on list: {arg:?}"),
                 ));
             }
             SExp::Atom(b) => total_size += b.data.len(),
@@ -409,7 +408,7 @@ pub fn op_concat(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_ash(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 2, "ash")?;
+    check_arg_count(args, 2, "ash")?;
     let a0 = args.first()?;
     let b0 = int_atom(a0, "ash")?;
     let i0 = number_from_u8(b0);
@@ -431,7 +430,7 @@ pub fn op_ash(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_lsh(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 2, "lsh")?;
+    check_arg_count(args, 2, "lsh")?;
     let a0 = args.first()?;
     let b0 = int_atom(a0, "lsh")?;
     let i0 = BigUint::from_bytes_be(b0);
@@ -462,7 +461,7 @@ fn binop_reduction(
     let mut total = initial_value;
     let mut arg_size: usize = 0;
     let mut cost = LOG_BASE_COST;
-    for arg in input.iter() {
+    for arg in input {
         let blob = int_atom(arg, op_name)?;
         let n0 = number_from_u8(blob);
         op_f(&mut total, &n0);
@@ -503,7 +502,7 @@ pub fn op_logxor(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_lognot(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 1, "lognot")?;
+    check_arg_count(args, 1, "lognot")?;
     let a0 = args.first()?;
     let v0 = int_atom(a0, "lognot")?;
     let mut n: BigInt = number_from_u8(v0);
@@ -514,7 +513,7 @@ pub fn op_lognot(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_not(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 1, "not")?;
+    check_arg_count(args, 1, "not")?;
     let r: SExp = SExp::from_bool(!args.first()?.as_bool()).clone();
     let cost = BOOL_BASE_COST;
     Ok((cost, r))
@@ -523,7 +522,7 @@ pub fn op_not(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 pub fn op_any(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     let mut cost = BOOL_BASE_COST;
     let mut is_any = false;
-    for arg in args.iter() {
+    for arg in args {
         cost += BOOL_COST_PER_ARG;
         check_cost(cost, max_cost)?;
         is_any = is_any || arg.as_bool();
@@ -535,7 +534,7 @@ pub fn op_any(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
 pub fn op_all(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     let mut cost = BOOL_BASE_COST;
     let mut is_all = true;
-    for arg in args.iter() {
+    for arg in args {
         cost += BOOL_COST_PER_ARG;
         check_cost(cost, max_cost)?;
         is_all = is_all && arg.as_bool();
@@ -608,17 +607,15 @@ fn number_to_scalar(n: &BigInt) -> Scalar {
 }
 
 pub fn op_pubkey_for_exp(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 1, "pubkey_for_exp")?;
+    check_arg_count(args, 1, "pubkey_for_exp")?;
     let a0 = args.first()?;
-
     let v0 = int_atom(a0, "pubkey_for_exp")?;
     let exp: BigInt = mod_group_order(&number_from_u8(v0));
     let cost = PUBKEY_BASE_COST + (v0.len() as u64) * PUBKEY_COST_PER_BYTE;
     let exp: Scalar = number_to_scalar(&exp);
     let point: G1Projective = G1Affine::generator() * exp;
     let point: G1Affine = point.into();
-
-    new_atom_and_cost(cost, &point.to_compressed())
+    Ok(new_atom_and_cost(cost, &point.to_compressed()))
 }
 
 pub fn op_point_add(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
@@ -648,5 +645,5 @@ pub fn op_point_add(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
         }
     }
     let total: G1Affine = total.into();
-    new_atom_and_cost(cost, &total.to_compressed())
+    Ok(new_atom_and_cost(cost, &total.to_compressed()))
 }

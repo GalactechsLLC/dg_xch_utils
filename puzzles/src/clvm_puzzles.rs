@@ -51,7 +51,7 @@ pub fn launcher_coin_spend_to_extra_data(
             "Provided coin spend is not launcher coin spend",
         ));
     }
-    PlotNftExtraData::from_program(coin_spend.solution.to_program().rest()?.rest()?.first()?)
+    PlotNftExtraData::from_program(&coin_spend.solution.to_program().rest()?.rest()?.first()?)
 }
 
 pub fn puzzle_for_singleton(launcher_id: &Bytes32, inner_puz: &Program) -> Result<Program, Error> {
@@ -175,7 +175,7 @@ pub fn get_template_singleton_inner_puzzle(inner_puzzle: &Program) -> Result<Pro
 }
 
 pub fn get_seconds_and_delayed_puzhash_from_p2_singleton_puzzle(
-    puzzle: Program,
+    puzzle: &Program,
 ) -> Result<(u64, Bytes32), Error> {
     match puzzle.uncurry() {
         Ok((_, args)) => {
@@ -448,8 +448,8 @@ pub fn get_pubkey_from_member_inner_puzzle(inner_puzzle: &Program) -> Result<Byt
 pub fn uncurry_pool_member_inner_puzzle(
     inner_puzzle: &Program,
 ) -> Result<(Program, Program, Program, Program, Program, Program), Error> {
-    match is_pool_member_inner_puzzle(inner_puzzle)? {
-        true => match inner_puzzle.uncurry() {
+    if is_pool_member_inner_puzzle(inner_puzzle)? {
+        match inner_puzzle.uncurry() {
             Ok((inner_f, args)) => {
                 let mut as_list: Vec<Program> = args.as_list().into_iter().take(5).collect();
                 if as_list.len() < 5 {
@@ -476,23 +476,20 @@ pub fn uncurry_pool_member_inner_puzzle(
                 ErrorKind::Other,
                 "Failed to unpack inner puzzle",
             )),
-        },
-        false => Err(Error::new(
+        }
+    } else {
+        Err(Error::new(
             ErrorKind::Other,
             "Attempting to unpack a non-waitingroom inner puzzle",
-        )),
+        ))
     }
 }
 
 pub fn uncurry_pool_waitingroom_inner_puzzle(
     inner_puzzle: &Program,
 ) -> Result<(Program, Program, Program, Program), Error> {
-    match is_pool_waitingroom_inner_puzzle(inner_puzzle)? {
-        false => Err(Error::new(
-            ErrorKind::Other,
-            "Attempting to unpack a non-waitingroom inner puzzle",
-        )),
-        true => match inner_puzzle.uncurry() {
+    if is_pool_waitingroom_inner_puzzle(inner_puzzle)? {
+        match inner_puzzle.uncurry() {
             Ok((_, args)) => {
                 let as_list = args.as_list();
                 if as_list.len() < 5 {
@@ -514,9 +511,14 @@ pub fn uncurry_pool_waitingroom_inner_puzzle(
             }
             Err(e) => Err(Error::new(
                 ErrorKind::Other,
-                format!("Failed to unpack inner puzzle: {:?}", e),
+                format!("Failed to unpack inner puzzle: {e:?}"),
             )),
-        },
+        }
+    } else {
+        Err(Error::new(
+            ErrorKind::Other,
+            "Attempting to unpack a non-waitingroom inner puzzle",
+        ))
     }
 }
 
@@ -620,10 +622,8 @@ pub fn pool_state_to_inner_puzzle(
         delay_ph,
     )?;
     match pool_state.state {
-        //Self Pooling
-        1 => Ok(escaping_inner_puzzle),
-        //Leaving Pool
-        2 => Ok(escaping_inner_puzzle),
+        //Self Pooling = 1 Leaving Pool = 2
+        1 | 2 => Ok(escaping_inner_puzzle),
         //Pooling
         _ => create_pooling_inner_puzzle(
             &pool_state.target_puzzle_hash,

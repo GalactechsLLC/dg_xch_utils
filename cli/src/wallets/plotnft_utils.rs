@@ -78,7 +78,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
             let wallet_sk = master_sk_to_wallet_sk(&self.info.master_sk, index).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Failed to parse Wallet SK: {:?}", e),
+                    format!("Failed to parse Wallet SK: {e:?}"),
                 )
             })?;
             let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
@@ -88,7 +88,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
                 .map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidInput,
-                        format!("Failed to parse Wallet SK: {:?}", e),
+                        format!("Failed to parse Wallet SK: {e:?}"),
                     )
                 })?;
             let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
@@ -117,6 +117,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     }
 }
 impl PlotNFTWallet {
+    #[must_use]
     pub fn new(
         master_secret_key: SecretKey,
         client: &FullnodeClient,
@@ -130,7 +131,7 @@ impl PlotNFTWallet {
                 constants,
                 master_sk: master_secret_key.clone(),
                 wallet_store: Arc::new(Mutex::new(MemoryWalletStore::new(master_secret_key, 0))),
-                data: "".to_string(),
+                data: String::new(),
             },
             MemoryWalletConfig {
                 fullnode_host: client.host.clone(),
@@ -176,6 +177,8 @@ impl PlotNFTWallet {
         .await
     }
 
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cast_sign_loss)]
     pub async fn generate_travel_transaction(
         &self,
         plot_nft: &PlotNft,
@@ -258,7 +261,7 @@ impl PlotNFTWallet {
                     .map_err(|e| {
                         Error::new(
                             ErrorKind::Other,
-                            format!("Failed to parse Public key: {:?}", e),
+                            format!("Failed to parse Public key: {e:?}"),
                         )
                     })?;
             }
@@ -291,6 +294,7 @@ impl PlotNFTWallet {
     }
 }
 
+#[allow(clippy::cast_sign_loss)]
 pub async fn generate_travel_transaction_without_fee<F, Fut>(
     client: Arc<FullnodeClient>,
     key_fn: F,
@@ -470,7 +474,7 @@ pub async fn scrounge_for_plotnft_by_key(
                 master_sk_to_wallet_sk_unhardened(master_secret_key, index).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidInput,
-                        format!("Failed to parse Wallet SK: {:?}", e),
+                        format!("Failed to parse Wallet SK: {e:?}"),
                     )
                 })?;
             let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
@@ -547,7 +551,7 @@ pub async fn scrounge_for_plotnfts(
                     break;
                 }
             }
-            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+            () = tokio::time::sleep(Duration::from_secs(1)) => {
                 info!("Finished: {} / {total}", *counter.lock().await);
             }
         }
@@ -586,7 +590,7 @@ pub async fn get_pool_state(
     } else {
         Err(Error::new(
             ErrorKind::NotFound,
-            format!("Failed to find pool state for launcher_id {}", launcher_id),
+            format!("Failed to find pool state for launcher_id {launcher_id}"),
         ))
     }
 }

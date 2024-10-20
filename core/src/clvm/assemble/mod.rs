@@ -96,16 +96,19 @@ pub fn handle_token(token: &Token, tokens: &mut Reader) -> Result<SExp, Error> {
     }
 }
 
+#[must_use]
 pub fn is_hex(chars: &[u8]) -> bool {
     chars.len() > 2 && chars[0] == b'0' && (chars[1] == b'x' || chars[1] == b'X')
 }
 
+#[must_use]
 pub fn is_quote(chars: &[u8]) -> bool {
     chars.len() > 2
         && ((chars.first() == Some(&b'"') && chars.last() == Some(&b'"'))
             || (chars.first() == Some(&b'\'') && chars.last() == Some(&b'\'')))
 }
 
+#[must_use]
 pub fn handle_bytes(token: &Token) -> SExp {
     let mut bytes = token.bytes;
     if bytes[0] == b'#' {
@@ -118,6 +121,7 @@ pub fn handle_bytes(token: &Token) -> SExp {
     }
 }
 
+#[must_use]
 pub fn handle_quote(token: &Token) -> Option<SExp> {
     if is_quote(token.bytes) {
         Some(SExp::Atom(AtomBuf::new(
@@ -137,18 +141,10 @@ pub fn handle_hex(token: &Token) -> Result<Option<SExp>, Error> {
         };
         bytes.extend(token.bytes[2..].to_vec());
         let as_hex = String::from_utf8(bytes).map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidInput,
-                format!("Invalid Hex Value: {e:?}"),
-            )
+            Error::new(ErrorKind::InvalidInput, format!("Invalid Hex Value: {e:?}"))
         })?;
         Ok(Some(SExp::Atom(AtomBuf::new(decode(as_hex).map_err(
-            |e| {
-                Error::new(
-                    ErrorKind::InvalidInput,
-                    format!("Invalid Hex Value: {e:?}"),
-                )
-            },
+            |e| Error::new(ErrorKind::InvalidInput, format!("Invalid Hex Value: {e:?}")),
         )?))))
     } else {
         Ok(None)

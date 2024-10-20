@@ -2,8 +2,7 @@ use crate::api::full_node::FullnodeAPI;
 use crate::api::responses::{AutoFarmResp, EmptyResponse};
 use crate::api::simulator::SimulatorAPI;
 use crate::rpc::full_node::{FullnodeClient, UrlFunction};
-use crate::rpc::{get_client, get_insecure_url, post};
-use crate::ClientSSLConfig;
+use crate::rpc::{get_http_client, get_insecure_url, post};
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
@@ -22,6 +21,7 @@ use dg_xch_keys::encode_puzzle_hash;
 use reqwest::Client;
 use serde_json::{json, Map};
 use std::collections::HashMap;
+use std::hash::RandomState;
 use std::io::Error;
 use std::sync::Arc;
 
@@ -30,7 +30,6 @@ pub struct SimulatorClient {
     full_node_client: FullnodeClient,
     pub host: String,
     pub port: u16,
-    pub ssl_path: Option<ClientSSLConfig>,
     pub additional_headers: Option<HashMap<String, String>>,
     url_function: UrlFunction,
 }
@@ -40,15 +39,13 @@ impl SimulatorClient {
         host: &str,
         port: u16,
         timeout: u64,
-        ssl_path: Option<ClientSSLConfig>,
         additional_headers: &Option<HashMap<String, String>>,
     ) -> Self {
         SimulatorClient {
-            client: get_client(ssl_path.clone(), timeout).unwrap(),
+            client: get_http_client(timeout).unwrap(),
             full_node_client: FullnodeClient::new_simulator(host, port, timeout),
             host: host.to_string(),
             port,
-            ssl_path,
             additional_headers: additional_headers.clone(),
             url_function: Arc::new(get_insecure_url),
         }
@@ -69,7 +66,7 @@ impl SimulatorAPI for SimulatorClient {
         );
         request_body.insert("blocks".to_string(), json!(blocks));
         request_body.insert("guarantee_tx_block".to_string(), json!(transaction_block));
-        Ok(post::<EmptyResponse>(
+        Ok(post::<EmptyResponse, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "farm_block"),
             &request_body,
@@ -81,7 +78,7 @@ impl SimulatorAPI for SimulatorClient {
     async fn set_auto_farming(&self, should_auto_farm: bool) -> Result<AutoFarmResp, Error> {
         let mut request_body = Map::new();
         request_body.insert("should_auto_farm".to_string(), json!(should_auto_farm));
-        Ok(post::<AutoFarmResp>(
+        Ok(post::<AutoFarmResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "set_auto_farming"),
             &request_body,
@@ -91,7 +88,7 @@ impl SimulatorAPI for SimulatorClient {
     }
 
     async fn get_auto_farming(&self) -> Result<AutoFarmResp, Error> {
-        Ok(post::<AutoFarmResp>(
+        Ok(post::<AutoFarmResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_auto_farming"),
             &Map::new(),

@@ -3,7 +3,7 @@ pub async fn test_simulator() {
     use dg_xch_cli::simulator::Simulator;
     use dg_xch_cli::wallets::{Wallet, WalletStore};
     use dg_xch_clients::api::full_node::FullnodeAPI;
-    use dg_xch_core::consensus::block_rewards::MOJO_PER_CHIA;
+
     use log::{info, LevelFilter};
     use simple_logger::SimpleLogger;
     use std::env;
@@ -15,7 +15,7 @@ pub async fn test_simulator() {
     let port = env::var("SIMULATOR_PORT")
         .map(|s| s.parse().unwrap())
         .unwrap_or(5000u16);
-    let simulator = Simulator::new(&hostname, port, 30, None, &None, None);
+    let simulator = Simulator::new(&hostname, port, 30, &None, None);
     let state_1 = simulator.client().get_blockchain_state().await.unwrap();
     info!("{:#?}", state_1);
     simulator.next_blocks(1, false).await.unwrap();
@@ -23,8 +23,8 @@ pub async fn test_simulator() {
     info!("{:#?}", state_2);
     //Test we moved the simulator forward
     assert!(state_1.peak.unwrap().height < state_2.peak.unwrap().height);
-    let bob = simulator.new_user("bob").await.unwrap();
-    let alice = simulator.new_user("alice").await.unwrap();
+    let bob = simulator.new_user("bob").unwrap();
+    let alice = simulator.new_user("alice").unwrap();
     //Bob should start with no XCH
     assert_eq!(
         bob.wallet

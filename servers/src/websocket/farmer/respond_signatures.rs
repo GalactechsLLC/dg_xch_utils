@@ -36,6 +36,7 @@ pub struct RespondSignaturesHandle<T> {
 }
 #[async_trait]
 impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
+    #[allow(clippy::too_many_lines)]
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
@@ -154,7 +155,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .map_err(|e| {
                                                 Error::new(
                                                     ErrorKind::InvalidInput,
-                                                    format!("{:?}", e),
+                                                    format!("{e:?}"),
                                                 )
                                             })?;
                                     if agg_sig_cc_sp.to_signature().verify(
@@ -190,7 +191,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .map_err(|e| {
                                                 Error::new(
                                                     ErrorKind::InvalidInput,
-                                                    format!("{:?}", e),
+                                                    format!("{e:?}"),
                                                 )
                                             })?;
                                     if agg_sig_rc_sp.to_signature().verify(
@@ -355,7 +356,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                     let foliage_agg_sig =
                                         AggregateSignature::aggregate(&foliage_sigs_to_agg, true)
                                             .map_err(|e| {
-                                            Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
+                                            Error::new(ErrorKind::InvalidInput, format!("{e:?}"))
                                         })?;
 
                                     let foliage_block_sigs_to_agg =
@@ -378,7 +379,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                         true,
                                     )
                                     .map_err(|e| {
-                                        Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
+                                        Error::new(ErrorKind::InvalidInput, format!("{e:?}"))
                                     })?;
                                     if foliage_agg_sig.to_signature().verify(
                                         true,

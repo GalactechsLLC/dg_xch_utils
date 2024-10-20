@@ -40,6 +40,7 @@ pub struct NewSignagePointHarvesterHandle<T: PlotManagerAsync> {
 }
 #[async_trait]
 impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarvesterHandle<T> {
+    #[allow(clippy::too_many_lines)]
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
@@ -131,10 +132,10 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                 warn!("Failed to find Pool Contract Difficulties for PH: {} ", pool_contract_puzzle_hash);
                             }
                         }
-                        for (index, quality) in qualities.into_iter() {
+                        for (index, quality) in &qualities {
                             let required_iters = calculate_iterations_quality(
                                 constants_arc.difficulty_constant_factor,
-                                &quality,
+                                quality,
                                 k,
                                 dif,
                                 &data_arc.sp_hash,
@@ -144,7 +145,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                             {
                                 if required_iters < sp_interval_iters {
                                     info!("Plot: {}, Passed Required Iterations, Loading Index: {}", path.file_name, index);
-                                    match plot_info.reader.fetch_ordered_proof(index).await {
+                                    match plot_info.reader.fetch_ordered_proof(*index).await {
                                         Ok(proof) => {
                                             let proof_bytes = proof_to_bytes(&proof);
                                             debug!(
@@ -155,7 +156,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                 encode(&proof_bytes)
                                             );
                                             responses.push((
-                                                quality,
+                                                *quality,
                                                 ProofOfSpace {
                                                     challenge: sp_challenge_hash,
                                                     pool_contract_puzzle_hash: plot_info

@@ -7,6 +7,7 @@ pub const AUG_SCHEME_DST: &[u8; 43] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_A
 // const POP_SCHEME_DST: &[u8; 43] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 // const AUG_SCHEME_POP_DST: &[u8; 43] = b"BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
+#[must_use]
 pub fn verify_signature(public_key: &PublicKey, msg: &[u8], signature: &Signature) -> bool {
     matches!(
         signature.verify(
@@ -38,10 +39,7 @@ pub fn aggregate_verify_signature(
     matches!(
         signature.aggregate_verify(
             true,
-            &new_msgs
-                .iter()
-                .map(Vec::as_slice)
-                .collect::<Vec<&[u8]>>(),
+            &new_msgs.iter().map(Vec::as_slice).collect::<Vec<&[u8]>>(),
             AUG_SCHEME_DST,
             &keys.iter().collect::<Vec<&PublicKey>>(),
             true,
@@ -50,10 +48,12 @@ pub fn aggregate_verify_signature(
     )
 }
 
+#[must_use]
 pub fn sign(local_sk: &SecretKey, msg: &[u8]) -> Signature {
     local_sk.sign(msg, AUG_SCHEME_DST, &local_sk.sk_to_pk().to_bytes())
 }
 
+#[must_use]
 pub fn sign_prepend(local_sk: &SecretKey, msg: &[u8], prepend_pk: &PublicKey) -> Signature {
     local_sk.sign(msg, AUG_SCHEME_DST, &prepend_pk.to_bytes())
 }

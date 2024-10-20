@@ -1,6 +1,7 @@
 pub const MOJO_PER_CHIA: u64 = 1_000_000_000_000;
 pub const BLOCKS_PER_YEAR: u32 = 1_681_920;
 
+#[must_use]
 pub const fn calculate_pool_reward(height: u32) -> u64 {
     /*
     Returns the pool reward at a certain block height. The pool earns 7/8 of the reward in each block. If the farmer
@@ -24,6 +25,7 @@ pub const fn calculate_pool_reward(height: u32) -> u64 {
     }
 }
 
+#[must_use]
 pub const fn calculate_base_farmer_reward(height: u32) -> u64 {
     /*
     Returns the base farmer reward at a certain block height.

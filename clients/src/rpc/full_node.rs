@@ -30,6 +30,7 @@ use dg_xch_core::protocols::full_node::FeeEstimate;
 use reqwest::Client;
 use serde_json::{json, Map};
 use std::collections::HashMap;
+use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 
@@ -53,7 +54,7 @@ impl FullnodeClient {
         additional_headers: &Option<HashMap<String, String>>,
     ) -> Self {
         FullnodeClient {
-            client: get_client(ssl_path.clone(), timeout).unwrap(),
+            client: get_client(&ssl_path, timeout).unwrap(),
             host: host.to_string(),
             port,
             ssl_path,
@@ -76,7 +77,7 @@ impl FullnodeClient {
 #[async_trait]
 impl FullnodeAPI for FullnodeClient {
     async fn get_blockchain_state(&self) -> Result<BlockchainState, Error> {
-        Ok(post::<BlockchainStateResp>(
+        Ok(post::<BlockchainStateResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_blockchain_state"),
             &Map::new(),
@@ -88,7 +89,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_block(&self, header_hash: &Bytes32) -> Result<FullBlock, Error> {
         let mut request_body = Map::new();
         request_body.insert("header_hash".to_string(), json!(header_hash));
-        Ok(post::<FullBlockResp>(
+        Ok(post::<FullBlockResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_block"),
             &request_body,
@@ -112,7 +113,7 @@ impl FullnodeAPI for FullnodeClient {
             json!(exclude_header_hash),
         );
         request_body.insert("exclude_reorged".to_string(), json!(exclude_reorged));
-        Ok(post::<FullBlockAryResp>(
+        Ok(post::<FullBlockAryResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_blocks"),
             &request_body,
@@ -125,7 +126,7 @@ impl FullnodeAPI for FullnodeClient {
         self.get_blocks(start, end, true, false).await
     }
     async fn get_block_count_metrics(&self) -> Result<BlockCountMetrics, Error> {
-        Ok(post::<BlockCountMetricsResp>(
+        Ok(post::<BlockCountMetricsResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_block_count_metrics"),
             &Map::new(),
@@ -137,7 +138,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_block_record_by_height(&self, height: u32) -> Result<BlockRecord, Error> {
         let mut request_body = Map::new();
         request_body.insert("height".to_string(), json!(height));
-        Ok(post::<BlockRecordResp>(
+        Ok(post::<BlockRecordResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_block_record_by_height"),
             &request_body,
@@ -149,7 +150,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_block_record(&self, header_hash: &Bytes32) -> Result<BlockRecord, Error> {
         let mut request_body = Map::new();
         request_body.insert("header_hash".to_string(), json!(header_hash));
-        Ok(post::<BlockRecordResp>(
+        Ok(post::<BlockRecordResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_block_record"),
             &request_body,
@@ -162,7 +163,7 @@ impl FullnodeAPI for FullnodeClient {
         let mut request_body = Map::new();
         request_body.insert("start".to_string(), json!(start));
         request_body.insert("end".to_string(), json!(end));
-        Ok(post::<BlockRecordAryResp>(
+        Ok(post::<BlockRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_block_records"),
             &request_body,
@@ -172,7 +173,7 @@ impl FullnodeAPI for FullnodeClient {
         .block_records)
     }
     async fn get_unfinished_block_headers(&self) -> Result<Vec<UnfinishedHeaderBlock>, Error> {
-        Ok(post::<UnfinishedBlockAryResp>(
+        Ok(post::<UnfinishedBlockAryResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -199,7 +200,7 @@ impl FullnodeAPI for FullnodeClient {
             "newer_block_header_hash".to_string(),
             json!(newer_block_header_hash),
         );
-        Ok(post::<NetSpaceResp>(
+        Ok(post::<NetSpaceResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_network_space"),
             &request_body,
@@ -224,7 +225,7 @@ impl FullnodeAPI for FullnodeClient {
     ) -> Result<(Vec<CoinRecord>, Vec<CoinRecord>), Error> {
         let mut request_body = Map::new();
         request_body.insert("header_hash".to_string(), json!(header_hash));
-        let resp = post::<AdditionsAndRemovalsResp>(
+        let resp = post::<AdditionsAndRemovalsResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_additions_and_removals"),
             &request_body,
@@ -234,7 +235,7 @@ impl FullnodeAPI for FullnodeClient {
         Ok((resp.additions, resp.removals))
     }
     async fn get_initial_freeze_period(&self) -> Result<u64, Error> {
-        Ok(post::<InitialFreezePeriodResp>(
+        Ok(post::<InitialFreezePeriodResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_initial_freeze_period"),
             &Map::new(),
@@ -244,7 +245,7 @@ impl FullnodeAPI for FullnodeClient {
         .initial_freeze_end_timestamp)
     }
     async fn get_network_info(&self) -> Result<NetworkInfo, Error> {
-        let resp = post::<NetworkInfoResp>(
+        let resp = post::<NetworkInfoResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_network_info"),
             &Map::new(),
@@ -270,7 +271,7 @@ impl FullnodeAPI for FullnodeClient {
         } else if challenge_hash.is_some() {
             request_body.insert("challenge_hash".to_string(), json!(challenge_hash));
         }
-        let resp = post::<SignagePointOrEOSResp>(
+        let resp = post::<SignagePointOrEOSResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -309,7 +310,7 @@ impl FullnodeAPI for FullnodeClient {
         if let Some(end_height) = end_height {
             request_body.insert("end_height".to_string(), json!(end_height));
         }
-        Ok(post::<CoinRecordAryResp>(
+        Ok(post::<CoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -341,7 +342,7 @@ impl FullnodeAPI for FullnodeClient {
         if let Some(eh) = end_height {
             request_body.insert("end_height".to_string(), json!(eh));
         }
-        Ok(post::<CoinRecordAryResp>(
+        Ok(post::<CoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -357,7 +358,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_coin_record_by_name(&self, name: &Bytes32) -> Result<Option<CoinRecord>, Error> {
         let mut request_body = Map::new();
         request_body.insert("name".to_string(), json!(name));
-        Ok(post::<CoinRecordResp>(
+        Ok(post::<CoinRecordResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_coin_record_by_name"),
             &request_body,
@@ -381,7 +382,7 @@ impl FullnodeAPI for FullnodeClient {
         );
         request_body.insert("start_height".to_string(), json!(start_height));
         request_body.insert("end_height".to_string(), json!(end_height));
-        Ok(post::<CoinRecordAryResp>(
+        Ok(post::<CoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_coin_records_by_names"),
             &request_body,
@@ -405,7 +406,7 @@ impl FullnodeAPI for FullnodeClient {
         );
         request_body.insert("start_height".to_string(), json!(start_height));
         request_body.insert("end_height".to_string(), json!(end_height));
-        Ok(post::<CoinRecordAryResp>(
+        Ok(post::<CoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -433,7 +434,7 @@ impl FullnodeAPI for FullnodeClient {
         );
         request_body.insert("start_height".to_string(), json!(start_height));
         request_body.insert("end_height".to_string(), json!(end_height));
-        Ok(post::<CoinRecordAryResp>(
+        Ok(post::<CoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_coin_records_by_hint"),
             &request_body,
@@ -445,7 +446,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn push_tx(&self, spend_bundle: &SpendBundle) -> Result<TXStatus, Error> {
         let mut request_body = Map::new();
         request_body.insert("spend_bundle".to_string(), json!(spend_bundle));
-        Ok(post::<TXResp>(
+        Ok(post::<TXResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "push_tx"),
             &request_body,
@@ -462,7 +463,7 @@ impl FullnodeAPI for FullnodeClient {
         let mut request_body = Map::new();
         request_body.insert("coin_id".to_string(), json!(coin_id));
         request_body.insert("height".to_string(), json!(height));
-        Ok(post::<CoinSpendResp>(
+        Ok(post::<CoinSpendResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_puzzle_and_solution"),
             &request_body,
@@ -476,7 +477,7 @@ impl FullnodeAPI for FullnodeClient {
             .await
     }
     async fn get_all_mempool_tx_ids(&self) -> Result<Vec<Bytes32>, Error> {
-        Ok(post::<MempoolTXResp>(
+        Ok(post::<MempoolTXResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_all_mempool_tx_ids"),
             &Map::new(),
@@ -486,7 +487,7 @@ impl FullnodeAPI for FullnodeClient {
         .tx_ids)
     }
     async fn get_all_mempool_items(&self) -> Result<HashMap<Bytes32, MempoolItem>, Error> {
-        Ok(post::<MempoolItemsResp>(
+        Ok(post::<MempoolItemsResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_all_mempool_items"),
             &Map::new(),
@@ -498,7 +499,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MempoolItem, Error> {
         let mut request_body = Map::new();
         request_body.insert("tx_id".to_string(), json!(tx_id));
-        Ok(post::<MempoolItemResp>(
+        Ok(post::<MempoolItemResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_mempool_item_by_tx_id"),
             &request_body,
@@ -513,7 +514,7 @@ impl FullnodeAPI for FullnodeClient {
     ) -> Result<Vec<MempoolItem>, Error> {
         let mut request_body = Map::new();
         request_body.insert("coin_name".to_string(), json!(coin_name));
-        Ok(post::<MempoolItemAryResp>(
+        Ok(post::<MempoolItemAryResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -538,7 +539,7 @@ impl FullnodeAPI for FullnodeClient {
         request_body.insert("spend_bundle".to_string(), json!(spend_bundle));
         request_body.insert("spend_type".to_string(), json!(spend_type));
         request_body.insert("target_times".to_string(), json!(target_times));
-        post::<FeeEstimate>(
+        post::<FeeEstimate, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_fee_estimate"),
             &request_body,
@@ -556,7 +557,7 @@ impl FullnodeExtAPI for FullnodeClient {
     ) -> Result<(CoinRecord, CoinSpend), Error> {
         let mut request_body = Map::new();
         request_body.insert("launcher_id".to_string(), json!(launcher_id));
-        let resp = post::<SingletonByLauncherIdResp>(
+        let resp = post::<SingletonByLauncherIdResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -575,7 +576,7 @@ impl FullnodeExtAPI for FullnodeClient {
     ) -> Result<(Vec<HintedCoinRecord>, Vec<HintedCoinRecord>), Error> {
         let mut request_body = Map::new();
         request_body.insert("header_hash".to_string(), json!(header_hash));
-        let resp = post::<HintedAdditionsAndRemovalsResp>(
+        let resp = post::<HintedAdditionsAndRemovalsResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -610,7 +611,7 @@ impl FullnodeExtAPI for FullnodeClient {
         if let Some(end_height) = end_height {
             request_body.insert("end_height".to_string(), json!(end_height));
         }
-        Ok(post::<CoinRecordAryResp>(
+        Ok(post::<CoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_coin_records_by_hints"),
             &request_body,
@@ -645,7 +646,7 @@ impl FullnodeExtAPI for FullnodeClient {
         if let Some(li) = last_id {
             request_body.insert("last_id".to_string(), json!(li));
         }
-        let resp = post::<PaginatedCoinRecordAryResp>(
+        let resp = post::<PaginatedCoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -684,7 +685,7 @@ impl FullnodeExtAPI for FullnodeClient {
         if let Some(li) = last_id {
             request_body.insert("last_id".to_string(), json!(li));
         }
-        let resp = post::<PaginatedCoinRecordAryResp>(
+        let resp = post::<PaginatedCoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -705,7 +706,7 @@ impl FullnodeExtAPI for FullnodeClient {
     ) -> Result<HashMap<Bytes32, Bytes32>, Error> {
         let mut request_body = Map::new();
         request_body.insert("coin_ids".to_string(), json!(coin_ids));
-        Ok(post::<CoinHintsResp>(
+        Ok(post::<CoinHintsResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_hints_by_coin_ids"),
             &request_body,
@@ -734,7 +735,7 @@ impl FullnodeExtAPI for FullnodeClient {
         if let Some(eh) = end_height {
             request_body.insert("end_height".to_string(), json!(eh));
         }
-        Ok(post::<CoinSpendMapResp>(
+        Ok(post::<CoinSpendMapResp, RandomState>(
             &self.client,
             &(self.url_function)(
                 self.host.as_str(),
@@ -790,8 +791,8 @@ async fn test_extended_functions() {
         .get_coin_records_by_hints_paginated(
             &hints,
             Some(true),
-            Some(4540000),
-            Some(4542825),
+            Some(4_540_000),
+            Some(4_542_825),
             10,
             None,
         )
@@ -802,8 +803,8 @@ async fn test_extended_functions() {
         .get_coin_records_by_puzzle_hashes_paginated(
             &puz_hashes,
             Some(true),
-            Some(4540000),
-            Some(4542825),
+            Some(4_540_000),
+            Some(4_542_825),
             2,
             None,
         )
@@ -812,7 +813,7 @@ async fn test_extended_functions() {
     assert!(!by_puz.0.is_empty());
     assert!(by_puz.0.iter().all(|v| coin_records.contains(v)));
     assert!(!fnc
-        .get_puzzles_and_solutions_by_names(&coin_ids, Some(true), Some(4540000), Some(4542825))
+        .get_puzzles_and_solutions_by_names(&coin_ids, Some(true), Some(4_540_000), Some(4_542_825))
         .await
         .unwrap()
         .is_empty());

@@ -12,20 +12,20 @@ use tokio::sync::Mutex;
 pub struct DiskPlot<F: AsyncSeek + AsyncRead> {
     file: Arc<Mutex<F>>,
     pub filename: Arc<PathBuf>,
-    _header: PlotHeader,
-    _plot_size: u64,
+    header: PlotHeader,
+    plot_size: u64,
 }
 impl DiskPlot<tokio::fs::File> {
     pub async fn new(filename: &Path) -> Result<Self, Error> {
         let mut file = open_read_only_async(filename).await?;
-        let _plot_size = file.metadata().await?.len();
-        let _header = read_plot_header_async(&mut file).await?;
+        let plot_size = file.metadata().await?.len();
+        let header = read_plot_header_async(&mut file).await?;
         file.seek(SeekFrom::Start(0)).await?;
         Ok(Self {
             file: Arc::new(Mutex::new(file)),
             filename: Arc::new(filename.to_path_buf()),
-            _header,
-            _plot_size,
+            header,
+            plot_size,
         })
     }
 }
@@ -34,18 +34,17 @@ impl<F: AsyncSeek + AsyncRead> Display for DiskPlot<F> {
         f.write_str(
             self.filename
                 .file_name()
-                .map(|s| s.to_str().unwrap_or("Invalid Path"))
-                .unwrap_or("Invalid Path"),
+                .map_or("Invalid Path", |s| s.to_str().unwrap_or("Invalid Path")),
         )
     }
 }
 impl<'a, F: AsyncSeek + AsyncRead> PlotFile<'a, F> for DiskPlot<F> {
     fn header(&'a self) -> &'a PlotHeader {
-        &self._header
+        &self.header
     }
 
     fn plot_size(&'a self) -> &'a u64 {
-        &self._plot_size
+        &self.plot_size
     }
 
     fn load_p7_park(&'a self, _index: u64) -> u128 {

@@ -19,29 +19,29 @@ use std::io::{Error, ErrorKind};
 
 #[async_trait]
 pub trait PoolClient {
-    async fn get_farmer(
+    async fn get_farmer<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: GetFarmerRequest,
-        headers: &Option<HashMap<String, String>>,
+        headers: &Option<HashMap<String, String, S>>,
     ) -> Result<GetFarmerResponse, PoolError>;
-    async fn post_farmer(
+    async fn post_farmer<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: PostFarmerRequest,
-        headers: &Option<HashMap<String, String>>,
+        headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PostFarmerResponse, PoolError>;
-    async fn put_farmer(
+    async fn put_farmer<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: PutFarmerRequest,
-        headers: &Option<HashMap<String, String>>,
+        headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PutFarmerResponse, PoolError>;
-    async fn post_partial(
+    async fn post_partial<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: PostPartialRequest,
-        headers: &Option<HashMap<String, String>>,
+        headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PostPartialResponse, PoolError>;
     async fn get_pool_info(&self, pool_url: &str) -> Result<GetPoolInfoResponse, PoolError>;
 }
@@ -51,6 +51,7 @@ pub struct DefaultPoolClient {
     pub client: Client,
 }
 impl DefaultPoolClient {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             client: Client::builder()
@@ -62,14 +63,14 @@ impl DefaultPoolClient {
 }
 #[async_trait]
 impl PoolClient for DefaultPoolClient {
-    async fn get_farmer(
+    async fn get_farmer<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: GetFarmerRequest,
-        headers: &Option<HashMap<String, String>>,
+        headers: &Option<HashMap<String, String, S>>,
     ) -> Result<GetFarmerResponse, PoolError> {
         send_request(
-            self.client.get(format!("{}/farmer", url)),
+            self.client.get(format!("{url}/farmer")),
             "get_farmer",
             headers,
             RequestMode::Query(request),
@@ -77,14 +78,14 @@ impl PoolClient for DefaultPoolClient {
         .await
     }
 
-    async fn post_farmer(
+    async fn post_farmer<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: PostFarmerRequest,
-        headers: &Option<HashMap<String, String>>,
+        headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PostFarmerResponse, PoolError> {
         send_request(
-            self.client.post(format!("{}/farmer", url)),
+            self.client.post(format!("{url}/farmer")),
             "post_farmer",
             headers,
             RequestMode::Json(request),
@@ -92,14 +93,14 @@ impl PoolClient for DefaultPoolClient {
         .await
     }
 
-    async fn put_farmer(
+    async fn put_farmer<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: PutFarmerRequest,
-        headers: &Option<HashMap<String, String>>,
+        headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PutFarmerResponse, PoolError> {
         send_request(
-            self.client.put(format!("{}/farmer", url)),
+            self.client.put(format!("{url}/farmer")),
             "put_farmer",
             headers,
             RequestMode::Json(request),
@@ -107,14 +108,14 @@ impl PoolClient for DefaultPoolClient {
         .await
     }
 
-    async fn post_partial(
+    async fn post_partial<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: PostPartialRequest,
-        headers: &Option<HashMap<String, String>>,
+        headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PostPartialResponse, PoolError> {
         send_request(
-            self.client.post(format!("{}/partial", url)),
+            self.client.post(format!("{url}/partial")),
             "post_partial",
             headers,
             RequestMode::Json(request),
@@ -123,19 +124,23 @@ impl PoolClient for DefaultPoolClient {
     }
     async fn get_pool_info(&self, pool_url: &str) -> Result<GetPoolInfoResponse, PoolError> {
         send_request(
-            self.client.get(format!("{}/pool_info", pool_url)),
+            self.client.get(format!("{pool_url}/pool_info")),
             "get_pool_info",
-            &None,
+            &None::<HashMap<String, String>>,
             RequestMode::<()>::Send,
         )
         .await
     }
 }
 
-async fn send_request<T: Serialize + Debug, R: DeserializeOwned>(
+async fn send_request<
+    T: Serialize + Debug,
+    R: DeserializeOwned,
+    S: std::hash::BuildHasher + Sync + Send + 'static,
+>(
     mut request_builder: RequestBuilder,
     method: &str,
-    headers: &Option<HashMap<String, String>>,
+    headers: &Option<HashMap<String, String, S>>,
     mode: RequestMode<T>,
 ) -> Result<R, PoolError> {
     if let Some(headers) = headers {
@@ -176,36 +181,37 @@ async fn send_request<T: Serialize + Debug, R: DeserializeOwned>(
         }
     };
     match future.await {
-        Ok(resp) => match resp.status() {
-            reqwest::StatusCode::OK => match resp.text().await {
-                Ok(body) => {
-                    debug!("Got Response from Pool: {body}");
-                    match serde_json::from_str::<PoolError>(body.as_str()) {
-                        Ok(e) => Err(e),
-                        Err(_) => match serde_json::from_str(&body) {
-                            Ok(r) => Ok(r),
-                            Err(e) => {
-                                warn!(
-                                    "Failed to parse {method} response, Invalid Json: {:?}, {}",
-                                    e, body
-                                );
-                                Err(PoolError {
-                                    error_code: PoolErrorCode::RequestFailed as u8,
-                                    error_message: e.to_string(),
-                                })
-                            }
-                        },
+        Ok(resp) => {
+            if resp.status() == reqwest::StatusCode::OK {
+                match resp.text().await {
+                    Ok(body) => {
+                        debug!("Got Response from Pool: {body}");
+                        match serde_json::from_str::<PoolError>(body.as_str()) {
+                            Ok(e) => Err(e),
+                            Err(_) => match serde_json::from_str(&body) {
+                                Ok(r) => Ok(r),
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to parse {method} response, Invalid Json: {:?}, {}",
+                                        e, body
+                                    );
+                                    Err(PoolError {
+                                        error_code: PoolErrorCode::RequestFailed as u8,
+                                        error_message: e.to_string(),
+                                    })
+                                }
+                            },
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to {method}, Invalid Body: {:?}", e);
+                        Err(PoolError {
+                            error_code: PoolErrorCode::RequestFailed as u8,
+                            error_message: e.to_string(),
+                        })
                     }
                 }
-                Err(e) => {
-                    warn!("Failed to {method}, Invalid Body: {:?}", e);
-                    Err(PoolError {
-                        error_code: PoolErrorCode::RequestFailed as u8,
-                        error_message: e.to_string(),
-                    })
-                }
-            },
-            _ => {
+            } else {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
                 warn!(
@@ -215,12 +221,11 @@ async fn send_request<T: Serialize + Debug, R: DeserializeOwned>(
                 Err(PoolError {
                     error_code: PoolErrorCode::RequestFailed as u8,
                     error_message: format!(
-                        "Failed to {method}, Bad Status Code: {:?}, {}",
-                        status, text
+                        "Failed to {method}, Bad Status Code: {status:?}, {text}"
                     ),
                 })
             }
-        },
+        }
         Err(e) => {
             warn!("Failed to {method}: {:?}", e);
             Err(PoolError {
@@ -245,7 +250,7 @@ pub async fn create_pool_login_url(
     let mut ids = String::new();
     for (index, (_, launcher_id)) in keys_and_launcher_ids.iter().enumerate() {
         if index != 0 {
-            ids.push(',')
+            ids.push(',');
         }
         ids.push_str(&hex::encode(launcher_id.as_slice()));
     }
@@ -263,7 +268,7 @@ pub async fn create_pool_login_parts(
     let pool_info = pool_client
         .get_pool_info(target_pool)
         .await
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let current_auth_token =
         get_current_authentication_token(pool_info.authentication_token_timeout);
     let mut sigs = vec![];
@@ -278,23 +283,23 @@ pub async fn create_pool_login_parts(
         let sig = sign(sec_key, &to_sign);
         sigs.push(sig);
     }
-    if !sigs.is_empty() {
+    if sigs.is_empty() {
+        Err(Error::new(
+            ErrorKind::NotFound,
+            "No Launcher IDs with Keys found",
+        ))
+    } else {
         let aggregate_signature =
             AggregateSignature::aggregate(sigs.iter().collect::<Vec<&Signature>>().as_ref(), true)
                 .map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidInput,
-                        format!("Failed to calculate signature: {:?}", e),
+                        format!("Failed to calculate signature: {e:?}"),
                     )
                 })?;
         Ok(PoolLoginParts {
             auth_token: current_auth_token,
             aggregate_signature: hex::encode(aggregate_signature.to_signature().to_bytes()),
         })
-    } else {
-        Err(Error::new(
-            ErrorKind::NotFound,
-            "No Launcher IDs with Keys found",
-        ))
     }
 }

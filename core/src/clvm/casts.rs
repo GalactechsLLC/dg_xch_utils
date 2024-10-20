@@ -8,6 +8,7 @@ pub static BIG_ZERO: Lazy<BigInt> = Lazy::new(|| BigInt::from(0));
 pub static BIG_ONE: Lazy<BigInt> = Lazy::new(|| BigInt::from(1));
 pub static BIG_TWO: Lazy<BigInt> = Lazy::new(|| BigInt::from(2));
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn bigint_to_bytes(v_: &BigInt, signed: bool) -> Result<Vec<u8>, Error> {
     let v = v_.clone();
     if v == *BIG_ZERO {

@@ -87,7 +87,7 @@ impl WebsocketServer {
             )
         };
         let server_config = Self::init(certs, key, root_certs)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {e:?}")))?;
         let socket_address = Self::init_socket(config)?;
         Ok(WebsocketServer {
             socket_address,
@@ -114,7 +114,7 @@ impl WebsocketServer {
             load_certs_from_bytes(cert_data.as_bytes())?,
         );
         let server_config = Self::init(certs, key, root_certs)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {e:?}")))?;
         let socket_address = Self::init_socket(config)?;
         Ok(WebsocketServer {
             socket_address,
@@ -164,32 +164,34 @@ impl WebsocketServer {
                                             message_handlers: message_handlers.clone(),
                                             run: run.clone(),
                                         };
-                                        connection_handler(
-                                            data,
-                                             #[cfg(feature = "metrics")]
-                                            metrics.clone()
-                                        )
+                                        async move {
+                                            connection_handler(
+                                                data,
+                                                 #[cfg(feature = "metrics")]
+                                                metrics.clone()
+                                            )
+                                        }
                                     });
                                     let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
                                     tokio::spawn( async move {
-                                        if let Err(err) = connection.await {
-                                            error!("Error serving connection: {:?}", err);
+                                        if let Err(e) = connection.await {
+                                            error!("Error serving connection: {e:?}");
                                         }
                                         Ok::<(), Error>(())
                                     });
                                 }
                                 Err(e) => {
-                                    error!("Error accepting connection: {:?}", e);
+                                    error!("Error accepting connection: {e:?}");
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("Error accepting connection: {:?}", e);
+                            error!("Error accepting connection: {e:?}");
                         }
                     }
                 },
-                _ = tokio::time::sleep(Duration::from_millis(10)) => {}
-            )
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            );
         }
         Ok(())
     }
@@ -204,7 +206,7 @@ impl WebsocketServer {
             root_cert_store.add(&cert).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Invalid Root Cert for Server: {:?}", e),
+                    format!("Invalid Root Cert for Server: {e:?}"),
                 )
             })?;
         }
@@ -216,7 +218,7 @@ impl WebsocketServer {
                 .map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidInput,
-                        format!("Invalid Cert for Server: {:?}", e),
+                        format!("Invalid Cert for Server: {e:?}"),
                     )
                 })?,
         ))
@@ -232,7 +234,7 @@ impl WebsocketServer {
             .map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Failed to parse Host: {:?}", e),
+                    format!("Failed to parse Host: {e:?}"),
                 )
             })?,
             config.port,
@@ -249,7 +251,7 @@ struct ConnectionData {
     pub run: Arc<AtomicBool>,
 }
 
-async fn connection_handler(
+fn connection_handler(
     mut data: ConnectionData,
     #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
 ) -> Result<Response<Full<Bytes>>, tungstenite::error::Error> {
@@ -294,7 +296,7 @@ async fn connection_handler(
             )
             .await
             {
-                error!("Error in websocket connection: {}", e);
+                error!("Error in websocket connection: {e}");
             }
             #[cfg(feature = "metrics")]
             if let Some(metrics) = metrics.as_ref() {
@@ -337,6 +339,6 @@ async fn handle_connection(
         debug!("Sending Close to Peer");
         let _ = removed.websocket.write().await.close(None).await;
     }
-    let _ = stream.run(run).await;
+    stream.run(run).await;
     Ok(())
 }

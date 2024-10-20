@@ -26,6 +26,7 @@ pub enum PlotTable {
     C3 = 9,
 }
 impl PlotTable {
+    #[must_use]
     pub fn lower(&self) -> &Self {
         match self {
             PlotTable::Table1 | PlotTable::Table2 => &PlotTable::Table1,
@@ -42,14 +43,14 @@ impl PlotTable {
 }
 
 pub trait PlotFile<'a, F: AsyncSeek + AsyncRead> {
-    fn table_address(&'a self, plot_table: &PlotTable) -> u64 {
+    fn table_address(&'a self, plot_table: PlotTable) -> u64 {
         match self.header() {
-            PlotHeader::V1(h) => h.table_begin_pointers[*plot_table as usize],
-            PlotHeader::V2(h) => h.table_begin_pointers[*plot_table as usize],
+            PlotHeader::V1(h) => h.table_begin_pointers[plot_table as usize],
+            PlotHeader::V2(h) => h.table_begin_pointers[plot_table as usize],
             PlotHeader::GHv2_5(_) => 0,
         }
     }
-    fn table_size(&'a self, plot_table: &PlotTable) -> u64 {
+    fn table_size(&'a self, plot_table: PlotTable) -> u64 {
         let table_pointers = match self.header() {
             PlotHeader::V1(h) => &h.table_begin_pointers,
             PlotHeader::V2(h) => &h.table_begin_pointers,
@@ -57,8 +58,8 @@ pub trait PlotFile<'a, F: AsyncSeek + AsyncRead> {
                 return 0;
             }
         };
-        let address = table_pointers[*plot_table as usize];
-        if let Some(next) = table_pointers.get(*plot_table as usize + 1) {
+        let address = table_pointers[plot_table as usize];
+        if let Some(next) = table_pointers.get(plot_table as usize + 1) {
             if *next > address {
                 return next - address;
             }
@@ -150,6 +151,7 @@ pub enum PlotHeader {
     GHv2_5(PlotHeaderGHv2_5),
 }
 impl PlotHeader {
+    #[must_use]
     pub fn magic(&self) -> Vec<u8> {
         match self {
             PlotHeader::V1(h) => h.magic.to_vec(),
@@ -157,6 +159,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.magic.to_vec(),
         }
     }
+    #[must_use]
     pub fn id(&self) -> Bytes32 {
         match self {
             PlotHeader::V1(h) => h.id,
@@ -164,6 +167,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.id,
         }
     }
+    #[must_use]
     pub fn k(&self) -> u8 {
         match self {
             PlotHeader::V1(h) => h.k,
@@ -171,6 +175,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.k,
         }
     }
+    #[must_use]
     pub fn memo_len(&self) -> u16 {
         match self {
             PlotHeader::V1(h) => h.memo_len,
@@ -178,6 +183,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.memo_len,
         }
     }
+    #[must_use]
     pub fn memo(&self) -> &PlotMemo {
         match self {
             PlotHeader::V1(h) => &h.memo,
@@ -185,6 +191,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => &h.memo,
         }
     }
+    #[must_use]
     pub fn format_desc_len(&self) -> u16 {
         match self {
             PlotHeader::V1(h) => h.format_desc_len,
@@ -192,6 +199,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.format_desc_len,
         }
     }
+    #[must_use]
     pub fn format_desc(&self) -> &[u8] {
         match self {
             PlotHeader::V1(h) => &h.format_desc,
@@ -199,12 +207,14 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => &h.format_desc,
         }
     }
+    #[must_use]
     pub fn plot_flags(&self) -> u32 {
         match self {
             PlotHeader::V1(_) | PlotHeader::GHv2_5(_) => 0,
             PlotHeader::V2(h) => h.plot_flags,
         }
     }
+    #[must_use]
     pub fn compression_level(&self) -> u8 {
         match self {
             PlotHeader::V1(_) => 0,
@@ -226,6 +236,7 @@ pub struct PlotHeaderV1 {
     pub table_begin_pointers: [u64; 10],
 }
 impl PlotHeaderV1 {
+    #[must_use]
     pub fn new() -> Self {
         PlotHeaderV1 {
             magic: [0; 19],
@@ -265,6 +276,7 @@ pub struct PlotHeaderV2 {
     pub table_sizes: [u64; 10],
 }
 impl PlotHeaderV2 {
+    #[must_use]
     pub fn new() -> Self {
         PlotHeaderV2 {
             magic: [0; 4],
@@ -303,6 +315,7 @@ pub struct PlotHeaderGHv2_5 {
     pub compression_level: u8,
 }
 impl PlotHeaderGHv2_5 {
+    #[must_use]
     pub fn new() -> Self {
         PlotHeaderGHv2_5 {
             magic: [0; 4],

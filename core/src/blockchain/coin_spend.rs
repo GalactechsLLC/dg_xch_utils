@@ -26,6 +26,7 @@ impl CoinSpend {
             INFINITE_COST,
         )
     }
+    #[must_use]
     pub fn reserved_fee(self) -> BigInt {
         fee_for_solution(&self.puzzle_reveal, &self.solution, INFINITE_COST)
     }

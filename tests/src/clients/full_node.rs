@@ -1,5 +1,6 @@
 use dg_xch_clients::api::full_node::FullnodeAPI;
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 pub async fn test_full_node_client() -> Result<(), Error> {
     use dg_xch_clients::api::full_node::FullnodeAPI;
     use dg_xch_clients::api::full_node::FullnodeExtAPI;
@@ -12,7 +13,7 @@ pub async fn test_full_node_client() -> Result<(), Error> {
         .map(|v| v.parse().unwrap_or(8555))
         .unwrap_or(8555);
     let client = FullnodeClient::new(&hostname, port, 120, None, &None);
-    let hinted_block = client.get_block_record_by_height(4000001).await?;
+    let hinted_block = client.get_block_record_by_height(4_000_001).await?;
     let add_and_removes_with_hints = client
         .get_additions_and_removals_with_hints(&hinted_block.header_hash)
         .await?;
@@ -42,17 +43,13 @@ pub async fn test_full_node_client() -> Result<(), Error> {
     assert_eq!(blocks.len(), 5);
     let blocks2 = client.get_all_blocks(0, 5).await?;
     assert_eq!(blocks, blocks2);
-    let firet_block_record = client
-        .get_block_record(&first_block.header_hash)
-        .await?;
+    let firet_block_record = client.get_block_record(&first_block.header_hash).await?;
     assert_eq!(first_block, firet_block_record);
     let block_records = client.get_block_records(0, 5).await?;
     assert_eq!(block_records.len(), 5);
     let _ = client.get_unfinished_block_headers().await?;
-    let height = client
-        .get_network_space_by_height(1000, 5000)
-        .await?; //this also tests get_network_space and get_block_record_by_height
-    assert_eq!(140670610131864768, height);
+    let height = client.get_network_space_by_height(1000, 5000).await?; //this also tests get_network_space and get_block_record_by_height
+    assert_eq!(140_670_610_131_864_768, height);
     let coins = client
         .get_coin_records_by_hints(
             &[
@@ -78,8 +75,8 @@ pub async fn test_full_node_client() -> Result<(), Error> {
             ]
             .map(Bytes32::from),
             Some(true),
-            Some(3068715),
-            Some(3468715),
+            Some(3_068_715),
+            Some(3_468_715),
         )
         .await?;
     for coin in coins {
@@ -102,13 +99,13 @@ pub async fn test_full_node_client() -> Result<(), Error> {
                 .copied()
                 .collect::<Vec<Bytes32>>(),
             Some(true),
-            Some(4000000),
-            Some(4000010),
+            Some(4_000_000),
+            Some(4_000_010),
             50,
             None,
         )
         .await?;
-    println!("{:?}", coin_records_by_hints);
+    println!("{coin_records_by_hints:?}");
     Ok(())
 }
 
@@ -198,10 +195,9 @@ pub async fn test_farmer_ws_client() {
                                 if !client_handle.load(Ordering::Relaxed) {
                                     info!("Farmer Stopping from global run");
                                     break 'retry;
-                                } else {
-                                    info!("Farmer Client Closed, Reconnecting");
-                                    break;
                                 }
+                                info!("Farmer Client Closed, Reconnecting");
+                                break;
                             }
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }

@@ -24,6 +24,7 @@ pub struct DTable {
     pub header: DTableH,
     pub table: Vec<DTableEntry>,
 }
+#[must_use]
 pub fn parse_d_table(bytes: &[u8]) -> DTable {
     let mut cursor = Cursor::new(bytes);
     let mut u16_buf: [u8; 2] = [0; 2];
@@ -33,18 +34,18 @@ pub fn parse_d_table(bytes: &[u8]) -> DTable {
     cursor.read_exact(&mut u16_buf).unwrap();
     let fast_mode = u16::from_le_bytes(u16_buf);
     let mut table = vec![];
-    let max_size = fse_dtable_size_u32(table_log as u32);
+    let max_size = fse_dtable_size_u32(u32::from(table_log));
     for _ in 0..max_size {
         let new_state = match cursor.read_exact(&mut u16_buf) {
-            Ok(_) => u16::from_le_bytes(u16_buf),
+            Ok(()) => u16::from_le_bytes(u16_buf),
             Err(_) => 0,
         };
         let symbol = match cursor.read_exact(&mut u8_buf) {
-            Ok(_) => u8::from_le_bytes(u8_buf),
+            Ok(()) => u8::from_le_bytes(u8_buf),
             Err(_) => 0,
         };
         let nb_bits = match cursor.read_exact(&mut u8_buf) {
-            Ok(_) => u8::from_le_bytes(u8_buf),
+            Ok(()) => u8::from_le_bytes(u8_buf),
             Err(_) => 0,
         };
         table.push(DTableEntry {
@@ -68,7 +69,7 @@ pub struct DState {
 }
 impl DState {
     pub fn new(bit_d: &mut BitDstream, dt: Arc<DTable>) -> Self {
-        let state = bit_d.read_bits(dt.header.table_log as u32);
+        let state = bit_d.read_bits(u32::from(dt.header.table_log));
         bit_d.reload();
         DState { state, table: dt }
     }
@@ -89,6 +90,8 @@ fn create_dtable(table_log: u32) -> DTable {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_sign_loss)]
 pub fn build_dtable(
     normalized_counter: &[i16],
     max_symbol_value: u32,
@@ -157,8 +160,8 @@ pub fn build_dtable(
     for table in &mut dt.table[0..(table_size as usize)] {
         let next_state = symbol_next[table.symbol as usize];
         symbol_next[table.symbol as usize] += 1;
-        table.nb_bits = (table_log - highbit_32(next_state as u32)) as u8;
-        table.new_state = ((next_state << table.nb_bits) as u32 - table_size) as u16;
+        table.nb_bits = (table_log - highbit_32(u32::from(next_state))) as u8;
+        table.new_state = (u32::from(next_state << table.nb_bits) - table_size) as u16;
     }
     Ok(dt)
 }
@@ -248,7 +251,7 @@ pub struct DecodeSymbol {}
 impl SymbolFn for DecodeSymbol {
     fn decode_symbol(&self, state: &mut DState, bit_d: &mut BitDstream) -> u8 {
         let entry = &state.table.table[state.state];
-        let low_bits: usize = bit_d.read_bits(entry.nb_bits as u32);
+        let low_bits: usize = bit_d.read_bits(u32::from(entry.nb_bits));
         state.state = entry.new_state as usize + low_bits;
         entry.symbol
     }
@@ -259,7 +262,7 @@ pub struct FastDecodeSymbol {}
 impl SymbolFn for FastDecodeSymbol {
     fn decode_symbol(&self, state: &mut DState, bit_d: &mut BitDstream) -> u8 {
         let entry = &state.table.table[state.state];
-        let low_bits: usize = bit_d.read_bits_fast(entry.nb_bits as u32);
+        let low_bits: usize = bit_d.read_bits_fast(u32::from(entry.nb_bits));
         state.state = entry.new_state as usize + low_bits;
         entry.symbol
     }

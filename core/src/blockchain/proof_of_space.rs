@@ -125,6 +125,7 @@ pub struct ProofOfSpace {
     pub proof: ProofBytes,
 }
 impl ProofOfSpace {
+    #[must_use]
     pub fn get_plot_id(&self) -> Option<Bytes32> {
         if let (Some(_), Some(_)) = (&self.pool_public_key, &self.pool_contract_puzzle_hash) {
             //Invalid, Both cant be Some
@@ -145,6 +146,7 @@ impl ProofOfSpace {
     }
 }
 
+#[must_use]
 pub fn calculate_plot_id_public_key(
     pool_public_key: &Bytes48,
     plot_public_key: &Bytes48,
@@ -157,6 +159,7 @@ pub fn calculate_plot_id_public_key(
     Bytes32::new(&hasher.finalize())
 }
 
+#[must_use]
 pub fn calculate_plot_id_puzzle_hash(
     pool_contract_puzzle_hash: &Bytes32,
     plot_public_key: &Bytes48,
@@ -169,6 +172,8 @@ pub fn calculate_plot_id_puzzle_hash(
     Bytes32::new(&hasher.finalize())
 }
 
+#[allow(clippy::cast_possible_wrap)]
+#[must_use]
 pub fn calculate_prefix_bits(constants: &ConsensusConstants, height: u32) -> i8 {
     let mut prefix_bits = constants.number_zero_bits_plot_filter as i8;
     if height >= constants.plot_filter_32_height {
@@ -183,6 +188,8 @@ pub fn calculate_prefix_bits(constants: &ConsensusConstants, height: u32) -> i8 
     max(0, prefix_bits)
 }
 
+#[allow(clippy::cast_sign_loss)]
+#[must_use]
 pub fn passes_plot_filter(
     prefix_bits: i8,
     plot_id: &Bytes32,
@@ -209,6 +216,7 @@ pub fn passes_plot_filter(
     }
 }
 
+#[must_use]
 pub fn calculate_plot_filter_input(
     plot_id: &Bytes32,
     challenge_hash: &Bytes32,
@@ -221,6 +229,7 @@ pub fn calculate_plot_filter_input(
     Bytes32::new(&hasher.finalize())
 }
 
+#[must_use]
 pub fn calculate_pos_challenge(
     plot_id: &Bytes32,
     challenge_hash: &Bytes32,

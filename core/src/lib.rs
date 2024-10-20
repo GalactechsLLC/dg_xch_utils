@@ -17,6 +17,7 @@ fn _pkg_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
+#[must_use]
 pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }

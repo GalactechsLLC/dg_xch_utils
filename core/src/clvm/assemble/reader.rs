@@ -33,6 +33,7 @@ pub struct Reader<'a> {
     pub index: usize,
 }
 impl<'a> Reader<'a> {
+    #[must_use]
     pub fn new(stream: &'a [u8]) -> Self {
         Self { stream, index: 0 }
     }

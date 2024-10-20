@@ -46,7 +46,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for HarvesterHandshakeHan
             .load_plots(self.harvester_state.clone())
             .await
         {
-            Ok(_) => {
+            Ok(()) => {
                 debug!("Done Loading Plots");
             }
             Err(e) => {

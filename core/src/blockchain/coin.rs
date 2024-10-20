@@ -12,9 +12,11 @@ pub struct Coin {
     pub amount: u64,
 }
 impl Coin {
+    #[must_use]
     pub fn name(&self) -> Bytes32 {
         self.coin_id()
     }
+    #[must_use]
     pub fn coin_id(&self) -> Bytes32 {
         let mut hasher = Sha256::new();
         hasher.update(self.parent_coin_info);

@@ -16,6 +16,7 @@ pub struct SpendBundle {
     pub aggregated_signature: Bytes96,
 }
 impl SpendBundle {
+    #[must_use]
     pub fn name(&self) -> Bytes32 {
         Bytes32::new(&hash_256(self.to_bytes(ChiaProtocolVersion::default())))
     }
@@ -40,6 +41,7 @@ impl SpendBundle {
         })
     }
 
+    #[must_use]
     pub fn empty() -> Self {
         SpendBundle {
             coin_spends: vec![],
@@ -65,17 +67,18 @@ impl SpendBundle {
         })
     }
 
+    #[must_use]
     pub fn removals(&self) -> Vec<Coin> {
         self.coin_spends.iter().map(|c| &c.coin).copied().collect()
     }
 
+    #[must_use]
     pub fn coins(&self) -> Vec<Coin> {
         self.removals()
     }
 
     pub fn net_additions(&self) -> Result<Vec<Coin>, Error> {
-        let removals: HashSet<Bytes32> =
-            self.removals().into_iter().map(|c| c.name()).collect();
+        let removals: HashSet<Bytes32> = self.removals().into_iter().map(|c| c.name()).collect();
         Ok(self
             .additions()?
             .into_iter()

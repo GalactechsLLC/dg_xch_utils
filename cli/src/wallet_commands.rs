@@ -16,7 +16,11 @@ use dg_xch_core::pool::PoolState;
 use dg_xch_core::protocols::pool::{
     GetPoolInfoResponse, FARMING_TO_POOL, POOL_PROTOCOL_VERSION, SELF_POOLING,
 };
-use dg_xch_keys::*;
+use dg_xch_keys::{
+    encode_puzzle_hash, fingerprint, key_from_mnemonic_str, master_sk_to_farmer_sk,
+    master_sk_to_pool_sk, master_sk_to_wallet_sk, BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER,
+    FARMER_PATH, POOL_PATH,
+};
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     calculate_synthetic_secret_key, puzzle_hash_for_pk, DEFAULT_HIDDEN_PUZZLE_HASH,
 };
@@ -29,7 +33,7 @@ use std::time::{Duration, Instant};
 
 pub fn create_cold_wallet() -> Result<(), Error> {
     let mnemonic = Mnemonic::generate(24)
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
     let master_secret_key = key_from_mnemonic_str(&mnemonic.to_string())?;
     let master_public_key = master_secret_key.sk_to_pk();
     let fp = fingerprint(&master_public_key);
@@ -58,7 +62,7 @@ pub fn create_cold_wallet() -> Result<(), Error> {
     info!("First 3 Wallet addresses");
     for i in 0..3 {
         let wallet_sk = master_sk_to_wallet_sk(&master_secret_key, i)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {e:?}")))?;
         let address = encode_puzzle_hash(
             &puzzle_hash_for_pk(&Bytes48::from(wallet_sk.sk_to_pk().to_bytes()))?,
             "xch",
@@ -79,22 +83,21 @@ pub fn keys_for_coinspends(
     for c in coin_spends {
         if puz_key_cache.contains(&c.coin.puzzle_hash) {
             continue;
-        } else {
-            for ki in last_key_index..max_pub_keys {
-                let sec_key = master_sk_to_wallet_sk(master_sk, ki)?;
-                let pub_key = sec_key.sk_to_pk();
-                let puz_hash = puzzle_hash_for_pk(&pub_key.into())?;
-                let synthetic_secret_key =
-                    calculate_synthetic_secret_key(&sec_key, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
-                info!("MasterSK: {:?}", master_sk);
-                info!("WalletSK: {:?}", sec_key);
-                info!("SyntheticSK: {:?}", synthetic_secret_key);
-                key_cache.insert(pub_key.into(), synthetic_secret_key.clone());
-                puz_key_cache.insert(puz_hash);
-                if c.coin.puzzle_hash == puz_hash {
-                    last_key_index = ki;
-                    break;
-                }
+        }
+        for ki in last_key_index..max_pub_keys {
+            let sec_key = master_sk_to_wallet_sk(master_sk, ki)?;
+            let pub_key = sec_key.sk_to_pk();
+            let puz_hash = puzzle_hash_for_pk(&pub_key.into())?;
+            let synthetic_secret_key =
+                calculate_synthetic_secret_key(&sec_key, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+            info!("MasterSK: {:?}", master_sk);
+            info!("WalletSK: {:?}", sec_key);
+            info!("SyntheticSK: {:?}", synthetic_secret_key);
+            key_cache.insert(pub_key.into(), synthetic_secret_key.clone());
+            puz_key_cache.insert(puz_hash);
+            if c.coin.puzzle_hash == puz_hash {
+                last_key_index = ki;
+                break;
             }
         }
     }
@@ -116,7 +119,7 @@ pub async fn migrate_plot_nft(
         Some(if target_pool.starts_with("https://") {
             target_pool.to_string()
         } else {
-            format!("https://{}", target_pool)
+            format!("https://{target_pool}")
         })
     };
     let pool_wallet =
@@ -218,7 +221,7 @@ pub async fn migrate_plot_nft_with_owner_key(
         Some(if target_pool.starts_with("https://") {
             target_pool.to_string()
         } else {
-            format!("https://{}", target_pool)
+            format!("https://{target_pool}")
         })
     };
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
@@ -238,7 +241,7 @@ pub async fn migrate_plot_nft_with_owner_key(
                     owner_key,
                     &plot_nft,
                     &target_pool_state,
-                    &Default::default(),
+                    &ConsensusConstants::default(),
                 )
                 .await?;
                 info!(
@@ -276,7 +279,7 @@ pub async fn migrate_plot_nft_with_owner_key(
                 owner_key,
                 &plot_nft,
                 &target_pool_state,
-                &Default::default(),
+                &ConsensusConstants::default(),
             )
             .await?;
             info!(
@@ -303,15 +306,11 @@ async fn wait_for_plot_nft_ready_state(
             Ok(is_ready) => {
                 if is_ready {
                     break;
-                } else {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
                 }
+                tokio::time::sleep(Duration::from_secs(60)).await;
             }
             Err(e) => {
-                error!(
-                    "Error Checking PlotNFT State, Waiting and Trying again. {:?}",
-                    e
-                );
+                error!("Error Checking PlotNFT State, Waiting and Trying again. {e:?}");
                 tokio::time::sleep(Duration::from_secs(30)).await;
             }
         }
@@ -332,14 +331,13 @@ async fn wait_for_num_blocks(client: Arc<FullnodeClient>, height: u32, timeout_s
                     if let Some(start) = start_height {
                         if peak.height > start + height {
                             break;
-                        } else {
-                            info!("Waiting for {} more blocks", start + height - peak.height);
-                            tokio::time::sleep(std::cmp::min(
-                                end_time.duration_since(now),
-                                Duration::from_secs(10),
-                            ))
-                            .await;
                         }
+                        info!("Waiting for {} more blocks", start + height - peak.height);
+                        tokio::time::sleep(std::cmp::min(
+                            end_time.duration_since(now),
+                            Duration::from_secs(10),
+                        ))
+                        .await;
                     } else {
                         start_height = Some(peak.height);
                     }
@@ -399,12 +397,7 @@ async fn get_pool_info(pool_url: &str) -> Result<GetPoolInfoResponse, Error> {
     let pool_info = DefaultPoolClient::new()
         .get_pool_info(pool_url)
         .await
-        .map_err(|e| {
-            Error::new(
-                ErrorKind::Other,
-                format!("Failed to load pool info: {:?}", e),
-            )
-        })?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to load pool info: {e:?}")))?;
     validate_pool_info(&pool_info)?;
     Ok(pool_info)
 }

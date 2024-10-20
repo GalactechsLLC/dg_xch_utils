@@ -40,12 +40,16 @@ pub struct MempoolItem {
     pub removals: Vec<Coin>,
 }
 impl MempoolItem {
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn fee_per_cost(&self) -> f64 {
         (self.fee / self.cost()) as f64
     }
+    #[must_use]
     pub fn name(&self) -> Bytes32 {
         self.spend_bundle_name
     }
+    #[must_use]
     pub fn cost(&self) -> u64 {
         self.npc_result
             .conds
@@ -53,10 +57,12 @@ impl MempoolItem {
             .map(|c| c.cost)
             .unwrap_or_default()
     }
+    #[must_use]
     pub fn additions(self) -> Vec<Coin> {
         additions_for_npc(self.npc_result)
     }
 
+    #[must_use]
     pub fn removals(self) -> Vec<Coin> {
         self.spend_bundle.removals()
     }

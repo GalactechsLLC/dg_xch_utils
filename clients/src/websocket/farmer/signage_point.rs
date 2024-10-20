@@ -34,6 +34,7 @@ pub struct NewSignagePointHandle {
 }
 #[async_trait]
 impl MessageHandler for NewSignagePointHandle {
+    #[allow(clippy::too_many_lines)]
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
@@ -61,7 +62,7 @@ impl MessageHandler for NewSignagePointHandle {
                         difficulty,
                         sub_slot_iters: POOL_SUB_SLOT_ITERS,
                         pool_contract_puzzle_hash: *p2_singleton_puzzle_hash,
-                    })
+                    });
                 } else {
                     warn!("No pool specific difficulty has been set for {p2_singleton_puzzle_hash}, check communication with the pool, skipping this signage point, pool: {}", &config.pool_url);
                     continue;

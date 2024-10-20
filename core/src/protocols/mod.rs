@@ -490,6 +490,7 @@ pub struct ChiaMessageFilter {
     pub id: Option<u16>,
 }
 impl ChiaMessageFilter {
+    #[must_use]
     pub fn matches(&self, msg: &ChiaMessage) -> bool {
         if self.id.is_some() && self.id != msg.id {
             return false;

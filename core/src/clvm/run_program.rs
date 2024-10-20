@@ -60,7 +60,7 @@ impl<D: Dialect> RunProgramContext<D> {
 // the input byte
 #[allow(clippy::cast_possible_truncation)]
 fn msb_mask(byte: u8) -> u8 {
-    let mut byte = (byte | (byte >> 1)) as u32;
+    let mut byte = u32::from(byte | (byte >> 1));
     byte |= byte >> 2;
     byte |= byte >> 4;
     debug_assert!((byte + 1) >> 1 <= 0x80);
@@ -177,7 +177,7 @@ impl<D: Dialect> RunProgramContext<D> {
         } else {
             self.op_stack.push(Operation::Apply);
             self.push(operator_node.clone());
-            let mut operands: &SExp = &operand_list;
+            let mut operands: &SExp = operand_list;
             loop {
                 match operands {
                     SExp::Atom(buf) => {
@@ -225,7 +225,7 @@ impl<D: Dialect> RunProgramContext<D> {
                 format!("in ((X)...) syntax X must be lone atom: {pair:?}"),
             ));
         };
-        self.eval_op_atom(op_node, op_list, &args)
+        self.eval_op_atom(op_node, op_list, args)
     }
 
     fn swap_eval_op(&mut self) -> Result<u64, Error> {
@@ -263,7 +263,7 @@ impl<D: Dialect> RunProgramContext<D> {
                     self.op_stack.push(Operation::PostEval);
                 };
 
-                self.eval_pair(&*pair.first, &*pair.rest)
+                self.eval_pair(&pair.first, &pair.rest)
             }
         }
     }
@@ -284,7 +284,7 @@ impl<D: Dialect> RunProgramContext<D> {
                 let (new_args, _) = arg_wrap.split()?;
                 let post_eval = match self.pre_eval {
                     None => None,
-                    Some(ref pre_eval) => pre_eval(&new_program, &new_args)?,
+                    Some(ref pre_eval) => pre_eval(new_program, new_args)?,
                 };
                 if let Some(post_eval) = post_eval {
                     self.posteval_stack.push(post_eval);

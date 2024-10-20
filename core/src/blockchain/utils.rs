@@ -2,11 +2,11 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
-use crate::clvm::condition_utils::conditions_dict_for_solution;
 use crate::clvm::condition_utils::created_outputs_for_conditions_dict;
+use crate::clvm::condition_utils::{conditions_dict_for_solution, ConditionsDict};
 use crate::clvm::program::SerializedProgram;
 use num_bigint::BigInt;
-use std::collections::HashMap;
+use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
 
 pub fn additions_for_solution(
@@ -15,16 +15,18 @@ pub fn additions_for_solution(
     solution: &SerializedProgram,
     max_cost: u64,
 ) -> Result<Vec<Coin>, Error> {
-    let (map, _cost) = conditions_dict_for_solution(puzzle_reveal, solution, max_cost)?;
-    created_outputs_for_conditions_dict(map, coin_name)
+    let (map, _cost) =
+        conditions_dict_for_solution::<RandomState>(puzzle_reveal, solution, max_cost)?;
+    created_outputs_for_conditions_dict(&map, coin_name)
 }
 
+#[must_use]
 pub fn fee_for_solution(
     puzzle_reveal: &SerializedProgram,
     solution: &SerializedProgram,
     max_cost: u64,
 ) -> BigInt {
-    match conditions_dict_for_solution(puzzle_reveal, solution, max_cost) {
+    match conditions_dict_for_solution::<RandomState>(puzzle_reveal, solution, max_cost) {
         Ok((conditions, _cost)) => {
             let mut total: BigInt = 0.into();
             match conditions.get(&ConditionOpcode::ReserveFee) {
@@ -43,6 +45,7 @@ pub fn fee_for_solution(
     }
 }
 
+#[must_use]
 pub fn atom_to_int(bytes: &[u8]) -> BigInt {
     if bytes.is_empty() {
         0.into()
@@ -52,7 +55,7 @@ pub fn atom_to_int(bytes: &[u8]) -> BigInt {
 }
 
 pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
-    conditions_dict: &HashMap<ConditionOpcode, Vec<ConditionWithArgs>, S>,
+    conditions_dict: &ConditionsDict<S>,
     coin_name: Bytes32,
     additional_data: &[u8],
 ) -> Result<Vec<(Bytes48, Vec<u8>)>, Error> {

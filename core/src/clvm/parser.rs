@@ -141,7 +141,7 @@ fn decode_size(stream: &mut dyn Read, initial_b: u8) -> Result<u64, Error> {
     }
     for b in &size_blob {
         v <<= 8;
-        v += *b as u64;
+        v += u64::from(*b);
     }
     if v >= MAX_DECODE_SIZE {
         return Err(Error::new(ErrorKind::InvalidInput, "bad encoding"));

@@ -6,7 +6,6 @@ use crate::wallets::{Wallet, WalletInfo};
 use bip39::Mnemonic;
 use dg_xch_clients::api::simulator::SimulatorAPI;
 use dg_xch_clients::rpc::simulator::SimulatorClient;
-use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::wallet_type::WalletType;
 use dg_xch_core::consensus::constants::ConsensusConstants;
@@ -34,17 +33,17 @@ pub struct Simulator {
     background: Mutex<Option<JoinHandle<()>>>,
 }
 impl Simulator {
+    #[must_use]
     pub fn new(
         host: &str,
         port: u16,
         timeout: u64,
-        ssl_path: Option<ClientSSLConfig>,
         additional_headers: &Option<HashMap<String, String>>,
         network: Option<ConsensusConstants>,
     ) -> Self {
         Self {
             network: network.unwrap_or_default(),
-            client: SimulatorClient::new(host, port, timeout, ssl_path, additional_headers),
+            client: SimulatorClient::new(host, port, timeout, additional_headers),
             run: Arc::new(AtomicBool::new(false)),
             background: Mutex::new(None),
         }
@@ -52,7 +51,7 @@ impl Simulator {
     pub fn client(&self) -> &SimulatorClient {
         &self.client
     }
-    pub async fn new_user(&self, name: &str) -> Result<ChainUser<'_>, Error> {
+    pub fn new_user(&self, name: &str) -> Result<ChainUser<'_>, Error> {
         let mnemonic = Mnemonic::generate(24).map_err(|e| Error::new(ErrorKind::Other, e))?;
         let secret_key =
             key_from_mnemonic(&mnemonic).map_err(|e| Error::new(ErrorKind::Other, e))?;
@@ -66,12 +65,12 @@ impl Simulator {
                     constants: Arc::new(self.network.clone()),
                     master_sk: secret_key.clone(),
                     wallet_store: Arc::new(Mutex::new(MemoryWalletStore::new(secret_key, 0))),
-                    data: "".to_string(),
+                    data: String::new(),
                 },
                 MemoryWalletConfig {
                     fullnode_host: self.client.host.clone(),
                     fullnode_port: self.client.port,
-                    fullnode_ssl_path: self.client.ssl_path.clone(),
+                    fullnode_ssl_path: None,
                     additional_headers: self.client.additional_headers.clone(),
                 },
             ),
@@ -114,10 +113,9 @@ impl Simulator {
                     ErrorKind::AlreadyExists,
                     "Simulator Already Running",
                 ));
-            } else {
-                run.store(false, Ordering::Relaxed);
-                background.await?;
             }
+            run.store(false, Ordering::Relaxed);
+            background.await?;
         }
         run.store(true, Ordering::Relaxed);
         *self.background.lock().await = Some(tokio::spawn(async move {

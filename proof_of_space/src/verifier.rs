@@ -41,6 +41,7 @@ impl Default for ValidatePlotOptions {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub async fn validate_plot(path: &Path, options: ValidatePlotOptions) -> Result<(), Error> {
     let count = thread::available_parallelism()?.get();
     let thread_count = max(min(options.thread_count, count), 1);
@@ -52,8 +53,7 @@ pub async fn validate_plot(path: &Path, options: ValidatePlotOptions) -> Result<
     info!("Mode: {}", if options.in_ram { "Ram" } else { "Disk" });
     info!("K Size: {}", plot_files[0].k());
     info!("Unpacked: {}", options.unpacked);
-    let plot_c3park_count =
-        plot_files[0].table_size(&PlotTable::C1) as usize / size_of::<u32>() - 1;
+    let plot_c3park_count = plot_files[0].table_size(PlotTable::C1) as usize / size_of::<u32>() - 1;
     info!("Maximum C3 Parks: {}", plot_c3park_count);
     if options.unpacked {
         todo!()
@@ -76,7 +76,7 @@ pub async fn validate_plot(path: &Path, options: ValidatePlotOptions) -> Result<
         for results in join_all(&mut tasks).await {
             match results {
                 Ok(res) => match res {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Validator Thread Finished");
                     }
                     Err(e) => {
@@ -92,6 +92,10 @@ pub async fn validate_plot(path: &Path, options: ValidatePlotOptions) -> Result<
     Ok(())
 }
 
+#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_sign_loss)]
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::too_many_lines)]
 async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
     index: usize,
     thread_count: usize,
@@ -99,7 +103,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
     fail_counter: Arc<AtomicU64>,
     start_offset: f64,
 ) -> Result<(), Error> {
-    let plot_c3park_count = plot_file.table_size(&PlotTable::C1) as usize / size_of::<u32>() - 1;
+    let plot_c3park_count = plot_file.table_size(PlotTable::C1) as usize / size_of::<u32>() - 1;
     let mut c3park_count = plot_c3park_count / thread_count;
     let mut start_c3park = index * c3park_count;
     let trailing_parks = plot_c3park_count - c3park_count * thread_count;
@@ -163,7 +167,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
                 Ok(proof) => {
                     // Now we can validate the proof
                     match get_f7_from_proof(
-                        reader.plot_file().k() as u32,
+                        u32::from(reader.plot_file().k()),
                         reader.plot_id().to_sized_bytes(),
                         &proof,
                         &mut fx,
@@ -206,6 +210,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
     Ok(())
 }
 
+#[must_use]
 pub fn uncompress_proof(proof: &[u8], k: usize) -> Vec<u64> {
     let mut index = 0;
     let proof_bits = BitReader::from_bytes_be(proof, proof.len() * 8);
@@ -218,6 +223,8 @@ pub fn uncompress_proof(proof: &[u8], k: usize) -> Vec<u64> {
     new_proof
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_precision_loss)]
 pub fn validate_proof(
     id: &[u8; 32],
     k: u8,
@@ -227,7 +234,7 @@ pub fn validate_proof(
     let mut fx = vec![0; PROOF_X_COUNT];
     let mut meta: Vec<BitReader> = Vec::with_capacity(PROOF_X_COUNT);
     let f7 = get_f7_from_proof(
-        k as u32,
+        u32::from(k),
         id,
         &uncompress_proof(proof, k as usize),
         &mut fx,
@@ -289,6 +296,8 @@ pub fn get_f7_from_proof_and_reorder(
     Ok((fx[0] >> K_EXTRA_BITS, compress_proof(new_proof, k as usize)))
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_sign_loss)]
 pub fn get_quality_string(
     k: u8,
     proof: &[u8],
@@ -299,7 +308,7 @@ pub fn get_quality_string(
     let mut table_index: u8 = 1;
     while table_index < 7 {
         let mut new_proof: BitReader = BitReader::default();
-        let size: u16 = k as u16 * (1 << (table_index - 1)) as u16;
+        let size: u16 = u16::from(k) * (1 << (table_index - 1)) as u16;
         let mut j = 0;
         while j < (1 << (7 - table_index)) {
             let mut left = proof_bits.range((j * size) as usize, ((j + 1) * size) as usize);
@@ -321,8 +330,8 @@ pub fn get_quality_string(
     to_hash.extend(
         proof_bits
             .range(
-                (k as u16 * quality_index) as usize,
-                (k as u16 * (quality_index + 2)) as usize,
+                (u16::from(k) * quality_index) as usize,
+                (u16::from(k) * (quality_index + 2)) as usize,
             )
             .to_bytes(),
     );
@@ -363,7 +372,7 @@ pub async fn check_plot<T: AsRef<Path>>(
             .fetch_qualities_for_challenge(challenge_hash.as_ref())
             .await?;
         let duration = Instant::now().duration_since(start).as_millis();
-        for (index, _quality) in qualities.iter() {
+        for (index, _quality) in &qualities {
             if duration > 5000 {
                 warn!("\tLooking up qualities took: {duration} ms. This should be below 5 seconds to minimize risk of losing rewards.");
             } else {
@@ -394,6 +403,8 @@ pub async fn check_plot<T: AsRef<Path>>(
     Ok((total_proofs, bad_proofs))
 }
 
+#[allow(clippy::cast_sign_loss)]
+#[allow(clippy::cast_possible_wrap)]
 fn compare_proof_bits(left: &BitReader, right: &BitReader, k: u8) -> Result<bool, Error> {
     let size = left.get_size() / k as usize;
     if left.get_size() != right.get_size() {
@@ -404,9 +415,9 @@ fn compare_proof_bits(left: &BitReader, right: &BitReader, k: u8) -> Result<bool
     }
     let mut i = size as isize - 1;
     while i >= 0 {
-        let _i = i as usize;
-        let left_val = left.range(k as usize * _i, k as usize * (_i + 1));
-        let right_val = right.range(k as usize * _i, k as usize * (_i + 1));
+        let ui = i as usize;
+        let left_val = left.range(k as usize * ui, k as usize * (ui + 1));
+        let right_val = right.range(k as usize * ui, k as usize * (ui + 1));
         if left_val < right_val {
             return Ok(true);
         }
@@ -418,6 +429,7 @@ fn compare_proof_bits(left: &BitReader, right: &BitReader, k: u8) -> Result<bool
     Ok(false)
 }
 
+#[must_use]
 pub fn proof_to_bytes(src: &[u64]) -> Vec<u8> {
     src.iter()
         .map(|b| b.to_be_bytes())
@@ -426,6 +438,7 @@ pub fn proof_to_bytes(src: &[u64]) -> Vec<u8> {
 }
 
 #[tokio::test]
+#[allow(clippy::cast_possible_truncation)]
 pub async fn test_qualities() {
     use crate::constants::ucdiv_t;
     use crate::plots::decompressor::DecompressorPool;
@@ -437,7 +450,9 @@ pub async fn test_qualities() {
     use std::thread::available_parallelism;
     let d_pool = Arc::new(DecompressorPool::new(
         1,
-        available_parallelism().map(|u| u.get()).unwrap_or(4) as u8,
+        available_parallelism()
+            .map(std::num::NonZero::get)
+            .unwrap_or(4) as u8,
     ));
     let compressed_reader = PlotReader::new(
         DiskPlot::new(Path::new(
@@ -468,7 +483,7 @@ pub async fn test_qualities() {
         .fetch_qualities_for_challenge(&challenge)
         .await
         .unwrap();
-    for (index, quality) in qualities.iter() {
+    for (index, quality) in &qualities {
         let proof = uncompressed_reader
             .fetch_ordered_proof(*index)
             .await
@@ -486,7 +501,7 @@ pub async fn test_qualities() {
         .fetch_qualities_for_challenge(&challenge)
         .await
         .unwrap();
-    for (index, quality) in qualities2.iter() {
+    for (index, quality) in &qualities2 {
         let proof = compressed_reader.fetch_ordered_proof(*index).await.unwrap();
         let v_quality = validate_proof(
             compressed_reader.plot_id().to_sized_bytes(),

@@ -9,6 +9,7 @@ pub struct RecentErrors<T: Clone + Serialize> {
     errors: VecDeque<(T, SystemTime)>,
 }
 impl<T: Clone + Serialize> RecentErrors<T> {
+    #[must_use]
     pub fn new(depth: usize, cache_duration: Duration) -> Self {
         Self {
             depth,

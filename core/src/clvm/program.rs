@@ -1,4 +1,6 @@
-use crate::blockchain::sized_bytes::{Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes, hex_to_bytes};
+use crate::blockchain::sized_bytes::{
+    hex_to_bytes, Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes,
+};
 use crate::clvm::curry_utils::curry;
 use crate::clvm::dialect::ChiaDialect;
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
@@ -105,6 +107,7 @@ impl Program {
         })
     }
 
+    #[must_use]
     pub fn tree_hash(&self) -> Bytes32 {
         let sexp = sexp_from_bytes(&self.serialized).unwrap_or_else(|e| {
             println!("ERROR: {e:?}");
@@ -162,6 +165,7 @@ impl Program {
         .or_else(|_: Error| Ok((self.clone(), Program::to(0))))
     }
 
+    #[must_use]
     pub fn as_list(&self) -> Vec<Program> {
         match self.as_pair() {
             None => {
@@ -190,14 +194,17 @@ impl Program {
             .collect())
     }
 
+    #[must_use]
     pub fn is_atom(&self) -> bool {
         matches!(self.sexp, SExp::Atom(_))
     }
 
+    #[must_use]
     pub fn is_pair(&self) -> bool {
         matches!(self.sexp, SExp::Pair(_))
     }
 
+    #[must_use]
     pub fn as_atom(&self) -> Option<Program> {
         match self.sexp {
             SExp::Atom(_) => match sexp_to_bytes(&self.sexp) {
@@ -208,6 +215,7 @@ impl Program {
         }
     }
 
+    #[must_use]
     pub fn as_vec(&self) -> Option<Vec<u8>> {
         match &self.sexp {
             SExp::Atom(vec) => Some(vec.data.clone()),
@@ -215,6 +223,7 @@ impl Program {
         }
     }
 
+    #[must_use]
     pub fn as_pair(&self) -> Option<(Program, Program)> {
         match &self.sexp {
             SExp::Pair(pair) => {
@@ -232,6 +241,7 @@ impl Program {
         }
     }
 
+    #[must_use]
     pub fn cons(&self, other: &Program) -> Program {
         match sexp_to_bytes(&SExp::Pair((&self.sexp, &other.sexp).into())) {
             Ok(bytes) => Program::new(bytes),
@@ -446,6 +456,7 @@ impl SerializedProgram {
             buffer: fs::read(path)?,
         })
     }
+    #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> SerializedProgram {
         SerializedProgram {
             buffer: bytes.to_owned(),
@@ -462,6 +473,7 @@ impl SerializedProgram {
         })
     }
     //pub fn uncurry(&self) -> (SerializedProgram, SerializedProgram) {}
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.buffer.clone()
     }
@@ -478,6 +490,7 @@ impl SerializedProgram {
         self.run(max_cost, 0, args)
     }
 
+    #[must_use]
     pub fn to_program(&self) -> Program {
         Program::new(self.buffer.clone())
     }

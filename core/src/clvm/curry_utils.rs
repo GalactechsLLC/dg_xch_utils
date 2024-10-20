@@ -24,7 +24,7 @@ pub fn concat(sexps: &[SExp]) -> Result<SExp, Error> {
 
 pub fn curry(program: &Program, args: &[Program]) -> Program {
     let mut fixed_args = Program::to(1);
-    for arg in args.iter().cloned().map(|v| v.to_sexp()).rev() {
+    for arg in args.iter().map(IntoSExp::to_sexp).rev() {
         fixed_args = Program::to(vec![
             4.to_sexp(),
             (1.to_sexp(), arg).to_sexp(),
@@ -33,7 +33,7 @@ pub fn curry(program: &Program, args: &[Program]) -> Program {
     }
     Program::to(vec![
         Program::to(2),
-        Program::to((1.to_sexp(), program.clone().to_sexp())),
+        Program::to((1.to_sexp(), program.to_sexp())),
         fixed_args,
     ])
 }

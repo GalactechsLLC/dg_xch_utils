@@ -9,6 +9,8 @@ use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 
+pub type ConditionsDict<S> = HashMap<ConditionOpcode, Vec<ConditionWithArgs>, S>;
+
 pub fn parse_sexp_to_condition(sexp: &SExp) -> Result<ConditionWithArgs, Error> {
     let as_atoms = sexp.as_atom_list();
     if as_atoms.is_empty() {
@@ -24,9 +26,9 @@ pub fn parse_sexp_to_condition(sexp: &SExp) -> Result<ConditionWithArgs, Error> 
     }
 }
 
-pub fn parse_sexp_to_conditions(sexp: SExp) -> Result<Vec<ConditionWithArgs>, Error> {
+pub fn parse_sexp_to_conditions(sexp: &SExp) -> Result<Vec<ConditionWithArgs>, Error> {
     let mut results = Vec::new();
-    for arg in sexp.iter() {
+    for arg in sexp {
         match parse_sexp_to_condition(arg) {
             Ok(condition) => {
                 results.push(condition);
@@ -37,10 +39,11 @@ pub fn parse_sexp_to_conditions(sexp: SExp) -> Result<Vec<ConditionWithArgs>, Er
     Ok(results)
 }
 
-pub fn conditions_by_opcode(
+#[must_use]
+pub fn conditions_by_opcode<S: std::hash::BuildHasher + Default>(
     conditions: Vec<ConditionWithArgs>,
-) -> HashMap<ConditionOpcode, Vec<ConditionWithArgs>> {
-    let mut hm: HashMap<ConditionOpcode, Vec<ConditionWithArgs>> = HashMap::new();
+) -> ConditionsDict<S> {
+    let mut hm: ConditionsDict<S> = HashMap::with_hasher(S::default());
     for cvp in conditions {
         match hm.get_mut(&cvp.opcode) {
             Some(list) => {
@@ -54,8 +57,8 @@ pub fn conditions_by_opcode(
     hm
 }
 
-pub fn created_outputs_for_conditions_dict(
-    conditions_dict: HashMap<ConditionOpcode, Vec<ConditionWithArgs>>,
+pub fn created_outputs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
+    conditions_dict: &ConditionsDict<S>,
     input_coin_name: Bytes32,
 ) -> Result<Vec<Coin>, Error> {
     let mut output_coins = Vec::new();
@@ -75,11 +78,11 @@ pub fn created_outputs_for_conditions_dict(
     Ok(output_coins)
 }
 
-pub fn conditions_dict_for_solution(
+pub fn conditions_dict_for_solution<S: std::hash::BuildHasher + Default>(
     puzzle_reveal: &SerializedProgram,
     solution: &SerializedProgram,
     max_cost: u64,
-) -> Result<(HashMap<ConditionOpcode, Vec<ConditionWithArgs>>, u64), Error> {
+) -> Result<(ConditionsDict<S>, u64), Error> {
     match conditions_for_solution(puzzle_reveal, solution, max_cost) {
         Ok((result, cost)) => Ok((conditions_by_opcode(result), cost)),
         Err(error) => Err(error),
@@ -92,7 +95,7 @@ pub fn conditions_for_solution(
     max_cost: u64,
 ) -> Result<(Vec<ConditionWithArgs>, u64), Error> {
     match puzzle_reveal.run_with_cost(max_cost, &solution.to_program()) {
-        Ok((cost, r)) => match parse_sexp_to_conditions(r.to_sexp()) {
+        Ok((cost, r)) => match parse_sexp_to_conditions(&r.to_sexp()) {
             Ok(conditions) => Ok((conditions, cost)),
             Err(error) => Err(error),
         },

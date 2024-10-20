@@ -9,6 +9,7 @@ use dg_xch_core::clvm::sexp::IntoSExp;
 use dg_xch_serialize::hash_256;
 use std::io::{Error, ErrorKind};
 
+#[must_use]
 pub fn generate_launcher_coin(coin: &Coin, amount: u64) -> Coin {
     Coin {
         parent_coin_info: coin.name(),

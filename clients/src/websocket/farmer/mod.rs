@@ -30,7 +30,7 @@ impl<T> FarmerClient<T> {
             .get(&client_config.network_id)
             .cloned()
             .unwrap_or(MAINNET.clone());
-        let handles = Arc::new(RwLock::new(handles(constants, shared_state.clone())));
+        let handles = Arc::new(RwLock::new(handles(constants, &shared_state)));
         let client = WsClient::new(client_config, NodeType::Farmer, handles, run).await?;
         Ok(FarmerClient {
             client,
@@ -43,6 +43,7 @@ impl<T> FarmerClient<T> {
         self.client.join().await
     }
 
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.client.handle.is_finished()
     }
@@ -50,7 +51,7 @@ impl<T> FarmerClient<T> {
 
 fn handles<T>(
     constants: Arc<ConsensusConstants>,
-    shared_state: Arc<FarmerSharedState<T>>,
+    shared_state: &FarmerSharedState<T>,
 ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
     HashMap::from([
         (
@@ -82,7 +83,7 @@ fn handles<T>(
                 }),
                 Arc::new(RequestSignedValuesHandle {
                     quality_to_identifiers: shared_state.quality_to_identifiers.clone(),
-                    recent_errors: Arc::new(Default::default()),
+                    recent_errors: Arc::default(),
                     harvester_peers: shared_state.harvester_peers.clone(),
                 }),
             )),

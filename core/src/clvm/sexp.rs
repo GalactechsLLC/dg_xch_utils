@@ -1,5 +1,7 @@
 use crate::blockchain::condition_opcode::ConditionOpcode;
-use crate::blockchain::sized_bytes::{Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes};
+use crate::blockchain::sized_bytes::{
+    Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes,
+};
 use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
 use crate::clvm::program::Program;
@@ -67,6 +69,7 @@ impl SExp {
             SExp::Pair(p) => Ok(&p.rest),
         }
     }
+    #[must_use]
     pub fn cons(self, other: SExp) -> SExp {
         SExp::Pair(PairBuf {
             first: Box::new(self),
@@ -83,6 +86,7 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn nullp(&self) -> bool {
         match &self {
             SExp::Atom(a) => a.data.is_empty(),
@@ -90,6 +94,7 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn as_atom_list(&self) -> Vec<Vec<u8>> {
         match self {
             SExp::Atom(_) => {
@@ -130,6 +135,7 @@ impl SExp {
         Ok(rtn)
     }
 
+    #[must_use]
     pub fn arg_count_is(&self, mut count: usize) -> bool {
         let mut ptr = self;
         loop {
@@ -146,10 +152,12 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn iter(&self) -> SExpIter {
         SExpIter { c: self }
     }
 
+    #[must_use]
     pub fn as_bool(&self) -> bool {
         match self.atom() {
             Ok(v0) => !v0.data.is_empty(),
@@ -157,6 +165,7 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn from_bool(b: bool) -> &'static SExp {
         if b {
             &ONE
@@ -165,6 +174,7 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn proper_list(self, store: bool) -> Option<Vec<SExp>> {
         let mut args = vec![];
         let mut args_sexp = self;
@@ -187,6 +197,7 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn non_nil(&self) -> bool {
         match self {
             SExp::Pair(_) => true,
@@ -281,6 +292,7 @@ impl Display for AtomBuf {
 }
 
 impl AtomBuf {
+    #[must_use]
     pub fn new(v: Vec<u8>) -> Self {
         AtomBuf { data: v }
     }
@@ -465,6 +477,12 @@ impl IntoSExp for String {
 }
 
 impl IntoSExp for Program {
+    fn to_sexp(self) -> SExp {
+        self.sexp.clone()
+    }
+}
+
+impl IntoSExp for &Program {
     fn to_sexp(self) -> SExp {
         self.sexp.clone()
     }

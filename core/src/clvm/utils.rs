@@ -18,6 +18,7 @@ pub const MEMPOOL_MODE: u32 =
     NO_NEG_DIV | COND_CANON_INTS | NO_UNKNOWN_CONDS | NO_UNKNOWN_OPS | COND_ARGS_NIL;
 pub const INFINITE_COST: u64 = 0x7FFF_FFFF_FFFF_FFFF;
 
+#[must_use]
 pub fn tree_hash(sexp: &SExp) -> Vec<u8> {
     match sexp {
         SExp::Pair(pair) => {
@@ -60,6 +61,7 @@ pub fn check_arg_count(args: &SExp, expected: usize, name: &str) -> Result<(), E
     }
 }
 
+#[must_use]
 pub fn arg_count(args: &SExp, return_early_if_exceeds: usize) -> usize {
     let mut count = 0;
     let mut ptr = args;
@@ -111,6 +113,7 @@ pub fn ptr_from_number(item: &BigInt) -> Result<SExp, Error> {
     Ok(SExp::Atom(slice.to_vec().into()))
 }
 
+#[must_use]
 pub fn number_from_u8(v: &[u8]) -> BigInt {
     if v.is_empty() {
         0.into()
@@ -128,18 +131,25 @@ fn u32_from_u8_impl(buf: &[u8], signed: bool) -> Option<u32> {
         return None;
     }
     let sign_extend = (buf[0] & 0x80) != 0;
-    let mut ret: u32 = if signed && sign_extend { 0xffff_ffff } else { 0 };
+    let mut ret: u32 = if signed && sign_extend {
+        0xffff_ffff
+    } else {
+        0
+    };
     for b in buf {
         ret <<= 8;
-        ret |= *b as u32;
+        ret |= u32::from(*b);
     }
     Some(ret)
 }
 
+#[must_use]
 pub fn u32_from_u8(buf: &[u8]) -> Option<u32> {
     u32_from_u8_impl(buf, false)
 }
 
+#[allow(clippy::cast_possible_wrap)]
+#[must_use]
 pub fn i32_from_u8(buf: &[u8]) -> Option<i32> {
     u32_from_u8_impl(buf, true).map(|v| v as i32)
 }
@@ -243,6 +253,7 @@ pub fn int_to_bytes(value: BigInt, size: usize, signed: bool) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
+#[must_use]
 pub fn additions_for_npc(npc_result: NPCResult) -> Vec<Coin> {
     let mut additions: Vec<Coin> = vec![];
     if let Some(conds) = npc_result.conds {

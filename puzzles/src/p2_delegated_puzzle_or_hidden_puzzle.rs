@@ -45,10 +45,11 @@ pub async fn test_calculate_synthetic_offset() {
     let result = calculate_synthetic_offset(&key, &DEFAULT_HIDDEN_PUZZLE_HASH);
     assert_eq!(
         "19134605735515143581103004370522950503760660832695882105316807119860397047163",
-        format!("{}", result)
+        format!("{result}")
     );
 }
 
+#[must_use]
 pub fn calculate_synthetic_offset(public_key: &Bytes48, hidden_puzzle_hash: &Bytes32) -> BigInt {
     let mut to_hash = vec![];
     to_hash.extend(public_key.to_sized_bytes());
@@ -73,7 +74,7 @@ pub fn calculate_synthetic_public_key(
         .map_err(|e| {
             Error::new(
                 ErrorKind::InvalidInput,
-                format!("Synthetic PK Error: {:?}", e),
+                format!("Synthetic PK Error: {e:?}"),
             )
         })?;
     Ok(Bytes48::from(agg.to_public_key().to_bytes()))
@@ -92,7 +93,7 @@ pub fn calculate_synthetic_secret_key(
     SecretKey::from_bytes(blob.to_sized_bytes()).map_err(|e| {
         Error::new(
             ErrorKind::InvalidInput,
-            format!("Synthetic SK Error: {:?}", e),
+            format!("Synthetic SK Error: {e:?}"),
         )
     })
 }
@@ -126,7 +127,7 @@ pub fn puzzle_hash_for_public_key_and_hidden_puzzle_hash(
 
 pub fn puzzle_for_public_key_and_hidden_puzzle(
     public_key: &Bytes48,
-    hidden_puzzle: Program,
+    hidden_puzzle: &Program,
 ) -> Result<Program, Error> {
     puzzle_for_public_key_and_hidden_puzzle_hash(public_key, &hidden_puzzle.tree_hash())
 }
@@ -145,7 +146,7 @@ pub async fn test_puzzle_hash_for_pk() {
     let expected_puzzlehash =
         Bytes32::from("48068eb6150f738fe90a001c562f0c4b769b7d64a59915aa8c0886b978e38137");
     let result = puzzle_hash_for_pk(&key).unwrap();
-    assert_eq!(expected_puzzlehash, result)
+    assert_eq!(expected_puzzlehash, result);
 }
 
 pub fn solution_for_delegated_puzzle(delegated_puzzle: Program, solution: Program) -> Program {
@@ -156,6 +157,7 @@ pub fn solution_for_delegated_puzzle(delegated_puzzle: Program, solution: Progra
     ])
 }
 
+#[must_use]
 pub fn solution_for_hidden_puzzle(
     hidden_public_key: Bytes48,
     hidden_puzzle: Program,

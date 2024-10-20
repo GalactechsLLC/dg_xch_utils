@@ -2,7 +2,7 @@ pub mod cli;
 
 use blst::min_pk::SecretKey;
 use clap::Parser;
-use cli::*;
+use cli::{prompt_for_mnemonic, Cli, RootCommands, WalletAction};
 use dg_xch_cli::wallet_commands::{
     create_cold_wallet, get_plotnft_ready_state, migrate_plot_nft, migrate_plot_nft_with_owner_key,
 };
@@ -28,6 +28,8 @@ use std::env;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
 
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cast_sign_loss)]
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let cli = Cli::parse();
@@ -86,7 +88,7 @@ async fn main() -> Result<(), Error> {
                             .map_err(|e| {
                                 Error::new(
                                     ErrorKind::InvalidInput,
-                                    format!("Failed to parse Wallet SK: {:?}", e),
+                                    format!("Failed to parse Wallet SK: {e:?}"),
                                 )
                             })?;
                         let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
@@ -95,7 +97,7 @@ async fn main() -> Result<(), Error> {
                             .map_err(|e| {
                                 Error::new(
                                     ErrorKind::InvalidInput,
-                                    format!("Failed to parse Wallet SK: {:?}", e),
+                                    format!("Failed to parse Wallet SK: {e:?}"),
                                 )
                             })?;
                         let pub_key: Bytes48 = hardened_wallet_sk.sk_to_pk().to_bytes().into();
@@ -127,7 +129,7 @@ async fn main() -> Result<(), Error> {
                         "xch"
                     )?
                 );
-                info!("\t  }}{}", if index != total - 1 { "," } else { "" });
+                info!("\t  }}{}", if index == total - 1 { "" } else { "," });
             }
             info!("\t}}");
             info!("}}");
@@ -694,7 +696,7 @@ async fn main() -> Result<(), Error> {
                 constants.clone(),
                 fee.unwrap_or_default(),
             )
-            .await?
+            .await?;
         }
         RootCommands::MovePlotNFTWithOwnerKey {
             target_pool,
@@ -712,13 +714,13 @@ async fn main() -> Result<(), Error> {
                 &target_address,
                 &owner_key,
             )
-            .await?
+            .await?;
         }
         RootCommands::GetPlotnftState { launcher_id } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
             get_plotnft_ready_state(client, &launcher_id, None)
                 .await
-                .map(|_| ())?
+                .map(|_| ())?;
         }
         RootCommands::CreatePoolLoginLink {
             target_pool,
@@ -727,7 +729,7 @@ async fn main() -> Result<(), Error> {
         } => {
             let url =
                 create_pool_login_url(&target_pool, &[(auth_key.into(), launcher_id)]).await?;
-            println!("{}", url);
+            println!("{url}");
         }
         RootCommands::CreateWallet { action } => match action {
             WalletAction::WithNFT { .. } => {}

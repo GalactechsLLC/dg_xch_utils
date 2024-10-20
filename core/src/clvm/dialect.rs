@@ -25,6 +25,7 @@ pub struct ChiaDialect {
 }
 
 impl ChiaDialect {
+    #[must_use]
     pub fn new(flags: u32) -> ChiaDialect {
         ChiaDialect { flags }
     }
@@ -39,69 +40,77 @@ impl Dialect for ChiaDialect {
                     return if (self.flags & NO_UNKNOWN_OPS) != 0 {
                         return Err(Error::new(
                             ErrorKind::InvalidData,
-                            format!("unimplemented operator: {:?}", o),
+                            format!("unimplemented operator: {o:?}"),
                         ));
                     } else {
                         op_unknown(&o, &argument_list, max_cost)
                     };
                 }
-                let f = match b[0] {
-                    3 => op_if,
-                    4 => op_cons,
-                    5 => op_first,
-                    6 => op_rest,
-                    7 => op_listp,
-                    8 => op_raise,
-                    9 => op_eq,
-                    10 => op_gr_bytes,
-                    11 => op_sha256,
-                    12 => op_substr,
-                    13 => op_strlen,
-                    14 => op_concat,
-                    // 15 ---
-                    16 => op_add,
-                    17 => op_subtract,
-                    18 => op_multiply,
-                    19 => {
-                        if (self.flags & NO_NEG_DIV) != 0 {
-                            op_div_deprecated
-                        } else {
-                            op_div
-                        }
-                    }
-                    20 => op_divmod,
-                    21 => op_gr,
-                    22 => op_ash,
-                    23 => op_lsh,
-                    24 => op_logand,
-                    25 => op_logior,
-                    26 => op_logxor,
-                    27 => op_lognot,
-                    // 28 ---
-                    29 => op_point_add,
-                    30 => op_pubkey_for_exp,
-                    // 31 ---
-                    32 => op_not,
-                    33 => op_any,
-                    34 => op_all,
-                    // 35 ---
-                    36 => op_softfork,
-                    _ => {
-                        return if (self.flags & NO_UNKNOWN_OPS) != 0 {
-                            Err(Error::new(
-                                ErrorKind::InvalidData,
-                                format!("unimplemented operator: {:?}", o),
-                            ))
-                        } else {
-                            op_unknown(&o, &argument_list, max_cost)
+                match b.first() {
+                    Some(v) => {
+                        let f = match *v {
+                            3 => op_if,
+                            4 => op_cons,
+                            5 => op_first,
+                            6 => op_rest,
+                            7 => op_listp,
+                            8 => op_raise,
+                            9 => op_eq,
+                            10 => op_gr_bytes,
+                            11 => op_sha256,
+                            12 => op_substr,
+                            13 => op_strlen,
+                            14 => op_concat,
+                            // 15 ---
+                            16 => op_add,
+                            17 => op_subtract,
+                            18 => op_multiply,
+                            19 => {
+                                if (self.flags & NO_NEG_DIV) != 0 {
+                                    op_div_deprecated
+                                } else {
+                                    op_div
+                                }
+                            }
+                            20 => op_divmod,
+                            21 => op_gr,
+                            22 => op_ash,
+                            23 => op_lsh,
+                            24 => op_logand,
+                            25 => op_logior,
+                            26 => op_logxor,
+                            27 => op_lognot,
+                            // 28 ---
+                            29 => op_point_add,
+                            30 => op_pubkey_for_exp,
+                            // 31 ---
+                            32 => op_not,
+                            33 => op_any,
+                            34 => op_all,
+                            // 35 ---
+                            36 => op_softfork,
+                            _ => {
+                                return if (self.flags & NO_UNKNOWN_OPS) != 0 {
+                                    Err(Error::new(
+                                        ErrorKind::InvalidData,
+                                        format!("unimplemented operator: {o:?}"),
+                                    ))
+                                } else {
+                                    op_unknown(&o, &argument_list, max_cost)
+                                };
+                            }
                         };
+                        f(&argument_list, max_cost)
                     }
-                };
-                f(&argument_list, max_cost)
+                    None => Err(Error::new(
+                        ErrorKind::InvalidData,
+                        format!("no operator found: {o:?}"),
+                    )),
+                }
             }
             SExp::Pair(_) => Err(Error::new(
                 ErrorKind::InvalidData,
-                format!("Expected Atom, got Pair: {:?}", o),
+                format!("Expected Atom, got Pair: {o:?}"),
             )),
         }
     }

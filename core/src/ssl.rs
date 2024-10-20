@@ -32,8 +32,9 @@ use x509_cert::Certificate;
 
 pub struct AllowAny {}
 impl AllowAny {
+    #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { })
+        Arc::new(Self {})
     }
 }
 
@@ -432,6 +433,7 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
     )
 }
 
+#[must_use]
 pub fn validate_all_ssl(ssl_dir: &Path) -> bool {
     let ca_dir = ssl_dir.join(Path::new("ca"));
     if ca_dir.exists() {
@@ -568,13 +570,7 @@ pub fn generate_ssl_for_nodes_in_memory(
     let mut map = HashMap::new();
     for node_name in nodes {
         let (cert, key) = generate_ca_signed_cert_data(crt, key)?;
-        map.insert(
-            (*node_name).to_string(),
-            MemoryNodeSSL {
-                cert,
-                key,
-            },
-        );
+        map.insert((*node_name).to_string(), MemoryNodeSSL { cert, key });
     }
     Ok(map)
 }

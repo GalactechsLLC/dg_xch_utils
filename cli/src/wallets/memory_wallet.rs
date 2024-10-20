@@ -38,15 +38,16 @@ pub struct MemoryWalletStore {
     secret_key_store: SecretKeyStore,
 }
 impl MemoryWalletStore {
+    #[must_use]
     pub fn new(secret_key: SecretKey, starting_index: u32) -> Self {
         Self {
             master_sk: secret_key,
             current_index: AtomicU32::new(starting_index),
-            standard_coins: Default::default(),
-            cat_coins: Default::default(),
-            keys_for_ph: Default::default(),
-            derivation_records: Default::default(),
-            secret_key_store: Default::default(),
+            standard_coins: Arc::default(),
+            cat_coins: Arc::default(),
+            derivation_records: DashMap::default(),
+            keys_for_ph: DashMap::default(),
+            secret_key_store: SecretKeyStore::default(),
         }
     }
 }
@@ -114,11 +115,11 @@ impl WalletStore for MemoryWalletStore {
             }
             Some(v) => {
                 let secret_key = SecretKey::from_bytes(v.value().0.as_ref()).map_err(|e| {
-                    Error::new(ErrorKind::InvalidInput, format!("MasterKey: {:?}", e))
+                    Error::new(ErrorKind::InvalidInput, format!("MasterKey: {e:?}"))
                 })?;
                 let synthetic_secret_key =
                     calculate_synthetic_secret_key(&secret_key, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
-                self.secret_key_store.save_secret_key(&synthetic_secret_key);
+                let _old_key = self.secret_key_store.save_secret_key(&synthetic_secret_key);
                 Ok(v.value().1)
             }
         }
@@ -143,7 +144,7 @@ impl WalletStore for MemoryWalletStore {
             )),
             Some(v) => {
                 let secret_key = SecretKey::from_bytes(v.value().as_ref()).map_err(|e| {
-                    Error::new(ErrorKind::InvalidInput, format!("MasterKey: {:?}", e))
+                    Error::new(ErrorKind::InvalidInput, format!("MasterKey: {e:?}"))
                 })?;
                 Ok(secret_key)
             }
@@ -243,9 +244,9 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
                             cat_program,
                             lineage_proof,
                             parent_coin_spend,
-                        })
+                        });
                     } else {
-                        error!("Error Parsing Coin as CAT: {hinted_coin:?}")
+                        error!("Error Parsing Coin as CAT: {hinted_coin:?}");
                     }
                 }
             }

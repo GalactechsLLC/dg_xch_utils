@@ -44,6 +44,7 @@ fn _pkg_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
+#[must_use]
 pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }
@@ -77,9 +78,8 @@ impl WsClient {
             env::var("PRIVATE_CA_KEY").ok(),
         ) {
             let (cert_bytes, key_bytes) =
-                generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes()).map_err(|e| {
-                    Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e))
-                })?;
+                generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes())
+                    .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
             (
                 load_certs_from_bytes(&cert_bytes)?,
                 load_private_key_from_bytes(&key_bytes)?,
@@ -88,9 +88,7 @@ impl WsClient {
         } else {
             let (cert_bytes, key_bytes) =
                 generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
-                    .map_err(|e| {
-                        Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e))
-                    })?;
+                    .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
             (
                 load_certs_from_bytes(&cert_bytes)?,
                 load_private_key_from_bytes(&key_bytes)?,
@@ -118,7 +116,7 @@ impl WsClient {
     ) -> Result<Self, Error> {
         let (certs, key, cert_str) = {
             let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
-                .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+                .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
             (
                 load_certs_from_bytes(&cert_bytes)?,
                 load_private_key_from_bytes(&key_bytes)?,
@@ -151,7 +149,7 @@ impl WsClient {
             .map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidData,
-                    format!("Failed to Parse Request: {}", e),
+                    format!("Failed to Parse Request: {e}"),
                 )
             })?;
         if let Some(m) = &client_config.additional_headers {
@@ -160,13 +158,13 @@ impl WsClient {
                     HeaderName::from_str(k).map_err(|e| {
                         Error::new(
                             ErrorKind::InvalidData,
-                            format!("Failed to Parse Header Name {},\r\n {}", k, e),
+                            format!("Failed to Parse Header Name {k},\r\n {e}"),
                         )
                     })?,
                     HeaderValue::from_str(v).map_err(|e| {
                         Error::new(
                             ErrorKind::InvalidData,
-                            format!("Failed to Parse Header value {},\r\n {}", v, e),
+                            format!("Failed to Parse Header value {k},\r\n {e}"),
                         )
                     })?,
                 );
@@ -177,7 +175,7 @@ impl WsClient {
             HeaderValue::from_str(&encode(&String::from_utf8_lossy(cert_str))).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidData,
-                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {e}"),
                 )
             })?,
         );
@@ -192,17 +190,12 @@ impl WsClient {
                     .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
                     .with_client_auth_cert(certs, key)
                     .map_err(|e| {
-                        Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e))
+                        Error::new(ErrorKind::Other, format!("Error Building Client: {e:?}"))
                     })?,
             ))),
         )
         .await
-        .map_err(|e| {
-            Error::new(
-                ErrorKind::Other,
-                format!("Error Connecting Client: {:?}", e),
-            )
-        })?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("Error Connecting Client: {e:?}")))?;
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (ws_con, mut stream) = WebsocketConnection::new(
             WebsocketMsgStream::Tls(stream),
@@ -241,9 +234,10 @@ impl WsClient {
     pub async fn join(self) -> Result<(), Error> {
         self.handle
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {:?}", e)))
+            .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {e:?}")))
     }
 
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.handle.is_finished()
     }
@@ -355,11 +349,11 @@ pub async fn oneshot<R: ChiaSerialize>(
         .map_err(|e| {
             Error::new(
                 ErrorKind::InvalidData,
-                format!("Failed to parse send data: {:?}", e),
+                format!("Failed to parse send data: {e:?}"),
             )
         })?;
     select!(
-        _ = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
+        () = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
             connection.write().await.unsubscribe(handle.id).await;
             Err(Error::new(
                 ErrorKind::Other,
@@ -374,7 +368,7 @@ pub async fn oneshot<R: ChiaSerialize>(
                 R::from_bytes(&mut cursor, protocol_version).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
-                        format!("Failed to parse msg: {:?}", e),
+                        format!("Failed to parse msg: {e:?}"),
                     )
                 })
             } else {
