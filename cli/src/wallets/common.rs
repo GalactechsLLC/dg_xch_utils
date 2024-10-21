@@ -10,6 +10,7 @@ use dg_xch_core::clvm::condition_utils::conditions_dict_for_solution;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use num_traits::cast::ToPrimitive;
 use std::future::Future;
+use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
 
 pub struct DerivationRecord {
@@ -54,16 +55,18 @@ where
     let mut msg_list: Vec<Vec<u8>> = vec![];
     for coin_spend in &coin_spends {
         //Get AGG_SIG conditions
-        let conditions_dict = conditions_dict_for_solution(
+        let conditions_dict = conditions_dict_for_solution::<RandomState>(
             &coin_spend.puzzle_reveal,
             &coin_spend.solution,
             max_cost,
         )?
         .0;
         //Create signature
-        for (pk_bytes, msg) in
-            pkm_pairs_for_conditions_dict(conditions_dict, coin_spend.coin.name(), additional_data)?
-        {
+        for (pk_bytes, msg) in pkm_pairs_for_conditions_dict(
+            &conditions_dict,
+            coin_spend.coin.name(),
+            additional_data,
+        )? {
             let pk = PublicKey::from_bytes(pk_bytes.as_slice()).map_err(|e| {
                 Error::new(
                     ErrorKind::Other,
@@ -86,12 +89,12 @@ where
     //Aggregate signatures
     let sig_refs: Vec<&Signature> = signatures.iter().collect();
     let pk_list: Vec<&Bytes48> = pk_list.iter().collect();
-    let msg_list: Vec<&[u8]> = msg_list.iter().map(|v| v.as_slice()).collect();
+    let msg_list: Vec<&[u8]> = msg_list.iter().map(Vec::as_slice).collect();
     let aggsig = AggregateSignature::aggregate(&sig_refs, true)
         .map_err(|e| {
             Error::new(
                 ErrorKind::Other,
-                format!("Failed to aggregate signatures: {:?}", e),
+                format!("Failed to aggregate signatures: {e:?}"),
             )
         })?
         .to_signature();

@@ -120,22 +120,22 @@ pub static MAINNET: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         max_vdf_witness_size: BigInt::from(64),
         mempool_block_buffer: BigInt::from(50),
         max_coin_amount: BigInt::from(u64::MAX),
-        max_block_cost_clvm: BigInt::from(11000000000u64),
+        max_block_cost_clvm: BigInt::from(11_000_000_000_u64),
         cost_per_byte: BigInt::from(12000),
         weight_proof_threshold: 2,
         weight_proof_recent_blocks: 1000,
         max_block_count_per_requests: 32,
         blocks_cache_size: 4608 + (128 * 4),
-        max_generator_size: 1000000,
+        max_generator_size: 1_000_000,
         max_generator_ref_list_size: 512,
-        pool_sub_slot_iters: 37600000000,
+        pool_sub_slot_iters: 37_600_000_000,
         soft_fork2_height: 0,
-        soft_fork3_height: 4510000,
-        hard_fork_height: 5496000,
-        hard_fork_fix_height: 5496000,
-        plot_filter_128_height: 10542000,
-        plot_filter_64_height: 15592000,
-        plot_filter_32_height: 20643000,
+        soft_fork3_height: 4_510_000,
+        hard_fork_height: 5_496_000,
+        hard_fork_fix_height: 5_496_000,
+        plot_filter_128_height: 10_542_000,
+        plot_filter_64_height: 15_592_000,
+        plot_filter_32_height: 20_643_000,
         bech32_prefix: String::from("xch"),
         is_testnet: false,
     })
@@ -159,7 +159,7 @@ pub static TESTNET_0: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 });
 pub static TESTNET_2: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
-        difficulty_constant_factor: 10052721566054,
+        difficulty_constant_factor: 10_052_721_566_054,
         genesis_challenge: Bytes32::from(
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         ),
@@ -177,7 +177,7 @@ pub static TESTNET_2: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 });
 pub static TESTNET_3: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
-        difficulty_constant_factor: 10052721566054,
+        difficulty_constant_factor: 10_052_721_566_054,
         genesis_challenge: Bytes32::from(
             "ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
         ),
@@ -196,7 +196,7 @@ pub static TESTNET_3: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 });
 pub static TESTNET_4: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
-        difficulty_constant_factor: 10052721566054,
+        difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
         genesis_challenge: Bytes32::from(
@@ -217,7 +217,7 @@ pub static TESTNET_4: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 });
 pub static TESTNET_5: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
-        difficulty_constant_factor: 10052721566054,
+        difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
         genesis_challenge: Bytes32::from(
@@ -238,7 +238,7 @@ pub static TESTNET_5: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 });
 pub static TESTNET_7: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
-        difficulty_constant_factor: 10052721566054,
+        difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
         genesis_challenge: Bytes32::from(
@@ -263,7 +263,7 @@ pub static TESTNET_10: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
             "ae83525ba8d1dd3f09b277de18ca3e43fc0af20d20c4b3e92ef2a48bd291ccb2",
         )
         .expect("Failed to parse known good hex"),
-        difficulty_constant_factor: 10052721566054,
+        difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
         genesis_challenge: Bytes32::from(
@@ -277,19 +277,19 @@ pub static TESTNET_10: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         ),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
-        soft_fork2_height: 3000000,
-        soft_fork3_height: 2997292,
+        soft_fork2_height: 3_000_000,
+        soft_fork3_height: 2_997_292,
         // planned 2.0 release is July 26, height 2965036 on testnet
         //1 week later
-        hard_fork_height: 2997292,
+        hard_fork_height: 2_997_292,
         // November 2023
-        hard_fork_fix_height: 3426000,
+        hard_fork_fix_height: 3_426_000,
         // another 2 weeks later
-        plot_filter_128_height: 3061804,
+        plot_filter_128_height: 3_061_804,
         // 3 years later
-        plot_filter_64_height: 8010796,
+        plot_filter_64_height: 8_010_796,
         // 3 years later
-        plot_filter_32_height: 13056556,
+        plot_filter_32_height: 13_056_556,
         bech32_prefix: String::from("txch"),
         is_testnet: true,
         ..Default::default()
@@ -301,7 +301,7 @@ pub static TESTNET_11: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
             "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615",
         )
         .expect("Failed to parse known good hex"),
-        difficulty_constant_factor: 10052721566054,
+        difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
         genesis_challenge: Bytes32::from(
@@ -315,13 +315,13 @@ pub static TESTNET_11: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         ),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
-        sub_slot_iters_starting: 67108864,
+        sub_slot_iters_starting: 67_108_864,
         //Forks activated from the beginning on this network
         hard_fork_height: 0,
         hard_fork_fix_height: 0,
-        plot_filter_128_height: 6029568,
-        plot_filter_64_height: 11075328,
-        plot_filter_32_height: 16121088,
+        plot_filter_128_height: 6_029_568,
+        plot_filter_64_height: 11_075_328,
+        plot_filter_32_height: 16_121_088,
         bech32_prefix: String::from("txch"),
         is_testnet: true,
         ..Default::default()

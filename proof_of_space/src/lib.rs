@@ -35,6 +35,7 @@ fn _pkg_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
+#[must_use]
 pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }
@@ -44,6 +45,7 @@ fn test_version() {
     println!("{}", version());
 }
 
+#[must_use]
 pub fn verify_and_get_quality_string(
     pos: &ProofOfSpace,
     constants: &ConsensusConstants,
@@ -89,6 +91,7 @@ pub fn verify_and_get_quality_string(
     }
 }
 
+#[must_use]
 pub fn get_quality_string(pos: &ProofOfSpace, plot_id: &Bytes32) -> Option<Bytes32> {
     match validate_proof(
         plot_id.to_sized_bytes(),
@@ -111,7 +114,7 @@ pub struct PathInfo {
 }
 impl Hash for PathInfo {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.file_name.hash(state)
+        self.file_name.hash(state);
     }
 }
 impl Eq for PathInfo {}

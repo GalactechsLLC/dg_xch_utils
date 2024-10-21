@@ -11,8 +11,7 @@ use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS_MAP, MAINNET};
 #[cfg(feature = "metrics")]
 use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
-    DeclareProofOfSpace, FarmerIdentifier, FarmerPoolState, NewSignagePoint, ProofsMap,
-    SignedValues,
+    DeclareProofOfSpace, NewSignagePoint, ProofsMap, SignedValues,
 };
 use dg_xch_core::protocols::harvester::RespondSignatures;
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
@@ -23,26 +22,21 @@ use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::RwLock;
 
 pub struct RespondSignaturesHandle<T> {
     pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pub quality_to_identifiers: Arc<RwLock<HashMap<Bytes32, FarmerIdentifier>>>,
     pub proofs_of_space: ProofsMap,
-    pub cache_time: Arc<RwLock<HashMap<Bytes32, Instant>>>,
     pub pool_public_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
-    pub owner_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
-    pub pool_state: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
     pub full_node_client: Arc<RwLock<Option<FarmerClient<T>>>>,
     pub config: Arc<FarmerServerConfig>,
-    pub headers: Arc<HashMap<String, String>>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
 }
 #[async_trait]
 impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
+    #[allow(clippy::too_many_lines)]
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
@@ -161,7 +155,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .map_err(|e| {
                                                 Error::new(
                                                     ErrorKind::InvalidInput,
-                                                    format!("{:?}", e),
+                                                    format!("{e:?}"),
                                                 )
                                             })?;
                                     if agg_sig_cc_sp.to_signature().verify(
@@ -197,7 +191,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .map_err(|e| {
                                                 Error::new(
                                                     ErrorKind::InvalidInput,
-                                                    format!("{:?}", e),
+                                                    format!("{e:?}"),
                                                 )
                                             })?;
                                     if agg_sig_rc_sp.to_signature().verify(
@@ -362,7 +356,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                     let foliage_agg_sig =
                                         AggregateSignature::aggregate(&foliage_sigs_to_agg, true)
                                             .map_err(|e| {
-                                            Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
+                                            Error::new(ErrorKind::InvalidInput, format!("{e:?}"))
                                         })?;
 
                                     let foliage_block_sigs_to_agg =
@@ -385,7 +379,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                         true,
                                     )
                                     .map_err(|e| {
-                                        Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
+                                        Error::new(ErrorKind::InvalidInput, format!("{e:?}"))
                                     })?;
                                     if foliage_agg_sig.to_signature().verify(
                                         true,

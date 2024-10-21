@@ -9,6 +9,7 @@ pub const Q_KW: [u8; 1] = [0x01];
 pub const A_KW: [u8; 1] = [0x02];
 pub const C_KW: [u8; 1] = [0x04];
 
+#[must_use]
 pub fn shatree_atom(atom: &[u8]) -> Bytes32 {
     Bytes32::new(&hash_256(
         ONE.iter()
@@ -18,6 +19,7 @@ pub fn shatree_atom(atom: &[u8]) -> Bytes32 {
     ))
 }
 
+#[must_use]
 pub fn shatree_pair(left_hash: &Bytes32, right_hash: &Bytes32) -> Bytes32 {
     Bytes32::new(&hash_256(
         TWO.iter()
@@ -39,6 +41,7 @@ pub static C_KW_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&C_KW));
 pub static ONE_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&ONE));
 pub static NULL_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&NULL));
 
+#[must_use]
 pub fn curried_values_tree_hash(arguments: &[Bytes32]) -> Bytes32 {
     if arguments.is_empty() {
         *ONE_TREEHASH
@@ -53,6 +56,7 @@ pub fn curried_values_tree_hash(arguments: &[Bytes32]) -> Bytes32 {
     }
 }
 
+#[must_use]
 pub fn curry_and_treehash(
     hash_of_quoted_mod_hash: &Bytes32,
     hashed_arguments: &[Bytes32],
@@ -67,6 +71,7 @@ pub fn curry_and_treehash(
     )
 }
 
+#[must_use]
 pub fn calculate_hash_of_quoted_mod_hash(mod_hash: &Bytes32) -> Bytes32 {
     shatree_pair(&Q_KW_TREEHASH, mod_hash)
 }

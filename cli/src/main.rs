@@ -2,7 +2,7 @@ pub mod cli;
 
 use blst::min_pk::SecretKey;
 use clap::Parser;
-use cli::*;
+use cli::{prompt_for_mnemonic, Cli, RootCommands, WalletAction};
 use dg_xch_cli::wallet_commands::{
     create_cold_wallet, get_plotnft_ready_state, migrate_plot_nft, migrate_plot_nft_with_owner_key,
 };
@@ -13,6 +13,7 @@ use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
+use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS_MAP, MAINNET};
 use dg_xch_keys::{
     encode_puzzle_hash, key_from_mnemonic, master_sk_to_farmer_sk, master_sk_to_pool_sk,
     master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened,
@@ -27,6 +28,8 @@ use std::env;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
 
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cast_sign_loss)]
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let cli = Cli::parse();
@@ -50,6 +53,14 @@ async fn main() -> Result<(), Error> {
         ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
         ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
     });
+    let constants = if let Some(network) = cli.network {
+        CONSENSUS_CONSTANTS_MAP
+            .get(&network)
+            .cloned()
+            .unwrap_or_else(|| MAINNET.clone())
+    } else {
+        MAINNET.clone()
+    };
     match cli.action {
         RootCommands::PrintPlottingInfo { launcher_id } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
@@ -59,7 +70,7 @@ async fn main() -> Result<(), Error> {
             if let Some(launcher_id) = launcher_id {
                 info!("Searching for NFT with LauncherID: {launcher_id}");
                 if let Some(plotnft) =
-                    get_plotnft_by_launcher_id(client.clone(), &launcher_id).await?
+                    get_plotnft_by_launcher_id(client.clone(), &launcher_id, None).await?
                 {
                     plotnfts.push(plotnft);
                 } else {
@@ -77,7 +88,7 @@ async fn main() -> Result<(), Error> {
                             .map_err(|e| {
                                 Error::new(
                                     ErrorKind::InvalidInput,
-                                    format!("Failed to parse Wallet SK: {:?}", e),
+                                    format!("Failed to parse Wallet SK: {e:?}"),
                                 )
                             })?;
                         let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
@@ -86,7 +97,7 @@ async fn main() -> Result<(), Error> {
                             .map_err(|e| {
                                 Error::new(
                                     ErrorKind::InvalidInput,
-                                    format!("Failed to parse Wallet SK: {:?}", e),
+                                    format!("Failed to parse Wallet SK: {e:?}"),
                                 )
                             })?;
                         let pub_key: Bytes48 = hardened_wallet_sk.sk_to_pk().to_bytes().into();
@@ -118,7 +129,7 @@ async fn main() -> Result<(), Error> {
                         "xch"
                     )?
                 );
-                info!("\t  }}{}", if index != total - 1 { "," } else { "" });
+                info!("\t  }}{}", if index == total - 1 { "" } else { "," });
             }
             info!("\t}}");
             info!("}}");
@@ -559,7 +570,12 @@ async fn main() -> Result<(), Error> {
         } => {
             let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
             let results = client
-                .get_coin_records_by_hints(&hints, include_spent_coins, start_height, end_height)
+                .get_coin_records_by_hints(
+                    &hints,
+                    Some(include_spent_coins),
+                    Some(start_height),
+                    Some(end_height),
+                )
                 .await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -666,6 +682,7 @@ async fn main() -> Result<(), Error> {
         RootCommands::MovePlotNFT {
             target_pool,
             launcher_id,
+            target_address,
             mnemonic,
             fee,
         } => {
@@ -674,26 +691,36 @@ async fn main() -> Result<(), Error> {
                 client,
                 &target_pool,
                 &launcher_id,
+                &target_address,
                 &mnemonic,
+                constants.clone(),
                 fee.unwrap_or_default(),
             )
-            .await?
+            .await?;
         }
         RootCommands::MovePlotNFTWithOwnerKey {
             target_pool,
             launcher_id,
+            target_address,
             owner_key,
         } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
             let owner_key = SecretKey::from_bytes(Bytes32::from(&owner_key).as_ref())
                 .expect("Failed to Parse Owner Secret Key");
-            migrate_plot_nft_with_owner_key(client, &target_pool, &launcher_id, &owner_key).await?
+            migrate_plot_nft_with_owner_key(
+                client,
+                &target_pool,
+                &launcher_id,
+                &target_address,
+                &owner_key,
+            )
+            .await?;
         }
         RootCommands::GetPlotnftState { launcher_id } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
-            get_plotnft_ready_state(client, &launcher_id)
+            get_plotnft_ready_state(client, &launcher_id, None)
                 .await
-                .map(|_| ())?
+                .map(|_| ())?;
         }
         RootCommands::CreatePoolLoginLink {
             target_pool,
@@ -702,7 +729,7 @@ async fn main() -> Result<(), Error> {
         } => {
             let url =
                 create_pool_login_url(&target_pool, &[(auth_key.into(), launcher_id)]).await?;
-            println!("{}", url);
+            println!("{url}");
         }
         RootCommands::CreateWallet { action } => match action {
             WalletAction::WithNFT { .. } => {}

@@ -8,6 +8,7 @@ pub static BIG_ZERO: Lazy<BigInt> = Lazy::new(|| BigInt::from(0));
 pub static BIG_ONE: Lazy<BigInt> = Lazy::new(|| BigInt::from(1));
 pub static BIG_TWO: Lazy<BigInt> = Lazy::new(|| BigInt::from(2));
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn bigint_to_bytes(v_: &BigInt, signed: bool) -> Result<Vec<u8>, Error> {
     let v = v_.clone();
     if v == *BIG_ZERO {
@@ -63,10 +64,10 @@ pub fn bigint_to_bytes(v_: &BigInt, signed: bool) -> Result<Vec<u8>, Error> {
     let (_sign, u32_digits) = v.to_u32_digits();
     for (i, n) in u32_digits.iter().take(byte4_length).enumerate() {
         let word_idx = byte4_length - i - 1;
-        let num = *n as u64;
+        let num = u64::from(*n);
         let pointer = extra_byte + byte4_remain + word_idx * 4;
         let setval = if v.is_negative() {
-            (1_u64 << 32) - num - dec as u64
+            (1_u64 << 32) - num - u64::from(dec)
         } else {
             num
         };

@@ -1,3 +1,4 @@
+pub mod cats;
 pub mod clvm_puzzles;
 pub mod p2_conditions;
 pub mod p2_delegated_puzzle_or_hidden_puzzle;
@@ -11,6 +12,7 @@ fn _pkg_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
+#[must_use]
 pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }

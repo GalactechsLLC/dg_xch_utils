@@ -11,6 +11,7 @@ pub struct Announcement {
     pub morph_bytes: Option<Vec<u8>>,
 }
 impl Announcement {
+    #[must_use]
     pub fn name(&self) -> Bytes32 {
         let mut buf = vec![];
         buf.extend(self.origin_info.as_slice());

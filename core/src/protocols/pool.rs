@@ -65,7 +65,6 @@ impl From<u8> for PoolErrorCode {
             13 => PoolErrorCode::InvalidPayoutInstructions,
             14 => PoolErrorCode::InvalidSingleton,
             15 => PoolErrorCode::DelayTimeTooShort,
-            16 => PoolErrorCode::RequestFailed,
             _ => PoolErrorCode::RequestFailed,
         }
     }
@@ -180,11 +179,14 @@ pub struct ErrorResponse {
     pub error_message: Option<String>, //Min Version 0.0.34
 }
 
+#[allow(clippy::cast_sign_loss)]
+#[must_use]
 pub fn get_current_authentication_token(timeout: u8) -> u64 {
     let now: u64 = OffsetDateTime::now_utc().unix_timestamp() as u64;
-    now / 60 / timeout as u64
+    now / 60 / u64::from(timeout)
 }
 
+#[must_use]
 pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
     let cur_token = get_current_authentication_token(timeout);
     let dif = if token > cur_token {
@@ -192,5 +194,5 @@ pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
     } else {
         cur_token - token
     };
-    dif <= timeout as u64
+    dif <= u64::from(timeout)
 }

@@ -3,7 +3,7 @@ use crate::blockchain::vdf_info::VdfInfo;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RewardChainSubSlot {
     pub end_of_slot_vdf: VdfInfo,
     pub challenge_chain_sub_slot_hash: Bytes32,

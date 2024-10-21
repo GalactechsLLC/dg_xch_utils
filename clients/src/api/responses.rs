@@ -24,6 +24,15 @@ pub struct AdditionsAndRemovalsResp {
     pub success: bool,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AutoFarmResp {
+    pub auto_farm_enabled: bool,
+    pub success: bool,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EmptyResponse {
+    pub success: bool,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HintedAdditionsAndRemovalsResp {
     //non-standard
     pub additions: Vec<HintedCoinRecord>,

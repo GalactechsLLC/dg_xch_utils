@@ -25,6 +25,7 @@ impl FullnodeClient {
         self.client.join().await
     }
 
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.client.handle.is_finished()
     }

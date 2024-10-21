@@ -75,6 +75,7 @@ impl ChiaSerialize for String {
         Self: Sized,
     {
         let mut bytes: Vec<u8> = Vec::new();
+        #[allow(clippy::cast_possible_truncation)]
         bytes.extend((self.len() as u32).to_be_bytes());
         bytes.extend(self.as_bytes());
         bytes
@@ -90,14 +91,14 @@ impl ChiaSerialize for String {
         bytes.read_exact(&mut u32_len_ary)?;
         let vec_len = u32::from_be_bytes(u32_len_ary) as usize;
         if vec_len > 2048 {
-            warn!("Serializing Large Vec: {vec_len}")
+            warn!("Serializing Large Vec: {vec_len}");
         }
         let mut buf = vec![0u8; vec_len];
         bytes.read_exact(&mut buf[0..vec_len])?;
         String::from_utf8(buf).map_err(|e| {
             Error::new(
                 ErrorKind::InvalidInput,
-                format!("Failed to parse Utf-8 String from Bytes: {:?}", e),
+                format!("Failed to parse Utf-8 String from Bytes: {e:?}"),
             )
         })
     }
@@ -108,7 +109,7 @@ impl ChiaSerialize for bool {
     where
         Self: Sized,
     {
-        vec![*self as u8]
+        vec![u8::from(*self)]
     }
     fn from_bytes<T: AsRef<[u8]>>(
         bytes: &mut Cursor<T>,
@@ -233,6 +234,7 @@ where
         Self: Sized,
     {
         let mut bytes: Vec<u8> = Vec::new();
+        #[allow(clippy::cast_possible_truncation)]
         bytes.extend((self.len() as u32).to_be_bytes());
         for e in self {
             bytes.extend(e.to_bytes(version));
@@ -251,7 +253,7 @@ where
         let buf: Vec<T> = Vec::new();
         let vec_len = u32::from_be_bytes(u32_buf);
         if vec_len > 2048 {
-            warn!("Serializing Large Vec: {vec_len}")
+            warn!("Serializing Large Vec: {vec_len}");
         }
         (0..vec_len).try_fold(buf, |mut vec, _| {
             vec.push(T::from_bytes(bytes, version)?);

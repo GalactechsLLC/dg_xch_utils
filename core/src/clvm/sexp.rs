@@ -1,5 +1,7 @@
 use crate::blockchain::condition_opcode::ConditionOpcode;
-use crate::blockchain::sized_bytes::*;
+use crate::blockchain::sized_bytes::{
+    Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes,
+};
 use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
 use crate::clvm::program::Program;
@@ -22,6 +24,14 @@ pub enum SExp {
     Atom(AtomBuf),
     Pair(PairBuf),
 }
+impl<'a> IntoIterator for &'a SExp {
+    type Item = &'a SExp;
+    type IntoIter = SExpIter<'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 impl SExp {
     pub fn atom(&self) -> Result<&AtomBuf, Error> {
         match self {
@@ -59,29 +69,32 @@ impl SExp {
             SExp::Pair(p) => Ok(&p.rest),
         }
     }
+    #[must_use]
     pub fn cons(self, other: SExp) -> SExp {
         SExp::Pair(PairBuf {
             first: Box::new(self),
             rest: Box::new(other),
         })
     }
-    pub fn split(self) -> Result<(SExp, SExp), Error> {
+    pub fn split(&self) -> Result<(&SExp, &SExp), Error> {
         match self {
             SExp::Atom(_) => Err(Error::new(
                 ErrorKind::Unsupported,
                 "Expected Pair, got Atom",
             )),
-            SExp::Pair(p) => Ok((*p.first, *p.rest)),
+            SExp::Pair(p) => Ok((&*p.first, &*p.rest)),
         }
     }
 
+    #[must_use]
     pub fn nullp(&self) -> bool {
         match &self {
             SExp::Atom(a) => a.data.is_empty(),
-            _ => false,
+            SExp::Pair(_) => false,
         }
     }
 
+    #[must_use]
     pub fn as_atom_list(&self) -> Vec<Vec<u8>> {
         match self {
             SExp::Atom(_) => {
@@ -122,6 +135,7 @@ impl SExp {
         Ok(rtn)
     }
 
+    #[must_use]
     pub fn arg_count_is(&self, mut count: usize) -> bool {
         let mut ptr = self;
         loop {
@@ -132,16 +146,18 @@ impl SExp {
                 SExp::Pair(pair) => {
                     ptr = &pair.rest;
                 }
-                _ => return false,
+                SExp::Atom(_) => return false,
             }
             count -= 1;
         }
     }
 
+    #[must_use]
     pub fn iter(&self) -> SExpIter {
         SExpIter { c: self }
     }
 
+    #[must_use]
     pub fn as_bool(&self) -> bool {
         match self.atom() {
             Ok(v0) => !v0.data.is_empty(),
@@ -149,6 +165,7 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn from_bool(b: bool) -> &'static SExp {
         if b {
             &ONE
@@ -157,16 +174,17 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn proper_list(self, store: bool) -> Option<Vec<SExp>> {
         let mut args = vec![];
         let mut args_sexp = self;
         loop {
             match args_sexp {
                 SExp::Atom(_) => {
-                    return if !args_sexp.non_nil() {
-                        Some(args)
-                    } else {
+                    return if args_sexp.non_nil() {
                         None
+                    } else {
+                        Some(args)
                     };
                 }
                 SExp::Pair(buf) => {
@@ -179,6 +197,7 @@ impl SExp {
         }
     }
 
+    #[must_use]
     pub fn non_nil(&self) -> bool {
         match self {
             SExp::Pair(_) => true,
@@ -193,10 +212,10 @@ impl Display for SExp {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self {
             SExp::Atom(a) => {
-                write!(f, "{}", a)
+                write!(f, "{a}")
             }
             SExp::Pair(p) => {
-                write!(f, "{}", p)
+                write!(f, "{p}")
             }
         }
     }
@@ -206,10 +225,10 @@ impl Debug for SExp {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self {
             SExp::Atom(a) => {
-                write!(f, "{}", a)
+                write!(f, "{a}")
             }
             SExp::Pair(p) => {
-                write!(f, "{:?}", p)
+                write!(f, "{p:?}")
             }
         }
     }
@@ -257,7 +276,7 @@ impl Display for AtomBuf {
                     } else if as_utf8.contains('\'') {
                         f.write_str(&format!("\"{as_utf8}\""))
                     } else if is_hex(as_utf8.as_bytes()) {
-                        f.write_str(&format!("0x{}", as_utf8))
+                        f.write_str(&format!("0x{as_utf8}"))
                     } else {
                         f.write_str(&format!("\"{as_utf8}\""))
                     }
@@ -273,6 +292,7 @@ impl Display for AtomBuf {
 }
 
 impl AtomBuf {
+    #[must_use]
     pub fn new(v: Vec<u8>) -> Self {
         AtomBuf { data: v }
     }
@@ -343,7 +363,7 @@ impl Display for PairBuf {
             buffer += &format!(" . {}", *current);
         }
         buffer += ")";
-        write!(f, "{}", buffer)
+        write!(f, "{buffer}")
     }
 }
 
@@ -352,10 +372,10 @@ impl Debug for PairBuf {
         let mut buffer = String::from("(");
         match &*self.first {
             SExp::Atom(a) => {
-                buffer += &format!("{}", a);
+                buffer += &format!("{a}");
             }
             SExp::Pair(p) => {
-                buffer += &format!("{:?}", p);
+                buffer += &format!("{p:?}");
             }
         }
         let mut current = &self.rest;
@@ -367,7 +387,7 @@ impl Debug for PairBuf {
             buffer += &format!(" . {}", *current);
         }
         buffer += ")";
-        write!(f, "{}", buffer)
+        write!(f, "{buffer}")
     }
 }
 
@@ -417,7 +437,7 @@ impl<T: IntoSExp + Clone> IntoSExp for &[T] {
     fn to_sexp(self) -> SExp {
         self.iter()
             .cloned()
-            .map(|v| v.to_sexp())
+            .map(IntoSExp::to_sexp)
             .collect::<Vec<SExp>>()
             .to_sexp()
     }
@@ -426,7 +446,7 @@ impl<T: IntoSExp + Clone> IntoSExp for &[T] {
 impl<T: IntoSExp> IntoSExp for Vec<T> {
     fn to_sexp(self) -> SExp {
         self.into_iter()
-            .map(|v| v.to_sexp())
+            .map(IntoSExp::to_sexp)
             .collect::<Vec<SExp>>()
             .to_sexp()
     }
@@ -457,6 +477,12 @@ impl IntoSExp for String {
 }
 
 impl IntoSExp for Program {
+    fn to_sexp(self) -> SExp {
+        self.sexp.clone()
+    }
+}
+
+impl IntoSExp for &Program {
     fn to_sexp(self) -> SExp {
         self.sexp.clone()
     }

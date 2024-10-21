@@ -21,6 +21,7 @@ use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::ops::{Index, IndexMut, Range};
 
+#[must_use]
 pub fn prep_hex_str(to_fix: &str) -> String {
     let lc = to_fix.to_lowercase();
     if let Some(s) = lc.strip_prefix("0x") {
@@ -34,6 +35,7 @@ pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, FromHexError> {
     decode(prep_hex_str(hex))
 }
 
+#[must_use]
 pub fn u64_to_bytes(v: u64) -> Vec<u8> {
     let mut rtn = Vec::new();
     if v.leading_zeros() == 0 {
@@ -47,10 +49,9 @@ pub fn u64_to_bytes(v: u64) -> Vec<u8> {
             if trim {
                 if b == u8::MIN {
                     continue;
-                } else {
-                    rtn.push(b);
-                    trim = false;
                 }
+                rtn.push(b);
+                trim = false;
             } else {
                 rtn.push(b);
             }
@@ -128,10 +129,10 @@ macro_rules! impl_sized_bytes {
                 }
             }
             impl<'a> $name {
-                pub fn from_sized_bytes(bytes: [u8; $size]) -> Self {
+                #[must_use] pub fn from_sized_bytes(bytes: [u8; $size]) -> Self {
                     $name { bytes }
                 }
-                pub fn to_sized_bytes(&'a self) -> &'a [u8; $size] {
+                #[must_use] pub fn to_sized_bytes(&'a self) -> &'a [u8; $size] {
                     &self.bytes
                 }
             }
@@ -406,7 +407,7 @@ impl TryFrom<&Bytes96> for Signature {
 
     fn try_from(val: &Bytes96) -> Result<Signature, Error> {
         Signature::from_bytes(val.to_sized_bytes())
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
     }
 }
 
@@ -415,7 +416,7 @@ impl TryFrom<Bytes96> for Signature {
 
     fn try_from(val: Bytes96) -> Result<Signature, Error> {
         Signature::from_bytes(val.to_sized_bytes())
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
     }
 }
 impl From<Signature> for Bytes96 {

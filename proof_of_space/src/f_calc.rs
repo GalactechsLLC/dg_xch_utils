@@ -1,5 +1,8 @@
 use crate::chacha8::{chacha8_get_keystream, chacha8_keysetup, ChachaContext};
-use crate::constants::*;
+use crate::constants::{
+    cdiv, ucdiv, ucdiv64, PlotEntry, K_BC, K_EXTRA_BITS, K_EXTRA_BITS_POW, K_F1_BLOCK_SIZE_BITS,
+    K_VECTOR_LENS, L_TARGETS,
+};
 use crate::utils::bit_reader::BitReader;
 use crate::utils::slice_u64from_bytes;
 use std::cmp::min;
@@ -10,6 +13,7 @@ pub struct F1Calculator {
     enc_ctx_: ChachaContext,
 }
 impl F1Calculator {
+    #[must_use]
     pub fn new(k: u8, orig_key: &[u8; 32]) -> F1Calculator {
         let mut f1_calc = F1Calculator {
             k,
@@ -26,8 +30,9 @@ impl F1Calculator {
         // Setup ChaCha8 context with zero-filled IV
         chacha8_keysetup(&mut self.enc_ctx_, &enc_key, None);
     }
+    #[allow(clippy::cast_possible_truncation)]
     pub fn calculate_f(&self, l: &BitReader) -> Result<BitReader, Error> {
-        let num_output_bits = self.k as u16;
+        let num_output_bits = u16::from(self.k);
         let block_size_bits = K_F1_BLOCK_SIZE_BITS;
 
         // Calculates the counter that will be used to get ChaCha8 keystream.
@@ -41,7 +46,7 @@ impl F1Calculator {
 
         // How many bits of L are in the current block (the rest are in the next block)
         let bits_of_l = min(
-            (block_size_bits as u32 - bits_before_l) as u16,
+            (u32::from(block_size_bits) - bits_before_l) as u16,
             num_output_bits,
         );
 
@@ -71,7 +76,7 @@ impl F1Calculator {
         } else {
             output_bits = ciphertext0.range(
                 bits_before_l as usize,
-                (bits_before_l + num_output_bits as u32) as usize,
+                (bits_before_l + u32::from(num_output_bits)) as usize,
             );
         }
 
@@ -89,12 +94,17 @@ impl F1Calculator {
 
     // F1(x) values for x in range [first_x, first_x + n) are placed in res[].
     // n must not be more than 1 << kBatchSizes.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn calculate_buckets(&self, first_x: u64, n: u64, res: &mut [u64]) {
-        let start = first_x * self.k as u64 / K_F1_BLOCK_SIZE_BITS as u64;
+        let start = first_x * u64::from(self.k) / u64::from(K_F1_BLOCK_SIZE_BITS);
         // 'end' is one past the last keystream block number to be generated
-        let end: u64 = ucdiv64((first_x + n) * self.k as u64, K_F1_BLOCK_SIZE_BITS as u64);
+        let end: u64 = ucdiv64(
+            (first_x + n) * u64::from(self.k),
+            u64::from(K_F1_BLOCK_SIZE_BITS),
+        );
         let num_blocks: u64 = end - start;
-        let mut start_bit: u32 = (first_x * self.k as u64 % K_F1_BLOCK_SIZE_BITS as u64) as u32;
+        let mut start_bit: u32 =
+            (first_x * u64::from(self.k) % u64::from(K_F1_BLOCK_SIZE_BITS)) as u32;
         let x_shift: u8 = self.k - K_EXTRA_BITS;
         //assert(n <= (1U << kBatchSizes));
         let mut ciphertext_bytes: Vec<u8> = Vec::new();
@@ -105,9 +115,9 @@ impl F1Calculator {
             &mut ciphertext_bytes,
         );
         for x in first_x..(first_x + n) {
-            let y = slice_u64from_bytes(&ciphertext_bytes, start_bit, self.k as u32);
+            let y = slice_u64from_bytes(&ciphertext_bytes, start_bit, u32::from(self.k));
             res[(x - first_x) as usize] = (y << K_EXTRA_BITS) | (x >> x_shift);
-            start_bit += self.k as u32;
+            start_bit += u32::from(self.k);
         }
     }
 }
@@ -130,6 +140,7 @@ pub struct FXCalculator {
     rmap_clean: Vec<u16>,
 }
 impl FXCalculator {
+    #[must_use]
     pub fn new(k: u8, table_index: u8) -> FXCalculator {
         FXCalculator {
             k,
@@ -138,6 +149,10 @@ impl FXCalculator {
             rmap_clean: vec![],
         }
     }
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[must_use]
     pub fn calculate_bucket(
         &self,
         y1: &BitReader,
@@ -181,6 +196,8 @@ impl FXCalculator {
         }
         (BitReader::new(f, (self.k + K_EXTRA_BITS) as usize), c)
     }
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn find_matches(
         &mut self,
         bucket_l: &[PlotEntry],

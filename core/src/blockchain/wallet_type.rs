@@ -35,8 +35,8 @@ impl From<u8> for WalletType {
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct AmountWithPuzzlehash {
+pub struct AmountWithPuzzleHash {
     pub amount: u64,
-    pub puzzlehash: Bytes32,
+    pub puzzle_hash: Bytes32,
     pub memos: Vec<Vec<u8>>,
 }

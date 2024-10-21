@@ -1,5 +1,6 @@
 use dg_xch_clients::api::full_node::FullnodeAPI;
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 pub async fn test_full_node_client() -> Result<(), Error> {
     use dg_xch_clients::api::full_node::FullnodeAPI;
     use dg_xch_clients::api::full_node::FullnodeExtAPI;
@@ -12,12 +13,11 @@ pub async fn test_full_node_client() -> Result<(), Error> {
         .map(|v| v.parse().unwrap_or(8555))
         .unwrap_or(8555);
     let client = FullnodeClient::new(&hostname, port, 120, None, &None);
-    let hinted_block = client.get_block_record_by_height(4000001).await.unwrap();
+    let hinted_block = client.get_block_record_by_height(4_000_001).await?;
     let add_and_removes_with_hints = client
         .get_additions_and_removals_with_hints(&hinted_block.header_hash)
-        .await
-        .unwrap();
-    let _ = client.get_all_mempool_items().await.unwrap();
+        .await?;
+    let _ = client.get_all_mempool_items().await?;
     let _ = client
         .get_coin_records_by_puzzle_hashes_paginated(
             &[Bytes32::from(
@@ -29,34 +29,27 @@ pub async fn test_full_node_client() -> Result<(), Error> {
             50,
             None,
         )
-        .await
-        .unwrap();
-    let state = client.get_blockchain_state().await.unwrap();
+        .await?;
+    let state = client.get_blockchain_state().await?;
     assert!(state.space > 0);
-    let first_block = client.get_block_record_by_height(1).await.unwrap();
+    let first_block = client.get_block_record_by_height(1).await?;
     assert_ne!(Bytes32::default(), first_block.header_hash);
-    let full_first_block = client.get_block(&first_block.header_hash).await.unwrap();
+    let full_first_block = client.get_block(&first_block.header_hash).await?;
     assert_eq!(
         Bytes32::from("0xd780d22c7a87c9e01d98b49a0910f6701c3b95015741316b3fda042e5d7b81d2"),
         full_first_block.foliage.prev_block_hash
     );
-    let blocks = client.get_blocks(0, 5, true, true).await.unwrap();
+    let blocks = client.get_blocks(0, 5, true, true).await?;
     assert_eq!(blocks.len(), 5);
-    let blocks2 = client.get_all_blocks(0, 5).await.unwrap();
+    let blocks2 = client.get_all_blocks(0, 5).await?;
     assert_eq!(blocks, blocks2);
-    let firet_block_record = client
-        .get_block_record(&first_block.header_hash)
-        .await
-        .unwrap();
+    let firet_block_record = client.get_block_record(&first_block.header_hash).await?;
     assert_eq!(first_block, firet_block_record);
-    let block_records = client.get_block_records(0, 5).await.unwrap();
+    let block_records = client.get_block_records(0, 5).await?;
     assert_eq!(block_records.len(), 5);
-    let _ = client.get_unfinished_block_headers().await.unwrap();
-    let height = client
-        .get_network_space_by_height(1000, 5000)
-        .await
-        .unwrap(); //this also tests get_network_space and get_block_record_by_height
-    assert_eq!(140670610131864768, height);
+    let _ = client.get_unfinished_block_headers().await?;
+    let height = client.get_network_space_by_height(1000, 5000).await?; //this also tests get_network_space and get_block_record_by_height
+    assert_eq!(140_670_610_131_864_768, height);
     let coins = client
         .get_coin_records_by_hints(
             &[
@@ -81,15 +74,14 @@ pub async fn test_full_node_client() -> Result<(), Error> {
                 "7d1b208b571cadf5cd853f139191110aef2c31ba01214b0df409101c7522af4d",
             ]
             .map(Bytes32::from),
-            true,
-            3068715,
-            3468715,
+            Some(true),
+            Some(3_068_715),
+            Some(3_468_715),
         )
-        .await
-        .unwrap();
+        .await?;
     for coin in coins {
         if !coin.spent {
-            let _parent_spend = get_parent_spend(&client, &coin).await.unwrap();
+            let _parent_spend = get_parent_spend(&client, &coin).await?;
         }
     }
     let coin_records_by_hints = client
@@ -107,14 +99,13 @@ pub async fn test_full_node_client() -> Result<(), Error> {
                 .copied()
                 .collect::<Vec<Bytes32>>(),
             Some(true),
-            Some(4000000),
-            Some(4000010),
+            Some(4_000_000),
+            Some(4_000_010),
             50,
             None,
         )
-        .await
-        .unwrap();
-    println!("{:?}", coin_records_by_hints);
+        .await?;
+    println!("{coin_records_by_hints:?}");
     Ok(())
 }
 
@@ -160,6 +151,7 @@ pub async fn test_farmer_ws_client() {
         network_id: network_id.to_string(),
         ssl_info: None,
         software_version: None,
+        protocol_version: ChiaProtocolVersion::default(),
         additional_headers: None,
     });
     let shared_state = Arc::new(FarmerSharedState::<()> {
@@ -184,7 +176,7 @@ pub async fn test_farmer_ws_client() {
                             farmer_client
                                 .client
                                 .connection
-                                .lock()
+                                .read()
                                 .await
                                 .subscribe(
                                     signage_handle_id,
@@ -203,10 +195,9 @@ pub async fn test_farmer_ws_client() {
                                 if !client_handle.load(Ordering::Relaxed) {
                                     info!("Farmer Stopping from global run");
                                     break 'retry;
-                                } else {
-                                    info!("Farmer Client Closed, Reconnecting");
-                                    break;
                                 }
+                                info!("Farmer Client Closed, Reconnecting");
+                                break;
                             }
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }

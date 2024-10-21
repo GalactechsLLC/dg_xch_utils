@@ -1,4 +1,5 @@
 pub mod full_node;
+pub mod simulator;
 pub mod wallet;
 
 use crate::ClientSSLConfig;
@@ -7,6 +8,7 @@ use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
     load_private_key_from_bytes, CHIA_CA_CRT, CHIA_CA_KEY,
 };
+use log::debug;
 use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
@@ -25,6 +27,7 @@ fn _pkg_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
+#[must_use]
 pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }
@@ -34,17 +37,18 @@ fn test_version() {
     println!("{}", version());
 }
 
+#[must_use]
 pub fn get_url(host: &str, port: u16, request_uri: &str) -> String {
-    format!(
-        "https://{host}:{port}/{request_uri}",
-        host = host,
-        port = port,
-        request_uri = request_uri
-    )
+    format!("https://{host}:{port}/{request_uri}")
 }
 
-pub fn get_client(ssl_path: Option<ClientSSLConfig>, timeout: u64) -> Result<Client, Error> {
-    let (certs, key) = if let Some(ssl_info) = &ssl_path {
+#[must_use]
+pub fn get_insecure_url(host: &str, port: u16, request_uri: &str) -> String {
+    format!("http://{host}:{port}/{request_uri}")
+}
+
+pub fn get_client(ssl_path: &Option<ClientSSLConfig>, timeout: u64) -> Result<Client, Error> {
+    let (certs, key) = if let Some(ssl_info) = ssl_path {
         (
             load_certs(&ssl_info.ssl_crt_path)?,
             load_private_key(&ssl_info.ssl_key_path)?,
@@ -77,19 +81,26 @@ pub fn get_client(ssl_path: Option<ClientSSLConfig>, timeout: u64) -> Result<Cli
         .with_safe_defaults()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
         .with_client_auth_cert(certs, key)
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     ClientBuilder::new()
         .use_preconfigured_tls(config)
         .timeout(Duration::from_secs(timeout))
         .build()
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))
 }
 
-pub async fn post<T>(
+pub fn get_http_client(timeout: u64) -> Result<Client, Error> {
+    ClientBuilder::new()
+        .timeout(Duration::from_secs(timeout))
+        .build()
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))
+}
+
+pub async fn post<T, S: std::hash::BuildHasher>(
     client: &Client,
     url: &str,
     data: &Map<String, Value>,
-    additional_headers: &Option<HashMap<String, String>>,
+    additional_headers: &Option<HashMap<String, String, S>>,
 ) -> Result<T, Error>
 where
     T: DeserializeOwned,
@@ -107,6 +118,7 @@ where
                     .text()
                     .await
                     .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
+                debug!("{body}");
                 serde_json::from_str(body.as_str()).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
@@ -123,6 +135,6 @@ where
                 format!("Bad Status Code: {:?}, for URL {:?}", resp.status(), url),
             )),
         },
-        Err(err) => Err(Error::new(ErrorKind::InvalidData, format!("{:?}", err))),
+        Err(err) => Err(Error::new(ErrorKind::InvalidData, format!("{err:?}"))),
     }
 }

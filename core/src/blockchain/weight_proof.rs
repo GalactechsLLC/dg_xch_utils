@@ -8,7 +8,7 @@ use crate::blockchain::vdf_proof::VdfProof;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SubEpochData {
     pub reward_chain_hash: Bytes32,
     pub num_blocks_overflow: u8,

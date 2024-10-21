@@ -148,8 +148,8 @@ pub fn calc_thread_vars<
 pub fn bytes_to_u64<T: AsRef<[u8]>>(bytes: T) -> u64 {
     let bytes = bytes.as_ref();
     let mut buf: [u8; size_of::<u64>()] = [0; size_of::<u64>()];
-    let length = (bytes.len() < size_of::<u64>()) as usize * bytes.len()
-        + (bytes.len() >= size_of::<u64>()) as usize * size_of::<u64>();
+    let length = usize::from(bytes.len() < size_of::<u64>()) * bytes.len()
+        + usize::from(bytes.len() >= size_of::<u64>()) * size_of::<u64>();
     buf[0..length].copy_from_slice(&bytes[0..length]);
     u64::from_be_bytes(buf)
 }
@@ -161,6 +161,7 @@ pub fn bytes_to_u64<T: AsRef<[u8]>>(bytes: T) -> u64 {
 // Note: requires that 8 bytes after the first sliced byte are addressable
 // (regardless of 'num_bits'). In practice it can be ensured by allocating
 // extra 7 bytes to all memory buffers passed to this function.
+#[allow(clippy::cast_possible_truncation)]
 pub fn slice_u64from_bytes<T: AsRef<[u8]>>(bytes: T, start_bit: u32, num_bits: u32) -> u64 {
     let mut bytes = bytes.as_ref().to_vec();
     let mut start_bit = start_bit;
@@ -178,7 +179,7 @@ pub fn slice_u64from_bytes_full<T: AsRef<[u8]>>(bytes: T, start_bit: u32, num_bi
     let last_bit = start_bit + num_bits;
     let mut r = slice_u64from_bytes(bytes.as_ref(), start_bit, num_bits);
     if start_bit % 8 + num_bits > 64 {
-        r |= bytes.as_ref()[(last_bit / 8) as usize] as u64 >> (8 - last_bit % 8);
+        r |= u64::from(bytes.as_ref()[(last_bit / 8) as usize]) >> (8 - last_bit % 8);
     }
     r
 }

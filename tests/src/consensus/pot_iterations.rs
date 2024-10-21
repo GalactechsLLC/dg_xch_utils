@@ -24,18 +24,20 @@ async fn test_pot_iterations() {
 #[tokio::test]
 async fn test_calculate_sp_iters() {
     use dg_xch_core::consensus::pot_iterations::calculate_sp_iters;
-    let ssi: u64 = 100001 * 64 * 4;
+    let ssi: u64 = 100_001 * 64 * 4;
     assert!(calculate_sp_iters(&TEST_CONSTANTS, ssi, 32).is_err());
     assert!(calculate_sp_iters(&TEST_CONSTANTS, ssi, 31).is_ok());
 }
 
 #[tokio::test]
+#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_possible_truncation)]
 async fn test_calculate_ip_iters() {
     use dg_xch_core::consensus::pot_iterations::calculate_ip_iters;
-    let ssi: u64 = 100001 * 64 * 4;
-    let sp_interval_iters = ssi / TEST_CONSTANTS.num_sps_sub_slot as u64;
+    let ssi: u64 = 100_001 * 64 * 4;
+    let sp_interval_iters = ssi / u64::from(TEST_CONSTANTS.num_sps_sub_slot);
     //Invalid signage point index
-    assert!(calculate_ip_iters(&TEST_CONSTANTS, ssi, 123, 100000).is_err());
+    assert!(calculate_ip_iters(&TEST_CONSTANTS, ssi, 123, 100_000).is_err());
     let mut sp_iters = sp_interval_iters * 13;
     //required_iters too high
     assert!(calculate_ip_iters(
@@ -79,7 +81,7 @@ async fn test_calculate_ip_iters() {
     assert!(sp_iters < ip_iters);
 
     //Overflow
-    sp_iters = sp_interval_iters * (TEST_CONSTANTS.num_sps_sub_slot as u64 - 1);
+    sp_iters = sp_interval_iters * (u64::from(TEST_CONSTANTS.num_sps_sub_slot) - 1);
     ip_iters = calculate_ip_iters(
         &TEST_CONSTANTS,
         ssi,
@@ -96,6 +98,7 @@ async fn test_calculate_ip_iters() {
 }
 
 #[tokio::test]
+#[allow(clippy::cast_precision_loss)]
 async fn test_win_percentage() {
     use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
     use dg_xch_core::consensus::pot_iterations::{
@@ -110,22 +113,22 @@ async fn test_win_percentage() {
     */
     let farmer_ks = HashMap::from([(32u8, 100), (33, 100), (34, 100), (35, 100), (36, 100)]);
     let mut farmer_space = HashMap::new();
-    for (k, _) in farmer_ks.iter() {
+    for k in farmer_ks.keys() {
         farmer_space.insert(*k, expected_plot_size(*k));
     }
     let total_space = farmer_space.values().sum::<u64>();
     let mut percentage_space = HashMap::new();
-    for (k, sp) in farmer_space.iter() {
+    for (k, sp) in &farmer_space {
         percentage_space.insert(*k, *sp as f64 / total_space as f64);
     }
     let mut wins = HashMap::new();
-    for (k, _) in farmer_ks.iter() {
+    for k in farmer_ks.keys() {
         wins.insert(*k, 0i32);
     }
     let total_slots = 50u32;
     let num_sps = 16u32;
-    let sp_interval_iters = 100000000u64 / 32;
-    let difficulty = 500000000000u64;
+    let sp_interval_iters = 100_000_000_u64 / 32;
+    let difficulty = 500_000_000_000_u64;
     for slot_index in 0..total_slots {
         for sp_index in 0..num_sps {
             let sp_hash = hash_256(
@@ -136,7 +139,7 @@ async fn test_win_percentage() {
                     .collect::<Vec<u8>>(),
             );
             let sp_hash = Bytes32::new(&sp_hash);
-            for (k, count) in farmer_ks.iter() {
+            for (k, count) in &farmer_ks {
                 for farmer_index in 0i32..*count {
                     let quality = hash_256(
                         slot_index
@@ -165,7 +168,7 @@ async fn test_win_percentage() {
     for k in farmer_ks.keys() {
         win_percentage.insert(
             *k,
-            *wins.get_mut(k).unwrap() as f64 / wins.values().sum::<i32>() as f64,
+            f64::from(*wins.get_mut(k).unwrap()) / f64::from(wins.values().sum::<i32>()),
         );
     }
     for k in farmer_ks.keys() {
