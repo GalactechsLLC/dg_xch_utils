@@ -1,24 +1,23 @@
+use crate::api::responses::{
+    LoginResp, SignedTransactionRecordResp, TransactionRecordResp, WalletBalanceResp,
+    WalletInfoResp, WalletSyncResp,
+};
 use crate::api::wallet::WalletAPI;
+use crate::rpc::{get_client, get_url, post};
+use crate::ClientSSLConfig;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin::Coin;
-use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::transaction_record::TransactionRecord;
 use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
 use dg_xch_core::blockchain::wallet_sync::WalletSync;
+use dg_xch_core::blockchain::wallet_type::AmountWithPuzzleHash;
 use reqwest::Client;
 use serde_json::{json, Map};
 use std::collections::HashMap;
 use std::hash::RandomState;
 use std::io::Error;
-
-use crate::api::responses::{
-    LoginResp, SignedTransactionRecordResp, TransactionRecordResp, WalletBalanceResp,
-    WalletInfoResp, WalletSyncResp,
-};
-use crate::rpc::{get_client, get_url, post};
-use crate::ClientSSLConfig;
 
 pub struct WalletClient {
     client: Client,
@@ -129,7 +128,7 @@ impl WalletAPI for WalletClient {
     async fn send_transaction_multi(
         &self,
         wallet_id: u32,
-        additions: Vec<PendingPayment>,
+        additions: Vec<AmountWithPuzzleHash>,
         fee: u64,
     ) -> Result<TransactionRecord, Error> {
         let mut request_body = Map::new();

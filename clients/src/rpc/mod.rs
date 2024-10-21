@@ -8,6 +8,7 @@ use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
     load_private_key_from_bytes, CHIA_CA_CRT, CHIA_CA_KEY,
 };
+use log::debug;
 use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
@@ -117,6 +118,7 @@ where
                     .text()
                     .await
                     .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
+                debug!("{body}");
                 serde_json::from_str(body.as_str()).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,

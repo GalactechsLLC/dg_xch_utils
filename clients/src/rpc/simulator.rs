@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 pub struct SimulatorClient {
     client: Client,
-    full_node_client: FullnodeClient,
+    pub full_node_client: FullnodeClient,
     pub host: String,
     pub port: u16,
     pub additional_headers: Option<HashMap<String, String>>,

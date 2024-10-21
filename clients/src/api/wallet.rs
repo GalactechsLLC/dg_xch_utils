@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin::Coin;
-use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::transaction_record::TransactionRecord;
 use dg_xch_core::blockchain::wallet_balance::WalletBalance;
 use dg_xch_core::blockchain::wallet_info::WalletInfo;
 use dg_xch_core::blockchain::wallet_sync::WalletSync;
+use dg_xch_core::blockchain::wallet_type::AmountWithPuzzleHash;
 use std::io::Error;
 
 #[async_trait]
@@ -25,7 +25,7 @@ pub trait WalletAPI {
     async fn send_transaction_multi(
         &self,
         wallet_id: u32,
-        additions: Vec<PendingPayment>,
+        additions: Vec<AmountWithPuzzleHash>,
         fee: u64,
     ) -> Result<TransactionRecord, Error>;
     async fn get_transaction(

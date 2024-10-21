@@ -1,30 +1,23 @@
 use crate::wallets::common::{sign_coin_spends, DerivationRecord};
-use crate::wallets::{
-    make_solution_from_conditions, SecretKeyStore, Wallet, WalletInfo, WalletStore,
-};
+use crate::wallets::{SecretKeyStore, Wallet, WalletInfo, WalletStore};
 use async_trait::async_trait;
 use blst::min_pk::SecretKey;
 use dashmap::DashMap;
 use dg_xch_clients::api::full_node::{FullnodeAPI, FullnodeExtAPI};
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
-use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::{CatCoinRecord, CatVersion, CoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
-use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
-use dg_xch_core::blockchain::condition_with_args::ConditionWithArgs;
-use dg_xch_core::blockchain::pending_payment::PendingPayment;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
-use dg_xch_core::blockchain::wallet_type::WalletType;
-use dg_xch_core::clvm::program::{Program, SerializedProgram, NULL};
+use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzleHash, WalletType};
+use dg_xch_core::clvm::program::{Program, SerializedProgram};
 use dg_xch_core::clvm::sexp::IntoSExp;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_puzzles::cats::{CAT_1_PROGRAM, CAT_2_PROGRAM};
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     calculate_synthetic_secret_key, DEFAULT_HIDDEN_PUZZLE_HASH,
 };
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
 use log::{error, info};
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
@@ -315,27 +308,15 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
     #[allow(clippy::cast_sign_loss)]
     async fn create_spend_bundle(
         &self,
-        payments: &[PendingPayment],
+        payments: &[AmountWithPuzzleHash],
         input_coins: &[CoinRecord],
         change_puzzle_hash: Option<Bytes32>,
         allow_excess: bool,
         fee: i64,
         surplus: i64,
         origin_id: Option<Bytes32>,
-        coins_to_assert: &[Bytes32],
-        coin_announcements_to_assert: Vec<ConditionWithArgs>,
-        puzzle_announcements_to_assert: Vec<ConditionWithArgs>,
-        additional_conditions: Vec<ConditionWithArgs>,
         solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
     ) -> Result<SpendBundle, Error> {
-        let make_solution_fn = |conditions: &[ConditionWithArgs]| -> Program {
-            let standard_solution = make_solution_from_conditions(conditions);
-            if let Some(solution_transformer) = &solution_transformer {
-                solution_transformer(standard_solution)
-            } else {
-                standard_solution
-            }
-        };
         let mut coins = input_coins.to_vec();
         let total_coin_value: u64 = coins.iter().map(|c| c.coin.amount).sum();
         let total_payment_value: u64 = payments.iter().map(|p| p.amount).sum();
@@ -370,91 +351,17 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
             let origin_coin = coins.remove(origin_index as usize);
             coins.insert(0, origin_coin);
         }
-        let mut primary_assert_coin_announcement: Option<ConditionWithArgs> = None;
-        let mut first = true;
         for coin in &coins {
-            let mut solution = None;
-            // create output for origin coin
-            if first {
-                first = false;
-                let mut conditions = vec![];
-                let mut created_coins = vec![];
-                for payment in payments {
-                    let send_create_coin_condition = payment.to_create_coin_condition();
-                    conditions.push(send_create_coin_condition);
-                    created_coins.push(Coin {
-                        parent_coin_info: coin.coin.coin_id(),
-                        puzzle_hash: payment.puzzle_hash,
-                        amount: payment.amount,
-                    });
-                }
-                if change > 0 {
-                    if let Some(change_puzzle_hash) = change_puzzle_hash {
-                        conditions.push(ConditionWithArgs {
-                            opcode: ConditionOpcode::CreateCoin,
-                            vars: vec![
-                                change_puzzle_hash.to_bytes(ChiaProtocolVersion::default()),
-                                change.to_bytes(ChiaProtocolVersion::default()),
-                            ],
-                        });
-                        created_coins.push(Coin {
-                            parent_coin_info: coin.coin.coin_id(),
-                            puzzle_hash: change_puzzle_hash,
-                            amount: change as u64,
-                        });
-                    }
-                }
-                if fee > 0 {
-                    conditions.push(ConditionWithArgs {
-                        opcode: ConditionOpcode::ReserveFee,
-                        vars: vec![fee.to_bytes(ChiaProtocolVersion::default())],
-                    });
-                }
-                conditions.extend(coin_announcements_to_assert.clone());
-                conditions.extend(puzzle_announcements_to_assert.clone());
-                conditions.extend(additional_conditions.clone());
-                let existing_coins_message = coins.iter().fold(vec![], |mut v, coin| {
-                    v.extend(coin.coin.coin_id().as_slice());
-                    v
-                });
-                let created_coins_message = created_coins.iter().fold(vec![], |mut v, coin| {
-                    v.extend(coin.coin_id().as_slice());
-                    v
-                });
-                let mut to_hash = existing_coins_message.clone();
-                to_hash.extend(created_coins_message.as_slice());
-                let message = hash_256(to_hash);
-                conditions.push(ConditionWithArgs {
-                    opcode: ConditionOpcode::CreateCoinAnnouncement,
-                    vars: vec![message.clone()],
-                });
-                for coin_id_to_assert in coins_to_assert {
-                    conditions.push(ConditionWithArgs {
-                        opcode: ConditionOpcode::AssertCoinAnnouncement,
-                        vars: vec![
-                            coin_id_to_assert.to_bytes(ChiaProtocolVersion::default()),
-                            message.clone(),
-                        ],
-                    });
-                }
-                primary_assert_coin_announcement = Some(ConditionWithArgs {
-                    opcode: ConditionOpcode::AssertCoinAnnouncement,
-                    vars: vec![
-                        coin.coin.coin_id().to_bytes(ChiaProtocolVersion::default()),
-                        message.clone(),
-                    ],
-                });
-                solution = Some(make_solution_fn(&conditions));
-            } else if let Some(primary_assert_coin_announcement) = &primary_assert_coin_announcement
-            {
-                let args = vec![primary_assert_coin_announcement.clone()];
-                solution = Some(make_solution_fn(&args));
+            let mut solution =
+                self.make_solution(payments, 0, None, None, None, None, fee as u64)?;
+            if let Some(solution_transformer) = &solution_transformer {
+                solution = solution_transformer(solution)
             }
             let puzzle = self.puzzle_for_puzzle_hash(&coin.coin.puzzle_hash).await?;
             let coin_spend = CoinSpend {
                 coin: coin.coin,
                 puzzle_reveal: SerializedProgram::from(puzzle),
-                solution: SerializedProgram::from(solution.unwrap_or(NULL.clone())),
+                solution: SerializedProgram::from(solution),
             };
             spends.push(coin_spend);
         }

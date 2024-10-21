@@ -8,14 +8,11 @@ use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::{CatCoinRecord, CoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
-use dg_xch_core::blockchain::condition_with_args::ConditionWithArgs;
-use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
-use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzlehash, WalletType};
+use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzleHash, WalletType};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
-use dg_xch_core::clvm::sexp::NULL;
 use dg_xch_core::clvm::utils::INFINITE_COST;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_keys::{master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened};
@@ -434,23 +431,19 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     #[allow(clippy::too_many_arguments)]
     async fn create_spend_bundle(
         &self,
-        payments: &[PendingPayment],
+        payments: &[AmountWithPuzzleHash],
         input_coins: &[CoinRecord],
         change_puzzle_hash: Option<Bytes32>,
         allow_excess: bool,
         fee: i64,
         surplus: i64,
         origin_id: Option<Bytes32>,
-        coins_to_assert: &[Bytes32],
-        coin_announcements_to_assert: Vec<ConditionWithArgs>,
-        puzzle_announcements_to_assert: Vec<ConditionWithArgs>,
-        additional_conditions: Vec<ConditionWithArgs>,
         solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
     ) -> Result<SpendBundle, Error>;
     #[allow(clippy::too_many_arguments)]
     fn make_solution(
         &self,
-        primaries: &[AmountWithPuzzlehash],
+        primaries: &[AmountWithPuzzleHash],
         min_time: u64,
         coin_announcements: Option<HashSet<Vec<u8>>>,
         coin_announcements_to_assert: Option<HashSet<Bytes32>>,
@@ -461,7 +454,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         let mut condition_list = vec![];
         for primary in primaries {
             condition_list.push(make_create_coin_condition(
-                primary.puzzlehash,
+                primary.puzzle_hash,
                 primary.amount,
                 &primary.memos,
             ));
@@ -632,7 +625,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         fee: u64,
         origin_id: Option<Bytes32>,
         coins: Option<Vec<Coin>>,
-        primaries: Option<&[AmountWithPuzzlehash]>,
+        primaries: Option<&[AmountWithPuzzleHash]>,
         ignore_max_send_amount: bool,
         coin_announcements_to_consume: Option<&[Announcement]>,
         puzzle_announcements_to_consume: Option<&[Announcement]>,
@@ -747,7 +740,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         fee: u64,
         origin_id: Option<Bytes32>,
         coins: Option<Vec<Coin>>,
-        primaries: Option<&[AmountWithPuzzlehash]>,
+        primaries: Option<&[AmountWithPuzzleHash]>,
         ignore_max_send_amount: bool,
         coin_announcements_to_consume: Option<&[Announcement]>,
         puzzle_announcements_to_consume: Option<&[Announcement]>,
@@ -840,7 +833,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 .unwrap_or_default()
                 .iter()
                 .map(|a| Primary {
-                    puzzle_hash: a.puzzlehash,
+                    puzzle_hash: a.puzzle_hash,
                     amount: a.amount,
                 })
                 .collect::<Vec<Primary>>();
@@ -863,16 +856,16 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 origin_id = Some(coin.name());
                 let mut primaries = if let Some(primaries) = primaries {
                     let mut primaries = primaries.to_vec();
-                    primaries.push(AmountWithPuzzlehash {
+                    primaries.push(AmountWithPuzzleHash {
                         amount,
-                        puzzlehash: *puzzle_hash,
+                        puzzle_hash: *puzzle_hash,
                         memos: memos.clone(),
                     });
                     primaries
                 } else if amount > 0 {
-                    vec![AmountWithPuzzlehash {
+                    vec![AmountWithPuzzleHash {
                         amount,
-                        puzzlehash: *puzzle_hash,
+                        puzzle_hash: *puzzle_hash,
                         memos: memos.clone(),
                     }]
                 } else {
@@ -882,7 +875,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     let change_puzzle_hash = if reuse_puzhash {
                         let mut change_puzzle_hash = coin.puzzle_hash;
                         for primary in &primaries {
-                            if change_puzzle_hash == primary.puzzlehash
+                            if change_puzzle_hash == primary.puzzle_hash
                                 && change == i128::from(primary.amount)
                             {
                                 //We cannot create two coins has same id, create a new puzhash for the change:
@@ -894,9 +887,9 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     } else {
                         self.get_new_puzzlehash().await?
                     };
-                    primaries.push(AmountWithPuzzlehash {
+                    primaries.push(AmountWithPuzzleHash {
                         amount: change as u64,
-                        puzzlehash: change_puzzle_hash,
+                        puzzle_hash: change_puzzle_hash,
                         memos: vec![],
                     });
                 }
@@ -905,7 +898,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     message_list.push(
                         Coin {
                             parent_coin_info: coin.name(),
-                            puzzle_hash: primary.puzzlehash,
+                            puzzle_hash: primary.puzzle_hash,
                             amount: primary.amount,
                         }
                         .name(),
@@ -1036,20 +1029,4 @@ pub fn compute_memos_for_spend(
         }
     }
     Ok(memos)
-}
-#[must_use]
-pub fn make_solution_from_program(program: Program) -> Program {
-    Program::to(vec![NULL.clone(), program.sexp, NULL.clone()])
-}
-#[must_use]
-pub fn make_solution_from_conditions(conditions: &[ConditionWithArgs]) -> Program {
-    make_solution_from_program(Program::to(vec![
-        Program::to(0x01),
-        Program::to(
-            conditions
-                .iter()
-                .map(|c| Program::new(c.to_bytes(ChiaProtocolVersion::default())))
-                .collect::<Vec<Program>>(),
-        ),
-    ]))
 }

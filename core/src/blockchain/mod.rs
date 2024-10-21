@@ -21,7 +21,6 @@ pub mod network_info;
 pub mod npc;
 pub mod npc_result;
 pub mod peer_info;
-pub mod pending_payment;
 pub mod pool_target;
 pub mod proof_of_space;
 pub mod reward_chain_block;

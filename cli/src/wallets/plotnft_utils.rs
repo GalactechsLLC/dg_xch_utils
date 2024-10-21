@@ -8,13 +8,11 @@ use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::coin_spend::{compute_additions_with_cost, CoinSpend};
-use dg_xch_core::blockchain::condition_with_args::ConditionWithArgs;
-use dg_xch_core::blockchain::pending_payment::PendingPayment;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
 use dg_xch_core::blockchain::tx_status::TXStatus;
-use dg_xch_core::blockchain::wallet_type::WalletType;
+use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzleHash, WalletType};
 use dg_xch_core::clvm::program::Program;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::plots::PlotNft;
@@ -121,17 +119,13 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
 
     async fn create_spend_bundle(
         &self,
-        _payments: &[PendingPayment],
+        _payments: &[AmountWithPuzzleHash],
         _input_coins: &[CoinRecord],
         _change_puzzle_hash: Option<Bytes32>,
         _allow_excess: bool,
         _fee: i64,
         _surplus: i64,
         _origin_id: Option<Bytes32>,
-        _coins_to_assert: &[Bytes32],
-        _coin_announcements_to_assert: Vec<ConditionWithArgs>,
-        _puzzle_announcements_to_assert: Vec<ConditionWithArgs>,
-        _additional_conditions: Vec<ConditionWithArgs>,
         _solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
     ) -> Result<SpendBundle, Error> {
         todo!()
