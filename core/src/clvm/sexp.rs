@@ -225,7 +225,7 @@ impl Debug for SExp {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self {
             SExp::Atom(a) => {
-                write!(f, "{a}")
+                write!(f, "{a:?}")
             }
             SExp::Pair(p) => {
                 write!(f, "{p:?}")
@@ -252,9 +252,15 @@ impl<'a> Iterator for SExpIter<'a> {
     }
 }
 
-#[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AtomBuf {
     pub data: Vec<u8>,
+}
+
+impl Debug for AtomBuf {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
 }
 
 impl Display for AtomBuf {
@@ -372,7 +378,7 @@ impl Debug for PairBuf {
         let mut buffer = String::from("(");
         match &*self.first {
             SExp::Atom(a) => {
-                buffer += &format!("{a}");
+                buffer += &format!("{a:?}");
             }
             SExp::Pair(p) => {
                 buffer += &format!("{p:?}");
@@ -380,11 +386,11 @@ impl Debug for PairBuf {
         }
         let mut current = &self.rest;
         while let Ok(p) = current.pair() {
-            buffer += &format!(" {}", &p.first.as_ref());
+            buffer += &format!(" {:?}", &p.first.as_ref());
             current = &p.rest;
         }
         if current.non_nil() {
-            buffer += &format!(" . {}", *current);
+            buffer += &format!(" . {:?}", *current);
         }
         buffer += ")";
         write!(f, "{buffer}")
@@ -418,18 +424,31 @@ pub trait TryIntoSExp {
 }
 
 impl IntoSExp for Vec<SExp> {
-    fn to_sexp(self) -> SExp {
-        if let Some(sexp) = self.first().cloned() {
-            let mut end = NULL.clone();
-            if self.len() > 1 {
-                for other in self[1..].iter().rev() {
-                    end = other.clone().cons(end);
+    fn to_sexp(mut self) -> SExp {
+        if self.is_empty() {
+            return SExp::Pair(PairBuf::from((&*NULL, &*NULL)));
+        }
+        if self.len() == 1 {
+            return SExp::Pair(PairBuf::from((&self[0], &*NULL)));
+        }
+        if self.len() == 2 {
+            let last = self.pop().expect("Len Was Checked to Be 2");
+            let first = self.pop().expect("Len Was Checked to Be 2");
+            return SExp::Pair(PairBuf::from((first, last)));
+        }
+        let mut prog = None;
+        while let Some(next) = self.pop() {
+            match prog {
+                None => {
+                    prog = Some(next);
+                }
+                Some(existing) => {
+                    let new = next.cons(existing);
+                    prog = Some(new);
                 }
             }
-            sexp.cons(end)
-        } else {
-            NULL.clone()
         }
+        prog.expect("Expected Program, Lengths Checked Above")
     }
 }
 
@@ -454,7 +473,7 @@ impl<T: IntoSExp> IntoSExp for Vec<T> {
 
 impl<T: IntoSExp> IntoSExp for (T, T) {
     fn to_sexp(self) -> SExp {
-        self.0.to_sexp().cons(self.1.to_sexp().cons(NULL.clone()))
+        self.0.to_sexp().cons(self.1.to_sexp())
     }
 }
 

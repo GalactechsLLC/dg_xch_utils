@@ -127,7 +127,7 @@ fn traverse_path(node_index: &[u8], args: &SExp) -> Result<(u64, SExp), Error> {
 
 fn augment_cost_errors(r: Result<u64, Error>, max_cost: &SExp) -> Result<u64, Error> {
     if let Err(e) = r {
-        if format!("{e:?}").contains("cost exceeded") {
+        if !format!("{e:?}").contains("cost exceeded") {
             Err(e)
         } else {
             Err(Error::new(

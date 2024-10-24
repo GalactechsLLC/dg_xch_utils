@@ -1,5 +1,5 @@
 use bip39::Mnemonic;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::Input;
@@ -317,6 +317,31 @@ pub enum RootCommands {
         #[command(subcommand)]
         action: WalletAction,
     },
+    #[command(about = "Create a cold wallet or a PlotNFT wallet", long_about = None)]
+    Curry {
+        #[arg(short = 'p', long = "program")]
+        program: String,
+        #[arg(short = 'a', long = "args")]
+        args: String,
+        #[arg(short = 'o', long = "output")]
+        output: Option<ProgramOutput>,
+    },
+    #[command(about = "Create a cold wallet or a PlotNFT wallet", long_about = None)]
+    Run {
+        #[arg(short = 'p', long = "program")]
+        program: String,
+        #[arg(short = 'a', long = "args")]
+        args: String,
+        #[arg(short = 'o', long = "output")]
+        output: Option<ProgramOutput>,
+    },
+}
+
+#[derive(Default, ValueEnum, Copy, Clone, Debug)]
+pub enum ProgramOutput {
+    #[default]
+    Hex,
+    String,
 }
 
 #[derive(Debug, Subcommand)]

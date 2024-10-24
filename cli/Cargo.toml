@@ -9,7 +9,7 @@ homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
 repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [lib]
-name = "dg_xch_cli"
+name = "dg_xch_cli_lib"
 path = "src/lib.rs"
 
 [[bin]]

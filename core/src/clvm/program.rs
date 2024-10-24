@@ -1,6 +1,7 @@
 use crate::blockchain::sized_bytes::{
     hex_to_bytes, Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes,
 };
+use crate::clvm::assemble::assemble_text;
 use crate::clvm::curry_utils::curry;
 use crate::clvm::dialect::ChiaDialect;
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
@@ -15,12 +16,12 @@ use once_cell::sync::Lazy;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
+use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
-use std::{fmt, fs};
 
 pub static NULL: Lazy<Program> = Lazy::new(|| Program {
     sexp: SNULL.clone(),
@@ -451,10 +452,21 @@ impl Debug for SerializedProgram {
     }
 }
 impl SerializedProgram {
-    pub fn from_file(path: &Path) -> Result<SerializedProgram, Error> {
-        Ok(SerializedProgram {
-            buffer: fs::read(path)?,
-        })
+    pub async fn from_file(path: &Path) -> Result<SerializedProgram, Error> {
+        if path.ends_with("bin") {
+            Ok(Self {
+                buffer: tokio::fs::read(path).await?,
+            })
+        } else if path.ends_with("hex") {
+            SerializedProgram::from_hex(tokio::fs::read_to_string(&path).await?.trim())
+        } else if path.ends_with("clvm") {
+            assemble_text(tokio::fs::read_to_string(&path).await?.trim())
+        } else {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("Invalid File type, Expected Hex or Bin: {path:?}"),
+            ));
+        }
     }
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> SerializedProgram {

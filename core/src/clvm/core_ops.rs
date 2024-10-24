@@ -47,17 +47,24 @@ pub fn op_listp(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 }
 
 pub fn op_raise(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    let pair = args.pair()?;
-    if pair.rest.nullp() {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            format!("clvm raise: {:?}", pair.first.atom()?),
-        ))
-    } else {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            format!("clvm raise: {:?}", &pair.rest),
-        ))
+    match args {
+        SExp::Atom(atom) => Err(Error::new(
+            ErrorKind::Other,
+            format!("clvm raise: {:?}", atom),
+        )),
+        SExp::Pair(pair) => {
+            if pair.rest.nullp() {
+                Err(Error::new(
+                    ErrorKind::Other,
+                    format!("clvm raise: {:?}", pair.first.atom()?),
+                ))
+            } else {
+                Err(Error::new(
+                    ErrorKind::Other,
+                    format!("clvm raise: {:?}", &pair.rest),
+                ))
+            }
+        }
     }
 }
 
