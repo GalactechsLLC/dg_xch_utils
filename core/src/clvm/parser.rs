@@ -16,6 +16,9 @@ enum ParserOp {
 
 #[allow(clippy::cast_possible_truncation)]
 pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
+    if bytes.as_ref().is_empty() {
+        return Ok(NULL.clone());
+    }
     let mut stream = Cursor::new(bytes);
     let mut byte_buf = [0; 1];
     let mut op_buf = vec![ParserOp::Exp];

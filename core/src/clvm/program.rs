@@ -71,6 +71,10 @@ impl Program {
         let serialized = sexp_to_bytes(&sexp).unwrap_or_default();
         Program { serialized, sexp }
     }
+    pub fn from_sexp(sexp: SExp) -> Result<Self, Error> {
+        let serialized = sexp_to_bytes(&sexp)?;
+        Ok(Program { serialized, sexp })
+    }
     pub fn first(&self) -> Result<Self, Error> {
         let first = self.sexp.first()?;
         let serialized = sexp_to_bytes(first).unwrap_or_default();

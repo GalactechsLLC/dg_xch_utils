@@ -1,13 +1,19 @@
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+pub const QUOTE: u8 = 0x01;
+pub const APPLY: u8 = 0x02;
+pub const IF: u8 = 0x03;
+pub const CONS: u8 = 0x04;
+pub const FIRST: u8 = 0x05;
+pub const REST: u8 = 0x06;
 
 const PAIRS: [(u8, &str); 32] = [
-    (0x01, "q"),
-    (0x02, "a"),
-    (0x03, "i"),
-    (0x04, "c"),
-    (0x05, "f"),
-    (0x06, "r"),
+    (QUOTE, "q"),
+    (APPLY, "a"),
+    (IF, "i"),
+    (CONS, "c"),
+    (FIRST, "f"),
+    (REST, "r"),
     (0x07, "l"),
     (0x08, "x"),
     (0x09, "="),
@@ -40,3 +46,5 @@ pub static KEYWORD_FROM_ATOM: Lazy<HashMap<Vec<u8>, String>> =
     Lazy::new(|| HashMap::from(PAIRS.map(|(k, v)| (vec![k], v.to_string()))));
 pub static KEYWORD_TO_ATOM: Lazy<HashMap<String, Vec<u8>>> =
     Lazy::new(|| HashMap::from(PAIRS.map(|(k, v)| (v.to_string(), vec![k]))));
+pub static B_KEYWORD_TO_ATOM: Lazy<HashMap<&[u8], Vec<u8>>> =
+    Lazy::new(|| HashMap::from(PAIRS.map(|(k, v)| (v.as_bytes(), vec![k]))));

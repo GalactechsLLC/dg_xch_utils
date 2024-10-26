@@ -3,7 +3,7 @@ use crate::blockchain::sized_bytes::{
     Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes,
 };
 use crate::clvm::assemble::is_hex;
-use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
+use crate::clvm::assemble::keywords::{APPLY, CONS, KEYWORD_FROM_ATOM, QUOTE};
 use crate::clvm::program::Program;
 use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
@@ -376,23 +376,68 @@ impl Display for PairBuf {
 impl Debug for PairBuf {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut buffer = String::from("(");
+        let mut is_quote = false;
+        let mut is_op_format = false;
         match &*self.first {
             SExp::Atom(a) => {
-                buffer += &format!("{a:?}");
+                if a.data.len() == 1 {
+                    is_quote = a.data.first() == Some(&QUOTE);
+                    is_op_format = a.data.first() == Some(&CONS);
+                    is_op_format = is_op_format || a.data.first() == Some(&APPLY);
+                }
+                if let Some(kw) = KEYWORD_FROM_ATOM.get(&a.data) {
+                    buffer += kw;
+                } else {
+                    buffer += &format!("{a:?}");
+                }
             }
             SExp::Pair(p) => {
                 buffer += &format!("{p:?}");
             }
         }
-        let mut current = &self.rest;
-        while let Ok(p) = current.pair() {
-            buffer += &format!(" {:?}", &p.first.as_ref());
-            current = &p.rest;
+        if is_quote {
+            let mut current = &self.rest;
+            match current.as_ref() {
+                SExp::Atom(a) => {
+                    buffer += &format!(" . {a:?}");
+                }
+                SExp::Pair(_) => {
+                    while let Ok(p) = current.pair() {
+                        buffer += &format!(" {:?}", &p.first.as_ref());
+                        current = &p.rest;
+                    }
+                    match current.as_ref() {
+                        SExp::Pair(pair) => {
+                            buffer += &format!(" {:?}", &pair);
+                        }
+                        SExp::Atom(atom) => {
+                            if !atom.data.is_empty() {
+                                buffer += &format!(" {:?}", &atom);
+                            }
+                        }
+                    }
+                }
+            }
+            buffer += ")";
+        } else if is_op_format {
+            let cons_pair = &self.rest;
+            match cons_pair.as_ref() {
+                SExp::Pair(pair) => {
+                    buffer += &format!(" {:?}", &pair.first);
+                    buffer += &format!(" {:?}", &pair.rest);
+                }
+                SExp::Atom(_) => {
+                    buffer += &format!(
+                        " {:?}",
+                        SExp::Pair(PairBuf::from((cons_pair.as_ref(), &*NULL)))
+                    );
+                }
+            }
+            buffer += ")";
+        } else {
+            buffer += &format!(" {:?}", &self.rest);
+            buffer += ")";
         }
-        if current.non_nil() {
-            buffer += &format!(" . {:?}", *current);
-        }
-        buffer += ")";
         write!(f, "{buffer}")
     }
 }
