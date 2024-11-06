@@ -8,6 +8,7 @@ use crate::clvm::sexp::{IntoSExp, SExp};
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
+use log::info;
 
 pub type ConditionsDict<S> = HashMap<ConditionOpcode, Vec<ConditionWithArgs>, S>;
 
@@ -85,7 +86,9 @@ pub fn conditions_dict_for_solution<S: std::hash::BuildHasher + Default>(
 ) -> Result<(ConditionsDict<S>, u64), Error> {
     match conditions_for_solution(puzzle_reveal, solution, max_cost) {
         Ok((result, cost)) => Ok((conditions_by_opcode(result), cost)),
-        Err(error) => Err(error),
+        Err(error) => {
+            Err(error)
+        },
     }
 }
 
@@ -95,10 +98,18 @@ pub fn conditions_for_solution(
     max_cost: u64,
 ) -> Result<(Vec<ConditionWithArgs>, u64), Error> {
     match puzzle_reveal.run_with_cost(max_cost, &solution.to_program()) {
-        Ok((cost, r)) => match parse_sexp_to_conditions(&r.to_sexp()) {
-            Ok(conditions) => Ok((conditions, cost)),
-            Err(error) => Err(error),
+        Ok((cost, r)) => {
+            match parse_sexp_to_conditions(&r.to_sexp()) {
+                Ok(conditions) => Ok((conditions, cost)),
+                Err(error) => {
+                    info!("{error:?}");
+                    Err(error)
+                },
+            }
         },
-        Err(error) => Err(error),
+        Err(error) => {
+            info!("{error:?}");
+            Err(error)
+        },
     }
 }

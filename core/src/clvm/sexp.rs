@@ -5,8 +5,6 @@ use crate::blockchain::sized_bytes::{
 use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
 use crate::clvm::program::Program;
-use dg_xch_serialize::ChiaProtocolVersion;
-use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
 use num_bigint::BigInt;
 use once_cell::sync::Lazy;
@@ -424,31 +422,18 @@ pub trait TryIntoSExp {
 }
 
 impl IntoSExp for Vec<SExp> {
-    fn to_sexp(mut self) -> SExp {
-        if self.is_empty() {
-            return SExp::Pair(PairBuf::from((&*NULL, &*NULL)));
-        }
-        if self.len() == 1 {
-            return SExp::Pair(PairBuf::from((&self[0], &*NULL)));
-        }
-        if self.len() == 2 {
-            let last = self.pop().expect("Len Was Checked to Be 2");
-            let first = self.pop().expect("Len Was Checked to Be 2");
-            return SExp::Pair(PairBuf::from((first, last)));
-        }
-        let mut prog = None;
-        while let Some(next) = self.pop() {
-            match prog {
-                None => {
-                    prog = Some(next);
-                }
-                Some(existing) => {
-                    let new = next.cons(existing);
-                    prog = Some(new);
+    fn to_sexp(self) -> SExp {
+        if let Some(sexp) = self.first().cloned() {
+            let mut end = NULL.clone();
+            if self.len() > 1 {
+                for other in self[1..].iter().rev() {
+                    end = other.clone().cons(end);
                 }
             }
+            sexp.cons(end)
+        } else {
+            NULL.clone()
         }
-        prog.expect("Expected Program, Lengths Checked Above")
     }
 }
 
@@ -468,6 +453,15 @@ impl<T: IntoSExp> IntoSExp for Vec<T> {
             .map(IntoSExp::to_sexp)
             .collect::<Vec<SExp>>()
             .to_sexp()
+    }
+}
+
+impl<T: IntoSExp> IntoSExp for Option<T> {
+    fn to_sexp(self) -> SExp {
+        match self {
+            None => NULL.clone(),
+            Some(s) => s.to_sexp()
+        }
     }
 }
 
@@ -509,7 +503,7 @@ impl IntoSExp for &Program {
 
 impl IntoSExp for ConditionOpcode {
     fn to_sexp(self) -> SExp {
-        SExp::Atom(AtomBuf::new(self.to_bytes(ChiaProtocolVersion::default())))
+        SExp::Atom(AtomBuf::new(vec![self as u8]))
     }
 }
 

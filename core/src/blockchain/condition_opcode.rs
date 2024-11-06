@@ -37,6 +37,8 @@ pub enum ConditionOpcode {
     AssertPuzzleAnnouncement = 63,
     AssertConcurrentSpend = 64,
     AssertConcurrentPuzzle = 65,
+    SendMessage = 66,
+    ReceiveMessage = 67,
     AssertMyCoinId = 70,
     AssertMyParentId = 71,
     AssertMyPuzzlehash = 72,
