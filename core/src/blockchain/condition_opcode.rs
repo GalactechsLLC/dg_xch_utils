@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use crate::clvm::program::Program;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,48 @@ pub enum ConditionOpcode {
     AssertBeforeHeightAbsolute = 87,
     SoftFork = 90,
 }
+impl Display for ConditionOpcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            ConditionOpcode::Unknown => "Unknown",
+            ConditionOpcode::Remark => "Remark",
+            ConditionOpcode::AggSigParent => "AggSigParent",
+            ConditionOpcode::AggSigPuzzle => "AggSigPuzzle",
+            ConditionOpcode::AggSigAmount => "AggSigAmount",
+            ConditionOpcode::AggSigPuzzleAmount => "AggSigPuzzleAmount",
+            ConditionOpcode::AggSigParentAmount => "AggSigParentAmount",
+            ConditionOpcode::AggSigParentPuzzle => "AggSigParentPuzzle",
+            ConditionOpcode::AggSigUnsafe => "AggSigUnsafe",
+            ConditionOpcode::AggSigMe => "AggSigMe",
+            ConditionOpcode::CreateCoin => "CreateCoin",
+            ConditionOpcode::ReserveFee => "ReserveFee",
+            ConditionOpcode::CreateCoinAnnouncement => "CreateCoinAnnouncement",
+            ConditionOpcode::AssertCoinAnnouncement => "AssertCoinAnnouncement",
+            ConditionOpcode::CreatePuzzleAnnouncement => "CreatePuzzleAnnouncement",
+            ConditionOpcode::AssertPuzzleAnnouncement => "AssertPuzzleAnnouncement",
+            ConditionOpcode::AssertConcurrentSpend => "AssertConcurrentSpend",
+            ConditionOpcode::AssertConcurrentPuzzle => "AssertConcurrentPuzzle",
+            ConditionOpcode::SendMessage => "SendMessage",
+            ConditionOpcode::ReceiveMessage => "ReceiveMessage",
+            ConditionOpcode::AssertMyCoinId => "AssertMyCoinId",
+            ConditionOpcode::AssertMyParentId => "AssertMyParentId",
+            ConditionOpcode::AssertMyPuzzlehash => "AssertMyPuzzlehash",
+            ConditionOpcode::AssertMyAmount => "AssertMyAmount",
+            ConditionOpcode::AssertMyBirthSeconds => "AssertMyBirthSeconds",
+            ConditionOpcode::AssertMyBirthHeight => "AssertMyBirthHeight",
+            ConditionOpcode::AssertEphemeral => "AssertEphemeral",
+            ConditionOpcode::AssertSecondsRelative => "AssertSecondsRelative",
+            ConditionOpcode::AssertSecondsAbsolute => "AssertSecondsAbsolute",
+            ConditionOpcode::AssertHeightRelative => "AssertHeightRelative",
+            ConditionOpcode::AssertHeightAbsolute => "AssertHeightAbsolute",
+            ConditionOpcode::AssertBeforeSecondsRelative => "AssertBeforeSecondsRelative",
+            ConditionOpcode::AssertBeforeSecondsAbsolute => "AssertBeforeSecondsAbsolute",
+            ConditionOpcode::AssertBeforeHeightRelative => "AssertBeforeHeightRelative",
+            ConditionOpcode::AssertBeforeHeightAbsolute => "AssertBeforeHeightAbsolute",
+            ConditionOpcode::SoftFork => "SoftFork",
+        })
+    }
+}
 impl From<u8> for ConditionOpcode {
     fn from(value: u8) -> Self {
         match value {
@@ -76,6 +119,8 @@ impl From<u8> for ConditionOpcode {
             63u8 => ConditionOpcode::AssertPuzzleAnnouncement,
             64u8 => ConditionOpcode::AssertConcurrentSpend,
             65u8 => ConditionOpcode::AssertConcurrentPuzzle,
+            66u8 => ConditionOpcode::SendMessage,
+            67u8 => ConditionOpcode::ReceiveMessage,
             70u8 => ConditionOpcode::AssertMyCoinId,
             71u8 => ConditionOpcode::AssertMyParentId,
             72u8 => ConditionOpcode::AssertMyPuzzlehash,

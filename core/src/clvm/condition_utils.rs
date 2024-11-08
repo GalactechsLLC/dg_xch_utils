@@ -8,22 +8,40 @@ use crate::clvm::sexp::{IntoSExp, SExp};
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
-use log::info;
+use log::{info, warn};
 
 pub type ConditionsDict<S> = HashMap<ConditionOpcode, Vec<ConditionWithArgs>, S>;
 
 pub fn parse_sexp_to_condition(sexp: &SExp) -> Result<ConditionWithArgs, Error> {
-    let as_atoms = sexp.as_atom_list();
-    if as_atoms.is_empty() {
-        Err(Error::new(ErrorKind::InvalidData, "Invalid Condition"))
-    } else {
-        match as_atoms.split_first() {
-            Some((first, rest)) => Ok(ConditionWithArgs {
-                opcode: ConditionOpcode::from(first[0]),
-                vars: Vec::from(rest),
-            }),
-            None => Err(Error::new(ErrorKind::InvalidData, "Invalid Condition")),
+    let mut opcode = ConditionOpcode::Unknown;
+    let mut vars = vec![];
+    let mut first = true;
+    for arg in sexp.iter().take(4) {
+        match arg {
+            SExp::Atom(arg) => {
+                if first {
+                    first = false;
+                    if arg.data.len() != 1 {
+                        return Err(Error::new(ErrorKind::InvalidData, "Invalid OpCode for Condition"));
+                    }
+                    opcode = ConditionOpcode::from(arg.data[0]);
+                } else {
+                    vars.push(arg.data.clone());
+                }
+            }
+            SExp::Pair(_) => {
+                warn!("Got pair in opcode args");
+                break;
+            }
         }
+    }
+    if vars.is_empty() {
+        Err(Error::new(ErrorKind::InvalidData, "Invalid Condition No Vars"))
+    } else {
+        Ok(ConditionWithArgs {
+            opcode,
+            vars,
+        })
     }
 }
 

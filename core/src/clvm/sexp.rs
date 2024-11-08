@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
+use std::mem::replace;
 
 pub static NULL: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![].into()));
 pub static ONE: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![1u8].into()));
@@ -240,12 +241,23 @@ impl<'a> Iterator for SExpIter<'a> {
     type Item = &'a SExp;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.c.pair().ok() {
-            Some(pair) => {
-                self.c = &pair.rest;
-                Some(&pair.first)
+        if self.c.nullp() {
+            None
+        } else {
+            match self.c {
+                SExp::Atom(a) => {
+                    if a.data.is_empty() {
+                        None
+                    } else {
+                        let rtn = replace(&mut self.c, &NULL);
+                        Some(rtn)
+                    }
+                }
+                SExp::Pair(pair) => {
+                    self.c = &pair.rest;
+                    Some(&pair.first)
+                }
             }
-            _ => None,
         }
     }
 }

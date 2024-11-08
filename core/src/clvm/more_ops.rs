@@ -6,17 +6,16 @@ use std::io::{Error, ErrorKind};
 use std::ops::BitAndAssign;
 use std::ops::BitOrAssign;
 use std::ops::BitXorAssign;
-
+use num_traits::Signed;
 use crate::clvm::parser::sexp_to_bytes;
 use once_cell::sync::Lazy;
 use sha2::Digest;
 use sha2::Sha256;
-
-use crate::clvm::sexp::{SExp, NULL, ONE};
-use crate::clvm::utils::{
-    arg_count, atom, check_arg_count, check_cost, i32_atom, int_atom, new_concat, new_substr,
-    number_from_u8, ptr_from_number, two_ints, u32_from_u8,
-};
+use crate::blockchain::coin::Coin;
+use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::utils::atom_to_int;
+use crate::clvm::sexp::{AtomBuf, SExp, NULL, ONE};
+use crate::clvm::utils::{arg_count, atom, check_arg_count, check_cost, i32_atom, int_atom, new_concat, new_substr, number_from_u8, sexp_from_bigint, two_ints, u32_from_u8, u64_from_bigint};
 
 const MALLOC_COST_PER_BYTE: u64 = 10;
 
@@ -83,6 +82,8 @@ const POINT_ADD_COST_PER_ARG: u64 = 1_343_980;
 const PUBKEY_BASE_COST: u64 = 1_325_730;
 // increased from 12 to closer model Raspberry PI
 const PUBKEY_COST_PER_BYTE: u64 = 38;
+
+const COIN_ID_COST: u64 = SHA256_BASE_COST + SHA256_COST_PER_ARG * 3 + SHA256_COST_PER_BYTE * (32 + 32 + 8) - 153;
 
 fn limbs_for_int(v: &BigInt) -> usize {
     ((v.bits() + 7) / 8) as usize
@@ -200,7 +201,7 @@ pub fn op_add(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
         byte_count += blob.len();
         total += v;
     }
-    let total = ptr_from_number(&total)?;
+    let total = sexp_from_bigint(&total)?;
     cost += byte_count as u64 * ARITH_COST_PER_BYTE;
     malloc_cost(cost, total)
 }
@@ -223,7 +224,7 @@ pub fn op_subtract(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
         };
         is_first = false;
     }
-    let total = ptr_from_number(&total)?;
+    let total = sexp_from_bigint(&total)?;
     cost += byte_count as u64 * ARITH_COST_PER_BYTE;
     malloc_cost(cost, total)
 }
@@ -252,7 +253,7 @@ pub fn op_multiply(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
 
         l0 = limbs_for_int(&total);
     }
-    let total = ptr_from_number(&total)?;
+    let total = sexp_from_bigint(&total)?;
     malloc_cost(cost, total)
 }
 
@@ -276,7 +277,7 @@ pub fn op_div_impl(args: &SExp, mempool: bool) -> Result<(u64, SExp), Error> {
         if q == (-1).into() && r != 0.into() {
             q += 1;
         }
-        let q1 = ptr_from_number(&q)?;
+        let q1 = sexp_from_bigint(&q)?;
         malloc_cost(cost, q1)
     }
 }
@@ -299,8 +300,8 @@ pub fn op_divmod(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
         ))
     } else {
         let (q, r) = a0.div_mod_floor(&a1);
-        let q1 = ptr_from_number(&q)?;
-        let r1 = ptr_from_number(&r)?;
+        let q1 = sexp_from_bigint(&q)?;
+        let r1 = sexp_from_bigint(&r)?;
 
         let c = (q1.atom()?.data.len() + r1.atom()?.data.len()) as u64 * MALLOC_COST_PER_BYTE;
         let r: SExp = q1.cons(r1);
@@ -341,7 +342,7 @@ pub fn op_strlen(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
     let v0 = atom(a0, "strlen")?;
     let size = v0.len();
     let size_num: BigInt = size.into();
-    let size_node = ptr_from_number(&size_num)?;
+    let size_node = sexp_from_bigint(&size_num)?;
     let cost = STRLEN_BASE_COST + size as u64 * STRLEN_COST_PER_BYTE;
     malloc_cost(cost, size_node)
 }
@@ -424,7 +425,7 @@ pub fn op_ash(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 
     let v: BigInt = if a1 > 0 { i0 << a1 } else { i0 >> -a1 };
     let l1 = limbs_for_int(&v);
-    let r = ptr_from_number(&v)?;
+    let r = sexp_from_bigint(&v)?;
     let cost = A_SHIFT_BASE_COST + ((l0 + l1) as u64) * A_SHIFT_COST_PER_BYTE;
     malloc_cost(cost, r)
 }
@@ -446,7 +447,7 @@ pub fn op_lsh(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
     let i0: BigInt = i0.into();
     let v: BigInt = if a1 > 0 { i0 << a1 } else { i0 >> -a1 };
     let l1 = limbs_for_int(&v);
-    let r = ptr_from_number(&v)?;
+    let r = sexp_from_bigint(&v)?;
     let cost = LSHIFT_BASE_COST + ((l0 + l1) as u64) * LSHIFT_COST_PER_BYTE;
     malloc_cost(cost, r)
 }
@@ -470,7 +471,7 @@ fn binop_reduction(
         check_cost(cost + (arg_size as u64 * LOG_COST_PER_BYTE), max_cost)?;
     }
     cost += arg_size as u64 * LOG_COST_PER_BYTE;
-    let total = ptr_from_number(&total)?;
+    let total = sexp_from_bigint(&total)?;
     malloc_cost(cost, total)
 }
 
@@ -508,7 +509,7 @@ pub fn op_lognot(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
     let mut n: BigInt = number_from_u8(v0);
     n = !n;
     let cost = LOG_NOT_BASE_COST + ((v0.len() as u64) * LOG_NOT_COST_PER_BYTE);
-    let r = ptr_from_number(&n)?;
+    let r = sexp_from_bigint(&n)?;
     malloc_cost(cost, r)
 }
 
@@ -646,4 +647,53 @@ pub fn op_point_add(args: &SExp, max_cost: u64) -> Result<(u64, SExp), Error> {
     }
     let total: G1Affine = total.into();
     Ok(new_atom_and_cost(cost, &total.to_compressed()))
+}
+
+pub fn op_coinid(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
+    let mut args_list = args.as_atom_list();
+    if args_list.len() != 3 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("coinid expects 3 args, got {} {args:?}", args_list.len()),
+        ));
+    }
+    let amount = args_list.pop().expect("Length Already Checked");
+    let puzzle_hash = args_list.pop().expect("Length Already Checked");
+    let parent_coin_info = args_list.pop().expect("Length Already Checked");
+    if parent_coin_info.len() != 32 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("invalid parent coin id, {}", hex::encode(&parent_coin_info)),
+        ));
+    }
+    if puzzle_hash.len() != 32 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("invalid puzzle hash, {}", hex::encode(&puzzle_hash)),
+        ));
+    }
+    let as_int = if !amount.is_empty() {
+        let as_int = atom_to_int(&amount);
+        if as_int.is_negative() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("coin amount cannot be negative, {}", atom_to_int(&amount)),
+            ));
+        }
+        if amount.len() > 9 || (amount.len() == 9 && amount[0] != 0) {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("coin amount exceeds max, {}", as_int),
+            ));
+        }
+        as_int
+    } else {
+        BigInt::ZERO
+    };
+    let coin = Coin {
+        parent_coin_info: Bytes32::from(parent_coin_info),
+        puzzle_hash: Bytes32::from(puzzle_hash),
+        amount: u64_from_bigint(&as_int)?,
+    };
+    Ok((COIN_ID_COST, SExp::Atom(AtomBuf::new(coin.coin_id().into()))))
 }

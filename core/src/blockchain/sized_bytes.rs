@@ -235,6 +235,12 @@ macro_rules! impl_sized_bytes {
                 }
             }
 
+            impl From<$name> for Vec<u8> {
+                fn from(slf: $name) -> Vec<u8> {
+                    slf.bytes.to_vec()
+                }
+            }
+
             impl TryFrom<Program> for $name {
                 type Error = Error;
 

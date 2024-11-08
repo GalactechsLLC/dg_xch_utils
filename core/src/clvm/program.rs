@@ -3,7 +3,7 @@ use crate::blockchain::sized_bytes::{
 };
 use crate::clvm::assemble::assemble_text;
 use crate::clvm::curry_utils::curry;
-use crate::clvm::dialect::ChiaDialect;
+use crate::clvm::dialect::{ChiaDialect, NO_UNKNOWN_OPS};
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
 use crate::clvm::run_program::run_program;
 use crate::clvm::sexp::{AtomBuf, IntoSExp};
@@ -275,7 +275,7 @@ impl Program {
     pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
         let program = sexp_from_bytes(&self.serialized)?;
         let args = sexp_from_bytes(&args.serialized)?;
-        let dialect = ChiaDialect::new(flags);
+        let dialect = ChiaDialect::new(flags | NO_UNKNOWN_OPS);
         let (cost, result) = match run_program(dialect, &program, &args, max_cost, None) {
             Ok(reduct) => reduct,
             Err(e) => {
