@@ -5,10 +5,10 @@ use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
 use crate::blockchain::utils::atom_to_int;
 use crate::clvm::program::SerializedProgram;
 use crate::clvm::sexp::{IntoSExp, SExp};
+use log::{info, warn};
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
-use log::{info, warn};
 
 pub type ConditionsDict<S> = HashMap<ConditionOpcode, Vec<ConditionWithArgs>, S>;
 
@@ -22,7 +22,10 @@ pub fn parse_sexp_to_condition(sexp: &SExp) -> Result<ConditionWithArgs, Error> 
                 if first {
                     first = false;
                     if arg.data.len() != 1 {
-                        return Err(Error::new(ErrorKind::InvalidData, "Invalid OpCode for Condition"));
+                        return Err(Error::new(
+                            ErrorKind::InvalidData,
+                            "Invalid OpCode for Condition",
+                        ));
                     }
                     opcode = ConditionOpcode::from(arg.data[0]);
                 } else {
@@ -36,12 +39,12 @@ pub fn parse_sexp_to_condition(sexp: &SExp) -> Result<ConditionWithArgs, Error> 
         }
     }
     if vars.is_empty() {
-        Err(Error::new(ErrorKind::InvalidData, "Invalid Condition No Vars"))
+        Err(Error::new(
+            ErrorKind::InvalidData,
+            "Invalid Condition No Vars",
+        ))
     } else {
-        Ok(ConditionWithArgs {
-            opcode,
-            vars,
-        })
+        Ok(ConditionWithArgs { opcode, vars })
     }
 }
 
@@ -104,9 +107,7 @@ pub fn conditions_dict_for_solution<S: std::hash::BuildHasher + Default>(
 ) -> Result<(ConditionsDict<S>, u64), Error> {
     match conditions_for_solution(puzzle_reveal, solution, max_cost) {
         Ok((result, cost)) => Ok((conditions_by_opcode(result), cost)),
-        Err(error) => {
-            Err(error)
-        },
+        Err(error) => Err(error),
     }
 }
 
@@ -116,18 +117,16 @@ pub fn conditions_for_solution(
     max_cost: u64,
 ) -> Result<(Vec<ConditionWithArgs>, u64), Error> {
     match puzzle_reveal.run_with_cost(max_cost, &solution.to_program()) {
-        Ok((cost, r)) => {
-            match parse_sexp_to_conditions(&r.to_sexp()) {
-                Ok(conditions) => Ok((conditions, cost)),
-                Err(error) => {
-                    info!("{error:?}");
-                    Err(error)
-                },
+        Ok((cost, r)) => match parse_sexp_to_conditions(&r.to_sexp()) {
+            Ok(conditions) => Ok((conditions, cost)),
+            Err(error) => {
+                info!("{error:?}");
+                Err(error)
             }
         },
         Err(error) => {
             info!("{error:?}");
             Err(error)
-        },
+        }
     }
 }

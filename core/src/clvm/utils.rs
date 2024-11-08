@@ -115,10 +115,13 @@ pub fn sexp_from_bigint(item: &BigInt) -> Result<SExp, Error> {
 
 pub fn u64_from_bigint(item: &BigInt) -> Result<u64, Error> {
     if item.is_negative() {
-        return Err(Error::new(ErrorKind::InvalidData, "cannot convert negative integer to u64"));
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "cannot convert negative integer to u64",
+        ));
     }
     if *item > u64::MAX.into() {
-        return Err(Error::new(ErrorKind::InvalidData, "u64::MAX exceeded"))
+        return Err(Error::new(ErrorKind::InvalidData, "u64::MAX exceeded"));
     }
     let bytes: Vec<u8> = item.to_signed_bytes_be();
     let mut slice = bytes.as_slice();
@@ -131,9 +134,7 @@ pub fn u64_from_bigint(item: &BigInt) -> Result<u64, Error> {
     }
     let mut fixed_ary = [0u8; 8];
     let start = size_of::<u64>() - slice.len();
-    for index in start..size_of::<u64>() {
-        fixed_ary[index] = slice[index - start];
-    }
+    fixed_ary[start..size_of::<u64>()].copy_from_slice(&slice[..(size_of::<u64>() - start)]);
     Ok(u64::from_be_bytes(fixed_ary))
 }
 

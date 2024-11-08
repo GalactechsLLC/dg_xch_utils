@@ -472,7 +472,7 @@ impl<T: IntoSExp> IntoSExp for Option<T> {
     fn to_sexp(self) -> SExp {
         match self {
             None => NULL.clone(),
-            Some(s) => s.to_sexp()
+            Some(s) => s.to_sexp(),
         }
     }
 }

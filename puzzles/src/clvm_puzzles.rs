@@ -29,9 +29,10 @@ lazy_static! {
     pub static ref SINGLETON_MOD: Program = SerializedProgram::from_hex(SINGLETON_MOD_HEX)
         .unwrap()
         .to_program();
-    pub static ref SINGLETON_MOD_V1_1: Program = SerializedProgram::from_hex(SINGLETON_MOD_V1_1_HEX)
-        .unwrap()
-        .to_program();
+    pub static ref SINGLETON_MOD_V1_1: Program =
+        SerializedProgram::from_hex(SINGLETON_MOD_V1_1_HEX)
+            .unwrap()
+            .to_program();
     pub static ref SINGLETON_MOD_HASH: Bytes32 = SINGLETON_MOD.tree_hash();
     pub static ref SINGLETON_MOD_V1_1_HASH: Bytes32 = SINGLETON_MOD_V1_1.tree_hash();
     pub static ref POOL_WAITING_ROOM_MOD: Program =
@@ -75,7 +76,10 @@ pub fn puzzle_for_singleton(launcher_id: &Bytes32, inner_puz: &Program) -> Resul
     SINGLETON_MOD.curry(&args)
 }
 
-pub fn puzzle_for_singleton_v1_1(launcher_id: &Bytes32, inner_puz: &Program) -> Result<Program, Error> {
+pub fn puzzle_for_singleton_v1_1(
+    launcher_id: &Bytes32,
+    inner_puz: &Program,
+) -> Result<Program, Error> {
     let args = vec![
         (
             (*SINGLETON_MOD_V1_1_HASH).try_into()?,

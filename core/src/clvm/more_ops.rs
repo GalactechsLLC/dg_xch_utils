@@ -1,21 +1,24 @@
+use crate::blockchain::coin::Coin;
+use crate::blockchain::sized_bytes::Bytes32;
+use crate::blockchain::utils::atom_to_int;
+use crate::clvm::parser::sexp_to_bytes;
+use crate::clvm::sexp::{AtomBuf, SExp, NULL, ONE};
+use crate::clvm::utils::{
+    arg_count, atom, check_arg_count, check_cost, i32_atom, int_atom, new_concat, new_substr,
+    number_from_u8, sexp_from_bigint, two_ints, u32_from_u8, u64_from_bigint,
+};
 use bls12_381::{G1Affine, G1Projective, Scalar};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
+use num_traits::Signed;
+use once_cell::sync::Lazy;
+use sha2::Digest;
+use sha2::Sha256;
 use std::convert::TryFrom;
 use std::io::{Error, ErrorKind};
 use std::ops::BitAndAssign;
 use std::ops::BitOrAssign;
 use std::ops::BitXorAssign;
-use num_traits::Signed;
-use crate::clvm::parser::sexp_to_bytes;
-use once_cell::sync::Lazy;
-use sha2::Digest;
-use sha2::Sha256;
-use crate::blockchain::coin::Coin;
-use crate::blockchain::sized_bytes::Bytes32;
-use crate::blockchain::utils::atom_to_int;
-use crate::clvm::sexp::{AtomBuf, SExp, NULL, ONE};
-use crate::clvm::utils::{arg_count, atom, check_arg_count, check_cost, i32_atom, int_atom, new_concat, new_substr, number_from_u8, sexp_from_bigint, two_ints, u32_from_u8, u64_from_bigint};
 
 const MALLOC_COST_PER_BYTE: u64 = 10;
 
@@ -83,7 +86,8 @@ const PUBKEY_BASE_COST: u64 = 1_325_730;
 // increased from 12 to closer model Raspberry PI
 const PUBKEY_COST_PER_BYTE: u64 = 38;
 
-const COIN_ID_COST: u64 = SHA256_BASE_COST + SHA256_COST_PER_ARG * 3 + SHA256_COST_PER_BYTE * (32 + 32 + 8) - 153;
+const COIN_ID_COST: u64 =
+    SHA256_BASE_COST + SHA256_COST_PER_ARG * 3 + SHA256_COST_PER_BYTE * (32 + 32 + 8) - 153;
 
 fn limbs_for_int(v: &BigInt) -> usize {
     ((v.bits() + 7) / 8) as usize
@@ -695,5 +699,8 @@ pub fn op_coinid(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
         puzzle_hash: Bytes32::from(puzzle_hash),
         amount: u64_from_bigint(&as_int)?,
     };
-    Ok((COIN_ID_COST, SExp::Atom(AtomBuf::new(coin.coin_id().into()))))
+    Ok((
+        COIN_ID_COST,
+        SExp::Atom(AtomBuf::new(coin.coin_id().into())),
+    ))
 }

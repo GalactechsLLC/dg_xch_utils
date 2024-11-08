@@ -21,7 +21,9 @@ impl IntoSExp for &ConditionWithArgs {
                 Some(pair) => args_pair = Some(pair.cons(var)),
             }
         }
-        self.opcode.to_sexp().cons(args_pair.unwrap_or_else(|| NULL.clone()))
+        self.opcode
+            .to_sexp()
+            .cons(args_pair.unwrap_or_else(|| NULL.clone()))
     }
 }
 impl IntoSExp for ConditionWithArgs {
