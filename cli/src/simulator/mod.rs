@@ -51,8 +51,11 @@ impl Simulator {
     pub fn client(&self) -> &SimulatorClient {
         &self.client
     }
-    pub fn new_user(&self, name: &str) -> Result<ChainUser<'_>, Error> {
-        let mnemonic = Mnemonic::generate(24).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    pub fn new_user(&self, name: &str, menmonic: Option<String>) -> Result<ChainUser<'_>, Error> {
+        let mnemonic = match menmonic {
+            Some(s) => Mnemonic::parse(s).map_err(|e| Error::new(ErrorKind::Other, e))?,
+            None => Mnemonic::generate(24).map_err(|e| Error::new(ErrorKind::Other, e))?,
+        };
         let secret_key =
             key_from_mnemonic(&mnemonic).map_err(|e| Error::new(ErrorKind::Other, e))?;
         Ok(ChainUser {

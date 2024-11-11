@@ -147,6 +147,7 @@ pub trait WalletStore {
         hardened: bool,
     ) -> Result<DerivationRecord, Error> {
         let wallet_sk = self.wallet_sk(index, hardened)?;
+        let _ = self.secret_key_store().save_secret_key(&wallet_sk);
         let pubkey = Bytes48::from(wallet_sk.sk_to_pk().to_bytes());
         let puzzle_hash = puzzle_hash_for_pk(&pubkey)?;
         self.add_puzzle_hash_and_keys(puzzle_hash, (Bytes32::from(wallet_sk), pubkey))

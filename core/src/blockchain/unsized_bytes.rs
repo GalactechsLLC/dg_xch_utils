@@ -12,6 +12,7 @@ pub struct UnsizedBytes {
     pub bytes: Vec<u8>,
 }
 impl<'a> SizedBytes<'a> for UnsizedBytes {
+    const SIZE: usize = usize::MAX;
     fn new(bytes: &[u8]) -> Self {
         Self {
             bytes: bytes.to_vec(),

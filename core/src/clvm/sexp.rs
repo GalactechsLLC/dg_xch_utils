@@ -5,8 +5,7 @@ use crate::blockchain::sized_bytes::{
 use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::{ADD, APPLY, CONS, DIV, DIVMOD, KEYWORD_FROM_ATOM, MUL, QUOTE, SUB};
 use crate::clvm::program::Program;
-use dg_xch_serialize::ChiaProtocolVersion;
-use dg_xch_serialize::ChiaSerialize;
+use crate::clvm::utils::{number_from_u8, u64_from_bigint};
 use hex::encode;
 use num_bigint::BigInt;
 use once_cell::sync::Lazy;
@@ -15,7 +14,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
+<<<<<<< HEAD
 use crate::clvm::compile::utils::concat_args;
+=======
+use std::mem::replace;
+>>>>>>> 3b340d3e4228fb824077d7b9813a92f3fced3b93
 
 pub static NULL: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![].into()));
 pub static ONE: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![1u8].into()));
@@ -243,12 +246,23 @@ impl<'a> Iterator for SExpIter<'a> {
     type Item = &'a SExp;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.c.pair().ok() {
-            Some(pair) => {
-                self.c = &pair.rest;
-                Some(&pair.first)
+        if self.c.nullp() {
+            None
+        } else {
+            match self.c {
+                SExp::Atom(a) => {
+                    if a.data.is_empty() {
+                        None
+                    } else {
+                        let rtn = replace(&mut self.c, &NULL);
+                        Some(rtn)
+                    }
+                }
+                SExp::Pair(pair) => {
+                    self.c = &pair.rest;
+                    Some(&pair.first)
+                }
             }
-            _ => None,
         }
     }
 }
@@ -302,6 +316,22 @@ impl AtomBuf {
     #[must_use]
     pub fn new(v: Vec<u8>) -> Self {
         AtomBuf { data: v }
+    }
+    pub fn as_bytes32(&self) -> Result<Bytes32, Error> {
+        if self.data.len() == Bytes32::SIZE {
+            Ok(Bytes32::new(self.data.as_slice()))
+        } else {
+            Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("Invalid Length for Bytes32: {}", self.data.len()),
+            ))
+        }
+    }
+    pub fn as_int(&self) -> BigInt {
+        number_from_u8(&self.data)
+    }
+    pub fn as_u64(&self) -> Result<u64, Error> {
+        u64_from_bigint(&number_from_u8(&self.data))
     }
 }
 
@@ -482,19 +512,18 @@ pub trait TryIntoSExp {
 }
 
 impl IntoSExp for Vec<SExp> {
-    fn to_sexp(mut self) -> SExp {
-        if self.is_empty() {
-            return SExp::Pair(PairBuf::from((&*NULL, &*NULL)));
+    fn to_sexp(self) -> SExp {
+        if let Some(sexp) = self.first().cloned() {
+            let mut end = NULL.clone();
+            if self.len() > 1 {
+                for other in self[1..].iter().rev() {
+                    end = other.clone().cons(end);
+                }
+            }
+            sexp.cons(end)
+        } else {
+            NULL.clone()
         }
-        if self.len() == 1 {
-            return SExp::Pair(PairBuf::from((&self[0], &*NULL)));
-        }
-        if self.len() == 2 {
-            let last = self.pop().expect("Len Was Checked to Be 2");
-            let first = self.pop().expect("Len Was Checked to Be 2");
-            return SExp::Pair(PairBuf::from((first, last)));
-        }
-        concat_args(self).expect("Expected Program, Lengths Checked Above")
     }
 }
 
@@ -514,6 +543,15 @@ impl<T: IntoSExp> IntoSExp for Vec<T> {
             .map(IntoSExp::to_sexp)
             .collect::<Vec<SExp>>()
             .to_sexp()
+    }
+}
+
+impl<T: IntoSExp> IntoSExp for Option<T> {
+    fn to_sexp(self) -> SExp {
+        match self {
+            None => NULL.clone(),
+            Some(s) => s.to_sexp(),
+        }
     }
 }
 
@@ -555,7 +593,7 @@ impl IntoSExp for &Program {
 
 impl IntoSExp for ConditionOpcode {
     fn to_sexp(self) -> SExp {
-        SExp::Atom(AtomBuf::new(self.to_bytes(ChiaProtocolVersion::default())))
+        SExp::Atom(AtomBuf::new(vec![self as u8]))
     }
 }
 

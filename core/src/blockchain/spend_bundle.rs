@@ -1,8 +1,12 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
+use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::sized_bytes::SizedBytes;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
+use crate::clvm::condition_utils::parse_sexp_to_conditions;
 use crate::clvm::program::Program;
+use crate::clvm::sexp::AtomBuf;
+use crate::clvm::utils::INFINITE_COST;
 use blst::min_pk::{AggregateSignature, Signature};
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
@@ -116,5 +120,48 @@ impl SpendBundle {
                 .to_signature()
                 .into();
         Ok(self)
+    }
+    pub fn validate(&self) -> Result<bool, Error> {
+        //Validate Signature
+
+        //Validate Spends
+        let mut coins_to_create = vec![];
+        let mut coins_to_spend = vec![];
+        let mut origin_id = None;
+        for spend in &self.coin_spends {
+            let (_cost, output_conditions) =
+                spend
+                    .puzzle_reveal
+                    .run(INFINITE_COST, 2, &spend.solution.to_program())?;
+            let conditions_with_args = parse_sexp_to_conditions(&output_conditions.sexp)?;
+            let mut create_conditions = vec![];
+            for condition_with_args in conditions_with_args {
+                if condition_with_args.opcode == ConditionOpcode::CreateCoin {
+                    coins_to_create.push(Coin {
+                        parent_coin_info: spend.coin.coin_id(),
+                        puzzle_hash: AtomBuf::from(condition_with_args.vars[0].clone())
+                            .as_bytes32()?,
+                        amount: AtomBuf::from(condition_with_args.vars[1].clone()).as_u64()?,
+                    });
+                    create_conditions.push(condition_with_args);
+                }
+            }
+            coins_to_spend.push(spend.coin);
+            if !create_conditions.is_empty() {
+                match origin_id {
+                    Some(_) => Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Cannot have multiple Origin coins",
+                    ))?,
+                    None => origin_id = Some(spend.coin.coin_id()),
+                }
+            }
+        }
+
+        //Validate Coins Created
+
+        //Validate Conditions
+
+        todo!()
     }
 }

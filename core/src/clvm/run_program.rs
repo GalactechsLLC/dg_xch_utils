@@ -1,6 +1,6 @@
 use crate::clvm::dialect::Dialect;
 use crate::clvm::sexp::{PairBuf, SExp, NULL};
-use crate::clvm::utils::ptr_from_number;
+use crate::clvm::utils::sexp_from_bigint;
 use num_bigint::BigInt;
 use std::io::Error;
 use std::io::ErrorKind;
@@ -316,7 +316,7 @@ impl<D: Dialect> RunProgramContext<D> {
         self.op_stack = vec![Operation::Eval];
         let max_cost = if max_cost == 0 { u64::MAX } else { max_cost };
         let max_cost_number: BigInt = max_cost.into();
-        let max_cost_ptr = ptr_from_number(&max_cost_number)?;
+        let max_cost_ptr = sexp_from_bigint(&max_cost_number)?;
         let mut cost: u64 = 0;
         loop {
             let top = self.op_stack.pop();

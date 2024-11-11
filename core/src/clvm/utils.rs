@@ -3,7 +3,7 @@ use crate::blockchain::npc_result::NPCResult;
 use crate::clvm::sexp::{AtomBuf, SExp};
 use dg_xch_serialize::hash_256;
 use num_bigint::BigInt;
-use num_traits::{Num, Zero};
+use num_traits::{Num, Signed, Zero};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::io::{Error, ErrorKind};
@@ -99,7 +99,7 @@ pub fn two_ints(args: &SExp, op_name: &str) -> Result<(BigInt, usize, BigInt, us
     Ok((number_from_u8(n0), n0.len(), number_from_u8(n1), n1.len()))
 }
 
-pub fn ptr_from_number(item: &BigInt) -> Result<SExp, Error> {
+pub fn sexp_from_bigint(item: &BigInt) -> Result<SExp, Error> {
     let bytes: Vec<u8> = item.to_signed_bytes_be();
     let mut slice = bytes.as_slice();
 
@@ -111,6 +111,31 @@ pub fn ptr_from_number(item: &BigInt) -> Result<SExp, Error> {
         slice = &slice[1..];
     }
     Ok(SExp::Atom(slice.to_vec().into()))
+}
+
+pub fn u64_from_bigint(item: &BigInt) -> Result<u64, Error> {
+    if item.is_negative() {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "cannot convert negative integer to u64",
+        ));
+    }
+    if *item > u64::MAX.into() {
+        return Err(Error::new(ErrorKind::InvalidData, "u64::MAX exceeded"));
+    }
+    let bytes: Vec<u8> = item.to_signed_bytes_be();
+    let mut slice = bytes.as_slice();
+    // make number minimal by removing leading zeros
+    while (!slice.is_empty()) && (slice[0] == 0) {
+        if slice.len() > 1 && (slice[1] & 0x80 == 0x80) {
+            break;
+        }
+        slice = &slice[1..];
+    }
+    let mut fixed_ary = [0u8; 8];
+    let start = size_of::<u64>() - slice.len();
+    fixed_ary[start..size_of::<u64>()].copy_from_slice(&slice[..(size_of::<u64>() - start)]);
+    Ok(u64::from_be_bytes(fixed_ary))
 }
 
 #[must_use]

@@ -7,8 +7,8 @@ pub trait Dialect {
 }
 use crate::clvm::core_ops::{op_cons, op_eq, op_first, op_if, op_listp, op_raise, op_rest};
 use crate::clvm::more_ops::{
-    op_add, op_all, op_any, op_ash, op_concat, op_div, op_div_deprecated, op_divmod, op_gr,
-    op_gr_bytes, op_logand, op_logior, op_lognot, op_logxor, op_lsh, op_multiply, op_not,
+    op_add, op_all, op_any, op_ash, op_coinid, op_concat, op_div, op_div_deprecated, op_divmod,
+    op_gr, op_gr_bytes, op_logand, op_logior, op_lognot, op_logxor, op_lsh, op_multiply, op_not,
     op_point_add, op_pubkey_for_exp, op_sha256, op_softfork, op_strlen, op_substr, op_subtract,
     op_unknown,
 };
@@ -61,7 +61,7 @@ impl Dialect for ChiaDialect {
                             12 => op_substr,
                             13 => op_strlen,
                             14 => op_concat,
-                            // 15 ---
+                            // 15 - Not Used
                             16 => op_add,
                             17 => op_subtract,
                             18 => op_multiply,
@@ -80,15 +80,29 @@ impl Dialect for ChiaDialect {
                             25 => op_logior,
                             26 => op_logxor,
                             27 => op_lognot,
-                            // 28 ---
+                            // 28 - Not Used
                             29 => op_point_add,
                             30 => op_pubkey_for_exp,
-                            // 31 ---
+                            // 31 - Not Used
                             32 => op_not,
                             33 => op_any,
                             34 => op_all,
-                            // 35 ---
+                            // 35 - Not Used
                             36 => op_softfork,
+                            48 => op_coinid,
+                            // 49 => op_bls_g1_subtract,
+                            // 50 => op_bls_g1_multiply,
+                            // 51 => op_bls_g1_negate,
+                            // 52 => op_bls_g2_add,
+                            // 53 => op_bls_g2_subtract,
+                            // 54 => op_bls_g2_multiply,
+                            // 55 => op_bls_g2_negate,
+                            // 56 => op_bls_map_to_g1,
+                            // 57 => op_bls_map_to_g2,
+                            // 58 => op_bls_pairing_identity,
+                            // 59 => op_bls_verify,
+                            // 60 => op_modpow,
+                            // 61 => op_mod,
                             _ => {
                                 return if (self.flags & NO_UNKNOWN_OPS) != 0 {
                                     Err(Error::new(

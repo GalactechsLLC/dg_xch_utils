@@ -145,7 +145,7 @@ impl WalletStore for MemoryWalletStore {
         {
             None => Err(Error::new(
                 ErrorKind::NotFound,
-                format!("Failed to find public_key: {public_key})"),
+                format!("Failed to find secret_key for pub_key: {public_key})"),
             )),
             Some(v) => {
                 let secret_key = SecretKey::from_bytes(v.value().as_ref()).map_err(|e| {
