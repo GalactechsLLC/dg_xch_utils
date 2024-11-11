@@ -1,17 +1,21 @@
-mod conditions;
+pub mod conditions;
 pub mod tokenizer;
+pub mod utils;
+pub mod tests;
 
-use crate::clvm::assemble::keywords::{APPLY, B_KEYWORD_TO_ATOM, CONS, QUOTE};
-use crate::clvm::assemble::{handle_bytes, handle_hex, handle_int, handle_quote};
-use crate::clvm::casts::bigint_to_bytes;
-use crate::clvm::compile::conditions::{parse_constant, parse_function};
+use std::borrow::Cow;
+use std::collections::HashSet;
+use crate::clvm::assemble::keywords::{B_KEYWORD_TO_SEXP};
+use crate::clvm::compile::conditions::{parse_constant, parse_function, parse_include};
 use crate::clvm::compile::tokenizer::{Token, TokenType, Tokenizer};
-use crate::clvm::program::Program;
-use crate::clvm::sexp::{AtomBuf, SExp, NULL};
+use crate::clvm::program::{Program};
+use crate::clvm::sexp::{IntoSExp, SExp, NULL};
 use std::fmt::{Debug, Formatter};
 use std::io::{Error, ErrorKind};
 use std::mem::take;
 use std::vec::IntoIter;
+use crate::clvm::assemble::assemble_text;
+use crate::clvm::compile::utils::{concat_args, get_arg_pointer, get_const_pointer, get_function_pointer, parse_value, APPLY_SEXP, ARGS_SEXP, CONS_SEXP, QUOTE_SEXP};
 
 pub struct UnparsedCondition<'a> {
     tokens: Vec<Token<'a>>,
@@ -41,6 +45,10 @@ impl<'a> Debug for Constant<'a> {
         write!(f, "Constant({:?}: {:?})", self.name, self.value)
     }
 }
+
+const INLINE_CONSTS: u32 = 0b_0000_0000_0000_0000_0000_0000_0000_0001;
+const INLINE_DEFUNS: u32 = 0b_0000_0000_0000_0000_0000_0000_0000_0010;
+
 #[derive(Debug, Default)]
 pub struct Compiler<'a> {
     pub argument_names: Vec<Token<'a>>,
@@ -49,11 +57,18 @@ pub struct Compiler<'a> {
     pub constants: Vec<Constant<'a>>,
     pub body: Vec<Token<'a>>,
     pub reader: Tokenizer<'a>,
+    pub include_dirs: &'a [&'a str],
+    pub flags: u32,
+    pub opt_level: u8,
+    pub in_nested: bool,
 }
 impl<'a> Compiler<'a> {
-    pub fn new(source: &'a str) -> Self {
+    pub fn new(source: Cow<'a, [u8]>, flags: u32, opt_level: u8, include_dirs: &'a [&'a str]) -> Self {
         Self {
-            reader: Tokenizer::new(source.trim().as_bytes()),
+            reader: Tokenizer::new(source),
+            flags,
+            opt_level,
+            include_dirs,
             ..Default::default()
         }
     }
@@ -66,11 +81,24 @@ impl<'a> Compiler<'a> {
         self.ensure_token(TokenType::StartCons)?;
         self.ensure_token_value(TokenType::Expression, b"mod")?;
         self.parse_argument_names()?;
-        self.parse_conditions()
+        self.parse_conditions()?;
+        if self.flags & INLINE_DEFUNS == INLINE_DEFUNS {
+            let funcs = take(&mut self.functions);
+            let (defun, inline) = funcs.into_iter().fold((vec![], vec![]), |(mut defun, mut inline), func| {
+                if self.can_inline_function(&func) {
+                    inline.push(func);
+                } else {
+                    defun.push(func);
+                }
+                (defun, inline)
+            });
+            self.functions = defun;
+            self.inline_functions.extend(inline);
+        }
+        Ok(())
     }
     fn post_process(&mut self, program: Program) -> Result<Program, Error> {
-        //TODO Add Post Process Functions
-        Ok(program)
+        assemble_text(&format!("{program:?}")).map(|v| v.to_program())
     }
     fn process(&mut self) -> Result<Program, Error> {
         let mut output = None;
@@ -82,7 +110,7 @@ impl<'a> Compiler<'a> {
                         output = Some(self.process_pair(&mut iter)?);
                     }
                     Some(existing) => {
-                        output = Some(existing.cons(&self.process_pair(&mut iter)?));
+                        output = Some(existing.cons(self.process_pair(&mut iter)?));
                     }
                 },
                 TokenType::Expression => match output {
@@ -91,7 +119,7 @@ impl<'a> Compiler<'a> {
                         break;
                     }
                     Some(existing) => {
-                        output = Some(existing.cons(&self.process_atom(token, &mut iter)?));
+                        output = Some(existing.cons(self.process_atom(token, &mut iter)?));
                     }
                 },
                 TokenType::EndCons => {
@@ -102,19 +130,49 @@ impl<'a> Compiler<'a> {
         }
         let body = output.ok_or(Error::new(ErrorKind::InvalidData, "No body found"))?;
         if self.functions.is_empty() {
-            Ok(body)
+            Program::from_sexp(body)
         } else {
             Program::from_sexp(
-                SExp::Atom(AtomBuf::new(vec![APPLY])).cons(
-                    SExp::Atom(AtomBuf::new(vec![QUOTE]))
-                        .cons(body.sexp)
-                        .cons(self.get_functions_sexp()?),
+                APPLY_SEXP.clone().cons(
+                    QUOTE_SEXP.clone().cons(body)
+                        .cons(self.get_program_args_sexp()?),
                 ),
             )
         }
     }
 
-    fn process_pair(&mut self, token_stream: &mut IntoIter<Token<'a>>) -> Result<Program, Error> {
+    fn create_pair_sexp(&mut self, mut entries: Vec<SExp>, found_end: bool) -> Result<SExp, Error> {
+        if entries.is_empty() {
+            return if found_end {
+                Ok(NULL.clone())
+            } else {
+                Err(Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "No closing cons found",
+                ))
+            };
+        }
+        if entries.len() == 1 {
+            entries.pop().ok_or(Error::new(
+                ErrorKind::UnexpectedEof,
+                "Expected Entry, Length Was Checked",
+            ))
+        } else if entries.len() == 2 {
+            let rest = entries.pop().ok_or(Error::new(
+                ErrorKind::UnexpectedEof,
+                "Expected Entry, Length Was Checked",
+            ))?;
+            let first = entries.pop().ok_or(Error::new(
+                ErrorKind::UnexpectedEof,
+                "Expected Entry, Length Was Checked",
+            ))?;
+            Ok(first.cons(rest))
+        } else {
+            concat_args(entries)
+        }
+    }
+
+    fn process_pair(&mut self, token_stream: &mut IntoIter<Token<'a>>) -> Result<SExp, Error> {
         let mut entries = vec![];
         let mut found_end_cons = false;
         while let Some(token) = token_stream.next() {
@@ -132,63 +190,31 @@ impl<'a> Compiler<'a> {
                 TokenType::Comment => {}
             }
         }
-        if entries.is_empty() {
-            return if found_end_cons {
-                Ok(Program::null())
-            } else {
-                Err(Error::new(
-                    ErrorKind::UnexpectedEof,
-                    "No closing cons found",
-                ))
-            };
-        }
-        if entries.len() == 1 {
-            entries.pop().ok_or(Error::new(
-                ErrorKind::UnexpectedEof,
-                "Expected Entry, Length Was Checked",
-            ))
-        } else if entries.len() == 2 {
-            Ok(entries[0].cons(&entries[1]))
-        } else {
-            let mut prog = None;
-            while let Some(next) = entries.pop() {
-                match prog {
-                    None => {
-                        prog = Some(next);
-                    }
-                    Some(existing) => {
-                        let new = next.cons(&existing);
-                        prog = Some(new);
-                    }
-                }
-            }
-            prog.ok_or(Error::new(ErrorKind::InvalidData, "No body found"))
-        }
+        self.create_pair_sexp(entries, found_end_cons)
     }
 
     fn process_atom(
         &mut self,
         token: Token<'a>,
         token_stream: &mut IntoIter<Token<'a>>,
-    ) -> Result<Program, Error> {
-        let is_function: bool = self.functions.iter().any(|v| v.name.bytes == token.bytes);
-        let is_inline: bool = self
+    ) -> Result<SExp, Error> {
+        if self.functions.iter().any(|v| v.name.bytes == token.bytes) {
+            self.get_function(token, token_stream)
+        } else if self
             .inline_functions
             .iter()
-            .any(|v| v.name.bytes == token.bytes);
-        let is_constant: bool = self.constants.iter().any(|v| v.name.bytes == token.bytes);
-        let is_arg: bool = self.argument_names.iter().any(|v| v.bytes == token.bytes);
-        if is_function {
-            self.get_function(token, token_stream)
-        } else if is_inline {
-            self.get_inline_function(token)
-        } else if is_constant {
+            .any(|v| v.name.bytes == token.bytes) {
+            self.get_inline_function(token, token_stream)
+        } else if self.constants.iter().any(|v| v.name.bytes == token.bytes) {
             self.get_constant(token)
-        } else if is_arg {
+        } else if self.argument_names.iter().any(|v| v.bytes == token.bytes) {
             self.get_arg(token)
         } else {
-            //Real Atom
-            todo!()
+            Ok(if let Some(kw) = B_KEYWORD_TO_SEXP.get(&token.bytes) {
+                kw.clone()
+            } else {
+                QUOTE_SEXP.clone().cons(parse_value(token.bytes)?)
+            })
         }
     }
 
@@ -196,29 +222,42 @@ impl<'a> Compiler<'a> {
         &mut self,
         token: Token<'a>,
         token_stream: &mut IntoIter<Token<'a>>,
-    ) -> Result<Program, Error> {
+    ) -> Result<SExp, Error> {
         let (index, function) = self
             .functions
             .iter()
             .enumerate()
             .find(|v| v.1.name.bytes == token.bytes)
             .ok_or(Error::new(ErrorKind::InvalidData, "Function not found"))?;
-        let func_pointer = Self::get_function_pointer(index as u8)?;
+        let constants_count = self.constants.len() * (self.flags & INLINE_CONSTS != INLINE_CONSTS) as usize;
+        let func_pointer = get_function_pointer(index as u8, constants_count, self.functions.len())?;
+        let mut i_set_the_value = false;
+        if !self.in_nested {
+            self.in_nested = true;
+            i_set_the_value = true;
+        }
         let num_args = function.argument_names.len() as u32;
         let args = self.get_function_args(num_args, token_stream)?;
-        println!("Args: {args:?}");
-        Program::from_sexp(
-            SExp::Atom(AtomBuf::new(vec![APPLY])).cons(
-                SExp::Atom(AtomBuf::new(vec![func_pointer as u8])).cons(
-                    SExp::Atom(AtomBuf::new(vec![CONS]))
-                        .cons(
-                            SExp::Atom(AtomBuf::new(vec![0x02]))
-                                .cons(SExp::Atom(AtomBuf::new(vec![CONS])).cons(args)),
-                        )
-                        .cons(NULL.clone()),
-                ),
+        if i_set_the_value {
+            self.in_nested = false;
+        }
+        Ok(APPLY_SEXP.clone().cons(
+            (func_pointer as u8).to_sexp().cons({
+                    let val = CONS_SEXP.clone().cons(
+                        APPLY_SEXP.clone().cons(CONS_SEXP.clone().cons(if self.in_nested {
+                            args
+                        } else {
+                            args.cons(NULL.clone())
+                        })),
+                    );
+                    if self.in_nested {
+                        val
+                    } else {
+                        val.cons(NULL.clone())
+                    }
+                }
             ),
-        )
+        ))
     }
 
     fn get_function_args(
@@ -247,20 +286,30 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        let mut rtn = NULL.clone();
-        for arg in args.into_iter().rev() {
-            rtn = arg.sexp.cons(rtn);
+        if args.len() == 1 {
+            Ok(args.pop().expect("Expected at least one argument"))
+        } else if args.len() == 2 {
+            let rest = args.pop().expect("Expected at least two arguments");
+            let first = args.pop().expect("Expected at least two arguments");
+            Ok(first.cons(rest))
+        } else {
+            concat_args(args)
         }
-        Ok(rtn)
     }
 
-    fn get_functions_sexp(&mut self) -> Result<SExp, Error> {
-        let mut funcs = vec![];
+    fn get_program_args_sexp(&mut self) -> Result<SExp, Error> {
+        let mut entries = vec![];
         for func in self.functions.clone().into_iter() {
-            funcs.push(self.get_function_body(func)?);
+            entries.push(self.get_function_body(func)?);
         }
+        if self.flags & INLINE_CONSTS != INLINE_CONSTS {
+            for constant in self.constants.iter().rev() {
+                entries.push(parse_value(constant.value.bytes)?);
+            }
+        }
+        entries.push(QUOTE_SEXP.clone());
         let mut rtn = None;
-        for arg in funcs.into_iter() {
+        for arg in entries.into_iter() {
             match rtn {
                 None => rtn = Some(arg),
                 Some(r) => {
@@ -268,29 +317,35 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        Ok(SExp::Atom(AtomBuf::new(vec![CONS])).cons(
+        Ok(CONS_SEXP.clone().cons(
             rtn.unwrap_or(NULL.clone())
-                .cons(SExp::Atom(AtomBuf::new(vec![1u8]))),
+                .cons(ARGS_SEXP.clone()),
         ))
     }
 
     fn get_function_body(&mut self, function: Function<'a>) -> Result<SExp, Error> {
         let mut tokens = function.function_body.into_iter();
         let args = &function.argument_names;
-        self.process_function_pair(&mut tokens, args)
+        self.process_function_pair(&mut tokens, args, 0)
     }
 
     fn process_function_pair(
         &mut self,
         token_stream: &mut IntoIter<Token<'a>>,
         function_args: &[Token<'a>],
+        depth: u32,
     ) -> Result<SExp, Error> {
         let mut entries = vec![];
         let mut found_end_cons = false;
         while let Some(token) = token_stream.next() {
             match token.t_type {
                 TokenType::StartCons | TokenType::DotCons => {
-                    entries.push(self.process_function_pair(token_stream, function_args)?);
+                    let pair = self.process_function_pair(token_stream, function_args, depth + 1)?;
+                    if depth == 1 {
+                        entries.push(pair.cons(NULL.clone()));
+                    }else {
+                        entries.push(pair);
+                    }
                 }
                 TokenType::EndCons => {
                     found_end_cons = true;
@@ -302,48 +357,8 @@ impl<'a> Compiler<'a> {
                 TokenType::Comment => {}
             }
         }
-        if entries.is_empty() {
-            return if found_end_cons {
-                Ok(NULL.clone())
-            } else {
-                Err(Error::new(
-                    ErrorKind::UnexpectedEof,
-                    "No closing cons found",
-                ))
-            };
-        }
-        if entries.len() == 1 {
-            let first = entries
-                .pop()
-                .ok_or(Error::new(ErrorKind::Other, "Expected 1 Entries Found 0"))?;
-            Ok(first)
-        } else if entries.len() == 2 {
-            let rest = entries
-                .pop()
-                .ok_or(Error::new(ErrorKind::Other, "Expected 2 Entries Found 0"))?;
-            let first = entries
-                .pop()
-                .ok_or(Error::new(ErrorKind::Other, "Expected 2 Entries Found 1"))?;
-            Ok(first.cons(rest))
-        } else {
-            let mut sexp = None;
-            let iter = entries.into_iter().rev();
-            for next in iter {
-                match sexp {
-                    None => {
-                        sexp = Some(next);
-                    }
-                    Some(existing) => {
-                        let new = next.cons(existing);
-                        sexp = Some(new);
-                    }
-                }
-            }
-            let sexp = sexp.ok_or(Error::new(ErrorKind::InvalidData, "No body found"))?;
-            let quoted = SExp::Atom(AtomBuf::new(vec![QUOTE])).cons(sexp);
-            println!("Function Pair: {:?}", quoted);
-            Ok(quoted)
-        }
+        self.create_pair_sexp(entries, found_end_cons)
+
     }
 
     fn process_function_atom(
@@ -352,90 +367,166 @@ impl<'a> Compiler<'a> {
         token_stream: &mut IntoIter<Token<'a>>,
         function_args: &[Token<'a>],
     ) -> Result<SExp, Error> {
-        let is_function: bool = self.functions.iter().any(|v| v.name.bytes == token.bytes);
-        let is_inline: bool = self
+        if self.functions.iter().any(|v| v.name.bytes == token.bytes) {
+            self.get_function(token, token_stream)
+        } else if self
             .inline_functions
             .iter()
-            .any(|v| v.name.bytes == token.bytes);
-        let is_constant: bool = self.constants.iter().any(|v| v.name.bytes == token.bytes);
-        let is_arg: bool = function_args.iter().any(|v| v.bytes == token.bytes);
-        if is_function {
-            self.get_function(token, token_stream).map(|v| v.sexp)
-        } else if is_inline {
-            self.get_inline_function(token).map(|v| v.sexp)
-        } else if is_constant {
-            self.get_constant(token).map(|v| v.sexp)
-        } else if is_arg {
+            .any(|v| v.name.bytes == token.bytes) {
+            self.get_inline_function(token, token_stream)
+        } else if self.constants.iter().any(|v| v.name.bytes == token.bytes) {
+            self.get_constant(token)
+        } else if function_args.iter().any(|v| v.bytes == token.bytes) {
             let (index, _) = function_args
                 .iter()
                 .enumerate()
                 .find(|v| v.1.bytes == token.bytes)
                 .ok_or(Error::new(ErrorKind::InvalidData, "Argument not found"))?;
-            let arg_pointer = Self::get_arg_pointer((index + 1) as u8)?;
-            Ok(SExp::Atom(AtomBuf::new(vec![arg_pointer as u8])))
-        } else if let Some(kw) = B_KEYWORD_TO_ATOM.get(&token.bytes) {
-            Ok(SExp::Atom(AtomBuf::new(kw.clone())))
+            let arg_pointer = get_arg_pointer((index + 1) as u8)?;
+            Ok((arg_pointer as u8).to_sexp())
+        } else if let Some(kw) = B_KEYWORD_TO_SEXP.get(&token.bytes) {
+            Ok(kw.clone())
         } else {
-            Ok(SExp::Atom(AtomBuf::new(token.bytes.to_vec())))
+            Ok(QUOTE_SEXP.clone().cons(parse_value(token.bytes)?))
         }
     }
 
-    fn get_function_pointer(function_index: u8) -> Result<u32, Error> {
-        let mut pointer = 1u32;
-        for _ in 0..function_index {
-            pointer += 1;
-            pointer <<= 1;
-        }
-        pointer <<= 1;
-        Ok(pointer)
-    }
-
-    fn get_arg_pointer(arg_index: u8) -> Result<u32, Error> {
-        let mut pointer = 1u32;
-        for _ in 0..arg_index {
-            pointer += 1;
-            pointer <<= 1;
-        }
-        pointer += 1;
-        Ok(pointer)
-    }
-
-    fn get_inline_function(&mut self, _token: Token<'a>) -> Result<Program, Error> {
-        todo!()
-    }
-
-    fn get_constant(&mut self, token: Token<'a>) -> Result<Program, Error> {
-        self.constants
-            .iter()
-            .find(|v| v.name.bytes == token.bytes)
-            .ok_or(Error::new(ErrorKind::InvalidData, "Argument not found"))
-            .map(|v| {
-                Ok(Program::from_sexp(
-                    SExp::Atom(AtomBuf::new(vec![QUOTE])).cons(Self::parse_value(v.value.bytes)?),
-                )
-                .unwrap())
-            })?
-    }
-
-    fn parse_value(value: &[u8]) -> Result<SExp, Error> {
-        if value.is_empty() {
-            Ok(NULL.clone())
-        } else {
-            match handle_int(value) {
-                Some(v) => bigint_to_bytes(&v, true).map(|v| SExp::Atom(AtomBuf::new(v))),
-                None => handle_hex(value)?
-                    .or_else(|| handle_quote(value).or_else(|| Some(handle_bytes(value))))
-                    .ok_or_else(|| {
-                        Error::new(
-                            ErrorKind::Other,
-                            format!("Failed to parse Value: {value:?}"),
-                        )
-                    }),
+    fn get_inline_function(&mut self, token: Token<'a>, token_stream: &mut IntoIter<Token<'a>>) -> Result<SExp, Error> {
+        let cloned_func = self.inline_functions.iter().find(|v| v.name.bytes == token.bytes).cloned();
+        match cloned_func {
+            Some(func) => {
+                if self.can_inline_function(&func) {
+                    let mut args = vec![];
+                    for _ in 0..func.argument_names.len() {
+                        if let Some(token) = token_stream.next() {
+                            match token.t_type {
+                                TokenType::StartCons | TokenType::DotCons => {
+                                    args.push(self.process_pair(token_stream)?);
+                                }
+                                TokenType::EndCons => {
+                                    break;
+                                }
+                                TokenType::Expression => {
+                                    args.push(self.process_atom(token, token_stream)?);
+                                }
+                                TokenType::Comment => {}
+                            }
+                        } else {
+                            return Err(Error::new(ErrorKind::InvalidData, "Failed to parse function arguments"));
+                        }
+                    }
+                    let mut body_tokens = func.function_body.into_iter();
+                    let func_body = self.process_inline_function_pair(
+                        &mut body_tokens,
+                        &func.argument_names,
+                        &args,
+                        0
+                    )?;
+                    println!("Func Body: {func_body:?}");
+                    Ok(func_body)
+                } else {
+                    Err(Error::new(ErrorKind::InvalidData, "Unable to Inline Function Marked as Inline"))
+                }
+            }
+            None => {
+                Err(Error::new(ErrorKind::InvalidData, "Inline Func not found"))
             }
         }
     }
 
-    fn get_arg(&mut self, token: Token<'a>) -> Result<Program, Error> {
+    fn process_inline_function_pair(
+        &mut self,
+        token_stream: &mut IntoIter<Token<'a>>,
+        function_args: &[Token<'a>],
+        mapped_args: &[SExp],
+        depth: u32,
+    ) -> Result<SExp, Error> {
+        let mut entries = vec![];
+        let mut found_end_cons = false;
+        while let Some(token) = token_stream.next() {
+            match token.t_type {
+                TokenType::StartCons | TokenType::DotCons => {
+                    let pair = self.process_inline_function_pair(token_stream, function_args, mapped_args, depth + 1)?;
+                    if depth == 1 {
+                        entries.push(pair.cons(NULL.clone()));
+                    }else {
+                        entries.push(pair);
+                    }
+                }
+                TokenType::EndCons => {
+                    found_end_cons = true;
+                    break;
+                }
+                TokenType::Expression => {
+                    entries.push(self.process_inline_function_atom(token, token_stream, function_args, mapped_args)?);
+                }
+                TokenType::Comment => {}
+            }
+        }
+        self.create_pair_sexp(entries, found_end_cons)
+    }
+
+    fn process_inline_function_atom(
+        &mut self,
+        token: Token<'a>,
+        token_stream: &mut IntoIter<Token<'a>>,
+        function_args: &[Token<'a>],
+        mapped_args: &[SExp],
+    ) -> Result<SExp, Error> {
+        if self.functions.iter().any(|v| v.name.bytes == token.bytes) {
+            self.get_function(token, token_stream)
+        } else if self
+            .inline_functions
+            .iter()
+            .any(|v| v.name.bytes == token.bytes) {
+            self.get_inline_function(token, token_stream)
+        } else if self.constants.iter().any(|v| v.name.bytes == token.bytes) {
+            self.get_constant(token)
+        } else if function_args.iter().any(|v| v.bytes == token.bytes) {
+            let (index, _) = function_args
+                .iter()
+                .enumerate()
+                .find(|v| v.1.bytes == token.bytes)
+                .ok_or(Error::new(ErrorKind::InvalidData, "Argument not found"))?;
+            Ok(mapped_args[index].clone())
+        } else if let Some(kw) = B_KEYWORD_TO_SEXP.get(&token.bytes) {
+            Ok(kw.clone())
+        } else {
+            Ok(QUOTE_SEXP.clone().cons(parse_value(token.bytes)?))
+        }
+    }
+
+    fn can_inline_function(&mut self, function: &Function) -> bool {
+        let mut found_sub_functions = HashSet::new();
+        for token in &function.function_body {
+            if token.t_type == TokenType::Expression && self.functions.iter().any(|v| v.name.bytes == token.bytes) {
+                found_sub_functions.insert(token.bytes);
+            }
+        }
+        found_sub_functions.is_empty()
+    }
+
+    fn get_constant(&mut self, token: Token<'a>) -> Result<SExp, Error> {
+        let (index, _) = self.constants
+            .iter()
+            .enumerate()
+            .find(|v| v.1.name.bytes == token.bytes)
+            .ok_or(Error::new(ErrorKind::InvalidData, "Argument not found"))?;
+        if self.flags & INLINE_CONSTS == 1{
+            self.constants
+                .iter()
+                .find(|v| v.name.bytes == token.bytes)
+                .ok_or(Error::new(ErrorKind::InvalidData, "Argument not found"))
+                .map(|v| {
+                    Ok(QUOTE_SEXP.clone().cons(parse_value(v.value.bytes)?))
+                })?
+        } else {
+            let const_pointer = get_const_pointer(index as u8)?;
+            Ok((const_pointer as u8).to_sexp())
+        }
+    }
+
+    fn get_arg(&mut self, token: Token<'a>) -> Result<SExp, Error> {
         let (index, _) = self
             .argument_names
             .iter()
@@ -443,11 +534,11 @@ impl<'a> Compiler<'a> {
             .find(|v| v.1.bytes == token.bytes)
             .ok_or(Error::new(ErrorKind::InvalidData, "Argument not found"))?;
         let arg_pointer = if self.functions.is_empty() {
-            Self::get_arg_pointer(index as u8)?
+            get_arg_pointer(index as u8)?
         } else {
-            Self::get_arg_pointer((index + 1) as u8)?
+            get_arg_pointer((index + !self.functions.is_empty() as usize) as u8)?
         };
-        Program::from_sexp(SExp::Atom(AtomBuf::new(vec![arg_pointer as u8])))
+        Ok((arg_pointer as u8).to_sexp())
     }
     fn ensure_token(&mut self, t_type: TokenType) -> Result<Token<'a>, Error> {
         if let Some(token) = self.reader.next() {
@@ -585,7 +676,7 @@ impl<'a> Compiler<'a> {
                     .push(parse_function(&mut conditions_queue)?);
             }
             b"include" => {
-                todo!()
+                let _results = parse_include(&mut conditions_queue, &[])?;
             }
             // b"defmacro" => {
             //     todo!()
@@ -602,34 +693,4 @@ impl<'a> Compiler<'a> {
         }
         Ok(())
     }
-}
-
-#[test]
-fn test_defun() {
-    const EXAMPLE_CLSP: &str = "
-    (mod (num)
-        (defun square (number)
-            ;; Returns the number squared.
-            (* number number)
-        )
-        (square num)
-    )";
-    let mut compiler = Compiler::new(EXAMPLE_CLSP);
-    let prog = compiler.compile().unwrap();
-    println!("{:?}", prog);
-}
-
-#[test]
-fn test_constant() {
-    const EXAMPLE_CLSP: &str = "
-    (mod (num)
-        (defconstant NUL_NUM 25)
-        (defun mul (number)
-            (* NUL_NUM number)
-        )
-        (mul num)
-    )";
-    let mut compiler = Compiler::new(EXAMPLE_CLSP);
-    let prog = compiler.compile().unwrap();
-    println!("{:?}", prog);
 }

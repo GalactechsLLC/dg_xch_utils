@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 
 const EOL_CHARS: [u8; 2] = [b'\r', b'\n'];
@@ -13,9 +14,9 @@ pub enum TokenType {
     Expression,
     Comment,
 }
-#[derive(PartialOrd, PartialEq, Eq, Ord, Clone, Copy)]
+#[derive(PartialOrd, PartialEq, Eq, Ord, Clone)]
 pub struct Token<'a> {
-    pub bytes: &'a [u8],
+    pub bytes: Cow<'a, [u8]>,
     pub index: usize,
     pub t_type: TokenType,
 }
@@ -26,18 +27,18 @@ impl<'a> Debug for Token<'a> {
             "Token {{ index: {}, type: {:?} value: {} }}",
             self.index,
             self.t_type,
-            String::from_utf8_lossy(self.bytes)
+            String::from_utf8_lossy(self.bytes.as_ref())
         )
     }
 }
 #[derive(Clone, Debug, Default)]
 pub struct Tokenizer<'a> {
-    stream: &'a [u8],
+    stream: Cow<'a, [u8]>,
     pub index: usize,
 }
 impl<'a> Tokenizer<'a> {
     #[must_use]
-    pub fn new(stream: &'a [u8]) -> Self {
+    pub fn new(stream: Cow<'a, [u8]>) -> Self {
         Self { stream, index: 0 }
     }
     pub fn consume_whitespace(&mut self) {
@@ -93,7 +94,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             let chr = &self.stream[self.index];
             if START_CONS_CHARS.contains(chr) {
                 let token = Token {
-                    bytes: &self.stream[self.index..=self.index],
+                    bytes: Cow::Borrowed(&self.stream[self.index..=self.index]),
                     index: self.index,
                     t_type: TokenType::StartCons,
                 };
@@ -101,7 +102,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 Some(token)
             } else if chr == &END_CONS_CHAR {
                 let token = Token {
-                    bytes: &self.stream[self.index..=self.index],
+                    bytes: Cow::Borrowed(&self.stream[self.index..=self.index]),
                     index: self.index,
                     t_type: TokenType::EndCons,
                 };
@@ -112,7 +113,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 let start = self.index;
                 self.consume_until_eol();
                 let token = Token {
-                    bytes: &self.stream[start..self.index],
+                    bytes: Cow::Borrowed(&self.stream[start..self.index]),
                     index: self.index,
                     t_type: TokenType::Comment,
                 };
@@ -121,7 +122,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 let start = self.index;
                 self.consume_until_whitespace();
                 let token = Token {
-                    bytes: &self.stream[start..self.index],
+                    bytes: Cow::Borrowed(&self.stream[start..self.index]),
                     index: start,
                     t_type: TokenType::Expression,
                 };

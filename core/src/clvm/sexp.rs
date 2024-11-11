@@ -3,7 +3,7 @@ use crate::blockchain::sized_bytes::{
     Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes,
 };
 use crate::clvm::assemble::is_hex;
-use crate::clvm::assemble::keywords::{APPLY, CONS, KEYWORD_FROM_ATOM, QUOTE};
+use crate::clvm::assemble::keywords::{ADD, APPLY, CONS, DIV, DIVMOD, KEYWORD_FROM_ATOM, MUL, QUOTE, SUB};
 use crate::clvm::program::Program;
 use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
+use crate::clvm::compile::utils::concat_args;
 
 pub static NULL: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![].into()));
 pub static ONE: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![1u8].into()));
@@ -384,6 +385,11 @@ impl Debug for PairBuf {
                     is_quote = a.data.first() == Some(&QUOTE);
                     is_op_format = a.data.first() == Some(&CONS);
                     is_op_format = is_op_format || a.data.first() == Some(&APPLY);
+                    is_op_format = is_op_format || a.data.first() == Some(&ADD);
+                    is_op_format = is_op_format || a.data.first() == Some(&SUB);
+                    is_op_format = is_op_format || a.data.first() == Some(&MUL);
+                    is_op_format = is_op_format || a.data.first() == Some(&DIV);
+                    is_op_format = is_op_format || a.data.first() == Some(&DIVMOD);
                 }
                 if let Some(kw) = KEYWORD_FROM_ATOM.get(&a.data) {
                     buffer += kw;
@@ -424,13 +430,20 @@ impl Debug for PairBuf {
             match cons_pair.as_ref() {
                 SExp::Pair(pair) => {
                     buffer += &format!(" {:?}", &pair.first);
-                    buffer += &format!(" {:?}", &pair.rest);
+                    match pair.rest.as_ref() {
+                        SExp::Atom(a) => {
+                            buffer += &format!(" {a:?}");
+                        } SExp::Pair(p) => {
+                            if p.rest.nullp() {
+                                buffer += &format!(" {:?}", &p.first);
+                            } else {
+                                buffer += &format!(" {:?}", &p);
+                            }
+                        }
+                    }
                 }
                 SExp::Atom(_) => {
-                    buffer += &format!(
-                        " {:?}",
-                        SExp::Pair(PairBuf::from((cons_pair.as_ref(), &*NULL)))
-                    );
+                    buffer += &format!(" {:?} {:?}", cons_pair, &*NULL);
                 }
             }
             buffer += ")";
@@ -481,19 +494,7 @@ impl IntoSExp for Vec<SExp> {
             let first = self.pop().expect("Len Was Checked to Be 2");
             return SExp::Pair(PairBuf::from((first, last)));
         }
-        let mut prog = None;
-        while let Some(next) = self.pop() {
-            match prog {
-                None => {
-                    prog = Some(next);
-                }
-                Some(existing) => {
-                    let new = next.cons(existing);
-                    prog = Some(new);
-                }
-            }
-        }
-        prog.expect("Expected Program, Lengths Checked Above")
+        concat_args(self).expect("Expected Program, Lengths Checked Above")
     }
 }
 

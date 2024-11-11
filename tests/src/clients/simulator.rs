@@ -1,7 +1,7 @@
 #[tokio::test]
 pub async fn test_simulator() {
-    use dg_xch_cli::simulator::Simulator;
-    use dg_xch_cli::wallets::{Wallet, WalletStore};
+    use dg_xch_cli_lib::simulator::Simulator;
+    use dg_xch_cli_lib::wallets::{Wallet, WalletStore};
     use dg_xch_clients::api::full_node::FullnodeAPI;
 
     use log::{info, LevelFilter};
