@@ -14,11 +14,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
-<<<<<<< HEAD
-use crate::clvm::compile::utils::concat_args;
-=======
 use std::mem::replace;
->>>>>>> 3b340d3e4228fb824077d7b9813a92f3fced3b93
 
 pub static NULL: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![].into()));
 pub static ONE: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![1u8].into()));
