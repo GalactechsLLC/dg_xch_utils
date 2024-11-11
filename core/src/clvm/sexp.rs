@@ -5,6 +5,7 @@ use crate::blockchain::sized_bytes::{
 use crate::clvm::assemble::is_hex;
 use crate::clvm::assemble::keywords::KEYWORD_FROM_ATOM;
 use crate::clvm::program::Program;
+use crate::clvm::utils::{number_from_u8, u64_from_bigint};
 use hex::encode;
 use num_bigint::BigInt;
 use once_cell::sync::Lazy;
@@ -311,6 +312,22 @@ impl AtomBuf {
     #[must_use]
     pub fn new(v: Vec<u8>) -> Self {
         AtomBuf { data: v }
+    }
+    pub fn as_bytes32(&self) -> Result<Bytes32, Error> {
+        if self.data.len() == Bytes32::SIZE {
+            Ok(Bytes32::new(self.data.as_slice()))
+        } else {
+            Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("Invalid Length for Bytes32: {}", self.data.len()),
+            ))
+        }
+    }
+    pub fn as_int(&self) -> BigInt {
+        number_from_u8(&self.data)
+    }
+    pub fn as_u64(&self) -> Result<u64, Error> {
+        u64_from_bigint(&number_from_u8(&self.data))
     }
 }
 

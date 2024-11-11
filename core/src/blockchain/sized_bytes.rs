@@ -61,6 +61,7 @@ pub fn u64_to_bytes(v: u64) -> Vec<u8> {
 }
 
 pub trait SizedBytes<'a>: Serialize + Deserialize<'a> + fmt::Display {
+    const SIZE: usize;
     fn new(bytes: &[u8]) -> Self;
     fn as_slice(&'a self) -> &'a [u8];
     fn is_null(&self) -> bool;
@@ -92,6 +93,7 @@ macro_rules! impl_sized_bytes {
                 pub bytes: [u8; $size]
             }
             impl<'a> SizedBytes<'a> for $name {
+                const SIZE: usize = $size;
                 fn new(bytes: &[u8]) -> Self {
                     if bytes.len() > $size {
                         warn!("Too Many Bytes Sent to {}, expected {} got {}", stringify!($name), $size, bytes.len());

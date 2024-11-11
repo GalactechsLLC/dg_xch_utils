@@ -14,16 +14,11 @@ impl IntoSExp for &ConditionWithArgs {
         for var in self.vars.iter().rev() {
             vars.push(SExp::Atom(AtomBuf::from(var)));
         }
-        let mut args_pair = None;
-        for var in vars.into_iter().rev() {
-            match args_pair {
-                None => args_pair = Some(var),
-                Some(pair) => args_pair = Some(pair.cons(var)),
-            }
+        let mut args_pair = NULL.clone();
+        for var in vars.into_iter() {
+            args_pair = var.cons(args_pair)
         }
-        self.opcode
-            .to_sexp()
-            .cons(args_pair.unwrap_or_else(|| NULL.clone()))
+        self.opcode.to_sexp().cons(args_pair)
     }
 }
 impl IntoSExp for ConditionWithArgs {
