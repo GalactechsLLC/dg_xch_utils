@@ -206,7 +206,7 @@ impl SExp {
     }
 }
 
-const PRINTABLE: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ#!$%&'()*+,-./:;<=>?@[\\]^_`{|}~\"\r\n";
+const PRINTABLE: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ#!$%&'()*+,-./:;<=>?@[\\]^_`{|}~\"\r\n ";
 
 impl Display for SExp {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -448,6 +448,12 @@ pub trait IntoSExp {
 
 pub trait TryIntoSExp {
     fn try_to_sexp(self) -> Result<SExp, Error>;
+}
+
+impl IntoSExp for Vec<&SExp> {
+    fn to_sexp(self) -> SExp {
+        self.into_iter().cloned().collect::<Vec<SExp>>().to_sexp()
+    }
 }
 
 impl IntoSExp for Vec<SExp> {

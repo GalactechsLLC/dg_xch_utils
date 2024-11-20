@@ -20,6 +20,7 @@ use sqlx::{Postgres, Type};
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::ops::{Index, IndexMut, Range};
+use std::str::FromStr;
 
 #[must_use]
 pub fn prep_hex_str(to_fix: &str) -> String {
@@ -216,24 +217,14 @@ macro_rules! impl_sized_bytes {
                 }
             }
 
-            impl From<String> for $name {
-                fn from(hex: String) -> Self {
-                    let bytes: Vec<u8> = decode(prep_hex_str(&hex)).unwrap();
-                    $name::new(&bytes)
-                }
-            }
-
-            impl From<&String> for $name {
-                fn from(hex: &String) -> Self {
-                    let bytes: Vec<u8> = decode(prep_hex_str(hex)).unwrap();
-                    $name::new(&bytes)
-                }
-            }
-
-            impl From<&str> for $name {
-                fn from(hex: &str) -> Self {
-                    let bytes: Vec<u8> = decode(prep_hex_str(hex)).unwrap();
-                    $name::new(&bytes)
+            impl FromStr for $name {
+                type Err = Error;
+                fn from_str(hex: &str) -> Result<Self, Self::Err> {
+                    let hex_str = prep_hex_str(hex);
+                    let bytes: Vec<u8> = decode(&hex_str).map_err(|_| {
+                        Error::new(ErrorKind::InvalidInput, format!("String ({hex_str:?} is not a valid {}",  stringify!($name)))
+                    })?;
+                    Ok($name::new(&bytes))
                 }
             }
 
@@ -272,16 +263,16 @@ macro_rules! impl_sized_bytes {
 
                 fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
                 where
-                    E: std::error::Error,
+                    E: serde::de::Error,
                 {
-                    Ok(value.into())
+                    Self::Value::from_str(value.as_str()).map_err(|e| serde::de::Error::custom(e.to_string()))
                 }
 
                 fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
                 where
-                    E: std::error::Error,
+                    E: serde::de::Error,
                 {
-                    Ok(value.into())
+                    Self::Value::from_str(value).map_err(|e| serde::de::Error::custom(e.to_string()))
                 }
             }
 

@@ -11,3 +11,4 @@ pub mod program;
 pub mod run_program;
 pub mod sexp;
 pub mod utils;
+pub mod debug_ops;

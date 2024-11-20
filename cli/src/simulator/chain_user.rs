@@ -2,6 +2,7 @@ use crate::simulator::Simulator;
 use crate::wallets::memory_wallet::MemoryWallet;
 use crate::wallets::Wallet;
 use dg_xch_clients::api::full_node::FullnodeAPI;
+use log::info;
 use std::io::Error;
 
 pub struct ChainUser<'a> {
@@ -18,6 +19,7 @@ impl<'a> ChainUser<'a> {
             .farm_coins(self.wallet.get_puzzle_hash(false).await?, num_coins, true)
             .await?;
         self.simulator.next_blocks(1, false).await?;
+        info!("Syncing Coins After Farming");
         self.refresh_coins().await
     }
     pub async fn send_xch(&self, mojos: u64, receiver: &ChainUser<'a>) -> Result<(), Error> {
