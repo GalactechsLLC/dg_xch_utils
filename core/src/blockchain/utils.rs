@@ -2,7 +2,7 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
-use crate::clvm::condition_utils::created_outputs_for_conditions_dict;
+use crate::clvm::condition_utils::{agg_sig_additional_data, created_outputs_for_conditions_dict};
 use crate::clvm::condition_utils::{conditions_dict_for_solution, ConditionsDict};
 use crate::clvm::program::SerializedProgram;
 use num_bigint::BigInt;
@@ -54,12 +54,13 @@ pub fn atom_to_int(bytes: &[u8]) -> BigInt {
     }
 }
 
-pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
+pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
     conditions_dict: &ConditionsDict<S>,
-    coin_name: Bytes32,
+    coin: Coin,
     additional_data: &[u8],
 ) -> Result<Vec<(Bytes48, Vec<u8>)>, Error> {
     let mut ret = vec![];
+    let agg_sig_map = agg_sig_additional_data::<S>(Bytes32::new(additional_data));
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigUnsafe) {
         for cwa in v {
             validate_cwa(cwa)?;
@@ -73,8 +74,21 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
         for cwa in v {
             validate_cwa(cwa)?;
             let mut buf = cwa.vars[1].clone();
-            buf.extend(coin_name.as_slice());
+            buf.extend(coin.name().as_slice());
             buf.extend(additional_data);
+            ret.push((Bytes48::new(&cwa.vars[0]), buf));
+        }
+    }
+    if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigPuzzle) {
+        let additional_data = agg_sig_map
+            .get(&ConditionOpcode::AggSigPuzzle)
+            .copied()
+            .unwrap_or_default();
+        for cwa in v {
+            validate_cwa(cwa)?;
+            let mut buf = cwa.vars[1].clone();
+            buf.extend(coin.puzzle_hash.as_slice());
+            buf.extend(additional_data.as_slice());
             ret.push((Bytes48::new(&cwa.vars[0]), buf));
         }
     }

@@ -36,6 +36,7 @@ use std::sync::Arc;
 
 pub type UrlFunction = Arc<dyn Fn(&str, u16, &str) -> String + Send + Sync + 'static>;
 
+#[derive(Clone)]
 pub struct FullnodeClient {
     client: Client,
     pub host: String,

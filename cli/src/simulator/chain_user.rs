@@ -6,7 +6,7 @@ use log::info;
 use std::io::Error;
 
 pub struct ChainUser<'a> {
-    pub simulator: &'a Simulator,
+    pub simulator: &'a Simulator<'a>,
     pub wallet: MemoryWallet,
     pub name: String,
 }
