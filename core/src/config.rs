@@ -2,6 +2,7 @@ use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::consensus::overrides::ConsensusOverrides;
 use num_bigint::BigInt;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 fn alerts_url() -> String {
     "https://download.chia.net/notify/mainnet_alert.txt".to_string()
@@ -1460,43 +1461,43 @@ impl Default for ConstantsOverrides {
         ConstantsOverrides {
             mainnet: Some(ConsensusOverrides {
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 ..Default::default()
             }),
             testnet0: Some(ConsensusOverrides {
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 min_plot_size: Some(18),
                 ..Default::default()
@@ -1504,22 +1505,22 @@ impl Default for ConstantsOverrides {
             testnet2: Some(ConsensusOverrides {
                 difficulty_constant_factor: Some(10_052_721_566_054),
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 min_plot_size: Some(18),
                 ..Default::default()
@@ -1527,22 +1528,22 @@ impl Default for ConstantsOverrides {
             testnet3: Some(ConsensusOverrides {
                 difficulty_constant_factor: Some(10_052_721_566_054),
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 mempool_block_buffer: Some(BigInt::from(10)),
                 min_plot_size: Some(18),
@@ -1553,22 +1554,22 @@ impl Default for ConstantsOverrides {
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "dd7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 mempool_block_buffer: Some(BigInt::from(10)),
                 min_plot_size: Some(18),
@@ -1579,22 +1580,22 @@ impl Default for ConstantsOverrides {
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "ee7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 mempool_block_buffer: Some(BigInt::from(10)),
                 min_plot_size: Some(18),
@@ -1605,22 +1606,22 @@ impl Default for ConstantsOverrides {
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "117816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 mempool_block_buffer: Some(BigInt::from(50)),
                 min_plot_size: Some(18),
@@ -1628,31 +1629,31 @@ impl Default for ConstantsOverrides {
             }),
             testnet10: Some(ConsensusOverrides {
                 agg_sig_me_additional_data: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "ae83525ba8d1dd3f09b277de18ca3e43fc0af20d20c4b3e92ef2a48bd291ccb2",
                     )
-                    .expect("Expected to parse Static Value agg_sig_me_additional_data"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 difficulty_constant_factor: Some(10_052_721_566_054),
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 mempool_block_buffer: Some(BigInt::from(10)),
                 min_plot_size: Some(18),
@@ -1666,31 +1667,31 @@ impl Default for ConstantsOverrides {
             }),
             testnet11: Some(ConsensusOverrides {
                 agg_sig_me_additional_data: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615",
                     )
-                    .expect("Expected to parse Static Value agg_sig_me_additional_data"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 difficulty_constant_factor: Some(10_052_721_566_054),
                 difficulty_starting: Some(30),
                 epoch_blocks: Some(768),
                 genesis_challenge: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
                     )
-                    .expect("Expected to parse Static Value genesis_challenge"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_pool_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 genesis_pre_farm_farmer_puzzle_hash: Some(
-                    Bytes32::try_from(
+                    Bytes32::from_str(
                         "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
                     )
-                    .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+                    .expect("Failed to parse known good hex"),
                 ),
                 mempool_block_buffer: Some(BigInt::from(10)),
                 min_plot_size: Some(18),

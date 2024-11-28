@@ -42,7 +42,7 @@ pub fn int_atom<'a>(args: &'a SExp, op_name: &str) -> Result<&'a [u8], Error> {
     args.atom().map(|b| b.data.as_slice()).map_err(|_| {
         Error::new(
             ErrorKind::InvalidInput,
-            format!("{op_name} requires int args"),
+            format!("{op_name} requires int args: Got {args}"),
         )
     })
 }

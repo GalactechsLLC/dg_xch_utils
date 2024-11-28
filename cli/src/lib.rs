@@ -29,6 +29,7 @@ use simple_logger::SimpleLogger;
 use std::env;
 use std::io::{Cursor, Error, ErrorKind};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 
 pub mod cli;
@@ -713,7 +714,7 @@ pub async fn run_cli() -> Result<(), Error> {
             owner_key,
         } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
-            let owner_key = SecretKey::from_bytes(Bytes32::try_from(owner_key.as_str())?.as_ref())
+            let owner_key = SecretKey::from_bytes(Bytes32::from_str(owner_key.as_str())?.as_ref())
                 .expect("Failed to Parse Owner Secret Key");
             migrate_plot_nft_with_owner_key(
                 client,

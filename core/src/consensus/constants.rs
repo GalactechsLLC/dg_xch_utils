@@ -2,6 +2,7 @@ use crate::blockchain::sized_bytes::Bytes32;
 use num_bigint::BigInt;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -104,22 +105,22 @@ pub static MAINNET: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         max_future_time: BigInt::from(5 * 60),
         max_future_time2: BigInt::from(2 * 60),
         number_of_timestamps: BigInt::from(11),
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
+        .expect("Failed to parse known good hex"),
         agg_sig_me_additional_data: hex::decode(
             "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
         )
         .expect("Failed to parse known good hex"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         max_vdf_witness_size: BigInt::from(64),
         mempool_block_buffer: BigInt::from(50),
         max_coin_amount: BigInt::from(u64::MAX),
@@ -145,18 +146,18 @@ pub static MAINNET: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 });
 pub static TESTNET_0: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
         is_testnet: true,
@@ -166,18 +167,18 @@ pub static TESTNET_0: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 pub static TESTNET_2: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
         difficulty_constant_factor: 10_052_721_566_054,
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
         is_testnet: true,
@@ -187,18 +188,18 @@ pub static TESTNET_2: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 pub static TESTNET_3: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
         difficulty_constant_factor: 10_052_721_566_054,
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
@@ -211,18 +212,18 @@ pub static TESTNET_4: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "dd7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
@@ -235,18 +236,18 @@ pub static TESTNET_5: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "ee7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
@@ -259,18 +260,18 @@ pub static TESTNET_7: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "117816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         mempool_block_buffer: BigInt::from(50),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
@@ -287,18 +288,18 @@ pub static TESTNET_10: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "ae83525ba8d1dd3f09b277de18ca3e43fc0af20d20c4b3e92ef2a48bd291ccb2",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         soft_fork2_height: 3_000_000,
@@ -328,18 +329,18 @@ pub static TESTNET_11: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::try_from(
+        genesis_challenge: Bytes32::from_str(
             "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615",
         )
-        .expect("Expected to parse Static Value genesis_challenge"),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
             "08296fc227decd043aee855741444538e4cc9a31772c4d1a9e6242d1e777e42a",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
             "3ef7c233fc0785f3c0cae5992c1d35e7c955ca37a423571c1607ba392a9d12f7",
         )
-        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        .expect("Failed to parse known good hex"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         sub_slot_iters_starting: 67_108_864,

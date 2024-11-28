@@ -1,4 +1,4 @@
-mod chain_user;
+pub mod chain_user;
 
 use crate::simulator::chain_user::ChainUser;
 use crate::wallets::memory_wallet::{MemoryWallet, MemoryWalletConfig, MemoryWalletStore};
@@ -26,13 +26,14 @@ lazy_static! {
             .unwrap();
 }
 
-pub struct Simulator {
+pub struct Simulator<'a> {
     network: ConsensusConstants,
     client: SimulatorClient,
     run: Arc<AtomicBool>,
     background: Mutex<Option<JoinHandle<()>>>,
+    users: Mutex<HashMap<String, Arc<ChainUser<'a>>>>,
 }
-impl Simulator {
+impl<'a> Simulator<'a> {
     #[must_use]
     pub fn new(
         host: &str,
@@ -46,19 +47,30 @@ impl Simulator {
             client: SimulatorClient::new(host, port, timeout, additional_headers),
             run: Arc::new(AtomicBool::new(false)),
             background: Mutex::new(None),
+            users: Mutex::new(HashMap::default()),
         }
     }
     pub fn client(&self) -> &SimulatorClient {
         &self.client
     }
-    pub fn new_user(&self, name: &str, menmonic: Option<String>) -> Result<ChainUser<'_>, Error> {
+    pub fn constants(&self) -> &ConsensusConstants {
+        &self.network
+    }
+    pub async fn get_user(&self, name: &str,) -> Option<Arc<ChainUser<'a>>> {
+        self.users.lock().await.get(name).cloned()
+    }
+    pub async fn new_user(&'a self, name: &str, menmonic: Option<String>) -> Result<Arc<ChainUser<'a>>, Error> {
+        let mut map_lock = self.users.lock().await;
+        if map_lock.contains_key(name) {
+            return Err(Error::new(ErrorKind::AlreadyExists, "User already exists"));
+        }
         let mnemonic = match menmonic {
             Some(s) => Mnemonic::parse(s).map_err(|e| Error::new(ErrorKind::Other, e))?,
             None => Mnemonic::generate(24).map_err(|e| Error::new(ErrorKind::Other, e))?,
         };
         let secret_key =
             key_from_mnemonic(&mnemonic).map_err(|e| Error::new(ErrorKind::Other, e))?;
-        Ok(ChainUser {
+        let chain_user = Arc::new(ChainUser {
             simulator: self,
             wallet: MemoryWallet::create_simulator(
                 WalletInfo {
@@ -78,7 +90,9 @@ impl Simulator {
                 },
             ),
             name: name.to_string(),
-        })
+        });
+        map_lock.insert(name.to_string(), chain_user.clone());
+        Ok(chain_user)
     }
     pub async fn next_blocks(&self, blocks: i64, call_per_block: bool) -> Result<(), Error> {
         if call_per_block {

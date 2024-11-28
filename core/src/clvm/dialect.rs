@@ -3,6 +3,7 @@ use std::io::{Error, ErrorKind};
 pub trait Dialect {
     fn quote_kw(&self) -> &[u8];
     fn apply_kw(&self) -> &[u8];
+    fn print_kw(&self) -> &[u8];
     fn op(&self, op: SExp, args: SExp, max_cost: u64) -> Result<(u64, SExp), Error>;
 }
 use crate::clvm::core_ops::{op_cons, op_eq, op_first, op_if, op_listp, op_raise, op_rest};
@@ -43,7 +44,7 @@ impl Dialect for ChiaDialect {
                             format!("unimplemented operator: {o:?}"),
                         ));
                     } else {
-                        op_unknown(&o, &argument_list, max_cost)
+                        op_unknown(&o, &argument_list, max_cost, self)
                     };
                 }
                 match b.first() {
@@ -110,11 +111,11 @@ impl Dialect for ChiaDialect {
                                         format!("unimplemented operator: {o:?}"),
                                     ))
                                 } else {
-                                    op_unknown(&o, &argument_list, max_cost)
+                                    op_unknown(&o, &argument_list, max_cost, self)
                                 };
                             }
                         };
-                        f(&argument_list, max_cost)
+                        f(&argument_list, max_cost, self)
                     }
                     None => Err(Error::new(
                         ErrorKind::InvalidData,
@@ -135,5 +136,8 @@ impl Dialect for ChiaDialect {
 
     fn apply_kw(&self) -> &[u8] {
         &[2]
+    }
+    fn print_kw(&self) -> &[u8] {
+        b"$print$"
     }
 }

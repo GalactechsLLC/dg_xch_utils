@@ -2,8 +2,7 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
-use crate::clvm::condition_utils::conditions_dict_for_solution;
-use crate::clvm::condition_utils::{created_outputs_for_conditions_dict, ConditionsDict};
+use crate::clvm::condition_utils::{agg_sig_additional_data, conditions_dict_for_solution, created_outputs_for_conditions_dict, ConditionsDict};
 use crate::clvm::program::SerializedProgram;
 use crate::formatting::number_from_slice;
 use crate::traits::SizedBytes;
@@ -49,10 +48,11 @@ pub fn fee_for_solution(
 
 pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
     conditions_dict: &ConditionsDict<S>,
-    coin_name: Bytes32,
+    coin: Coin,
     additional_data: &[u8],
 ) -> Result<Vec<(Bytes48, Vec<u8>)>, Error> {
     let mut ret = vec![];
+    let agg_sig_map = agg_sig_additional_data::<S>(Bytes32::parse(additional_data)?);
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigUnsafe) {
         for cwa in v {
             validate_cwa(cwa)?;
@@ -66,7 +66,20 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
         for cwa in v {
             validate_cwa(cwa)?;
             let mut buf = cwa.vars[1].clone();
-            buf.extend(coin_name);
+            buf.extend(coin.name());
+            buf.extend(additional_data);
+            ret.push((Bytes48::parse(&cwa.vars[0])?, buf));
+        }
+    }
+    if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigPuzzle) {
+        let additional_data = agg_sig_map
+            .get(&ConditionOpcode::AggSigPuzzle)
+            .copied()
+            .unwrap_or_default();
+        for cwa in v {
+            validate_cwa(cwa)?;
+            let mut buf = cwa.vars[1].clone();
+            buf.extend(coin.puzzle_hash);
             buf.extend(additional_data);
             ret.push((Bytes48::parse(&cwa.vars[0])?, buf));
         }
