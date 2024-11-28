@@ -2,13 +2,17 @@ pub mod blockchain;
 pub mod clvm;
 pub mod config;
 pub mod consensus;
+pub mod constants;
 pub mod curry_and_treehash;
 pub mod errors;
+pub mod formatting;
 pub mod plots;
 pub mod pool;
 pub mod protocols;
 pub mod ssl;
+pub mod traits;
 pub mod utils;
+pub mod puzzles;
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")

@@ -1,14 +1,10 @@
 use crate::blockchain::proof_of_space::ProofOfSpace;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 
+use crate::constants::{FARMING_TO_POOL, LEAVING_POOL, SELF_POOLING};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-
-pub const POOL_PROTOCOL_VERSION: u8 = 1;
-pub const SELF_POOLING: u8 = 1;
-pub const LEAVING_POOL: u8 = 2;
-pub const FARMING_TO_POOL: u8 = 3;
 
 #[derive(ChiaSerial, Copy, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum PoolSingletonState {

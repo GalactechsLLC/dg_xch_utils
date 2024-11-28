@@ -1,11 +1,8 @@
+use crate::constants::{COMMENT_CHAR, END_CONS_CHAR, EOL_CHARS, SPACE_CHARS, START_CONS_CHARS};
 use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-const EOL_CHARS: [u8; 2] = [b'\r', b'\n'];
-const START_CONS_CHARS: [u8; 2] = [b'(', b'.'];
-const END_CONS_CHAR: u8 = b')';
-const COMMENT_CHAR: u8 = b';';
-const SPACE_CHARS: [u8; 2] = [b' ', b'\t'];
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Clone, Copy)]
 pub enum TokenType {
     StartCons,
@@ -31,98 +28,104 @@ impl<'a> Debug for Token<'a> {
         )
     }
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Tokenizer<'a> {
     stream: Cow<'a, [u8]>,
-    pub index: usize,
+    pub index: AtomicUsize,
 }
 impl<'a> Tokenizer<'a> {
     #[must_use]
     pub fn new(stream: Cow<'a, [u8]>) -> Self {
-        Self { stream, index: 0 }
+        Self {
+            stream,
+            index: AtomicUsize::new(0),
+        }
     }
-    pub fn consume_whitespace(&mut self) {
-        for c in &self.stream[self.index..] {
+    pub fn consume_whitespace(&self) {
+        for c in &self.stream[self.index.load(Ordering::Relaxed)..] {
             if SPACE_CHARS.contains(c) || EOL_CHARS.contains(c) {
-                self.index += 1;
+                self.index.fetch_add(1, Ordering::Relaxed);
             } else {
                 break;
             }
         }
     }
-    pub fn consume_until_whitespace(&mut self) {
-        for c in &self.stream[self.index..] {
+    pub fn consume_until_whitespace(&self) {
+        for c in &self.stream[self.index.load(Ordering::Relaxed)..] {
             match c {
                 b' ' | b'\t' | b')' | b'\r' | b'\n' => {
                     break;
                 }
                 _ => {
-                    self.index += 1;
+                    self.index.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
     }
-    pub fn consume_until_eol(&mut self) {
-        for c in &self.stream[self.index..] {
+    pub fn consume_until_eol(&self) {
+        for c in &self.stream[self.index.load(Ordering::Relaxed)..] {
             match c {
                 b'\r' | b'\n' => {
                     break;
                 }
                 _ => {
-                    self.index += 1;
+                    self.index.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
     }
-    pub fn consume_comment_chars(&mut self) {
-        for c in &self.stream[self.index..] {
+    pub fn consume_comment_chars(&self) {
+        for c in &self.stream[self.index.load(Ordering::Relaxed)..] {
             if *c == b';' {
                 break;
             } else {
-                self.index += 1;
+                self.index.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
-}
-impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Token<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
+    pub fn next_token(&'a self) -> Option<Token<'a>> {
         self.consume_whitespace();
-        if self.stream.len() <= self.index {
+        if self.stream.len() <= self.index.load(Ordering::Relaxed) {
             None
         } else {
-            let chr = &self.stream[self.index];
+            let chr = &self.stream[self.index.load(Ordering::Relaxed)];
             if START_CONS_CHARS.contains(chr) {
                 let token = Token {
-                    bytes: Cow::Borrowed(&self.stream[self.index..=self.index]),
-                    index: self.index,
+                    bytes: Cow::Borrowed(
+                        &self.stream[self.index.load(Ordering::Relaxed)
+                            ..=self.index.load(Ordering::Relaxed)],
+                    ),
+                    index: self.index.load(Ordering::Relaxed),
                     t_type: TokenType::StartCons,
                 };
-                self.index += 1;
+                self.index.fetch_add(1, Ordering::Relaxed);
                 Some(token)
             } else if chr == &END_CONS_CHAR {
                 let token = Token {
-                    bytes: Cow::Borrowed(&self.stream[self.index..=self.index]),
-                    index: self.index,
+                    bytes: Cow::Borrowed(
+                        &self.stream[self.index.load(Ordering::Relaxed)
+                            ..=self.index.load(Ordering::Relaxed)],
+                    ),
+                    index: self.index.load(Ordering::Relaxed),
                     t_type: TokenType::EndCons,
                 };
-                self.index += 1;
+                self.index.fetch_add(1, Ordering::Relaxed);
                 Some(token)
             } else if chr == &COMMENT_CHAR {
                 self.consume_comment_chars();
-                let start = self.index;
+                let start = self.index.load(Ordering::Relaxed);
                 self.consume_until_eol();
                 let token = Token {
-                    bytes: Cow::Borrowed(&self.stream[start..self.index]),
-                    index: self.index,
+                    bytes: Cow::Borrowed(&self.stream[start..self.index.load(Ordering::Relaxed)]),
+                    index: self.index.load(Ordering::Relaxed),
                     t_type: TokenType::Comment,
                 };
                 Some(token)
             } else {
-                let start = self.index;
+                let start = self.index.load(Ordering::Relaxed);
                 self.consume_until_whitespace();
                 let token = Token {
-                    bytes: Cow::Borrowed(&self.stream[start..self.index]),
+                    bytes: Cow::Borrowed(&self.stream[start..self.index.load(Ordering::Relaxed)]),
                     index: start,
                     t_type: TokenType::Expression,
                 };

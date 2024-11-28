@@ -11,11 +11,10 @@ use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_core::constants::{FARMING_TO_POOL, POOL_PROTOCOL_VERSION, SELF_POOLING};
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
-use dg_xch_core::protocols::pool::{
-    GetPoolInfoResponse, FARMING_TO_POOL, POOL_PROTOCOL_VERSION, SELF_POOLING,
-};
+use dg_xch_core::protocols::pool::GetPoolInfoResponse;
 use dg_xch_keys::{
     encode_puzzle_hash, fingerprint, key_from_mnemonic_str, master_sk_to_farmer_sk,
     master_sk_to_pool_sk, master_sk_to_wallet_sk, BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER,
@@ -64,7 +63,7 @@ pub fn create_cold_wallet() -> Result<(), Error> {
         let wallet_sk = master_sk_to_wallet_sk(&master_secret_key, i)
             .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("MasterKey: {e:?}")))?;
         let address = encode_puzzle_hash(
-            &puzzle_hash_for_pk(&Bytes48::from(wallet_sk.sk_to_pk().to_bytes()))?,
+            &puzzle_hash_for_pk(Bytes48::from(wallet_sk.sk_to_pk().to_bytes()))?,
             "xch",
         )?;
         info!("Index: {}, Address: {}", i, address);
@@ -87,9 +86,9 @@ pub fn keys_for_coinspends(
         for ki in last_key_index..max_pub_keys {
             let sec_key = master_sk_to_wallet_sk(master_sk, ki)?;
             let pub_key = sec_key.sk_to_pk();
-            let puz_hash = puzzle_hash_for_pk(&pub_key.into())?;
+            let puz_hash = puzzle_hash_for_pk(pub_key.into())?;
             let synthetic_secret_key =
-                calculate_synthetic_secret_key(&sec_key, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+                calculate_synthetic_secret_key(&sec_key, *DEFAULT_HIDDEN_PUZZLE_HASH)?;
             info!("MasterSK: {:?}", master_sk);
             info!("WalletSK: {:?}", sec_key);
             info!("SyntheticSK: {:?}", synthetic_secret_key);
@@ -107,8 +106,8 @@ pub fn keys_for_coinspends(
 pub async fn migrate_plot_nft(
     client: Arc<FullnodeClient>,
     target_pool: &str,
-    launcher_id: &Bytes32,
-    owner_ph: &Bytes32,
+    launcher_id: Bytes32,
+    owner_ph: Bytes32,
     mnemonic: &str,
     constants: Arc<ConsensusConstants>,
     fee: u64,
@@ -211,8 +210,8 @@ pub async fn migrate_plot_nft(
 pub async fn migrate_plot_nft_with_owner_key(
     client: Arc<FullnodeClient>,
     target_pool: &str,
-    launcher_id: &Bytes32,
-    owner_ph: &Bytes32,
+    launcher_id: Bytes32,
+    owner_ph: Bytes32,
     owner_key: &SecretKey,
 ) -> Result<(), Error> {
     let pool_url = if target_pool.trim().is_empty() {
@@ -298,7 +297,7 @@ pub async fn migrate_plot_nft_with_owner_key(
 
 async fn wait_for_plot_nft_ready_state(
     client: Arc<FullnodeClient>,
-    launcher_id: &Bytes32,
+    launcher_id: Bytes32,
     last_known_coin_name: Option<Bytes32>,
 ) {
     loop {
@@ -355,7 +354,7 @@ async fn wait_for_num_blocks(client: Arc<FullnodeClient>, height: u32, timeout_s
 
 async fn create_and_validate_target_state(
     pool_url: Option<String>,
-    target_puzzle_hash: &Bytes32,
+    target_puzzle_hash: Bytes32,
     plot_nft: &PlotNft,
 ) -> Result<PoolState, Error> {
     let target_pool_state = if let Some(pool_url) = pool_url {
@@ -374,7 +373,7 @@ async fn create_and_validate_target_state(
             pool_url: None,
             relative_lock_height: 0,
             state: SELF_POOLING, //# Self pooling
-            target_puzzle_hash: *target_puzzle_hash,
+            target_puzzle_hash,
             version: 1,
         }
     };
@@ -421,7 +420,7 @@ fn validate_pool_info(pool_info: &GetPoolInfoResponse) -> Result<(), Error> {
 
 pub async fn get_plotnft_ready_state(
     client: Arc<FullnodeClient>,
-    launcher_id: &Bytes32,
+    launcher_id: Bytes32,
     last_known_coin_name: Option<Bytes32>,
 ) -> Result<bool, Error> {
     let mut peak = None;

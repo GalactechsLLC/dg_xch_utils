@@ -1,0 +1,40 @@
+[package]
+name = "dg_xch_gui"
+version = "2.0.3"
+edition = "2021"
+authors = ["James Hoerr"]
+description = "GUI for the dg_xch_utils"
+license = "Apache-2.0"
+homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"
+
+[[bin]]
+name = "dg_xch_gui"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1.77"
+bip39 = {version= "2.0.0", features=["rand"] }
+blst = { version = "0.3.11", features = ["portable"] }
+dashmap = "5.5.3"
+dialoguer = "0.11.0"
+dg_xch_clients = {path = "../clients", version="2.0.3"}
+dg_xch_cli = {path = "../cli", version = "2.0.3", default-features = false}
+dg_xch_core = {path = "../core", version = "2.0.3", default-features = false}
+dg_xch_keys = {path = "../keys", version="2.0.3"}
+dg_xch_pos = {path = "../proof_of_space", version="2.0.3"}
+dg_xch_puzzles = {path = "../puzzles", version="2.0.3"}
+dg_xch_serialize= {path = "../serialize", version="2.0.3"}
+eframe = "0.29.1"
+hex = "0.4.3"
+lazy_static = "1.4.0"
+log = "0.4.20"
+num-traits = "0.2.18"
+rand = "0.8.5"
+rayon = "1.8.1"
+secrets = "1.2.0"
+serde = "1.0.197"
+serde_json = "1.0.114"
+simple_logger = "4.3.3"
+tokio = {version = "1.36.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+serde_yaml = "0.9.34"

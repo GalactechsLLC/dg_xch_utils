@@ -1,7 +1,7 @@
-use std::borrow::Cow;
-use std::fs;
 use crate::clvm::compile::tokenizer::{Token, TokenType, Tokenizer};
 use crate::clvm::compile::{Constant, Function};
+use std::borrow::Cow;
+use std::fs;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::vec::IntoIter;
@@ -127,5 +127,4 @@ pub fn parse_include<'a>(
             format!("Failed to Find include: {file_name}"),
         ))
     }
-
 }

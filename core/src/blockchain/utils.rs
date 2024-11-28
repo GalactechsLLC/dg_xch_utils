@@ -1,10 +1,12 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::ConditionWithArgs;
-use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
-use crate::clvm::condition_utils::created_outputs_for_conditions_dict;
-use crate::clvm::condition_utils::{conditions_dict_for_solution, ConditionsDict};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
+use crate::clvm::condition_utils::conditions_dict_for_solution;
+use crate::clvm::condition_utils::{created_outputs_for_conditions_dict, ConditionsDict};
 use crate::clvm::program::SerializedProgram;
+use crate::formatting::number_from_slice;
+use crate::traits::SizedBytes;
 use num_bigint::BigInt;
 use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
@@ -32,7 +34,7 @@ pub fn fee_for_solution(
             match conditions.get(&ConditionOpcode::ReserveFee) {
                 Some(conditions) => {
                     for cond in conditions {
-                        total += atom_to_int(&cond.vars[0]);
+                        total += number_from_slice(&cond.vars[0]);
                     }
                 }
                 None => {
@@ -45,15 +47,6 @@ pub fn fee_for_solution(
     }
 }
 
-#[must_use]
-pub fn atom_to_int(bytes: &[u8]) -> BigInt {
-    if bytes.is_empty() {
-        0.into()
-    } else {
-        BigInt::from_signed_bytes_be(bytes)
-    }
-}
-
 pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
     conditions_dict: &ConditionsDict<S>,
     coin_name: Bytes32,
@@ -63,19 +56,19 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigUnsafe) {
         for cwa in v {
             validate_cwa(cwa)?;
-            if ends_with(&cwa.vars[1], additional_data) {
+            if cwa.vars[1].ends_with(additional_data) {
                 return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
             }
-            ret.push((Bytes48::new(&cwa.vars[0]), cwa.vars[1].clone()));
+            ret.push((Bytes48::parse(&cwa.vars[0])?, cwa.vars[1].clone()));
         }
     }
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigMe) {
         for cwa in v {
             validate_cwa(cwa)?;
             let mut buf = cwa.vars[1].clone();
-            buf.extend(coin_name.as_slice());
+            buf.extend(coin_name);
             buf.extend(additional_data);
-            ret.push((Bytes48::new(&cwa.vars[0]), buf));
+            ret.push((Bytes48::parse(&cwa.vars[0])?, buf));
         }
     }
     Ok(ret)
@@ -89,12 +82,4 @@ fn validate_cwa(cwa: &ConditionWithArgs) -> Result<(), Error> {
         return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
     }
     Ok(())
-}
-
-fn ends_with(buf: &[u8], sufix: &[u8]) -> bool {
-    if buf.len() < sufix.len() {
-        false
-    } else {
-        &buf[buf.len() - sufix.len()..] == sufix
-    }
 }

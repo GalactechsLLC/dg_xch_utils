@@ -3,10 +3,11 @@ pub mod simulator;
 pub mod wallet;
 
 use crate::ClientSSLConfig;
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::shared::NoCertificateVerification;
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
-    load_private_key_from_bytes, CHIA_CA_CRT, CHIA_CA_KEY,
+    load_private_key_from_bytes,
 };
 use log::debug;
 use reqwest::{Client, ClientBuilder};

@@ -29,12 +29,14 @@ num-integer = "0.1.46"
 num-traits = "0.2.18"
 once_cell = "1.19.0"
 paperclip = { version = "0.8.2", features = ["actix4"], optional = true }
+parking_lot = "0.12.3"
 prometheus = {version="0.13.3", features=["protobuf"], optional = true}
 rand = "0.8.5"
 regex = "1.10.3"
 rustls = {version = "0.21.10", features = ["dangerous_configuration"] }
 rustls-pemfile = "1.0.4"
 rsa = { version = "0.9.6", features = ["std", "pem", "sha2"] }
+secrets = "1.2.0"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
 sha2 = { version = "0.10.8", features = ["oid"] }
@@ -45,6 +47,7 @@ tokio = {version = "1.36.0", features=["rt-multi-thread", "sync", "signal", "mac
 tokio-tungstenite = {version = "0.20.1", features = ["rustls-tls-webpki-roots", "rustls"] }
 uuid = {version="1.7.0", features=["v4"]}
 x509-cert = { version = "0.2.5", features = ["std", "pem", "builder"] }
+lazy_static = "1.5.0"
 
 [features]
 mysql = ["sqlx/mysql"]

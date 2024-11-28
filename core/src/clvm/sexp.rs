@@ -1,23 +1,23 @@
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::sized_bytes::{
-    Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes,
+    Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96,
 };
 use crate::clvm::assemble::is_hex;
-use crate::clvm::assemble::keywords::{ADD, APPLY, CONS, DIV, DIVMOD, KEYWORD_FROM_ATOM, MUL, QUOTE, SUB};
 use crate::clvm::program::Program;
-use crate::clvm::utils::{number_from_u8, u64_from_bigint};
+use crate::constants::{
+    ADD, APPLY, CONS, DIV, DIVMOD, KEYWORD_FROM_ATOM, MUL, NULL_SEXP, ONE_SEXP, QUOTE, SUB,
+};
+use crate::formatting::{number_from_slice, u32_from_slice, u64_from_bigint};
+use crate::traits::SizedBytes;
+use crate::utils::hash_256;
 use hex::encode;
 use num_bigint::BigInt;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
 use std::mem::replace;
-
-pub static NULL: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![].into()));
-pub static ONE: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![1u8].into()));
 
 #[derive(Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SExp {
@@ -123,7 +123,7 @@ impl SExp {
                     cur_node = *pair.rest;
                     match *pair.first {
                         SExp::Atom(_) => {
-                            rtn.insert(*pair.first, NULL.clone());
+                            rtn.insert(*pair.first, NULL_SEXP.clone());
                         }
                         SExp::Pair(inner_pair) => {
                             rtn.insert(*inner_pair.first, *inner_pair.rest);
@@ -153,6 +153,39 @@ impl SExp {
     }
 
     #[must_use]
+    pub fn arg_count(&self, return_early_if_exceeds: usize) -> usize {
+        let mut count = 0;
+        let mut ptr = self;
+        while let Ok(pair) = ptr.pair() {
+            ptr = &pair.rest;
+            count += 1;
+            if count > return_early_if_exceeds {
+                break;
+            };
+        }
+        count
+    }
+
+    #[must_use]
+    pub fn tree_hash(&self) -> Bytes32 {
+        match self {
+            SExp::Pair(pair) => {
+                let mut byte_buf = Vec::new();
+                byte_buf.push(2);
+                byte_buf.extend(pair.first.tree_hash());
+                byte_buf.extend(pair.rest.tree_hash());
+                hash_256(&byte_buf).into()
+            }
+            SExp::Atom(atom) => {
+                let mut byte_buf = Vec::new();
+                byte_buf.push(1);
+                byte_buf.extend(&atom.data);
+                hash_256(&byte_buf).into()
+            }
+        }
+    }
+
+    #[must_use]
     pub fn iter(&self) -> SExpIter {
         SExpIter { c: self }
     }
@@ -168,9 +201,9 @@ impl SExp {
     #[must_use]
     pub fn from_bool(b: bool) -> &'static SExp {
         if b {
-            &ONE
+            &ONE_SEXP
         } else {
-            &NULL
+            &NULL_SEXP
         }
     }
 
@@ -204,6 +237,42 @@ impl SExp {
             SExp::Atom(b) => !b.data.is_empty(),
         }
     }
+
+    pub fn substr(&self, start: usize, end: usize) -> Result<SExp, Error> {
+        let atom = &self.atom()?.data;
+        if start > atom.len() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("substr start out of bounds: {start} is > {}", atom.len()),
+            ));
+        }
+        if end > atom.len() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("substr end out of bounds: {end} is > {}", atom.len()),
+            ));
+        }
+        if end < start {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("substr invalid bounds: {start} is > {end}"),
+            ));
+        }
+        let sub = SExp::Atom(AtomBuf {
+            data: atom[start..end].to_vec(),
+        });
+        Ok(sub)
+    }
+
+    pub fn concat<'a>(nodes: &'a [&'a SExp]) -> Result<SExp, Error> {
+        let mut buf = vec![];
+        for node in nodes {
+            let atom = node.atom()?;
+            buf.extend(&atom.data);
+        }
+        let new_atom = SExp::Atom(AtomBuf { data: buf });
+        Ok(new_atom)
+    }
 }
 
 const PRINTABLE: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ#!$%&'()*+,-./:;<=>?@[\\]^_`{|}~\"\r\n";
@@ -234,6 +303,22 @@ impl Debug for SExp {
     }
 }
 
+impl TryFrom<&BigInt> for SExp {
+    type Error = Error;
+    fn try_from(value: &BigInt) -> Result<Self, Self::Error> {
+        let bytes: Vec<u8> = value.to_signed_bytes_be();
+        let mut slice = bytes.as_slice();
+        // make number minimal by removing leading zeros
+        while (!slice.is_empty()) && (slice[0] == 0) {
+            if slice.len() > 1 && (slice[1] & 0x80 == 0x80) {
+                break;
+            }
+            slice = &slice[1..];
+        }
+        Ok(SExp::Atom(slice.to_vec().into()))
+    }
+}
+
 pub struct SExpIter<'a> {
     c: &'a SExp,
 }
@@ -250,7 +335,7 @@ impl<'a> Iterator for SExpIter<'a> {
                     if a.data.is_empty() {
                         None
                     } else {
-                        let rtn = replace(&mut self.c, &NULL);
+                        let rtn = replace(&mut self.c, &NULL_SEXP);
                         Some(rtn)
                     }
                 }
@@ -315,7 +400,7 @@ impl AtomBuf {
     }
     pub fn as_bytes32(&self) -> Result<Bytes32, Error> {
         if self.data.len() == Bytes32::SIZE {
-            Ok(Bytes32::new(self.data.as_slice()))
+            Bytes32::parse(self.data.as_slice())
         } else {
             Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -324,48 +409,34 @@ impl AtomBuf {
         }
     }
     pub fn as_int(&self) -> BigInt {
-        number_from_u8(&self.data)
+        number_from_slice(&self.data)
     }
     pub fn as_u64(&self) -> Result<u64, Error> {
-        u64_from_bigint(&number_from_u8(&self.data))
+        u64_from_bigint(&number_from_slice(&self.data))
+    }
+    pub fn as_u32(&self) -> Option<u32> {
+        u32_from_slice(&self.data)
+    }
+    pub fn as_i32(&self) -> Option<u32> {
+        u32_from_slice(&self.data)
+    }
+}
+impl<T: AsRef<[u8]>> From<T> for AtomBuf {
+    fn from(v: T) -> Self {
+        Self::new(v.as_ref().to_vec())
+    }
+}
+impl<T: AsRef<[u8]>> PartialEq<T> for AtomBuf {
+    fn eq(&self, other: &T) -> bool {
+        self.data == other.as_ref()
     }
 }
 
-impl From<&[u8]> for AtomBuf {
-    fn from(v: &[u8]) -> Self {
-        Self::new(v.to_vec())
-    }
-}
-
-impl From<Vec<u8>> for AtomBuf {
-    fn from(v: Vec<u8>) -> Self {
-        Self::new(v)
-    }
-}
-
-impl From<&Vec<u8>> for AtomBuf {
-    fn from(v: &Vec<u8>) -> Self {
-        Self::from(v.clone())
-    }
-}
-impl PartialEq<&[u8]> for AtomBuf {
-    fn eq(&self, other: &&[u8]) -> bool {
-        self.data == *other
-    }
-}
-
-impl PartialEq<[u8]> for AtomBuf {
+impl PartialEq<[u8]> for &AtomBuf {
     fn eq(&self, other: &[u8]) -> bool {
         self.data == other
     }
 }
-
-impl PartialEq<Vec<u8>> for AtomBuf {
-    fn eq(&self, other: &Vec<u8>) -> bool {
-        &self.data == other
-    }
-}
-
 #[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairBuf {
     pub first: Box<SExp>,
@@ -459,7 +530,8 @@ impl Debug for PairBuf {
                     match pair.rest.as_ref() {
                         SExp::Atom(a) => {
                             buffer += &format!(" {a:?}");
-                        } SExp::Pair(p) => {
+                        }
+                        SExp::Pair(p) => {
                             if p.rest.nullp() {
                                 buffer += &format!(" {:?}", &p.first);
                             } else {
@@ -469,7 +541,7 @@ impl Debug for PairBuf {
                     }
                 }
                 SExp::Atom(_) => {
-                    buffer += &format!(" {:?} {:?}", cons_pair, &*NULL);
+                    buffer += &format!(" {:?} {:?}", cons_pair, &*NULL_SEXP);
                 }
             }
             buffer += ")";
@@ -510,7 +582,7 @@ pub trait TryIntoSExp {
 impl IntoSExp for Vec<SExp> {
     fn to_sexp(self) -> SExp {
         if let Some(sexp) = self.first().cloned() {
-            let mut end = NULL.clone();
+            let mut end = NULL_SEXP.clone();
             if self.len() > 1 {
                 for other in self[1..].iter().rev() {
                     end = other.clone().cons(end);
@@ -518,7 +590,7 @@ impl IntoSExp for Vec<SExp> {
             }
             sexp.cons(end)
         } else {
-            NULL.clone()
+            NULL_SEXP.clone()
         }
     }
 }
@@ -545,7 +617,7 @@ impl<T: IntoSExp> IntoSExp for Vec<T> {
 impl<T: IntoSExp> IntoSExp for Option<T> {
     fn to_sexp(self) -> SExp {
         match self {
-            None => NULL.clone(),
+            None => NULL_SEXP.clone(),
             Some(s) => s.to_sexp(),
         }
     }
@@ -598,7 +670,7 @@ macro_rules! impl_to_sexp_sized_bytes {
         $(
             impl IntoSExp for $name {
                 fn to_sexp(self) -> SExp {
-                    SExp::Atom(AtomBuf::new(self.as_slice().to_vec()))
+                    SExp::Atom(AtomBuf::new(self.bytes().to_vec()))
                 }
             }
         )*

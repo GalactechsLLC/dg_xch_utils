@@ -1,15 +1,16 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::condition_opcode::ConditionOpcode;
-use crate::blockchain::sized_bytes::SizedBytes;
+use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
-use crate::clvm::condition_utils::parse_sexp_to_conditions;
 use crate::clvm::program::Program;
 use crate::clvm::sexp::AtomBuf;
 use crate::clvm::utils::INFINITE_COST;
+use crate::traits::SizedBytes;
+use crate::utils::hash_256;
 use blst::min_pk::{AggregateSignature, Signature};
 use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
@@ -22,7 +23,7 @@ pub struct SpendBundle {
 impl SpendBundle {
     #[must_use]
     pub fn name(&self) -> Bytes32 {
-        Bytes32::new(&hash_256(self.to_bytes(ChiaProtocolVersion::default())))
+        hash_256(self.to_bytes(ChiaProtocolVersion::default())).into()
     }
     pub fn aggregate(bundles: Vec<SpendBundle>) -> Result<Self, Error> {
         let mut coin_spends = vec![];
@@ -133,7 +134,8 @@ impl SpendBundle {
                 spend
                     .puzzle_reveal
                     .run(INFINITE_COST, 2, &spend.solution.to_program())?;
-            let conditions_with_args = parse_sexp_to_conditions(&output_conditions.sexp)?;
+            let conditions_with_args: Vec<ConditionWithArgs> =
+                (&output_conditions.sexp).try_into()?;
             let mut create_conditions = vec![];
             for condition_with_args in conditions_with_args {
                 if condition_with_args.opcode == ConditionOpcode::CreateCoin {

@@ -1,26 +1,12 @@
-use std::io::{Error, ErrorKind};
-use once_cell::sync::Lazy;
 use crate::clvm::assemble::{handle_bytes, handle_hex, handle_int, handle_quote};
-use crate::clvm::assemble::keywords::{APPLY, CONS, QUOTE};
-use crate::clvm::casts::bigint_to_bytes;
-use crate::clvm::sexp::{AtomBuf, SExp, NULL};
-
-pub static CONS_SEXP: Lazy<SExp> = Lazy::new(|| {
-    SExp::Atom(AtomBuf::new(vec![CONS]))
-});
-pub static APPLY_SEXP: Lazy<SExp> = Lazy::new(|| {
-    SExp::Atom(AtomBuf::new(vec![APPLY]))
-});
-pub static QUOTE_SEXP: Lazy<SExp> = Lazy::new(|| {
-    SExp::Atom(AtomBuf::new(vec![QUOTE]))
-});
-pub static ARGS_SEXP: Lazy<SExp> = Lazy::new(|| {
-    SExp::Atom(AtomBuf::new(vec![QUOTE]))
-});
+use crate::clvm::sexp::{AtomBuf, SExp};
+use crate::constants::NULL_SEXP;
+use crate::formatting::bigint_to_bytes;
+use std::io::{Error, ErrorKind};
 
 pub fn parse_value(value: &[u8]) -> Result<SExp, Error> {
     if value.is_empty() {
-        Ok(NULL.clone())
+        Ok(NULL_SEXP.clone())
     } else {
         match handle_int(value) {
             Some(v) => bigint_to_bytes(&v, true).map(|v| SExp::Atom(AtomBuf::new(v))),
@@ -36,7 +22,11 @@ pub fn parse_value(value: &[u8]) -> Result<SExp, Error> {
     }
 }
 
-pub fn get_function_pointer(function_index: u8, const_count: usize, func_count: usize) -> Result<u32, Error> {
+pub fn get_function_pointer(
+    function_index: u8,
+    const_count: usize,
+    func_count: usize,
+) -> Result<u32, Error> {
     let mut pointer = 1u32;
     pointer <<= 1;
     for _ in 0..const_count {

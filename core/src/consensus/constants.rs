@@ -104,19 +104,22 @@ pub static MAINNET: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         max_future_time: BigInt::from(5 * 60),
         max_future_time2: BigInt::from(2 * 60),
         number_of_timestamps: BigInt::from(11),
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
         agg_sig_me_additional_data: hex::decode(
             "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
         )
         .expect("Failed to parse known good hex"),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
         max_vdf_witness_size: BigInt::from(64),
         mempool_block_buffer: BigInt::from(50),
         max_coin_amount: BigInt::from(u64::MAX),
@@ -142,15 +145,18 @@ pub static MAINNET: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 });
 pub static TESTNET_0: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
-        ),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
         is_testnet: true,
@@ -160,15 +166,18 @@ pub static TESTNET_0: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 pub static TESTNET_2: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
         difficulty_constant_factor: 10_052_721_566_054,
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
-        ),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
         is_testnet: true,
@@ -178,15 +187,18 @@ pub static TESTNET_2: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 pub static TESTNET_3: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
         difficulty_constant_factor: 10_052_721_566_054,
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
-        ),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
@@ -199,15 +211,18 @@ pub static TESTNET_4: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "dd7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
-        ),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
@@ -220,15 +235,18 @@ pub static TESTNET_5: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "ee7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
-        ),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
@@ -241,15 +259,18 @@ pub static TESTNET_7: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "117816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015af",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
-        ),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
         mempool_block_buffer: BigInt::from(50),
         min_plot_size: 18,
         bech32_prefix: String::from("txch"),
@@ -266,15 +287,18 @@ pub static TESTNET_10: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "ae83525ba8d1dd3f09b277de18ca3e43fc0af20d20c4b3e92ef2a48bd291ccb2",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "3d8765d3a597ec1d99663f6c9816d915b9f68613ac94009884c4addaefcce6af",
-        ),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "d23da14695a188ae5708dd152263c4db883eb27edeb936178d4d988b8f3ce5fc",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         soft_fork2_height: 3_000_000,
@@ -304,15 +328,18 @@ pub static TESTNET_11: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         difficulty_constant_factor: 10_052_721_566_054,
         difficulty_starting: 30,
         epoch_blocks: 768,
-        genesis_challenge: Bytes32::from(
+        genesis_challenge: Bytes32::try_from(
             "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615",
-        ),
-        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_challenge"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::try_from(
             "08296fc227decd043aee855741444538e4cc9a31772c4d1a9e6242d1e777e42a",
-        ),
-        genesis_pre_farm_pool_puzzle_hash: Bytes32::from(
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_farmer_puzzle_hash"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::try_from(
             "3ef7c233fc0785f3c0cae5992c1d35e7c955ca37a423571c1607ba392a9d12f7",
-        ),
+        )
+        .expect("Expected to parse Static Value genesis_pre_farm_pool_puzzle_hash"),
         mempool_block_buffer: BigInt::from(10),
         min_plot_size: 18,
         sub_slot_iters_starting: 67_108_864,
@@ -334,7 +361,7 @@ pub static CONSENSUS_CONSTANTS_MAP: Lazy<HashMap<String, Arc<ConsensusConstants>
             ("testnet2".to_string(), TESTNET_2.clone()),
             ("testnet3".to_string(), TESTNET_3.clone()),
             ("testnet4".to_string(), TESTNET_4.clone()),
-            ("testnet4".to_string(), TESTNET_5.clone()),
+            ("testnet5".to_string(), TESTNET_5.clone()),
             ("testnet7".to_string(), TESTNET_7.clone()),
             ("testnet10".to_string(), TESTNET_10.clone()),
             ("testnet11".to_string(), TESTNET_11.clone()),

@@ -5,9 +5,10 @@ use crate::plots::fx_generator::{forward_prop_f1_to_f7, get_proof_f1_and_meta};
 use crate::plots::plot_reader::PlotReader;
 use crate::plots::PROOF_X_COUNT;
 use crate::utils::bit_reader::BitReader;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::plots::{PlotFile, PlotHeader, PlotTable};
-use dg_xch_serialize::hash_256;
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
 use futures_util::future::join_all;
 use log::{debug, error, info, warn};
 use std::cmp::{max, min};
@@ -168,7 +169,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
                     // Now we can validate the proof
                     match get_f7_from_proof(
                         u32::from(reader.plot_file().k()),
-                        reader.plot_id().to_sized_bytes(),
+                        &reader.plot_id().bytes(),
                         &proof,
                         &mut fx,
                         &mut meta,
@@ -246,8 +247,7 @@ pub fn validate_proof(
         .read_u64(5)?
         << 1) as u16;
     if challenge_bits.range(0, k as usize).first_u64() == f7 {
-        let quality_string = get_quality_string(k, proof, index, challenge)?;
-        Ok(Bytes32::new(&quality_string))
+        get_quality_string(k, proof, index, challenge)
     } else {
         Ok(Bytes32::default())
     }
@@ -303,7 +303,7 @@ pub fn get_quality_string(
     proof: &[u8],
     quality_index: u16,
     challenge: &[u8],
-) -> Result<Vec<u8>, Error> {
+) -> Result<Bytes32, Error> {
     let mut proof_bits = BitReader::from_bytes_be(proof, proof.len() * 8);
     let mut table_index: u8 = 1;
     while table_index < 7 {
@@ -335,7 +335,7 @@ pub fn get_quality_string(
             )
             .to_bytes(),
     );
-    Ok(hash_256(to_hash))
+    Ok(Bytes32::new(hash_256(to_hash)))
 }
 
 pub async fn check_plot<T: AsRef<Path>>(
@@ -366,7 +366,7 @@ pub async fn check_plot<T: AsRef<Path>>(
     let mut total_proofs = 0;
     let mut bad_proofs = 0;
     for i in 0..challenges {
-        let challenge_hash = Bytes32::new(&hash_256(i.to_be_bytes()));
+        let challenge_hash = Bytes32::new(hash_256(i.to_be_bytes()));
         let start = Instant::now();
         let qualities = reader
             .fetch_qualities_for_challenge(challenge_hash.as_ref())
@@ -388,7 +388,7 @@ pub async fn check_plot<T: AsRef<Path>>(
             }
             total_proofs += 1;
             if validate_proof(
-                id.to_sized_bytes(),
+                &id.bytes(),
                 k,
                 &proof_to_bytes(&proof),
                 challenge_hash.as_ref(),
@@ -489,7 +489,7 @@ pub async fn test_qualities() {
             .await
             .unwrap();
         let v_quality = validate_proof(
-            uncompressed_reader.plot_id().to_sized_bytes(),
+            &uncompressed_reader.plot_id().bytes(),
             k,
             &proof_to_bytes(&proof),
             &challenge,
@@ -504,7 +504,7 @@ pub async fn test_qualities() {
     for (index, quality) in &qualities2 {
         let proof = compressed_reader.fetch_ordered_proof(*index).await.unwrap();
         let v_quality = validate_proof(
-            compressed_reader.plot_id().to_sized_bytes(),
+            &compressed_reader.plot_id().bytes(),
             k,
             &proof_to_bytes(&proof),
             &challenge,

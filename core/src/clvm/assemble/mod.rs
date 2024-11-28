@@ -1,13 +1,11 @@
-pub mod keywords;
 pub mod reader;
 
-use crate::clvm::assemble::keywords::KEYWORD_TO_ATOM;
-use crate::clvm::assemble::reader::{Reader, Token, DOT_CONS, END_CONS, START_CONS};
-use crate::clvm::casts::bigint_to_bytes;
+use crate::clvm::assemble::reader::{Reader, Token};
 use crate::clvm::parser::sexp_to_bytes;
 use crate::clvm::program::SerializedProgram;
-use crate::clvm::sexp;
 use crate::clvm::sexp::{AtomBuf, SExp};
+use crate::constants::{DOT_CONS, END_CONS, KEYWORD_TO_ATOM, NULL_SEXP, START_CONS};
+use crate::formatting::bigint_to_bytes;
 use hex::decode;
 use num_bigint::BigInt;
 use once_cell::sync::Lazy;
@@ -24,7 +22,7 @@ pub fn tokenize_exp(tokens: &mut Reader) -> Result<SExp, Error> {
     if let Some(token) = tokens.next() {
         handle_token(&token, tokens)
     } else {
-        Ok(sexp::NULL.clone())
+        Ok(NULL_SEXP.clone())
     }
 }
 
@@ -32,12 +30,12 @@ pub fn tokenize_cons(tokens: &mut Reader) -> Result<SExp, Error> {
     if let Some(token) = tokens.next() {
         handle_cons(&token, tokens)
     } else {
-        Ok(sexp::NULL.clone())
+        Ok(NULL_SEXP.clone())
     }
 }
 pub fn handle_cons(token: &Token, tokens: &mut Reader) -> Result<SExp, Error> {
     if token == &END_CONS {
-        Ok(sexp::NULL.clone())
+        Ok(NULL_SEXP.clone())
     } else {
         let first = handle_token(token, tokens)?;
         if let Some(token) = tokens.next() {
@@ -80,7 +78,7 @@ pub fn handle_token(token: &Token, tokens: &mut Reader) -> Result<SExp, Error> {
     if token == &START_CONS {
         tokenize_cons(tokens)
     } else if token.bytes.is_empty() {
-        Ok(sexp::NULL.clone())
+        Ok(NULL_SEXP.clone())
     } else {
         let bytes = token.bytes;
         match handle_int(bytes) {

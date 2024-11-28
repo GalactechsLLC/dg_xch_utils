@@ -145,6 +145,7 @@ pub const HEADER_MAGIC: [u8; 19] = [
 
 pub const HEADER_V2_MAGIC: [u8; 4] = [0x50, 0x4c, 0x4f, 0x54];
 
+#[derive(Default)]
 pub struct PlotEntry {
     pub y: u64,
     pub pos: u64,

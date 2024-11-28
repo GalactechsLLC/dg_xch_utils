@@ -1,5 +1,6 @@
-use crate::clvm::sexp::{SExp, NULL, ONE};
+use crate::clvm::sexp::SExp;
 use crate::clvm::utils::{atom, check_arg_count};
+use crate::constants::{NULL_SEXP, ONE_SEXP};
 use std::io::{Error, ErrorKind};
 
 const FIRST_COST: u64 = 30;
@@ -41,8 +42,8 @@ pub fn op_rest(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
 pub fn op_listp(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
     check_arg_count(args, 1, "l")?;
     match args.first()?.pair() {
-        Ok(_) => Ok((LISTP_COST, ONE.clone())),
-        _ => Ok((LISTP_COST, NULL.clone())),
+        Ok(_) => Ok((LISTP_COST, ONE_SEXP.clone())),
+        _ => Ok((LISTP_COST, NULL_SEXP.clone())),
     }
 }
 
@@ -73,5 +74,12 @@ pub fn op_eq(args: &SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
     let s0 = atom(args.first()?, "=")?;
     let s1 = atom(args.rest()?.first()?, "=")?;
     let cost = EQ_BASE_COST + (s0.len() as u64 + s1.len() as u64) * EQ_COST_PER_BYTE;
-    Ok((cost, if s0 == s1 { ONE.clone() } else { NULL.clone() }))
+    Ok((
+        cost,
+        if s0 == s1 {
+            ONE_SEXP.clone()
+        } else {
+            NULL_SEXP.clone()
+        },
+    ))
 }

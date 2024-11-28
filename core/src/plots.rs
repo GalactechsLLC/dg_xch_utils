@@ -1,7 +1,9 @@
 use crate::blockchain::coin_record::CoinRecord;
-use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::clvm::program::Program;
-use crate::pool::{PoolState, DELAY_PUZZLEHASH_IDENTIFIER, DELAY_TIME_IDENTIFIER};
+use crate::constants::{DELAY_PUZZLEHASH_IDENTIFIER, DELAY_TIME_IDENTIFIER};
+use crate::pool::PoolState;
+use crate::traits::SizedBytes;
 use hex::encode;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -99,16 +101,16 @@ impl TryFrom<&[u8]> for PlotMemo {
         if v.len() == 112 {
             Ok(PlotMemo {
                 pool_public_key: None,
-                pool_contract_puzzle_hash: Some(Bytes32::new(&v[0..32])),
-                farmer_public_key: Bytes48::new(&v[32..80]),
-                local_master_secret_key: Bytes32::new(&v[80..112]),
+                pool_contract_puzzle_hash: Some(Bytes32::parse(&v[0..32])?),
+                farmer_public_key: Bytes48::parse(&v[32..80])?,
+                local_master_secret_key: Bytes32::parse(&v[80..112])?,
             })
         } else if v.len() == 128 {
             Ok(PlotMemo {
-                pool_public_key: Some(Bytes48::new(&v[0..48])),
+                pool_public_key: Some(Bytes48::parse(&v[0..48])?),
                 pool_contract_puzzle_hash: None,
-                farmer_public_key: Bytes48::new(&v[48..96]),
-                local_master_secret_key: Bytes32::new(&v[96..128]),
+                farmer_public_key: Bytes48::parse(&v[48..96])?,
+                local_master_secret_key: Bytes32::parse(&v[96..128])?,
             })
         } else {
             Err(Error::new(
@@ -395,9 +397,9 @@ impl PlotNftExtraData {
         Ok(PlotNftExtraData {
             pool_state,
             delay_time: delay_time.to_i32().unwrap_or_default(),
-            delay_puzzle_hash: Bytes32::new(
+            delay_puzzle_hash: Bytes32::parse(
                 &extra_data_programs[0].rest()?.as_vec().unwrap_or_default(),
-            ),
+            )?,
         })
     }
 }

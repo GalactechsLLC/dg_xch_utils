@@ -4,12 +4,13 @@ resolver = "2"
 members = [
     "cli",
     "clients",
-    "core",
+    "core", "gui",
     "keys",
     "macros",
     "proof_of_space",
     "puzzles",
     "serialize",
     "servers",
+    "simulator",
     "tests"
 ]
