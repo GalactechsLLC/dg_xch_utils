@@ -9,7 +9,7 @@ use crate::traits::SizedBytes;
 use bls12_381::{G1Affine, G1Projective, Scalar};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
-use num_traits::Signed;
+use num_traits::{Signed, Zero};
 use once_cell::sync::Lazy;
 use sha2::Digest;
 use sha2::Sha256;
@@ -724,7 +724,7 @@ pub fn op_coinid<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Resul
         }
         as_int
     } else {
-        BigInt::ZERO
+        BigInt::zero()
     };
     let coin = Coin {
         parent_coin_info: Bytes32::parse(&parent_coin_info)?,

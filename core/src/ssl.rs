@@ -525,16 +525,3 @@ pub struct SslInfo {
     pub certs: SslCertInfo,
     pub ca: SslCertInfo,
 }
-
-#[test]
-pub fn test_ssl() {
-    use simple_logger::SimpleLogger;
-    SimpleLogger::new().init().unwrap();
-    let path = Path::new("/home/luna/ssl_test/");
-    create_all_ssl(path, false).unwrap();
-    if validate_all_ssl(path) {
-        info!("Validated SSL");
-    } else {
-        info!("Failed to Validated SSL");
-    }
-}
