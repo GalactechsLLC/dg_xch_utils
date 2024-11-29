@@ -46,7 +46,7 @@ pub fn fee_for_solution(
     }
 }
 
-pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher>(
+pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + std::default::Default>(
     conditions_dict: &ConditionsDict<S>,
     coin: Coin,
     additional_data: &[u8],
