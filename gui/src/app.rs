@@ -11,7 +11,7 @@ use crate::scenes::farmer::FarmerScene;
 use crate::scenes::fullnode::FullNodeScene;
 use crate::scenes::Scene;
 use crate::scenes::wallet::WalletScene;
-use crate::state::{SelectedTab, State};
+use crate::state::{SelectedTab, State, WalletState};
 
 static TAB_BAR: OnceLock<Mutex<TabBar>> = OnceLock::new();
 static CONFIG_SCENE: OnceLock<Mutex<ConfigScene>> = OnceLock::new();
@@ -22,7 +22,7 @@ static FULL_NODE_SCENE: OnceLock<Mutex<FullNodeScene>> = OnceLock::new();
 pub struct DgXchGui {
     pub state: State,
     pub config: Config,
-    pub wallet: Option<String>,
+    pub wallet: Option<WalletState>,
     pub errors: Vec<String>,
 }
 impl DgXchGui {
@@ -87,7 +87,7 @@ impl eframe::App for DgXchGui {
                 },
                 SelectedTab::Wallet => {
                     WALLET_SCENE.get_or_init(|| {
-                        Mutex::new(WalletScene::new())
+                        Mutex::new(WalletScene::new(&self))
                     }).lock().update(self, ctx, frame)
                 },
                 SelectedTab::FullNode => {

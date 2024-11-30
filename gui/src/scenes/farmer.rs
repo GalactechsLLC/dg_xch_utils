@@ -14,7 +14,7 @@ impl Scene for FarmerScene {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(20.0);
-                ui.heading("FullNode");
+                ui.heading("Farmer");
                 ui.add_space(20.0);
             });
         });

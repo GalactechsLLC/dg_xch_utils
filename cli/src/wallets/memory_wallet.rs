@@ -83,7 +83,8 @@ impl WalletStore for MemoryWalletStore {
     }
 
     async fn get_confirmed_balance(&self) -> u128 {
-        todo!()
+        let coins = self.standard_coins.lock().await;
+        coins.iter().map(|coin| coin.coin.amount as u128).sum()
     }
 
     async fn get_unconfirmed_balance(&self) -> u128 {
