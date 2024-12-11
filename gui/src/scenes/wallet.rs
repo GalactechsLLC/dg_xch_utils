@@ -9,6 +9,7 @@ use eframe::egui::Context;
 use eframe::egui::mutex::Mutex;
 use log::error;
 use dg_xch_clients::api::full_node::FullnodeAPI;
+use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use crate::scenes::fullnode_overview::FullNodeOverviewScene;
 use crate::scenes::wallet_import_mnemonic::WalletImportMnemonicScene;
 use crate::scenes::wallet_overview::WalletOverviewScene;
@@ -31,19 +32,6 @@ impl WalletScene {
         let background_state = shared_state.clone();
         let client = gui.state.wallet_client.clone();
         let shutdown_signal = gui.state.shutdown_signal.clone();
-        // tokio::spawn(async move {
-        //     while shutdown_signal.load(Ordering::SeqCst) {
-        //         match client.get_additions_and_removals().await {
-        //             Ok(state) => {
-        //                 *background_state.blockchain_state.lock() = Some(state);
-        //             }
-        //             Err(e) => {
-        //                 error!("Error getting blockchain state: {}", e);
-        //             }
-        //         }
-        //         tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-        //     }
-        // });
         WalletScene {
             shared_state: Arc::new(Default::default()),
             tabs: [
@@ -59,7 +47,7 @@ impl WalletScene {
 impl Scene for WalletScene {
     
     fn update(&mut self, gui: &mut DgXchGui, ctx: &Context, frame: &mut eframe::Frame) {
-        egui::SidePanel::left("fullnode_nav").show(ctx, |ui| {
+        egui::SidePanel::left("fullnode_nav").resizable(false).show(ctx, |ui| {
             ui.vertical(|ui| {
                 for (label, tab) in &self.tabs {
                     if ui.selectable_label(self.selected_tab == *tab, label).clicked() {

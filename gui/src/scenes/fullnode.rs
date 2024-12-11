@@ -51,7 +51,7 @@ impl FullNodeScene {
 
 impl Scene for FullNodeScene {
     fn update(&mut self, gui: &mut DgXchGui, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        egui::SidePanel::left("fullnode_nav").show(ctx, |ui| {
+        egui::SidePanel::left("fullnode_nav").resizable(false).show(ctx, |ui| {
             ui.vertical(|ui| {
                 for (label, tab) in &self.tabs {
                     if ui.selectable_label(self.selected_tab == *tab, label).clicked() {

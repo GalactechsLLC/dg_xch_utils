@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use eframe::egui::mutex::Mutex;
@@ -43,5 +44,6 @@ pub struct WalletState {
     pub wallet: Mutex<Option<MemoryWallet>>,
     pub confirmed_balance: u128,
     pub unconfirmed_balance: u128,
+    pub balance_history: HashMap<u128, u128>
 }
 
