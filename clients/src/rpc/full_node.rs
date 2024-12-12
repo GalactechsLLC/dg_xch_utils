@@ -33,6 +33,7 @@ use std::collections::HashMap;
 use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
+use log::error;
 
 pub type UrlFunction = Arc<dyn Fn(&str, u16, &str) -> String + Send + Sync + 'static>;
 
@@ -445,16 +446,27 @@ impl FullnodeAPI for FullnodeClient {
         .coin_records)
     }
     async fn push_tx(&self, spend_bundle: &SpendBundle) -> Result<TXStatus, Error> {
+        let mut retries = 0;
         let mut request_body = Map::new();
         request_body.insert("spend_bundle".to_string(), json!(spend_bundle));
-        Ok(post::<TXResp, RandomState>(
-            &self.client,
-            &(self.url_function)(self.host.as_str(), self.port, "push_tx"),
-            &request_body,
-            &self.additional_headers,
-        )
-        .await?
-        .status)
+        while retries < 3 {
+            match post::<TXResp, RandomState>(
+                &self.client,
+                &(self.url_function)(self.host.as_str(), self.port, "push_tx"),
+                &request_body,
+                &self.additional_headers,
+            )
+                .await {
+                Ok(v) => {
+                    return Ok(v.status);
+                }
+                Err(e) => {
+                    error!("Failed to Push TX({retries}): {e:?}");
+                    retries += 1;
+                }
+            }
+        }
+        Err(Error::new(ErrorKind::NotConnected, "Failed to push TX After 3 Tries"))
     }
     async fn get_puzzle_and_solution(
         &self,
