@@ -4,10 +4,11 @@ use crate::wallets::Wallet;
 use dg_xch_clients::api::full_node::FullnodeAPI;
 use log::info;
 use std::io::Error;
+use std::sync::Arc;
 
 pub struct ChainUser<'a> {
     pub simulator: &'a Simulator<'a>,
-    pub wallet: MemoryWallet,
+    pub wallet: Arc<MemoryWallet>,
     pub name: String,
 }
 impl<'a> ChainUser<'a> {

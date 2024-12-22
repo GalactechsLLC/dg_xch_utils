@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 pub struct SimulatorClient {
     client: Client,
-    pub full_node_client: FullnodeClient,
+    pub full_node_client: Arc<FullnodeClient>,
     pub host: String,
     pub port: u16,
     pub additional_headers: Option<HashMap<String, String>>,
@@ -40,15 +40,15 @@ impl SimulatorClient {
         port: u16,
         timeout: u64,
         additional_headers: &Option<HashMap<String, String>>,
-    ) -> Self {
-        SimulatorClient {
+    ) -> Result<Self, Error> {
+        Ok(SimulatorClient {
             client: get_http_client(timeout).unwrap(),
-            full_node_client: FullnodeClient::new_simulator(host, port, timeout),
+            full_node_client: Arc::new(FullnodeClient::new_simulator(host, port, timeout)?),
             host: host.to_string(),
             port,
             additional_headers: additional_headers.clone(),
             url_function: Arc::new(get_insecure_url),
-        }
+        })
     }
 }
 #[async_trait]

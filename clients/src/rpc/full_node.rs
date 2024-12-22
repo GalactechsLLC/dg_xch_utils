@@ -54,25 +54,25 @@ impl FullnodeClient {
         timeout: u64,
         ssl_path: Option<ClientSSLConfig>,
         additional_headers: &Option<HashMap<String, String>>,
-    ) -> Self {
-        FullnodeClient {
-            client: get_client(&ssl_path, timeout).unwrap(),
+    ) -> Result<Self, Error> {
+        Ok(FullnodeClient {
+            client: get_client(&ssl_path, timeout)?,
             host: host.to_string(),
             port,
             ssl_path,
             additional_headers: additional_headers.clone(),
             url_function: Arc::new(get_url),
-        }
+        })
     }
-    pub fn new_simulator(host: &str, port: u16, timeout: u64) -> Self {
-        FullnodeClient {
-            client: get_http_client(timeout).unwrap(),
+    pub fn new_simulator(host: &str, port: u16, timeout: u64) -> Result<Self, Error> {
+        Ok(FullnodeClient {
+            client: get_http_client(timeout)?,
             host: host.to_string(),
             port,
             ssl_path: None,
             additional_headers: None,
             url_function: Arc::new(get_insecure_url),
-        }
+        })
     }
 }
 
@@ -765,7 +765,7 @@ impl FullnodeExtAPI for FullnodeClient {
 
 #[tokio::test]
 async fn test_extended_functions() {
-    let fnc = FullnodeClient::new("localhost", 8555, 10, None, &None);
+    let fnc = FullnodeClient::new("localhost", 8555, 10, None, &None).unwrap();
     let _by_puz = fnc
         .get_coin_records_by_puzzle_hashes_paginated(
             &[Bytes32::from(

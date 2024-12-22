@@ -393,8 +393,8 @@ fn knapsack_coin_algorithm(
 
 #[async_trait]
 pub trait Wallet<T: WalletStore + Send + Sync, C> {
-    fn create(info: WalletInfo<T>, config: C) -> Self;
-    fn create_simulator(info: WalletInfo<T>, config: C) -> Self;
+    fn create(info: WalletInfo<T>, config: C) -> Result<Self, Error> where Self: Sized;
+    fn create_simulator(info: WalletInfo<T>, config: C) -> Result<Self, Error> where Self: Sized;
     fn name(&self) -> &str;
     async fn sync(&self) -> Result<bool, Error>;
     fn is_synced(&self) -> bool;
@@ -432,12 +432,11 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
     #[allow(clippy::too_many_arguments)]
     async fn create_spend_bundle(
         &self,
-        payments: &[AmountWithPuzzleHash],
+        payments: Vec<AmountWithPuzzleHash>,
         input_coins: &[CoinRecord],
         change_puzzle_hash: Option<Bytes32>,
         allow_excess: bool,
         fee: i64,
-        surplus: i64,
         origin_id: Option<Bytes32>,
         solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
     ) -> Result<SpendBundle, Error>;
