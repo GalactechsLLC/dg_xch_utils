@@ -17,7 +17,7 @@ pub struct BundleCoinSpend {
     pub cost: Option<u64>,
 }
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone, Default)]
 pub struct MempoolItem {
     pub spend_bundle: SpendBundle,
     pub fee: u64,

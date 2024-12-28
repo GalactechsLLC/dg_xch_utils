@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 pub struct SpendBundle {
     pub coin_spends: Vec<CoinSpend>,
     pub aggregated_signature: Bytes96,

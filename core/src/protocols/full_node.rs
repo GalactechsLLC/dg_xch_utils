@@ -1,3 +1,4 @@
+use crate::blockchain::coin_record::CoinRecord;
 use crate::blockchain::end_of_subslot_bundle::EndOfSubSlotBundle;
 use crate::blockchain::full_block::FullBlock;
 use crate::blockchain::peer_info::TimestampedPeerInfo;
@@ -196,4 +197,192 @@ pub struct FeeEstimate {
     fees_last_block: Option<u64>,
     fee_rate_last_block: f64,
     last_tx_block_height: u32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct BlockRequest {
+    pub header_hash: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct BlocksRequest {
+    pub start: u32,
+    pub end: u32,
+    pub exclude_header_hash: bool,
+    pub exclude_reorged: bool,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct AllBlocksRequest {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct BlockRecordByHeightRequest {
+    pub height: u32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct BlockRecordRequest {
+    pub header_hash: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct BlockRecordsRequest {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct NetworkSpaceRequest {
+    pub older_block_header_hash: Bytes32,
+    pub newer_block_header_hash: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct RecentSignagePointorEOSRequest {
+    pub sp_hash: Option<Bytes32>,
+    pub challenge_hash: Option<Bytes32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordsByPuzzleHashRequest {
+    pub puzzle_hash: Bytes32,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordsByPuzzleHashesRequest {
+    pub puzzle_hashes: Vec<Bytes32>,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordByNameRequest {
+    pub name: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordByNamesRequest {
+    pub names: Vec<String>,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordsByParentIdsRequest {
+    pub parent_ids: Vec<Bytes32>,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordsByHintRequest {
+    pub hint: Bytes32,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct PushTxRequest {
+    pub spend_bundle: SpendBundle,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct PuzzleAndSolutionRequest {
+    pub coin_id: Bytes32,
+    pub height: u32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinSpendRequest {
+    pub coin_record: CoinRecord,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct MempoolItemByTxIdRequest {
+    pub tx_id: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct NetworkSpaceByHeightRequest {
+    pub older_block_height: u32,
+    pub newer_block_height: u32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct AdditionsAndRemovalsRequest {
+    pub header_hash: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct MempoolItemByCoinNameRequest {
+    pub coin_name: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct FeeEstimateRequest {
+    pub cost: Option<u64>,
+    pub spend_bundle: Option<SpendBundle>,
+    pub spend_type: Option<String>,
+    pub target_times: Vec<u64>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct AdditionsAndRemovalsWithHintRequest {
+    pub header_hash: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct SingletonByLauncherIdRequest {
+    pub launcher_id: Bytes32,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordsByHintsRequest {
+    pub hints: Vec<Bytes32>,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordsByHintsPaginatedRequest {
+    pub hints: Vec<Bytes32>,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
+    pub page_size: Option<u32>,
+    pub last_id: Option<Bytes32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct CoinRecordsByPuzzleHashesPaginatedRequest {
+    pub puzzle_hashes: Vec<Bytes32>,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
+    pub page_size: Option<u32>,
+    pub last_id: Option<Bytes32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct HintsByCoinIdRequest {
+    pub coin_ids: Vec<Bytes32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct PuzzlesAndSolutionsByNamesRequest {
+    pub names: Vec<Bytes32>,
+    pub include_spent_coins: Option<bool>,
+    pub start_height: Option<u32>,
+    pub end_height: Option<u32>,
 }

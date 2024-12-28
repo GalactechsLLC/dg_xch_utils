@@ -10,7 +10,7 @@ use crate::api::responses::{
     BlockCountMetricsResp, CoinHintsResp, CoinSpendMapResp, HintedAdditionsAndRemovalsResp,
     MempoolItemAryResp, PaginatedCoinRecordAryResp,
 };
-use crate::rpc::{get_client, get_http_client, get_insecure_url, get_url, post};
+use crate::rpc::{get_client, get_http_client, get_insecure_url, get_url, post, ChiaRpcError};
 use crate::ClientSSLConfig;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::block_record::BlockRecord;
@@ -31,7 +31,6 @@ use reqwest::Client;
 use serde_json::{json, Map};
 use std::collections::HashMap;
 use std::hash::RandomState;
-use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 
 pub type UrlFunction = Arc<dyn Fn(&str, u16, &str) -> String + Send + Sync + 'static>;
@@ -76,7 +75,7 @@ impl FullnodeClient {
 
 #[async_trait]
 impl FullnodeAPI for FullnodeClient {
-    async fn get_blockchain_state(&self) -> Result<BlockchainState, Error> {
+    async fn get_blockchain_state(&self) -> Result<BlockchainState, ChiaRpcError> {
         Ok(post::<BlockchainStateResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_blockchain_state"),
@@ -86,7 +85,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .blockchain_state)
     }
-    async fn get_block(&self, header_hash: &Bytes32) -> Result<FullBlock, Error> {
+    async fn get_block(&self, header_hash: &Bytes32) -> Result<FullBlock, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("header_hash".to_string(), json!(header_hash));
         Ok(post::<FullBlockResp, RandomState>(
@@ -104,7 +103,7 @@ impl FullnodeAPI for FullnodeClient {
         end: u32,
         exclude_header_hash: bool,
         exclude_reorged: bool,
-    ) -> Result<Vec<FullBlock>, Error> {
+    ) -> Result<Vec<FullBlock>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("start".to_string(), json!(start));
         request_body.insert("end".to_string(), json!(end));
@@ -122,10 +121,10 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .blocks)
     }
-    async fn get_all_blocks(&self, start: u32, end: u32) -> Result<Vec<FullBlock>, Error> {
+    async fn get_all_blocks(&self, start: u32, end: u32) -> Result<Vec<FullBlock>, ChiaRpcError> {
         self.get_blocks(start, end, true, false).await
     }
-    async fn get_block_count_metrics(&self) -> Result<BlockCountMetrics, Error> {
+    async fn get_block_count_metrics(&self) -> Result<BlockCountMetrics, ChiaRpcError> {
         Ok(post::<BlockCountMetricsResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_block_count_metrics"),
@@ -135,7 +134,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .metrics)
     }
-    async fn get_block_record_by_height(&self, height: u32) -> Result<BlockRecord, Error> {
+    async fn get_block_record_by_height(&self, height: u32) -> Result<BlockRecord, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("height".to_string(), json!(height));
         Ok(post::<BlockRecordResp, RandomState>(
@@ -147,7 +146,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .block_record)
     }
-    async fn get_block_record(&self, header_hash: &Bytes32) -> Result<BlockRecord, Error> {
+    async fn get_block_record(&self, header_hash: &Bytes32) -> Result<BlockRecord, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("header_hash".to_string(), json!(header_hash));
         Ok(post::<BlockRecordResp, RandomState>(
@@ -159,7 +158,11 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .block_record)
     }
-    async fn get_block_records(&self, start: u32, end: u32) -> Result<Vec<BlockRecord>, Error> {
+    async fn get_block_records(
+        &self,
+        start: u32,
+        end: u32,
+    ) -> Result<Vec<BlockRecord>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("start".to_string(), json!(start));
         request_body.insert("end".to_string(), json!(end));
@@ -172,7 +175,9 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .block_records)
     }
-    async fn get_unfinished_block_headers(&self) -> Result<Vec<UnfinishedHeaderBlock>, Error> {
+    async fn get_unfinished_block_headers(
+        &self,
+    ) -> Result<Vec<UnfinishedHeaderBlock>, ChiaRpcError> {
         Ok(post::<UnfinishedBlockAryResp, RandomState>(
             &self.client,
             &(self.url_function)(
@@ -190,7 +195,7 @@ impl FullnodeAPI for FullnodeClient {
         &self,
         older_block_header_hash: &Bytes32,
         newer_block_header_hash: &Bytes32,
-    ) -> Result<u64, Error> {
+    ) -> Result<u64, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert(
             "older_block_header_hash".to_string(),
@@ -213,7 +218,7 @@ impl FullnodeAPI for FullnodeClient {
         &self,
         older_block_height: u32,
         newer_block_height: u32,
-    ) -> Result<u64, Error> {
+    ) -> Result<u64, ChiaRpcError> {
         let older_block = self.get_block_record_by_height(older_block_height).await?;
         let newer_block = self.get_block_record_by_height(newer_block_height).await?;
         self.get_network_space(&older_block.header_hash, &newer_block.header_hash)
@@ -222,7 +227,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_additions_and_removals(
         &self,
         header_hash: &Bytes32,
-    ) -> Result<(Vec<CoinRecord>, Vec<CoinRecord>), Error> {
+    ) -> Result<(Vec<CoinRecord>, Vec<CoinRecord>), ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("header_hash".to_string(), json!(header_hash));
         let resp = post::<AdditionsAndRemovalsResp, RandomState>(
@@ -234,7 +239,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?;
         Ok((resp.additions, resp.removals))
     }
-    async fn get_initial_freeze_period(&self) -> Result<u64, Error> {
+    async fn get_initial_freeze_period(&self) -> Result<u64, ChiaRpcError> {
         Ok(post::<InitialFreezePeriodResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_initial_freeze_period"),
@@ -244,7 +249,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .initial_freeze_end_timestamp)
     }
-    async fn get_network_info(&self) -> Result<NetworkInfo, Error> {
+    async fn get_network_info(&self) -> Result<NetworkInfo, ChiaRpcError> {
         let resp = post::<NetworkInfoResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_network_info"),
@@ -261,9 +266,12 @@ impl FullnodeAPI for FullnodeClient {
         &self,
         sp_hash: Option<&Bytes32>,
         challenge_hash: Option<&Bytes32>,
-    ) -> Result<SignagePointOrEOS, Error> {
+    ) -> Result<SignagePointOrEOS, ChiaRpcError> {
         if sp_hash.is_some() && challenge_hash.is_some() {
-            return Err(Error::new(ErrorKind::InvalidInput, "InvalidArgument get_recent_signage_point_or_eos: One of sp_hash or challenge_hash must be None"));
+            return Err(ChiaRpcError {
+                error: Some("InvalidArgument get_recent_signage_point_or_eos: One of sp_hash or challenge_hash must be None".to_string()),
+                success: false,
+            });
         }
         let mut request_body = Map::new();
         if sp_hash.is_some() {
@@ -295,7 +303,7 @@ impl FullnodeAPI for FullnodeClient {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-    ) -> Result<Vec<CoinRecord>, Error> {
+    ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("puzzle_hash".to_string(), json!(puzzle_hash));
         if let Some(include_spent_coins) = include_spent_coins {
@@ -329,7 +337,7 @@ impl FullnodeAPI for FullnodeClient {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-    ) -> Result<Vec<CoinRecord>, Error> {
+    ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
         request_body.insert(
@@ -355,7 +363,10 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .coin_records)
     }
-    async fn get_coin_record_by_name(&self, name: &Bytes32) -> Result<Option<CoinRecord>, Error> {
+    async fn get_coin_record_by_name(
+        &self,
+        name: &Bytes32,
+    ) -> Result<Option<CoinRecord>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("name".to_string(), json!(name));
         Ok(post::<CoinRecordResp, RandomState>(
@@ -373,7 +384,7 @@ impl FullnodeAPI for FullnodeClient {
         include_spent_coins: bool,
         start_height: u32,
         end_height: u32,
-    ) -> Result<Vec<CoinRecord>, Error> {
+    ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("names".to_string(), json!(names));
         request_body.insert(
@@ -397,7 +408,8 @@ impl FullnodeAPI for FullnodeClient {
         include_spent_coins: bool,
         start_height: u32,
         end_height: u32,
-    ) -> Result<Vec<CoinRecord>, Error> {
+    ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
+        //todo make options
         let mut request_body = Map::new();
         request_body.insert("parent_ids".to_string(), json!(parent_ids));
         request_body.insert(
@@ -425,7 +437,8 @@ impl FullnodeAPI for FullnodeClient {
         include_spent_coins: bool,
         start_height: u32,
         end_height: u32,
-    ) -> Result<Vec<CoinRecord>, Error> {
+    ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
+        //todo make options
         let mut request_body = Map::new();
         request_body.insert("hint".to_string(), json!(hint));
         request_body.insert(
@@ -443,7 +456,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .coin_records)
     }
-    async fn push_tx(&self, spend_bundle: &SpendBundle) -> Result<TXStatus, Error> {
+    async fn push_tx(&self, spend_bundle: &SpendBundle) -> Result<TXStatus, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("spend_bundle".to_string(), json!(spend_bundle));
         Ok(post::<TXResp, RandomState>(
@@ -459,7 +472,7 @@ impl FullnodeAPI for FullnodeClient {
         &self,
         coin_id: &Bytes32,
         height: u32,
-    ) -> Result<CoinSpend, Error> {
+    ) -> Result<CoinSpend, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("coin_id".to_string(), json!(coin_id));
         request_body.insert("height".to_string(), json!(height));
@@ -472,11 +485,11 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .coin_solution)
     }
-    async fn get_coin_spend(&self, coin_record: &CoinRecord) -> Result<CoinSpend, Error> {
+    async fn get_coin_spend(&self, coin_record: &CoinRecord) -> Result<CoinSpend, ChiaRpcError> {
         self.get_puzzle_and_solution(&coin_record.coin.name(), coin_record.spent_block_index)
             .await
     }
-    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<Bytes32>, Error> {
+    async fn get_all_mempool_tx_ids(&self) -> Result<Vec<Bytes32>, ChiaRpcError> {
         Ok(post::<MempoolTXResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_all_mempool_tx_ids"),
@@ -486,7 +499,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .tx_ids)
     }
-    async fn get_all_mempool_items(&self) -> Result<HashMap<Bytes32, MempoolItem>, Error> {
+    async fn get_all_mempool_items(&self) -> Result<HashMap<Bytes32, MempoolItem>, ChiaRpcError> {
         Ok(post::<MempoolItemsResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_all_mempool_items"),
@@ -496,7 +509,7 @@ impl FullnodeAPI for FullnodeClient {
         .await?
         .mempool_items)
     }
-    async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MempoolItem, Error> {
+    async fn get_mempool_item_by_tx_id(&self, tx_id: &str) -> Result<MempoolItem, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("tx_id".to_string(), json!(tx_id));
         Ok(post::<MempoolItemResp, RandomState>(
@@ -511,7 +524,7 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_mempool_items_by_coin_name(
         &self,
         coin_name: &Bytes32,
-    ) -> Result<Vec<MempoolItem>, Error> {
+    ) -> Result<Vec<MempoolItem>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("coin_name".to_string(), json!(coin_name));
         Ok(post::<MempoolItemAryResp, RandomState>(
@@ -533,7 +546,7 @@ impl FullnodeAPI for FullnodeClient {
         spend_bundle: Option<SpendBundle>,
         spend_type: Option<String>,
         target_times: &[u64],
-    ) -> Result<FeeEstimate, Error> {
+    ) -> Result<FeeEstimate, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("cost".to_string(), json!(cost));
         request_body.insert("spend_bundle".to_string(), json!(spend_bundle));
@@ -554,7 +567,7 @@ impl FullnodeExtAPI for FullnodeClient {
     async fn get_singleton_by_launcher_id(
         &self,
         launcher_id: &Bytes32,
-    ) -> Result<(CoinRecord, CoinSpend), Error> {
+    ) -> Result<(CoinRecord, CoinSpend), ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("launcher_id".to_string(), json!(launcher_id));
         let resp = post::<SingletonByLauncherIdResp, RandomState>(
@@ -573,7 +586,7 @@ impl FullnodeExtAPI for FullnodeClient {
     async fn get_additions_and_removals_with_hints(
         &self,
         header_hash: &Bytes32,
-    ) -> Result<(Vec<HintedCoinRecord>, Vec<HintedCoinRecord>), Error> {
+    ) -> Result<(Vec<HintedCoinRecord>, Vec<HintedCoinRecord>), ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("header_hash".to_string(), json!(header_hash));
         let resp = post::<HintedAdditionsAndRemovalsResp, RandomState>(
@@ -596,7 +609,7 @@ impl FullnodeExtAPI for FullnodeClient {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-    ) -> Result<Vec<CoinRecord>, Error> {
+    ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("hints".to_string(), json!(hints));
         if let Some(include_spent_coins) = include_spent_coins {
@@ -629,7 +642,7 @@ impl FullnodeExtAPI for FullnodeClient {
         end_height: Option<u32>,
         page_size: u32,
         last_id: Option<Bytes32>,
-    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error> {
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("hints".to_string(), json!(hints));
         request_body.insert(
@@ -669,7 +682,7 @@ impl FullnodeExtAPI for FullnodeClient {
         end_height: Option<u32>,
         page_size: u32,
         last_id: Option<Bytes32>,
-    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), Error> {
+    ) -> Result<(Vec<PaginatedCoinRecord>, Option<Bytes32>, Option<i32>), ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("puzzle_hashes".to_string(), json!(puzzle_hashes));
         if let Some(isc) = include_spent_coins {
@@ -703,7 +716,7 @@ impl FullnodeExtAPI for FullnodeClient {
     async fn get_hints_by_coin_ids(
         &self,
         coin_ids: &[Bytes32],
-    ) -> Result<HashMap<Bytes32, Bytes32>, Error> {
+    ) -> Result<HashMap<Bytes32, Bytes32>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("coin_ids".to_string(), json!(coin_ids));
         Ok(post::<CoinHintsResp, RandomState>(
@@ -722,7 +735,7 @@ impl FullnodeExtAPI for FullnodeClient {
         include_spent_coins: Option<bool>,
         start_height: Option<u32>,
         end_height: Option<u32>,
-    ) -> Result<HashMap<Bytes32, Option<CoinSpend>>, Error> {
+    ) -> Result<HashMap<Bytes32, Option<CoinSpend>>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("names".to_string(), json!(names));
         request_body.insert(

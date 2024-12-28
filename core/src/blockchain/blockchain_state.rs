@@ -9,7 +9,7 @@ use std::fmt::Formatter;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-#[derive(ChiaSerial, Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Copy, Clone, Serialize, Deserialize, Debug, Default)]
 pub struct MinMempoolFees {
     pub cost_5000000: f64,
 }
@@ -145,7 +145,7 @@ where
     d.deserialize_any(PU128(PhantomData))
 }
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 pub struct BlockchainState {
     pub peak: Option<BlockRecord>,
     pub genesis_challenge_initialized: bool,

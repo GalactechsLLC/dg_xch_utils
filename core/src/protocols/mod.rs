@@ -21,6 +21,7 @@ use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use log::{debug, error, info};
 use std::collections::HashMap;
+use std::fmt;
 use std::io::{Cursor, Error, ErrorKind};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -417,11 +418,17 @@ impl From<u8> for ProtocolMessageTypes {
     }
 }
 
+impl fmt::Display for ProtocolMessageTypes {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 pub const INVALID_PROTOCOL_BAN_SECONDS: u8 = 10;
 pub const API_EXCEPTION_BAN_SECONDS: u8 = 10;
 pub const INTERNAL_PROTOCOL_ERROR_BAN_SECONDS: u8 = 10;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum NodeType {
     Unknown = 0,
     FullNode = 1,
@@ -484,10 +491,12 @@ impl From<ChiaMessage> for Message {
     }
 }
 
-#[derive(Debug)]
+pub type FilterFunction = Box<dyn Fn(&ChiaMessage) -> bool + Sync + Send + 'static>;
+
 pub struct ChiaMessageFilter {
     pub msg_type: Option<ProtocolMessageTypes>,
     pub id: Option<u16>,
+    pub custom_fn: Option<FilterFunction>,
 }
 impl ChiaMessageFilter {
     #[must_use]
@@ -500,7 +509,11 @@ impl ChiaMessageFilter {
                 return false;
             }
         }
-        true
+        if let Some(func) = &self.custom_fn {
+            func(msg)
+        } else {
+            true
+        }
     }
 }
 
@@ -605,11 +618,8 @@ impl WebsocketConnection {
             .map_err(|e| Error::new(ErrorKind::Other, e))
     }
 
-    pub async fn subscribe(&self, uuid: Uuid, handle: ChiaMessageHandler) {
-        self.message_handlers
-            .write()
-            .await
-            .insert(uuid, Arc::new(handle));
+    pub async fn subscribe(&self, uuid: Uuid, handle: Arc<ChiaMessageHandler>) {
+        self.message_handlers.write().await.insert(uuid, handle);
     }
 
     pub async fn unsubscribe(&self, uuid: Uuid) -> Option<Arc<ChiaMessageHandler>> {
@@ -686,7 +696,7 @@ impl ReadStream {
                                             if !matched{
                                                 error!("No Matches for Message: {:?}", &msg_arc);
                                             }
-                                            debug!("Processed Message: {:?}", &msg_arc.msg_type);
+                                            info!("Processed Message: {:?}", &msg_arc.msg_type);
                                         }
                                         Err(e) => {
                                             error!("Invalid Message: {:?}", e);
