@@ -1,15 +1,18 @@
 pub mod farmer;
 pub mod harvester;
 
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::{
     ChiaMessageHandler, NodeType, PeerMap, SocketPeer, WebsocketConnection, WebsocketMsgStream,
 };
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
-    load_private_key_from_bytes, AllowAny, SslInfo, CHIA_CA_CRT, CHIA_CA_KEY,
+    load_private_key_from_bytes, AllowAny, SslInfo,
 };
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion};
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
+use dg_xch_serialize::ChiaProtocolVersion;
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1::Builder;
@@ -151,7 +154,7 @@ impl WebsocketServer {
                                     let mut peer_id = None;
                                     if let Some(certs) = stream.get_ref().1.peer_certificates() {
                                         if !certs.is_empty() {
-                                            peer_id = Some(Bytes32::new(&hash_256(&certs[0].0)));
+                                            peer_id = Some(Bytes32::new(hash_256(&certs[0].0)));
                                         }
                                     }
                                     let peer_id = Arc::new(peer_id);
@@ -265,9 +268,9 @@ fn connection_handler(
                 .or_else(|| {
                     if let Some(key) = data.req.headers().get("ssl-client-cert") {
                         debug!("Using ssl-client header");
-                        Some(Bytes32::new(&hash_256(key.as_bytes())))
+                        Some(Bytes32::new(hash_256(key.as_bytes())))
                     } else if let Some(key) = data.req.headers().get("chia-client-cert") {
-                        Some(Bytes32::new(&hash_256(key.as_bytes())))
+                        Some(Bytes32::new(hash_256(key.as_bytes())))
                     } else {
                         error!("Invalid Peer - No Cert or Header");
                         None

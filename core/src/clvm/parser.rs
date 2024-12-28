@@ -1,5 +1,6 @@
 use crate::clvm::sexp::AtomBuf;
-use crate::clvm::sexp::{SExp, NULL};
+use crate::clvm::sexp::SExp;
+use crate::constants::NULL_SEXP;
 use bytes::Buf;
 use std::io::Read;
 use std::io::{Cursor, Write};
@@ -16,6 +17,9 @@ enum ParserOp {
 
 #[allow(clippy::cast_possible_truncation)]
 pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
+    if bytes.as_ref().is_empty() {
+        return Ok(NULL_SEXP.clone());
+    }
     let mut stream = Cursor::new(bytes);
     let mut byte_buf = [0; 1];
     let mut op_buf = vec![ParserOp::Exp];
@@ -29,7 +33,7 @@ pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
                     op_buf.push(ParserOp::Exp);
                     op_buf.push(ParserOp::Exp);
                 } else if byte_buf[0] == 0x80 {
-                    val_buf.push(NULL.clone());
+                    val_buf.push(NULL_SEXP.clone());
                 } else if byte_buf[0] <= MAX_SINGLE_BYTE {
                     val_buf.push(SExp::Atom(AtomBuf::new(byte_buf.to_vec())));
                 } else {

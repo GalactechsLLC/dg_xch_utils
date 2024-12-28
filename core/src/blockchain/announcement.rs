@@ -1,8 +1,7 @@
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::blockchain::sized_bytes::Bytes32;
+use crate::utils::hash_256;
 use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::hash_256;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 
 #[derive(ChiaSerial, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Announcement {
@@ -14,17 +13,16 @@ impl Announcement {
     #[must_use]
     pub fn name(&self) -> Bytes32 {
         let mut buf = vec![];
-        buf.extend(self.origin_info.as_slice());
-        let msg = match &self.morph_bytes {
+        buf.extend(self.origin_info);
+        match &self.morph_bytes {
             Some(m) => {
                 let mut morph_buf = vec![];
                 morph_buf.extend(m);
                 morph_buf.extend(&self.message);
-                Cow::Owned(hash_256(morph_buf))
+                buf.extend(hash_256(morph_buf));
             }
-            None => Cow::Borrowed(&self.message),
+            None => buf.extend(&self.message),
         };
-        buf.extend(msg.as_ref());
-        Bytes32::new(&hash_256(buf))
+        hash_256(buf).into()
     }
 }

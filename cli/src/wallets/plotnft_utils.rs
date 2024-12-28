@@ -7,7 +7,7 @@ use dg_xch_clients::api::full_node::FullnodeAPI;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::announcement::Announcement;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
-use dg_xch_core::blockchain::coin_spend::{compute_additions_with_cost, CoinSpend};
+use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
@@ -15,9 +15,10 @@ use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzleHash, WalletType};
 use dg_xch_core::clvm::program::Program;
 use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_core::constants::{FARMING_TO_POOL, LEAVING_POOL, POOL_PROTOCOL_VERSION};
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
-use dg_xch_core::protocols::pool::{FARMING_TO_POOL, LEAVING_POOL, POOL_PROTOCOL_VERSION};
+use dg_xch_core::traits::SizedBytes;
 use dg_xch_keys::{
     master_sk_to_singleton_owner_sk, master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened,
 };
@@ -83,7 +84,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
                 )
             })?;
             let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
-            let ph = puzzle_hash_for_pk(&pub_key)?;
+            let ph = puzzle_hash_for_pk(pub_key)?;
             puzzle_hashes.push(ph);
             let wallet_sk = master_sk_to_wallet_sk_unhardened(&self.info.master_sk, index)
                 .map_err(|e| {
@@ -93,7 +94,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
                     )
                 })?;
             let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
-            let ph = puzzle_hash_for_pk(&pub_key)?;
+            let ph = puzzle_hash_for_pk(pub_key)?;
             puzzle_hashes.push(ph);
         }
         let (spend, unspent) =
@@ -159,7 +160,7 @@ impl PlotNFTWallet {
     pub fn find_owner_key(&self, key_to_find: &Bytes48, limit: u32) -> Result<SecretKey, Error> {
         for i in 0..limit {
             let key = master_sk_to_singleton_owner_sk(&self.wallet_info().master_sk, i)?;
-            if &key.sk_to_pk().to_bytes() == key_to_find.to_sized_bytes() {
+            if key.sk_to_pk().to_bytes() == key_to_find.bytes() {
                 return Ok(key);
             }
         }
@@ -226,25 +227,23 @@ impl PlotNFTWallet {
         };
         let new_inner_puzzle = pool_state_to_inner_puzzle(
             &next_state,
-            &launcher_coin.coin.name(),
-            &constants.genesis_challenge,
+            launcher_coin.coin.name(),
+            constants.genesis_challenge,
             plot_nft.delay_time as u64,
-            &plot_nft.delay_puzzle_hash,
+            plot_nft.delay_puzzle_hash,
         )?;
-        let new_full_puzzle = create_full_puzzle(&new_inner_puzzle, &launcher_coin.coin.name())?;
+        let new_full_puzzle = create_full_puzzle(&new_inner_puzzle, launcher_coin.coin.name())?;
         let (outgoing_coin_spend, inner_puzzle) = create_travel_spend(
             &last_coin_spend,
-            &launcher_coin.coin,
+            launcher_coin.coin,
             &plot_nft.pool_state,
             &next_state,
-            &constants.genesis_challenge,
+            constants.genesis_challenge,
             plot_nft.delay_time as u64,
-            &plot_nft.delay_puzzle_hash,
+            plot_nft.delay_puzzle_hash,
         )?;
-        let (additions, _cost) = compute_additions_with_cost(
-            &last_coin_spend,
-            constants.max_block_cost_clvm.to_u64().unwrap(),
-        )?;
+        let (additions, _cost) = last_coin_spend
+            .compute_additions_with_cost(constants.max_block_cost_clvm.to_u64().unwrap())?;
         let singleton = &additions[0];
         let singleton_id = singleton.name();
         assert_eq!(
@@ -344,25 +343,23 @@ where
     };
     let new_inner_puzzle = pool_state_to_inner_puzzle(
         &next_state,
-        &launcher_coin.coin.name(),
-        &constants.genesis_challenge,
+        launcher_coin.coin.name(),
+        constants.genesis_challenge,
         plot_nft.delay_time as u64,
-        &plot_nft.delay_puzzle_hash,
+        plot_nft.delay_puzzle_hash,
     )?;
-    let new_full_puzzle = create_full_puzzle(&new_inner_puzzle, &launcher_coin.coin.name())?;
+    let new_full_puzzle = create_full_puzzle(&new_inner_puzzle, launcher_coin.coin.name())?;
     let (outgoing_coin_spend, inner_puzzle) = create_travel_spend(
         &last_coin_spend,
-        &launcher_coin.coin,
+        launcher_coin.coin,
         &plot_nft.pool_state,
         &next_state,
-        &constants.genesis_challenge,
+        constants.genesis_challenge,
         plot_nft.delay_time as u64,
-        &plot_nft.delay_puzzle_hash,
+        plot_nft.delay_puzzle_hash,
     )?;
-    let (additions, _cost) = compute_additions_with_cost(
-        &last_coin_spend,
-        constants.max_block_cost_clvm.to_u64().unwrap(),
-    )?;
+    let (additions, _cost) = last_coin_spend
+        .compute_additions_with_cost(constants.max_block_cost_clvm.to_u64().unwrap())?;
     let singleton = &additions[0];
     let singleton_id = singleton.name();
     assert_eq!(
@@ -493,7 +490,7 @@ pub async fn scrounge_for_plotnft_by_key(
                     )
                 })?;
             let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
-            let ph = puzzle_hash_for_pk(&pub_key)?;
+            let ph = puzzle_hash_for_pk(pub_key)?;
             puzzle_hashes.push(ph);
         }
         plotnfs.extend(scrounge_for_plotnfts(client.clone(), &puzzle_hashes).await?);
@@ -529,7 +526,7 @@ pub async fn scrounge_for_plotnfts(
                 if child.puzzle_hash == *SINGLETON_LAUNCHER_HASH {
                     let launcher_id = child.name();
                     if let Some(plotnft) =
-                        get_plotnft_by_launcher_id(client.clone(), &launcher_id, None).await?
+                        get_plotnft_by_launcher_id(client.clone(), launcher_id, None).await?
                     {
                         plotnfts.lock().await.push(plotnft);
                     }
@@ -552,7 +549,7 @@ pub async fn scrounge_for_plotnfts(
                         for child in coin_spend.additions()? {
                             if child.puzzle_hash == *SINGLETON_LAUNCHER_HASH {
                                 let launcher_id = child.name();
-                                if let Some(plotnft) = get_plotnft_by_launcher_id(client.clone(), &launcher_id, None).await? {
+                                if let Some(plotnft) = get_plotnft_by_launcher_id(client.clone(), launcher_id, None).await? {
                                     plotnfts.lock().await.push(plotnft);
                                 }
                             }
@@ -595,7 +592,7 @@ pub async fn scrounge_for_standard_coins(
 
 pub async fn get_pool_state(
     client: Arc<FullnodeClient>,
-    launcher_id: &Bytes32,
+    launcher_id: Bytes32,
     last_known_coin_name: Option<Bytes32>,
 ) -> Result<PoolState, Error> {
     if let Some(plotnft) =
@@ -612,10 +609,10 @@ pub async fn get_pool_state(
 
 pub async fn get_plotnft_by_launcher_id(
     client: Arc<FullnodeClient>,
-    launcher_id: &Bytes32,
+    launcher_id: Bytes32,
     last_known_coin_name: Option<Bytes32>,
 ) -> Result<Option<PlotNft>, Error> {
-    if let Some(starting_coin) = client.get_coin_record_by_name(launcher_id).await? {
+    if let Some(starting_coin) = client.get_coin_record_by_name(&launcher_id).await? {
         let spend = client.get_coin_spend(&starting_coin).await?;
         let initial_extra_data = launcher_coin_spend_to_extra_data(&spend)?;
         let first_coin = get_most_recent_singleton_coin_from_coin_spend(&spend)?;
@@ -652,7 +649,7 @@ pub async fn get_plotnft_by_launcher_id(
             }
             if let Some(singleton_coin) = singleton_coin {
                 Ok(Some(PlotNft {
-                    launcher_id: *launcher_id,
+                    launcher_id,
                     singleton_coin,
                     pool_state: last_not_null_state,
                     delay_time: initial_extra_data.delay_time,

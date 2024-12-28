@@ -1,16 +1,13 @@
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::clvm::program::Program;
+use crate::constants::POOL_STATE_IDENTIFIER;
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Error, ErrorKind};
 use std::string::String;
-
-pub const POOL_STATE_IDENTIFIER: char = 'p';
-pub const DELAY_TIME_IDENTIFIER: char = 't';
-pub const DELAY_PUZZLEHASH_IDENTIFIER: char = 'h';
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Farmer {

@@ -1,9 +1,8 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::npc_result::NPCResult;
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::spend_bundle::SpendBundle;
-use crate::clvm::utils::additions_for_npc;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -59,7 +58,7 @@ impl MempoolItem {
     }
     #[must_use]
     pub fn additions(self) -> Vec<Coin> {
-        additions_for_npc(self.npc_result)
+        self.npc_result.additions()
     }
 
     #[must_use]
@@ -81,6 +80,6 @@ impl Ord for MempoolItem {
 }
 impl Hash for MempoolItem {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write(self.spend_bundle_name.as_slice());
+        state.write(self.spend_bundle_name.as_ref());
     }
 }

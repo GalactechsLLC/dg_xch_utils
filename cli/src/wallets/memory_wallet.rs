@@ -83,7 +83,8 @@ impl WalletStore for MemoryWalletStore {
     }
 
     async fn get_confirmed_balance(&self) -> u128 {
-        todo!()
+        let coins = self.standard_coins.lock().await;
+        coins.iter().map(|coin| coin.coin.amount as u128).sum()
     }
 
     async fn get_unconfirmed_balance(&self) -> u128 {
@@ -123,7 +124,7 @@ impl WalletStore for MemoryWalletStore {
                     Error::new(ErrorKind::InvalidInput, format!("MasterKey: {e:?}"))
                 })?;
                 let synthetic_secret_key =
-                    calculate_synthetic_secret_key(&secret_key, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+                    calculate_synthetic_secret_key(&secret_key, *DEFAULT_HIDDEN_PUZZLE_HASH)?;
                 let _old_key = self.secret_key_store.save_secret_key(&synthetic_secret_key);
                 Ok(v.value().1)
             }
@@ -145,7 +146,7 @@ impl WalletStore for MemoryWalletStore {
         {
             None => Err(Error::new(
                 ErrorKind::NotFound,
-                format!("Failed to find public_key: {public_key})"),
+                format!("Failed to find secret_key for pub_key: {public_key})"),
             )),
             Some(v) => {
                 let secret_key = SecretKey::from_bytes(v.value().as_ref()).map_err(|e| {

@@ -14,6 +14,18 @@ pub fn bytes_to_u64<T: AsRef<[u8]>>(bytes: T) -> u64 {
     u64::from_be_bytes(buf)
 }
 
+pub fn extract_num<T: AsRef<[u8]>>(
+    bytes: T,
+    len_bytes: u32,
+    start_bit: u32,
+    mut num_bits: u32,
+) -> u64 {
+    if (start_bit + num_bits) / 8 > len_bytes - 1 {
+        num_bits = len_bytes * 8 - start_bit;
+    }
+    slice_u64from_bytes(bytes, start_bit, num_bits)
+}
+
 // 'bytes' points to a big-endian 64 bit value (possibly truncated, if
 // (start_bit % 8 + num_bits > 64)). Returns the integer that starts at
 // 'start_bit' that is 'num_bits' long (as a native-endian integer).

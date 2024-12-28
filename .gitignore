@@ -3,3 +3,4 @@ target/
 /.idea/
 *.iml
 publish.sh
+config.yaml

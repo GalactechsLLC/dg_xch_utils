@@ -8,6 +8,7 @@ use dg_xch_core::blockchain::proof_of_space::{
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::protocols::harvester::HarvesterState;
+use dg_xch_core::traits::SizedBytes;
 use log::warn;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -25,6 +26,7 @@ pub mod entry_sizes;
 pub mod f_calc;
 pub mod finite_state_entropy;
 pub mod plots;
+pub mod util;
 pub mod utils;
 pub mod verifier;
 
@@ -49,8 +51,8 @@ fn test_version() {
 pub fn verify_and_get_quality_string(
     pos: &ProofOfSpace,
     constants: &ConsensusConstants,
-    original_challenge_hash: &Bytes32,
-    signage_point: &Bytes32,
+    original_challenge_hash: Bytes32,
+    signage_point: Bytes32,
     height: u32,
 ) -> Option<Bytes32> {
     if pos.pool_public_key.is_none() && pos.pool_contract_puzzle_hash.is_none() {
@@ -70,15 +72,14 @@ pub fn verify_and_get_quality_string(
         return None;
     }
     if let Some(plot_id) = pos.get_plot_id() {
-        if pos.challenge
-            != calculate_pos_challenge(&plot_id, original_challenge_hash, signage_point)
+        if pos.challenge != calculate_pos_challenge(plot_id, original_challenge_hash, signage_point)
         {
             warn!("Failed to Verify ProofOfSpace: New challenge is not challenge");
             return None;
         }
         if !passes_plot_filter(
             calculate_prefix_bits(constants, height),
-            &plot_id,
+            plot_id,
             original_challenge_hash,
             signage_point,
         ) {
@@ -94,7 +95,7 @@ pub fn verify_and_get_quality_string(
 #[must_use]
 pub fn get_quality_string(pos: &ProofOfSpace, plot_id: &Bytes32) -> Option<Bytes32> {
     match validate_proof(
-        plot_id.to_sized_bytes(),
+        &plot_id.bytes(),
         pos.size,
         pos.proof.as_ref(),
         pos.challenge.as_ref(),

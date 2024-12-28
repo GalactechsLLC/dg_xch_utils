@@ -1,4 +1,4 @@
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::blockchain::sized_bytes::Bytes32;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -33,11 +33,13 @@ impl Coin {
             };
             hasher.update(&amount_bytes[start..]);
         }
-        Bytes32::new(hasher.finalize().as_slice())
+        let mut buf = [0u8; 32];
+        hasher.finalize_into((&mut buf).into());
+        buf.into()
     }
 }
 impl Hash for Coin {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write(self.name().as_slice());
+        state.write(self.name().as_ref());
     }
 }

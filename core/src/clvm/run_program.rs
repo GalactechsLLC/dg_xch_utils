@@ -1,6 +1,6 @@
 use crate::clvm::dialect::Dialect;
-use crate::clvm::sexp::{PairBuf, SExp, NULL};
-use crate::clvm::utils::ptr_from_number;
+use crate::clvm::sexp::{PairBuf, SExp};
+use crate::constants::NULL_SEXP;
 use num_bigint::BigInt;
 use std::io::Error;
 use std::io::ErrorKind;
@@ -88,7 +88,7 @@ fn traverse_path(node_index: &[u8], args: &SExp) -> Result<(u64, SExp), Error> {
         + TRAVERSE_COST_PER_BIT;
 
     if first_bit_byte_index >= node_index.len() {
-        return Ok((cost, NULL.clone()));
+        return Ok((cost, NULL_SEXP.clone()));
     }
 
     // find first non-zero bit (the most significant bit is a sentinel)
@@ -197,7 +197,7 @@ impl<D: Dialect> RunProgramContext<D> {
                     }
                 }
             }
-            self.push(NULL.clone());
+            self.push(NULL_SEXP.clone());
             Ok(OP_COST)
         }
     }
@@ -316,7 +316,7 @@ impl<D: Dialect> RunProgramContext<D> {
         self.op_stack = vec![Operation::Eval];
         let max_cost = if max_cost == 0 { u64::MAX } else { max_cost };
         let max_cost_number: BigInt = max_cost.into();
-        let max_cost_ptr = ptr_from_number(&max_cost_number)?;
+        let max_cost_ptr = SExp::try_from(&max_cost_number)?;
         let mut cost: u64 = 0;
         loop {
             let top = self.op_stack.pop();

@@ -1,11 +1,7 @@
-use crate::blockchain::sized_bytes::{Bytes48, SizedBytes};
+use crate::blockchain::sized_bytes::Bytes48;
+use crate::constants::AUG_SCHEME_DST;
 use blst::min_pk::{PublicKey, SecretKey, Signature};
 use blst::BLST_ERROR;
-
-//const BASIC_SCHEME_DST: &[u8; 43] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-pub const AUG_SCHEME_DST: &[u8; 43] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_";
-// const POP_SCHEME_DST: &[u8; 43] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
-// const AUG_SCHEME_POP_DST: &[u8; 43] = b"BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
 #[must_use]
 pub fn verify_signature(public_key: &PublicKey, msg: &[u8], signature: &Signature) -> bool {
@@ -23,7 +19,7 @@ pub fn verify_signature(public_key: &PublicKey, msg: &[u8], signature: &Signatur
 }
 
 pub fn aggregate_verify_signature(
-    public_keys: &[&Bytes48],
+    public_keys: &[Bytes48],
     msgs: &Vec<&[u8]>,
     signature: &Signature,
 ) -> bool {
@@ -31,7 +27,7 @@ pub fn aggregate_verify_signature(
     let mut keys: Vec<PublicKey> = Vec::new();
     for (key, msg) in public_keys.iter().zip(msgs) {
         let mut combined = Vec::new();
-        combined.extend(key.as_slice());
+        combined.extend(*key);
         combined.extend(*msg);
         new_msgs.push(combined);
         keys.push((*key).into());

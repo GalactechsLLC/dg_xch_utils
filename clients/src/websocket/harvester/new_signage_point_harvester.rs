@@ -85,9 +85,9 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                 }
                 if passes_plot_filter(
                     data_arc.filter_prefix_bits,
-                    &plot_id,
-                    &data_arc.challenge_hash,
-                    &data_arc.sp_hash,
+                    plot_id,
+                    data_arc.challenge_hash,
+                    data_arc.sp_hash,
                 ) {
                     if plot_info.pool_public_key.is_some() {
                         plot_counts.og_passed.fetch_add(1, Ordering::Relaxed);
@@ -97,9 +97,9 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                         plot_counts.pool_passed.fetch_add(1, Ordering::Relaxed);
                     }
                     let sp_challenge_hash = calculate_pos_challenge(
-                        &plot_id,
-                        &data_arc.challenge_hash,
-                        &data_arc.sp_hash,
+                        plot_id,
+                        data_arc.challenge_hash,
+                        data_arc.sp_hash,
                     );
                     debug!("Starting Search for challenge {sp_challenge_hash} in plot {}", path.file_name);
                     let qualities = match plot_info
@@ -132,20 +132,20 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                 warn!("Failed to find Pool Contract Difficulties for PH: {} ", pool_contract_puzzle_hash);
                             }
                         }
-                        for (index, quality) in &qualities {
+                        for (index, quality) in qualities {
                             let required_iters = calculate_iterations_quality(
                                 constants_arc.difficulty_constant_factor,
                                 quality,
                                 k,
                                 dif,
-                                &data_arc.sp_hash,
+                                data_arc.sp_hash,
                             );
                             if let Ok(sp_interval_iters) =
                                 calculate_sp_interval_iters(&constants_arc, sub_slot_iters)
                             {
                                 if required_iters < sp_interval_iters {
                                     info!("Plot: {}, Passed Required Iterations, Loading Index: {}", path.file_name, index);
-                                    match plot_info.reader.fetch_ordered_proof(*index).await {
+                                    match plot_info.reader.fetch_ordered_proof(index).await {
                                         Ok(proof) => {
                                             let proof_bytes = proof_to_bytes(&proof);
                                             debug!(
@@ -156,7 +156,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                 encode(&proof_bytes)
                                             );
                                             responses.push((
-                                                *quality,
+                                                quality,
                                                 ProofOfSpace {
                                                     challenge: sp_challenge_hash,
                                                     pool_contract_puzzle_hash: plot_info

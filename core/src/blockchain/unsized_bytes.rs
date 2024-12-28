@@ -1,5 +1,5 @@
-use crate::blockchain::sized_bytes::{prep_hex_str, SizedBytes};
 use crate::clvm::program::Program;
+use crate::formatting::prep_hex_str;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::{decode, encode};
 use serde::de::Visitor;
@@ -11,19 +11,11 @@ use std::io::{Cursor, Error, ErrorKind};
 pub struct UnsizedBytes {
     pub bytes: Vec<u8>,
 }
-impl<'a> SizedBytes<'a> for UnsizedBytes {
+impl UnsizedBytes {
     fn new(bytes: &[u8]) -> Self {
         Self {
             bytes: bytes.to_vec(),
         }
-    }
-
-    fn as_slice(&'a self) -> &'a [u8] {
-        &self.bytes
-    }
-
-    fn is_null(&self) -> bool {
-        self.bytes.iter().all(|v| *v == 0)
     }
 }
 

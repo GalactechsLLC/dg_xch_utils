@@ -15,9 +15,10 @@ use crate::plots::PROOF_X_COUNT;
 use crate::utils::bit_reader::BitReader;
 use crate::utils::{bytes_to_u64, open_read_only, open_read_only_async, slice_u128from_bytes};
 use crate::verifier::get_f7_from_proof_and_reorder;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::plots::{PlotFile, PlotHeader, PlotHeaderV1, PlotHeaderV2, PlotMemo, PlotTable};
-use dg_xch_serialize::hash_256;
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
 use hex::encode;
 use log::{debug, error, warn};
 use rustc_hash::FxHashSet;
@@ -76,7 +77,7 @@ impl<
                     NonZeroUsize::new(8).expect("Safe Value Expected for Non Zero Usize")
                 })
                 .get() as u8,
-            &t.plot_id().bytes,
+            &t.plot_id().bytes(),
         ));
         let mut reader = Self {
             proof_decompressor,
@@ -636,7 +637,7 @@ impl<
         bits.append_value(x2, self.file.k() as usize);
         bits.append_value(x1, self.file.k() as usize);
         hash_input.extend(bits.to_bytes());
-        Ok(Bytes32::new(&hash_256(hash_input)))
+        Ok(Bytes32::new(hash_256(hash_input)))
     }
 
     pub async fn fetch_qualities_for_challenge(
@@ -687,7 +688,7 @@ impl<
         meta.clear();
         let k = self.plot_file().k();
         let bytes = self.plot_file().plot_id();
-        reorder_proof(k, bytes.to_sized_bytes(), proof, &mut fx, &mut meta)
+        reorder_proof(k, &bytes.bytes(), proof, &mut fx, &mut meta)
     }
 
     pub async fn fetch_proofs_for_challenge(
@@ -1014,7 +1015,7 @@ fn parse_v1(full_buffer: &[u8]) -> Result<PlotHeaderV1, Error> {
         ..Default::default()
     };
     start += 19;
-    plot_header.id = Bytes32::new(&full_buffer[start..start + 32]);
+    plot_header.id = Bytes32::parse(&full_buffer[start..start + 32])?;
     start += 32;
     plot_header.k = full_buffer[start];
     start += 1;
@@ -1045,7 +1046,7 @@ fn parse_v2(full_buffer: &[u8]) -> Result<PlotHeaderV2, Error> {
     start += 4;
     plot_header.version = u32::from_le_bytes(full_buffer[start..start + 4].try_into().unwrap());
     start += 4;
-    plot_header.id = Bytes32::new(&full_buffer[start..start + 32]);
+    plot_header.id = Bytes32::parse(&full_buffer[start..start + 32])?;
     start += 32;
     plot_header.k = full_buffer[start];
     start += 1;

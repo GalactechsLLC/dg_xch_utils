@@ -31,3 +31,6 @@ sha2 = "0.10.8"
 simple_logger = "4.3.3"
 tokio = {version = "1.35.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
 uuid = {version="1.7.0", features=["v4"]}
+paste = "1.0.15"
+serde_json = "1.0.133"
+serde = "1.0.210"

@@ -1,22 +1,6 @@
+use crate::constants::{CONS_CHARS, EOL_CHARS, QUOTE_CHARS, SPACE_CHARS};
 use log::error;
 
-const EOL_CHARS: [u8; 2] = [b'\r', b'\n'];
-const QUOTE_CHARS: [u8; 2] = [b'\'', b'"'];
-const CONS_CHARS: [u8; 3] = [b'(', b'.', b')'];
-const SPACE_CHARS: [u8; 2] = [b' ', b'\t'];
-
-pub const START_CONS: Token = Token {
-    bytes: b"(",
-    index: 0,
-};
-pub const DOT_CONS: Token = Token {
-    bytes: b".",
-    index: 0,
-};
-pub const END_CONS: Token = Token {
-    bytes: b")",
-    index: 0,
-};
 #[derive(Debug)]
 pub struct Token<'a> {
     pub bytes: &'a [u8],

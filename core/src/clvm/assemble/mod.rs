@@ -1,13 +1,11 @@
-pub mod keywords;
 pub mod reader;
 
-use crate::clvm::assemble::keywords::KEYWORD_TO_ATOM;
-use crate::clvm::assemble::reader::{Reader, Token, DOT_CONS, END_CONS, START_CONS};
-use crate::clvm::casts::bigint_to_bytes;
+use crate::clvm::assemble::reader::{Reader, Token};
 use crate::clvm::parser::sexp_to_bytes;
 use crate::clvm::program::SerializedProgram;
-use crate::clvm::sexp;
 use crate::clvm::sexp::{AtomBuf, SExp};
+use crate::constants::{DOT_CONS, END_CONS, KEYWORD_TO_ATOM, NULL_SEXP, START_CONS};
+use crate::formatting::bigint_to_bytes;
 use hex::decode;
 use num_bigint::BigInt;
 use once_cell::sync::Lazy;
@@ -24,7 +22,7 @@ pub fn tokenize_exp(tokens: &mut Reader) -> Result<SExp, Error> {
     if let Some(token) = tokens.next() {
         handle_token(&token, tokens)
     } else {
-        Ok(sexp::NULL.clone())
+        Ok(NULL_SEXP.clone())
     }
 }
 
@@ -32,12 +30,12 @@ pub fn tokenize_cons(tokens: &mut Reader) -> Result<SExp, Error> {
     if let Some(token) = tokens.next() {
         handle_cons(&token, tokens)
     } else {
-        Ok(sexp::NULL.clone())
+        Ok(NULL_SEXP.clone())
     }
 }
 pub fn handle_cons(token: &Token, tokens: &mut Reader) -> Result<SExp, Error> {
     if token == &END_CONS {
-        Ok(sexp::NULL.clone())
+        Ok(NULL_SEXP.clone())
     } else {
         let first = handle_token(token, tokens)?;
         if let Some(token) = tokens.next() {
@@ -80,12 +78,13 @@ pub fn handle_token(token: &Token, tokens: &mut Reader) -> Result<SExp, Error> {
     if token == &START_CONS {
         tokenize_cons(tokens)
     } else if token.bytes.is_empty() {
-        Ok(sexp::NULL.clone())
+        Ok(NULL_SEXP.clone())
     } else {
-        match handle_int(token) {
+        let bytes = token.bytes;
+        match handle_int(bytes) {
             Some(v) => bigint_to_bytes(&v, true).map(|v| SExp::Atom(AtomBuf::new(v))),
-            None => handle_hex(token)?
-                .or_else(|| handle_quote(token).or_else(|| Some(handle_bytes(token))))
+            None => handle_hex(bytes)?
+                .or_else(|| handle_quote(bytes).or_else(|| Some(handle_bytes(bytes))))
                 .ok_or_else(|| {
                     Error::new(
                         ErrorKind::Other,
@@ -109,8 +108,8 @@ pub fn is_quote(chars: &[u8]) -> bool {
 }
 
 #[must_use]
-pub fn handle_bytes(token: &Token) -> SExp {
-    let mut bytes = token.bytes;
+pub fn handle_bytes(bytes: &[u8]) -> SExp {
+    let mut bytes = bytes;
     if bytes[0] == b'#' {
         bytes = &bytes[1..];
     }
@@ -122,24 +121,24 @@ pub fn handle_bytes(token: &Token) -> SExp {
 }
 
 #[must_use]
-pub fn handle_quote(token: &Token) -> Option<SExp> {
-    if is_quote(token.bytes) {
+pub fn handle_quote(token: &[u8]) -> Option<SExp> {
+    if is_quote(token) {
         Some(SExp::Atom(AtomBuf::new(
-            token.bytes[1..(token.bytes.len() - 1)].to_vec(),
+            token[1..(token.len() - 1)].to_vec(),
         )))
     } else {
         None
     }
 }
 
-pub fn handle_hex(token: &Token) -> Result<Option<SExp>, Error> {
-    if is_hex(token.bytes) {
-        let mut bytes = if token.bytes.len() % 2 > 0 {
+pub fn handle_hex(bytes: &[u8]) -> Result<Option<SExp>, Error> {
+    if is_hex(bytes) {
+        let mut bytes = if bytes.len() % 2 > 0 {
             vec![b'0']
         } else {
             vec![]
         };
-        bytes.extend(token.bytes[2..].to_vec());
+        bytes.extend(bytes[2..].to_vec());
         let as_hex = String::from_utf8(bytes).map_err(|e| {
             Error::new(ErrorKind::InvalidInput, format!("Invalid Hex Value: {e:?}"))
         })?;
@@ -151,9 +150,9 @@ pub fn handle_hex(token: &Token) -> Result<Option<SExp>, Error> {
     }
 }
 
-pub fn handle_int(token: &Token) -> Option<BigInt> {
+pub fn handle_int(bytes: &[u8]) -> Option<BigInt> {
     static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[+\-]?[0-9]+(?:_[0-9]+)*$").unwrap());
-    let as_str = String::from_utf8_lossy(token.bytes);
+    let as_str = String::from_utf8_lossy(bytes);
     if RE.is_match(&as_str) {
         as_str.replace('_', "").parse::<BigInt>().ok()
     } else {

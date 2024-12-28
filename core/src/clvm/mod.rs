@@ -1,6 +1,6 @@
 pub mod assemble;
 pub mod bls_bindings;
-pub mod casts;
+pub mod compile;
 pub mod condition_utils;
 pub mod core_ops;
 pub mod curry_utils;
@@ -11,3 +11,4 @@ pub mod program;
 pub mod run_program;
 pub mod sexp;
 pub mod utils;
+pub mod debug_ops;

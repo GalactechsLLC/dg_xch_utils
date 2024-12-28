@@ -5,7 +5,8 @@ pub mod wallet;
 
 use crate::ClientSSLConfig;
 use async_trait::async_trait;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::shared::{Handshake, NoCertificateVerification, CAPABILITIES};
 use dg_xch_core::protocols::{
     ChiaMessage, ChiaMessageFilter, ChiaMessageHandler, MessageHandler, NodeType, SocketPeer,
@@ -14,9 +15,11 @@ use dg_xch_core::protocols::{
 use dg_xch_core::protocols::{PeerMap, ProtocolMessageTypes, WebsocketMsgStream};
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
-    load_private_key_from_bytes, CHIA_CA_CRT, CHIA_CA_KEY,
+    load_private_key_from_bytes,
 };
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::debug;
 use reqwest::header::{HeaderName, HeaderValue};
 use rustls::{Certificate, ClientConfig, PrivateKey};
@@ -179,7 +182,7 @@ impl WsClient {
                 )
             })?,
         );
-        let peer_id = Arc::new(Bytes32::new(&hash_256(&certs[0].0)));
+        let peer_id = Arc::new(Bytes32::new(hash_256(&certs[0].0)));
         let (stream, _) = connect_async_tls_with_config(
             request,
             None,

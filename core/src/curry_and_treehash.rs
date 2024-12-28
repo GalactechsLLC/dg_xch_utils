@@ -1,5 +1,5 @@
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
-use dg_xch_serialize::hash_256;
+use crate::blockchain::sized_bytes::Bytes32;
+use crate::utils::hash_256;
 use once_cell::sync::Lazy;
 
 pub const NULL: [u8; 0] = [];
@@ -11,28 +11,12 @@ pub const C_KW: [u8; 1] = [0x04];
 
 #[must_use]
 pub fn shatree_atom(atom: &[u8]) -> Bytes32 {
-    Bytes32::new(&hash_256(
-        ONE.iter()
-            .copied()
-            .chain(atom.iter().copied())
-            .collect::<Vec<u8>>(),
-    ))
+    hash_256([ONE.as_slice(), atom].concat()).into()
 }
 
 #[must_use]
 pub fn shatree_pair(left_hash: &Bytes32, right_hash: &Bytes32) -> Bytes32 {
-    Bytes32::new(&hash_256(
-        TWO.iter()
-            .copied()
-            .chain(
-                left_hash
-                    .to_sized_bytes()
-                    .iter()
-                    .copied()
-                    .chain(right_hash.to_sized_bytes().iter().copied()),
-            )
-            .collect::<Vec<u8>>(),
-    ))
+    hash_256([TWO.as_slice(), left_hash.as_ref(), right_hash.as_ref()].concat()).into()
 }
 
 pub static Q_KW_TREEHASH: Lazy<Bytes32> = Lazy::new(|| shatree_atom(&Q_KW));

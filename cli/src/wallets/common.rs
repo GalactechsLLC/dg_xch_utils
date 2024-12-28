@@ -1,12 +1,12 @@
 use blst::min_pk::{AggregateSignature, PublicKey, SecretKey, Signature};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::utils::pkm_pairs_for_conditions_dict;
 use dg_xch_core::blockchain::wallet_type::WalletType;
 use dg_xch_core::clvm::bls_bindings;
 use dg_xch_core::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
-use dg_xch_core::clvm::condition_utils::conditions_dict_for_solution;
+use dg_xch_core::clvm::condition_utils::{conditions_dict_for_solution};
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use num_traits::cast::ToPrimitive;
 use std::future::Future;
@@ -64,10 +64,10 @@ where
         //Create signature
         for (pk_bytes, msg) in pkm_pairs_for_conditions_dict(
             &conditions_dict,
-            coin_spend.coin.name(),
+            coin_spend.coin,
             additional_data,
         )? {
-            let pk = PublicKey::from_bytes(pk_bytes.as_slice()).map_err(|e| {
+            let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
                 Error::new(
                     ErrorKind::Other,
                     format!(
@@ -88,7 +88,6 @@ where
     }
     //Aggregate signatures
     let sig_refs: Vec<&Signature> = signatures.iter().collect();
-    let pk_list: Vec<&Bytes48> = pk_list.iter().collect();
     let msg_list: Vec<&[u8]> = msg_list.iter().map(Vec::as_slice).collect();
     let aggsig = AggregateSignature::aggregate(&sig_refs, true)
         .map_err(|e| {
