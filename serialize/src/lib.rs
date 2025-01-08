@@ -1,16 +1,8 @@
-use bytes::Buf;
 use log::warn;
-use sha2::{Digest, Sha256};
 use std::convert::Infallible;
 use std::fmt::{Display, Formatter};
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::str::FromStr;
-
-pub fn hash_256(input: impl AsRef<[u8]>) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    hasher.finalize().to_vec()
-}
 
 #[derive(
     Default,
@@ -271,8 +263,9 @@ macro_rules! impl_primitives {
                 }
                 fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>, _version: ChiaProtocolVersion) -> Result<Self, std::io::Error> where Self: Sized,
                 {
-                    if bytes.remaining() < $size {
-                        Err(Error::new(std::io::ErrorKind::InvalidInput, format!("Failed to Parse $name, expected length $size, found {}",  bytes.remaining())))
+                    let remaining = bytes.get_ref().as_ref().len().saturating_sub(bytes.position() as usize);
+                    if remaining < $size {
+                        Err(Error::new(std::io::ErrorKind::InvalidInput, format!("Failed to Parse $name, expected length $size, found {}", remaining)))
                     } else {
                         let mut buffer: [u8; $size] = [0; $size];
                         bytes.read_exact(&mut buffer)?;

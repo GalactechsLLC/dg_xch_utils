@@ -6,7 +6,8 @@ use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
 use dg_xch_core::clvm::program::Program;
 use dg_xch_core::clvm::sexp::IntoSExp;
-use dg_xch_serialize::hash_256;
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
 use std::io::{Error, ErrorKind};
 
 #[must_use]
@@ -54,8 +55,8 @@ pub fn launch_conditions_and_coin_spend(
         amount.to_sexp(),
     ]);
     let mut buf = vec![0; 64];
-    buf[0..32].copy_from_slice(launcher_coin.name().to_sized_bytes());
-    buf[32..64].copy_from_slice(launcher_solution.tree_hash().to_sized_bytes());
+    buf[0..32].copy_from_slice(&launcher_coin.name().bytes());
+    buf[32..64].copy_from_slice(&launcher_solution.tree_hash().bytes());
     let assert_launcher_announcement = Program::to(vec![
         ConditionOpcode::AssertCoinAnnouncement.to_sexp(),
         hash_256(&buf).to_sexp(),

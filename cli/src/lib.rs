@@ -79,7 +79,7 @@ pub async fn run_cli() -> Result<(), Error> {
             if let Some(launcher_id) = launcher_id {
                 info!("Searching for NFT with LauncherID: {launcher_id}");
                 if let Some(plotnft) =
-                    get_plotnft_by_launcher_id(client.clone(), &launcher_id, None).await?
+                    get_plotnft_by_launcher_id(client.clone(), launcher_id, None).await?
                 {
                     plotnfts.push(plotnft);
                 } else {
@@ -101,7 +101,7 @@ pub async fn run_cli() -> Result<(), Error> {
                                 )
                             })?;
                         let pub_key: Bytes48 = wallet_sk.sk_to_pk().to_bytes().into();
-                        puzzle_hashes.push(puzzle_hash_for_pk(&pub_key)?);
+                        puzzle_hashes.push(puzzle_hash_for_pk(pub_key)?);
                         let hardened_wallet_sk = master_sk_to_wallet_sk(&master_key, index)
                             .map_err(|e| {
                                 Error::new(
@@ -110,7 +110,7 @@ pub async fn run_cli() -> Result<(), Error> {
                                 )
                             })?;
                         let pub_key: Bytes48 = hardened_wallet_sk.sk_to_pk().to_bytes().into();
-                        puzzle_hashes.push(puzzle_hash_for_pk(&pub_key)?);
+                        puzzle_hashes.push(puzzle_hash_for_pk(pub_key)?);
                     }
                     plotnfts.extend(scrounge_for_plotnfts(client.clone(), &puzzle_hashes).await?);
                     page += 1;
@@ -131,9 +131,9 @@ pub async fn run_cli() -> Result<(), Error> {
                     "\t    ContractAddress: {}",
                     encode_puzzle_hash(
                         &launcher_id_to_p2_puzzle_hash(
-                            &plot_nft.launcher_id,
+                            plot_nft.launcher_id,
                             plot_nft.delay_time as u64,
-                            &plot_nft.delay_puzzle_hash,
+                            plot_nft.delay_puzzle_hash,
                         )?,
                         "xch"
                     )?
@@ -699,8 +699,8 @@ pub async fn run_cli() -> Result<(), Error> {
             migrate_plot_nft(
                 client,
                 &target_pool,
-                &launcher_id,
-                &target_address,
+                launcher_id,
+                target_address,
                 &mnemonic,
                 constants.clone(),
                 fee.unwrap_or_default(),
@@ -719,15 +719,15 @@ pub async fn run_cli() -> Result<(), Error> {
             migrate_plot_nft_with_owner_key(
                 client,
                 &target_pool,
-                &launcher_id,
-                &target_address,
+                launcher_id,
+                target_address,
                 &owner_key,
             )
             .await?;
         }
         RootCommands::GetPlotnftState { launcher_id } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None)?);
-            get_plotnft_ready_state(client, &launcher_id, None)
+            get_plotnft_ready_state(client, launcher_id, None)
                 .await
                 .map(|_| ())?;
         }

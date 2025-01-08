@@ -1,14 +1,15 @@
 use crate::api::RequestMode;
 use async_trait::async_trait;
 use blst::min_pk::{AggregateSignature, SecretKey, Signature};
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::clvm::bls_bindings::sign;
 use dg_xch_core::protocols::pool::{
     get_current_authentication_token, AuthenticationPayload, GetFarmerRequest, GetFarmerResponse,
     GetPoolInfoResponse, PoolError, PoolErrorCode, PostFarmerRequest, PostFarmerResponse,
     PostPartialRequest, PostPartialResponse, PutFarmerRequest, PutFarmerResponse,
 };
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_core::utils::hash_256;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, warn};
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
@@ -252,7 +253,7 @@ pub async fn create_pool_login_url(
         if index != 0 {
             ids.push(',');
         }
-        ids.push_str(&hex::encode(launcher_id.as_slice()));
+        ids.push_str(&hex::encode(launcher_id));
     }
     Ok(format!(
         "{target_pool}/login?launcher_id={ids}&authentication_token={}&signature={})",

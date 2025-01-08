@@ -1,9 +1,9 @@
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::blockchain::sized_bytes::Bytes32;
 use crate::consensus::constants::ConsensusConstants;
-use dg_xch_serialize::hash_256;
+use crate::constants::TWO_POW_256;
+use crate::utils::hash_256;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
-use once_cell::sync::Lazy;
 use std::cmp::max;
 use std::io::{Error, ErrorKind};
 use std::ops::Mul;
@@ -72,12 +72,6 @@ pub fn calculate_ip_iters(
     }
 }
 
-pub const POOL_SUB_SLOT_ITERS: u64 = 37_600_000_000;
-// This number should be held constant and be consistent for every pool in the network. DO NOT CHANGE
-pub const ITERS_LIMIT: u64 = POOL_SUB_SLOT_ITERS / 64;
-
-static TWO_POW_256: Lazy<BigUint> = Lazy::new(|| BigUint::from(2u64).pow(256));
-
 #[must_use]
 pub fn expected_plot_size(k: u8) -> u64 {
     ((2 * u64::from(k)) + 1) * 2u64.pow(u32::from(k) - 1)
@@ -86,14 +80,14 @@ pub fn expected_plot_size(k: u8) -> u64 {
 #[must_use]
 pub fn calculate_iterations_quality(
     difficulty_constant_factor: u128,
-    quality_string: &Bytes32,
+    quality_string: Bytes32,
     size: u8,
     difficulty: u64,
-    cc_sp_output_hash: &Bytes32,
+    cc_sp_output_hash: Bytes32,
 ) -> u64 {
     let mut to_hash: Vec<u8> = Vec::new();
-    to_hash.extend(quality_string.as_slice());
-    to_hash.extend(cc_sp_output_hash.as_slice());
+    to_hash.extend(quality_string);
+    to_hash.extend(cc_sp_output_hash);
     let hashed = hash_256(to_hash);
     let quality_int = BigUint::from_bytes_be(hashed.as_slice());
     let difficulty_int = BigUint::from(difficulty);

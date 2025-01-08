@@ -8,15 +8,16 @@ use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::{CatCoinRecord, CoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::condition_opcode::ConditionOpcode;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::transaction_record::{TransactionRecord, TransactionType};
 use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzleHash, WalletType};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
 use dg_xch_core::clvm::utils::INFINITE_COST;
 use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
 use dg_xch_keys::{master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened};
-use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle;
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     puzzle_for_pk, puzzle_hash_for_pk, solution_for_conditions,
 };
@@ -25,7 +26,7 @@ use dg_xch_puzzles::utils::{
     make_assert_puzzle_announcement, make_create_coin_announcement, make_create_coin_condition,
     make_create_puzzle_announcement, make_reserve_fee_condition,
 };
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, info};
 use num_traits::ToPrimitive;
 use rand::prelude::StdRng;
@@ -149,7 +150,7 @@ pub trait WalletStore {
         let wallet_sk = self.wallet_sk(index, hardened)?;
         let _ = self.secret_key_store().save_secret_key(&wallet_sk);
         let pubkey = Bytes48::from(wallet_sk.sk_to_pk().to_bytes());
-        let puzzle_hash = puzzle_hash_for_pk(&pubkey)?;
+        let puzzle_hash = puzzle_hash_for_pk(pubkey)?;
         self.add_puzzle_hash_and_keys(puzzle_hash, (Bytes32::from(wallet_sk), pubkey))
             .await;
         Ok(DerivationRecord {
@@ -349,12 +350,12 @@ fn knapsack_coin_algorithm(
     target: u64,
     max_coin_amount: u64,
     max_num_coins: usize,
-    seed: Option<&[u8]>,
+    seed: Option<[u8; 32]>,
 ) -> Option<HashSet<Coin>> {
     let mut best_set_sum = max_coin_amount;
     let mut best_set_of_coins: Option<HashSet<Coin>> = None;
-    let seed = Bytes32::new(seed.unwrap_or(b"knapsack seed"));
-    let mut rand = StdRng::from_seed(*seed.to_sized_bytes());
+    let seed = Bytes32::new(seed.unwrap_or(*b"---------knapsack seed----------"));
+    let mut rand = StdRng::from_seed(seed.bytes());
     for _ in 0..1000 {
         let mut selected_coins = HashSet::default();
         let mut selected_coins_sum = 0;
@@ -427,11 +428,11 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         }
         Ok(hashes)
     }
-    fn puzzle_for_pk(&self, public_key: &Bytes48) -> Result<Program, Error> {
+    fn puzzle_for_pk(&self, public_key: Bytes48) -> Result<Program, Error> {
         puzzle_for_pk(public_key)
     }
-    fn puzzle_hash_for_pk(&self, public_key: &Bytes48) -> Result<Bytes32, Error> {
-        p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk(public_key)
+    fn puzzle_hash_for_pk(&self, public_key: Bytes48) -> Result<Bytes32, Error> {
+        puzzle_hash_for_pk(public_key)
     }
     #[allow(clippy::too_many_arguments)]
     async fn create_spend_bundle(
@@ -449,7 +450,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         &self,
         primaries: &[AmountWithPuzzleHash],
         min_time: u64,
-        coin_announcements: Option<HashSet<Vec<u8>>>,
+        coin_announcements: Option<HashSet<Bytes32>>,
         coin_announcements_to_assert: Option<HashSet<Bytes32>>,
         puzzle_announcements: Option<HashSet<Vec<u8>>>,
         puzzle_announcements_to_assert: Option<HashSet<Bytes32>>,
@@ -474,7 +475,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
         }
         if let Some(coin_announcements) = coin_announcements {
             for announcement in coin_announcements {
-                condition_list.push(make_create_coin_announcement(&announcement));
+                condition_list.push(make_create_coin_announcement(&announcement.bytes()));
             }
         }
         if let Some(coin_announcements_to_assert) = coin_announcements_to_assert {
@@ -522,7 +523,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             .await
             .populate_secret_key_for_puzzle_hash(puz_hash)
             .await?;
-        puzzle_for_pk(&public_key)
+        puzzle_for_pk(public_key)
     }
     async fn get_new_puzzle(&self) -> Result<Program, Error> {
         let dr = self
@@ -531,7 +532,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             .await
             .get_unused_derivation_record(false)
             .await?;
-        let puzzle = puzzle_for_pk(&dr.pubkey)?;
+        let puzzle = puzzle_for_pk(dr.pubkey)?;
         self.wallet_store()
             .lock()
             .await
@@ -912,7 +913,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     v.extend(e.to_bytes(ChiaProtocolVersion::default()));
                     v
                 }));
-                let coin_announcements = HashSet::from([message.clone()]);
+                let coin_announcements = HashSet::from([Bytes32::new(message)]);
                 let coin_announcements_to_assert = HashSet::from_iter(coin_announcements_bytes);
                 let puzzle_announcements_to_assert = HashSet::from_iter(puzzle_announcements_bytes);
                 info!("Primaries: {:?}", primaries);
@@ -956,7 +957,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 primary_announcement_hash = Some(
                     Announcement {
                         origin_info: coin.name(),
-                        message,
+                        message: message.to_vec(),
                         morph_bytes: None,
                     }
                     .name(),

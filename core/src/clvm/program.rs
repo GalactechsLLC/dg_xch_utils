@@ -1,20 +1,23 @@
 use crate::blockchain::sized_bytes::{
-    hex_to_bytes, Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96, SizedBytes,
+    Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96,
 };
 use crate::clvm::assemble::assemble_text;
 use crate::clvm::curry_utils::curry;
 use crate::clvm::dialect::{ChiaDialect, NO_UNKNOWN_OPS};
 use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
 use crate::clvm::run_program::run_program;
+use crate::clvm::sexp::SExp;
 use crate::clvm::sexp::{AtomBuf, IntoSExp};
-use crate::clvm::sexp::{SExp, NULL as SNULL};
-use crate::clvm::utils::{tree_hash, MEMPOOL_MODE};
+use crate::clvm::utils::MEMPOOL_MODE;
+use crate::constants::NULL_SEXP;
+use crate::formatting::hex_to_bytes;
 use dg_xch_macros::ChiaSerial;
 use hex::encode;
+use log::error;
 use num_bigint::BigInt;
-use once_cell::sync::Lazy;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
@@ -22,11 +25,6 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
-
-pub static NULL: Lazy<Program> = Lazy::new(|| Program {
-    sexp: SNULL.clone(),
-    serialized: vec![],
-});
 
 #[derive(Eq, Serialize, Deserialize)]
 pub struct Program {
@@ -54,22 +52,26 @@ impl Program {
                 println!("Error building Program: {e:?}");
                 Program {
                     serialized: vec![],
-                    sexp: SNULL.clone(),
+                    sexp: NULL_SEXP.clone(),
                 }
             }
         }
     }
     pub fn null() -> Self {
-        let serial = sexp_to_bytes(&SNULL).unwrap_or_default();
+        let serial = sexp_to_bytes(&NULL_SEXP).unwrap_or_default();
         Program {
             serialized: serial,
-            sexp: SNULL.clone(),
+            sexp: NULL_SEXP.clone(),
         }
     }
     pub fn to<T: IntoSExp>(vals: T) -> Self {
         let sexp = vals.to_sexp();
         let serialized = sexp_to_bytes(&sexp).unwrap_or_default();
         Program { serialized, sexp }
+    }
+    pub fn from_sexp(sexp: SExp) -> Result<Self, Error> {
+        let serialized = sexp_to_bytes(&sexp)?;
+        Ok(Program { serialized, sexp })
     }
     pub fn first(&self) -> Result<Self, Error> {
         let first = self.sexp.first()?;
@@ -111,10 +113,10 @@ impl Program {
     #[must_use]
     pub fn tree_hash(&self) -> Bytes32 {
         let sexp = sexp_from_bytes(&self.serialized).unwrap_or_else(|e| {
-            println!("ERROR: {e:?}");
-            SNULL.clone()
+            error!("ERROR: {e:?}");
+            NULL_SEXP.clone()
         });
-        Bytes32::new(&tree_hash(&sexp))
+        sexp.tree_hash()
     }
     pub fn curry(&self, args: &[Program]) -> Result<Program, Error> {
         Ok(curry(self, args))
@@ -122,7 +124,7 @@ impl Program {
 
     pub fn uncurry(&self) -> Result<(Program, Program), Error> {
         fn inner_match(o: &SExp, expected: &[u8]) -> Result<(), Error> {
-            if o.atom()? == expected {
+            if o.atom()? == *expected {
                 Ok(())
             } else {
                 Err(Error::new(
@@ -353,16 +355,9 @@ impl PartialEq for Program {
 macro_rules! impl_sized_bytes {
     ($($name: ident);*) => {
         $(
-            impl TryFrom<$name> for Program {
-                type Error = std::io::Error;
-                fn try_from(bytes: $name) -> Result<Self, Self::Error> {
-                    bytes.as_slice().try_into()
-                }
-            }
-            impl TryFrom<&$name> for Program {
-                type Error = std::io::Error;
-                fn try_from(bytes: &$name) -> Result<Self, Self::Error> {
-                    bytes.as_slice().try_into()
+            impl From<$name> for Program {
+                fn from(bytes: $name) -> Self {
+                    Program::to(bytes)
                 }
             }
         )*

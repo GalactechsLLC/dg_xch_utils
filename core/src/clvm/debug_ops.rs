@@ -1,8 +1,9 @@
 use crate::clvm::dialect::Dialect;
 use crate::clvm::more_ops::BOOL_BASE_COST;
-use crate::clvm::sexp::{SExp, NULL};
 use log::info;
 use std::io::Error;
+use crate::clvm::sexp::{SExp};
+use crate::constants::NULL_SEXP;
 
 pub fn op_print<D: Dialect>(
     args: &SExp,
@@ -10,11 +11,13 @@ pub fn op_print<D: Dialect>(
     _dialect: &D,
 ) -> Result<(u64, SExp), Error> {
     match args.clone().proper_list(true) {
-        None => Ok((BOOL_BASE_COST, NULL.clone())),
+        None => {
+            Ok((BOOL_BASE_COST, NULL_SEXP.clone()))
+        }
         Some(mut args) => {
             args.reverse();
             if args.is_empty() {
-                Ok((BOOL_BASE_COST, NULL.clone()))
+                Ok((BOOL_BASE_COST, NULL_SEXP.clone()))
             } else {
                 let mut buffer = String::new();
                 match args.first() {
@@ -28,9 +31,11 @@ pub fn op_print<D: Dialect>(
                         }
                         buffer.remove(buffer.len() - 1);
                         info!("CLVM DEBUG: {}", buffer);
-                        Ok((cost, NULL.clone()))
+                        Ok((cost, NULL_SEXP.clone()))
                     }
-                    None => Ok((BOOL_BASE_COST, NULL.clone())),
+                    None => {
+                        Ok((BOOL_BASE_COST, NULL_SEXP.clone()))
+                    }
                 }
             }
         }

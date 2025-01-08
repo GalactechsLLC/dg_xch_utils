@@ -6,9 +6,10 @@ use crate::websocket::{WebsocketServer, WebsocketServerConfig};
 use blst::min_pk::SecretKey;
 use dg_xch_clients::api::pool::PoolClient;
 use dg_xch_clients::websocket::farmer::FarmerClient;
-use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::clvm::bls_bindings::{sign, verify_signature};
 use dg_xch_core::config::PoolWalletConfig;
+use dg_xch_core::formatting::hex_to_bytes;
 use dg_xch_core::protocols::farmer::{FarmerPoolState, FarmerSharedState};
 use dg_xch_core::protocols::pool::{
     get_current_authentication_token, AuthenticationPayload, GetFarmerRequest, GetFarmerResponse,
@@ -16,8 +17,10 @@ use dg_xch_core::protocols::pool::{
     PutFarmerPayload, PutFarmerRequest, PutFarmerResponse,
 };
 use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
 use dg_xch_keys::decode_puzzle_hash;
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{error, info};
 use std::collections::HashMap;
 use std::io::Error;
@@ -205,7 +208,7 @@ pub async fn get_farmer<
 }
 
 fn do_auth(pool_config: &PoolWalletConfig, owner_sk: &SecretKey) -> Result<Bytes48, PoolError> {
-    if owner_sk.sk_to_pk().to_bytes() != *pool_config.owner_public_key.to_sized_bytes() {
+    if owner_sk.sk_to_pk().to_bytes() != pool_config.owner_public_key.bytes() {
         return Err(PoolError {
             error_code: PoolErrorCode::ServerException as u8,
             error_message: "Owner Keys Mismatch".to_string(),

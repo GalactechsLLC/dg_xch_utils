@@ -1,8 +1,11 @@
-use crate::blockchain::sized_bytes::{prep_hex_str, Bytes32, Bytes48, SizedBytes};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::consensus::constants::ConsensusConstants;
+use crate::formatting::prep_hex_str;
+use crate::traits::SizedBytes;
+use crate::utils::hash_256;
 use blst::min_pk::{AggregatePublicKey, PublicKey, SecretKey};
 use dg_xch_macros::ChiaSerial;
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::{decode, encode};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -133,43 +136,43 @@ impl ProofOfSpace {
         } else if let (None, None) = (&self.pool_public_key, &self.pool_contract_puzzle_hash) {
             //Invalid, Both cant be None
             None
-        } else if let Some(contract) = &self.pool_contract_puzzle_hash {
+        } else if let Some(contract) = self.pool_contract_puzzle_hash {
             Some(calculate_plot_id_puzzle_hash(
                 contract,
-                &self.plot_public_key,
+                self.plot_public_key,
             ))
         } else {
             self.pool_public_key
-                .as_ref()
-                .map(|pub_key| calculate_plot_id_public_key(pub_key, &self.plot_public_key))
+                .map(|pub_key| calculate_plot_id_public_key(pub_key, self.plot_public_key))
         }
     }
 }
 
 #[must_use]
-pub fn calculate_plot_id_public_key(
-    pool_public_key: &Bytes48,
-    plot_public_key: &Bytes48,
-) -> Bytes32 {
+pub fn calculate_plot_id_public_key(pool_public_key: Bytes48, plot_public_key: Bytes48) -> Bytes32 {
     let mut to_hash: Vec<u8> = Vec::new();
-    to_hash.extend(pool_public_key.to_sized_bytes());
-    to_hash.extend(plot_public_key.to_sized_bytes());
+    to_hash.extend(pool_public_key);
+    to_hash.extend(plot_public_key);
     let mut hasher: Sha256 = Sha256::new();
     hasher.update(to_hash);
-    Bytes32::new(&hasher.finalize())
+    let mut buf = [0u8; 32];
+    hasher.finalize_into((&mut buf).into());
+    buf.into()
 }
 
 #[must_use]
 pub fn calculate_plot_id_puzzle_hash(
-    pool_contract_puzzle_hash: &Bytes32,
-    plot_public_key: &Bytes48,
+    pool_contract_puzzle_hash: Bytes32,
+    plot_public_key: Bytes48,
 ) -> Bytes32 {
     let mut to_hash: Vec<u8> = Vec::new();
-    to_hash.extend(pool_contract_puzzle_hash.to_sized_bytes());
-    to_hash.extend(plot_public_key.to_sized_bytes());
+    to_hash.extend(pool_contract_puzzle_hash);
+    to_hash.extend(plot_public_key);
     let mut hasher: Sha256 = Sha256::new();
     hasher.update(to_hash);
-    Bytes32::new(&hasher.finalize())
+    let mut buf = [0u8; 32];
+    hasher.finalize_into((&mut buf).into());
+    buf.into()
 }
 
 #[allow(clippy::cast_possible_wrap)]
@@ -192,16 +195,16 @@ pub fn calculate_prefix_bits(constants: &ConsensusConstants, height: u32) -> i8 
 #[must_use]
 pub fn passes_plot_filter(
     prefix_bits: i8,
-    plot_id: &Bytes32,
-    challenge_hash: &Bytes32,
-    signage_point: &Bytes32,
+    plot_id: Bytes32,
+    challenge_hash: Bytes32,
+    signage_point: Bytes32,
 ) -> bool {
     if prefix_bits == 0 {
         true
     } else {
         let mut filter = [false; 256];
         let mut index = 0;
-        for b in calculate_plot_filter_input(plot_id, challenge_hash, signage_point).as_slice() {
+        for b in calculate_plot_filter_input(plot_id, challenge_hash, signage_point).bytes() {
             for i in (0..=7).rev() {
                 filter[index] = (b >> i & 1) == 1;
                 index += 1;
@@ -218,22 +221,24 @@ pub fn passes_plot_filter(
 
 #[must_use]
 pub fn calculate_plot_filter_input(
-    plot_id: &Bytes32,
-    challenge_hash: &Bytes32,
-    signage_point: &Bytes32,
+    plot_id: Bytes32,
+    challenge_hash: Bytes32,
+    signage_point: Bytes32,
 ) -> Bytes32 {
     let mut hasher: Sha256 = Sha256::new();
     hasher.update(plot_id);
     hasher.update(challenge_hash);
     hasher.update(signage_point);
-    Bytes32::new(&hasher.finalize())
+    let mut buf = [0u8; 32];
+    hasher.finalize_into((&mut buf).into());
+    buf.into()
 }
 
 #[must_use]
 pub fn calculate_pos_challenge(
-    plot_id: &Bytes32,
-    challenge_hash: &Bytes32,
-    signage_point: &Bytes32,
+    plot_id: Bytes32,
+    challenge_hash: Bytes32,
+    signage_point: Bytes32,
 ) -> Bytes32 {
     let mut hasher: Sha256 = Sha256::new();
     hasher.update(calculate_plot_filter_input(
@@ -241,7 +246,9 @@ pub fn calculate_pos_challenge(
         challenge_hash,
         signage_point,
     ));
-    Bytes32::new(&hasher.finalize())
+    let mut buf = [0u8; 32];
+    hasher.finalize_into((&mut buf).into());
+    buf.into()
 }
 
 pub fn generate_taproot_sk(

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use dg_xch_core::blockchain::proof_of_space::calculate_prefix_bits;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use dg_xch_core::consensus::pot_iterations::POOL_SUB_SLOT_ITERS;
+use dg_xch_core::constants::POOL_SUB_SLOT_ITERS;
 #[cfg(feature = "metrics")]
 use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{

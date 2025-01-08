@@ -1,13 +1,14 @@
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
-use dg_xch_core::blockchain::utils::atom_to_int;
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
 use dg_xch_core::clvm::sexp::{AtomBuf, IntoSExp, SExp};
 use dg_xch_core::consensus::block_rewards::calculate_pool_reward;
 use dg_xch_core::consensus::coinbase::pool_parent_id;
+use dg_xch_core::formatting::number_from_slice;
 use dg_xch_core::plots::PlotNftExtraData;
 use dg_xch_core::pool::PoolState;
+use dg_xch_core::traits::SizedBytes;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use lazy_static::lazy_static;
 use log::debug;
@@ -60,15 +61,11 @@ pub fn launcher_coin_spend_to_extra_data(
     PlotNftExtraData::from_program(&coin_spend.solution.to_program().rest()?.rest()?.first()?)
 }
 
-pub fn puzzle_for_singleton(launcher_id: &Bytes32, inner_puz: &Program) -> Result<Program, Error> {
+pub fn puzzle_for_singleton(launcher_id: Bytes32, inner_puz: &Program) -> Result<Program, Error> {
     let args = vec![
         (
-            (*SINGLETON_MOD_HASH).try_into()?,
-            (
-                launcher_id.try_into()?,
-                (*SINGLETON_LAUNCHER_HASH).try_into()?,
-            )
-                .try_into()?,
+            (*SINGLETON_MOD_HASH).into(),
+            (launcher_id.into(), (*SINGLETON_LAUNCHER_HASH).into()).try_into()?,
         )
             .try_into()?,
         inner_puz.clone(),
@@ -77,17 +74,13 @@ pub fn puzzle_for_singleton(launcher_id: &Bytes32, inner_puz: &Program) -> Resul
 }
 
 pub fn puzzle_for_singleton_v1_1(
-    launcher_id: &Bytes32,
+    launcher_id: Bytes32,
     inner_puz: &Program,
 ) -> Result<Program, Error> {
     let args = vec![
         (
-            (*SINGLETON_MOD_V1_1_HASH).try_into()?,
-            (
-                launcher_id.try_into()?,
-                (*SINGLETON_LAUNCHER_HASH).try_into()?,
-            )
-                .try_into()?,
+            (*SINGLETON_MOD_V1_1_HASH).into(),
+            (launcher_id.into(), (*SINGLETON_LAUNCHER_HASH).into()).try_into()?,
         )
             .try_into()?,
         inner_puz.clone(),
@@ -96,86 +89,85 @@ pub fn puzzle_for_singleton_v1_1(
 }
 
 pub fn create_waiting_room_inner_puzzle(
-    target_puzzle_hash: &Bytes32,
+    target_puzzle_hash: Bytes32,
     relative_lock_height: u32,
-    owner_pubkey: &Bytes48,
-    launcher_id: &Bytes32,
-    genesis_challenge: &Bytes32,
+    owner_pubkey: Bytes48,
+    launcher_id: Bytes32,
+    genesis_challenge: Bytes32,
     delay_time: u64,
-    delay_ph: &Bytes32,
+    delay_ph: Bytes32,
 ) -> Result<Program, Error> {
-    let mut genesis_bytes = genesis_challenge.as_slice()[0..16].to_vec();
+    let mut genesis_bytes = genesis_challenge.bytes()[0..16].to_vec();
     genesis_bytes.append(&mut b"\x00".repeat(16));
-    let pool_reward_prefix: Bytes32 = Bytes32::new(&genesis_bytes);
+    let pool_reward_prefix: Bytes32 = Bytes32::parse(&genesis_bytes)?;
     let p2_singleton_puzzle_hash: Bytes32 =
         launcher_id_to_p2_puzzle_hash(launcher_id, delay_time, delay_ph)?;
     let args: Vec<Program> = vec![
-        target_puzzle_hash.try_into()?,
-        p2_singleton_puzzle_hash.try_into()?,
-        owner_pubkey.try_into()?,
-        pool_reward_prefix.try_into()?,
+        target_puzzle_hash.into(),
+        p2_singleton_puzzle_hash.into(),
+        owner_pubkey.into(),
+        pool_reward_prefix.into(),
         relative_lock_height.try_into()?,
     ];
     POOL_WAITING_ROOM_MOD.curry(&args)
 }
 
 pub fn create_pooling_inner_puzzle(
-    target_puzzle_hash: &Bytes32,
-    pool_waiting_room_inner_hash: &Bytes32,
-    owner_pubkey: &Bytes48,
-    launcher_id: &Bytes32,
-    genesis_challenge: &Bytes32,
+    target_puzzle_hash: Bytes32,
+    pool_waiting_room_inner_hash: Bytes32,
+    owner_pubkey: Bytes48,
+    launcher_id: Bytes32,
+    genesis_challenge: Bytes32,
     delay_time: u64,
-    delay_ph: &Bytes32,
+    delay_ph: Bytes32,
 ) -> Result<Program, Error> {
-    let mut genesis_bytes = genesis_challenge.as_slice()[..16].to_vec();
+    let mut genesis_bytes = genesis_challenge.bytes()[..16].to_vec();
     genesis_bytes.append(&mut b"\x00".repeat(16));
-    let pool_reward_prefix: Bytes32 = Bytes32::new(&genesis_bytes);
+    let pool_reward_prefix: Bytes32 = Bytes32::parse(&genesis_bytes)?;
     let p2_singleton_puzzle_hash: Bytes32 =
         launcher_id_to_p2_puzzle_hash(launcher_id, delay_time, delay_ph)?;
     let args: Vec<Program> = vec![
-        target_puzzle_hash.try_into()?,
-        p2_singleton_puzzle_hash.try_into()?,
-        owner_pubkey.try_into()?,
-        pool_reward_prefix.try_into()?,
-        pool_waiting_room_inner_hash.try_into()?,
+        target_puzzle_hash.into(),
+        p2_singleton_puzzle_hash.into(),
+        owner_pubkey.into(),
+        pool_reward_prefix.into(),
+        pool_waiting_room_inner_hash.into(),
     ];
     POOL_MEMBER_MOD.curry(&args)
 }
 
-pub fn create_full_puzzle(inner_puzzle: &Program, launcher_id: &Bytes32) -> Result<Program, Error> {
+pub fn create_full_puzzle(inner_puzzle: &Program, launcher_id: Bytes32) -> Result<Program, Error> {
     puzzle_for_singleton(launcher_id, inner_puzzle)
 }
 
 pub fn create_p2_singleton_puzzle(
-    singleton_mod_hash: &Bytes32,
-    launcher_id: &Bytes32,
+    singleton_mod_hash: Bytes32,
+    launcher_id: Bytes32,
     seconds_delay: u64,
-    delayed_puzzle_hash: &Bytes32,
+    delayed_puzzle_hash: Bytes32,
 ) -> Result<Program, Error> {
     let args: Vec<Program> = vec![
-        singleton_mod_hash.try_into()?,
-        launcher_id.try_into()?,
-        (*SINGLETON_LAUNCHER_HASH).try_into()?,
+        singleton_mod_hash.into(),
+        launcher_id.into(),
+        (*SINGLETON_LAUNCHER_HASH).into(),
         seconds_delay.try_into()?,
-        delayed_puzzle_hash.try_into()?,
+        delayed_puzzle_hash.into(),
     ];
     let curried = P2_SINGLETON_OR_DELAYED_MOD.curry(&args)?;
     Ok(curried)
 }
 
 pub fn launcher_id_to_p2_puzzle_hash(
-    launcher_id: &Bytes32,
+    launcher_id: Bytes32,
     seconds_delay: u64,
-    delayed_puzzle_hash: &Bytes32,
+    delayed_puzzle_hash: Bytes32,
 ) -> Result<Bytes32, Error> {
     let as_prog = create_p2_singleton_puzzle(
-        &SINGLETON_MOD_HASH,
+        *SINGLETON_MOD_HASH,
         launcher_id,
         seconds_delay,
         delayed_puzzle_hash,
     )?;
-
     Ok(as_prog.tree_hash())
 }
 
@@ -188,7 +180,7 @@ pub fn get_delay_puzzle_info_from_launcher_spend(
     let seconds_vec = as_map.get(&Program::new("t".as_bytes().to_vec())).unwrap();
     let hash_vec = as_map.get(&Program::new("h".as_bytes().to_vec())).unwrap();
     Ok((
-        atom_to_int(&seconds_vec.as_vec().unwrap())
+        number_from_slice(&seconds_vec.as_vec().unwrap())
             .to_u64()
             .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Failed to convert Atom to Int"))?,
         hash_vec.try_into()?,
@@ -216,12 +208,12 @@ pub fn get_seconds_and_delayed_puzhash_from_p2_singleton_puzzle(
             let seconds_delay_int: u64 = seconds_delay.try_into()?;
             Ok((
                 seconds_delay_int,
-                Bytes32::new(
+                Bytes32::parse(
                     &delayed_puzzle_hash
                         .as_atom()
                         .unwrap_or_else(|| Program::new(Vec::new()))
                         .serialized,
-                ),
+                )?,
             ))
         }
         Err(error) => Err(error),
@@ -246,15 +238,15 @@ pub fn is_pool_member_inner_puzzle(inner_puzzle: &Program) -> Result<bool, Error
 pub fn create_absorb_spend(
     last_coin_spend: &CoinSpend,
     current: &PoolState,
-    launcher_coin: &Coin,
+    launcher_coin: Coin,
     height: u32,
-    genesis_challenge: &Bytes32,
+    genesis_challenge: Bytes32,
     delay_time: u64,
-    delay_ph: &Bytes32,
+    delay_ph: Bytes32,
 ) -> Result<Vec<CoinSpend>, Error> {
     let inner_puzzle: Program = pool_state_to_inner_puzzle(
         current,
-        &launcher_coin.name(),
+        launcher_coin.name(),
         genesis_challenge,
         delay_time,
         delay_ph,
@@ -297,7 +289,7 @@ pub fn create_absorb_spend(
             inner_sol.to_sexp(),
         ]));
         let full_puzzle: SerializedProgram =
-            SerializedProgram::from(create_full_puzzle(&inner_puzzle, &launcher_coin.name())?);
+            SerializedProgram::from(create_full_puzzle(&inner_puzzle, launcher_coin.name())?);
         let full_puzzle_program = full_puzzle.to_program();
         if coin.puzzle_hash != full_puzzle_program.tree_hash() {
             return Err(Error::new(
@@ -308,8 +300,8 @@ pub fn create_absorb_spend(
         let reward_parent = pool_parent_id(height, genesis_challenge);
         let p2_singleton_puzzle: SerializedProgram =
             SerializedProgram::from(create_p2_singleton_puzzle(
-                &SINGLETON_MOD_HASH,
-                &launcher_coin.name(),
+                *SINGLETON_MOD_HASH,
+                launcher_coin.name(),
                 delay_time,
                 delay_ph,
             )?);
@@ -359,16 +351,16 @@ pub fn create_absorb_spend(
 
 pub fn create_travel_spend(
     last_coin_spend: &CoinSpend,
-    launcher_coin: &Coin,
+    launcher_coin: Coin,
     current: &PoolState,
     target: &PoolState,
-    genesis_challenge: &Bytes32,
+    genesis_challenge: Bytes32,
     delay_time: u64,
-    delay_ph: &Bytes32,
+    delay_ph: Bytes32,
 ) -> Result<(CoinSpend, Program), Error> {
     let inner_puzzle = pool_state_to_inner_puzzle(
         current,
-        &launcher_coin.name(),
+        launcher_coin.name(),
         genesis_challenge,
         delay_time,
         delay_ph,
@@ -387,7 +379,7 @@ pub fn create_travel_spend(
     } else if is_pool_waitingroom_inner_puzzle(&inner_puzzle)? {
         let destination_inner = pool_state_to_inner_puzzle(
             target,
-            &launcher_coin.name(),
+            launcher_coin.name(),
             genesis_challenge,
             delay_time,
             delay_ph,
@@ -438,7 +430,7 @@ pub fn create_travel_spend(
         current_singleton.amount.to_sexp(),
         inner_solution.to_sexp(),
     ]);
-    let full_puzzle = create_full_puzzle(&inner_puzzle, &launcher_coin.name())?;
+    let full_puzzle = create_full_puzzle(&inner_puzzle, launcher_coin.name())?;
     Ok((
         CoinSpend {
             coin: current_singleton,
@@ -632,15 +624,15 @@ pub fn solution_to_pool_state(coin_solution: &CoinSpend) -> Result<Option<PoolSt
 
 pub fn pool_state_to_inner_puzzle(
     pool_state: &PoolState,
-    launcher_id: &Bytes32,
-    genesis_challenge: &Bytes32,
+    launcher_id: Bytes32,
+    genesis_challenge: Bytes32,
     delay_time: u64,
-    delay_ph: &Bytes32,
+    delay_ph: Bytes32,
 ) -> Result<Program, Error> {
     let escaping_inner_puzzle: Program = create_waiting_room_inner_puzzle(
-        &pool_state.target_puzzle_hash,
+        pool_state.target_puzzle_hash,
         pool_state.relative_lock_height,
-        &pool_state.owner_pubkey,
+        pool_state.owner_pubkey,
         launcher_id,
         genesis_challenge,
         delay_time,
@@ -651,9 +643,9 @@ pub fn pool_state_to_inner_puzzle(
         1 | 2 => Ok(escaping_inner_puzzle),
         //Pooling
         _ => create_pooling_inner_puzzle(
-            &pool_state.target_puzzle_hash,
-            &escaping_inner_puzzle.tree_hash(),
-            &pool_state.owner_pubkey,
+            pool_state.target_puzzle_hash,
+            escaping_inner_puzzle.tree_hash(),
+            pool_state.owner_pubkey,
             launcher_id,
             genesis_challenge,
             delay_time,
@@ -663,12 +655,12 @@ pub fn pool_state_to_inner_puzzle(
 }
 
 pub fn validate_puzzle_hash(
-    launcher_id: &Bytes32,
-    delay_ph: &Bytes32,
+    launcher_id: Bytes32,
+    delay_ph: Bytes32,
     delay_time: u64,
     pool_state: &PoolState,
-    outer_puzzle_hash: &Bytes32,
-    genesis_challenge: &Bytes32,
+    outer_puzzle_hash: Bytes32,
+    genesis_challenge: Bytes32,
 ) -> Result<bool, Error> {
     let inner_puzzle: Program = pool_state_to_inner_puzzle(
         pool_state,
@@ -678,6 +670,5 @@ pub fn validate_puzzle_hash(
         delay_ph,
     )?;
     let new_full_puzzle: Program = create_full_puzzle(&inner_puzzle, launcher_id)?;
-    let tree_hash = new_full_puzzle.tree_hash();
-    Ok(tree_hash == *outer_puzzle_hash)
+    Ok(new_full_puzzle.tree_hash() == outer_puzzle_hash)
 }

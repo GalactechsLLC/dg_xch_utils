@@ -6,8 +6,9 @@ use dg_xch_clients::websocket::farmer::FarmerClient;
 use dg_xch_core::blockchain::pool_target::PoolTarget;
 use dg_xch_core::blockchain::proof_of_space::{generate_plot_public_key, generate_taproot_sk};
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
-use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend, AUG_SCHEME_DST};
+use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend};
 use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS_MAP, MAINNET};
+use dg_xch_core::constants::AUG_SCHEME_DST;
 #[cfg(feature = "metrics")]
 use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
@@ -15,6 +16,7 @@ use dg_xch_core::protocols::farmer::{
 };
 use dg_xch_core::protocols::harvester::RespondSignatures;
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
+use dg_xch_core::traits::SizedBytes;
 use dg_xch_pos::verify_and_get_quality_string;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hyper_tungstenite::tungstenite::Message;
@@ -93,8 +95,8 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                     if let Some(computed_quality_string) = verify_and_get_quality_string(
                         &pospace,
                         constants,
-                        &response.challenge_hash,
-                        &response.sp_hash,
+                        response.challenge_hash,
+                        response.sp_hash,
                         peak_height,
                     ) {
                         if is_sp_signatures {
@@ -108,12 +110,10 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                             let local_pk = response.local_pk.into();
                             for sk in self.farmer_private_keys.values() {
                                 let pk = sk.sk_to_pk();
-                                if pk.to_bytes() == *response.farmer_pk.to_sized_bytes() {
+                                if pk.to_bytes() == response.farmer_pk.bytes() {
                                     let agg_pk =
                                         generate_plot_public_key(&local_pk, &pk, include_taproot)?;
-                                    if agg_pk.to_bytes()
-                                        != *pospace.plot_public_key.to_sized_bytes()
-                                    {
+                                    if agg_pk.to_bytes() != pospace.plot_public_key.bytes() {
                                         warn!(
                                             "Key Mismatch {:?} != {:?}",
                                             pospace.plot_public_key, agg_pk
@@ -313,7 +313,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                             let local_pk = response.local_pk.into();
                             for sk in self.farmer_private_keys.values() {
                                 let pk = sk.sk_to_pk();
-                                if pk.to_bytes() == *response.farmer_pk.to_sized_bytes() {
+                                if pk.to_bytes() == response.farmer_pk.bytes() {
                                     let agg_pk =
                                         generate_plot_public_key(&local_pk, &pk, include_taproot)?;
                                     let (

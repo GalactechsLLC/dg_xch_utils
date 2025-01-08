@@ -1,9 +1,19 @@
+use hkdf::hmac::digest::Output;
+use sha2::{Digest, Sha256, Sha256VarCore};
 use std::io::Error;
 use tokio::select;
 #[cfg(not(target_os = "windows"))]
 use tokio::signal::unix::{signal, SignalKind};
 #[cfg(target_os = "windows")]
 use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown};
+
+pub fn hash_256(input: impl AsRef<[u8]>) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(input);
+    let mut buf = [0u8; 32];
+    hasher.finalize_into(<&mut Output<Sha256VarCore>>::from(&mut buf));
+    buf
+}
 
 #[cfg(not(target_os = "windows"))]
 pub async fn await_termination() -> Result<(), Error> {

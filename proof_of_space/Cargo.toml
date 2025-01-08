@@ -27,6 +27,7 @@ rayon = "1.8.1"
 rustc-hash = "1.1.0"
 sha2 = "0.10.8"
 simple_logger = "4.3.3"
+time = "0.3.36"
 tokio = {version = "1.36.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
 windows-sys = { version = "0.52.0", features = ["Win32_Storage_FileSystem"] }
 
