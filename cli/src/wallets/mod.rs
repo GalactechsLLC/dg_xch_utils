@@ -393,8 +393,12 @@ fn knapsack_coin_algorithm(
 
 #[async_trait]
 pub trait Wallet<T: WalletStore + Send + Sync, C> {
-    fn create(info: WalletInfo<T>, config: C) -> Result<Self, Error> where Self: Sized;
-    fn create_simulator(info: WalletInfo<T>, config: C) -> Result<Self, Error> where Self: Sized;
+    fn create(info: WalletInfo<T>, config: C) -> Result<Self, Error>
+    where
+        Self: Sized;
+    fn create_simulator(info: WalletInfo<T>, config: C) -> Result<Self, Error>
+    where
+        Self: Sized;
     fn name(&self) -> &str;
     async fn sync(&self) -> Result<bool, Error>;
     fn is_synced(&self) -> bool;

@@ -44,7 +44,10 @@ pub struct PlotNFTWallet {
 }
 #[async_trait]
 impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
-    fn create(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Result<Self, Error> {
+    fn create(
+        info: WalletInfo<MemoryWalletStore>,
+        config: MemoryWalletConfig,
+    ) -> Result<Self, Error> {
         Ok(Self {
             fullnode_client: Arc::new(FullnodeClient::new(
                 &config.fullnode_host,
@@ -57,7 +60,10 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
             config,
         })
     }
-    fn create_simulator(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Result<Self, Error> {
+    fn create_simulator(
+        info: WalletInfo<MemoryWalletStore>,
+        config: MemoryWalletConfig,
+    ) -> Result<Self, Error> {
         Ok(Self {
             fullnode_client: Arc::new(FullnodeClient::new_simulator(
                 &config.fullnode_host,
@@ -131,7 +137,6 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     }
 }
 impl PlotNFTWallet {
-    #[must_use]
     pub fn new(
         master_secret_key: SecretKey,
         client: &FullnodeClient,

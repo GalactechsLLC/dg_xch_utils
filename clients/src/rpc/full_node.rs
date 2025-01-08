@@ -27,13 +27,13 @@ use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::blockchain::unfinished_header_block::UnfinishedHeaderBlock;
 use dg_xch_core::protocols::full_node::BlockCountMetrics;
 use dg_xch_core::protocols::full_node::FeeEstimate;
+use log::error;
 use reqwest::Client;
 use serde_json::{json, Map};
 use std::collections::HashMap;
 use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
-use log::error;
 
 pub type UrlFunction = Arc<dyn Fn(&str, u16, &str) -> String + Send + Sync + 'static>;
 
@@ -456,7 +456,8 @@ impl FullnodeAPI for FullnodeClient {
                 &request_body,
                 &self.additional_headers,
             )
-                .await {
+            .await
+            {
                 Ok(v) => {
                     return Ok(v.status);
                 }
@@ -466,7 +467,10 @@ impl FullnodeAPI for FullnodeClient {
                 }
             }
         }
-        Err(Error::new(ErrorKind::NotConnected, "Failed to push TX After 3 Tries"))
+        Err(Error::new(
+            ErrorKind::NotConnected,
+            "Failed to push TX After 3 Tries",
+        ))
     }
     async fn get_puzzle_and_solution(
         &self,
@@ -765,12 +769,14 @@ impl FullnodeExtAPI for FullnodeClient {
 
 #[tokio::test]
 async fn test_extended_functions() {
+    use std::str::FromStr;
     let fnc = FullnodeClient::new("localhost", 8555, 10, None, &None).unwrap();
     let _by_puz = fnc
         .get_coin_records_by_puzzle_hashes_paginated(
-            &[Bytes32::from(
+            &[Bytes32::from_str(
                 "1c69feee1fb42ffa6c60fcc222c3aa8fb6cc719937a83f5aa068dc7045e0a633",
-            )],
+            )
+            .unwrap()],
             None,
             None,
             None,
@@ -781,9 +787,12 @@ async fn test_extended_functions() {
         .unwrap();
     fnc.get_blockchain_state().await.unwrap();
     let (additions, _removals) = fnc
-        .get_additions_and_removals_with_hints(&Bytes32::from(
-            "0x499c034d9761ab329c0ce293006a55628bb9ea62cae3836901628f6a1afb0031",
-        ))
+        .get_additions_and_removals_with_hints(
+            &Bytes32::from_str(
+                "0x499c034d9761ab329c0ce293006a55628bb9ea62cae3836901628f6a1afb0031",
+            )
+            .unwrap(),
+        )
         .await
         .unwrap();
     let mut hints = vec![];

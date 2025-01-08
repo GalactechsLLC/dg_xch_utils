@@ -3,7 +3,7 @@ use crate::wallets::{SecretKeyStore, Wallet, WalletInfo, WalletStore};
 use async_trait::async_trait;
 use blst::min_pk::SecretKey;
 use dashmap::DashMap;
-use dg_xch_clients::api::full_node::{FullnodeAPI};
+use dg_xch_clients::api::full_node::FullnodeAPI;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_core::blockchain::coin_record::{CatCoinRecord, CoinRecord};
@@ -164,7 +164,6 @@ pub struct MemoryWallet {
     pub fullnode_client: FullnodeClient,
 }
 impl MemoryWallet {
-    #[must_use]
     pub fn new(
         master_secret_key: SecretKey,
         client: &FullnodeClient,
@@ -191,7 +190,10 @@ impl MemoryWallet {
 }
 #[async_trait]
 impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
-    fn create(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Result<Self, Error> {
+    fn create(
+        info: WalletInfo<MemoryWalletStore>,
+        config: MemoryWalletConfig,
+    ) -> Result<Self, Error> {
         let fullnode_client = FullnodeClient::new(
             &config.fullnode_host.clone(),
             config.fullnode_port,
@@ -205,7 +207,10 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
             fullnode_client,
         })
     }
-    fn create_simulator(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Result<Self, Error> {
+    fn create_simulator(
+        info: WalletInfo<MemoryWalletStore>,
+        config: MemoryWalletConfig,
+    ) -> Result<Self, Error> {
         let fullnode_client =
             FullnodeClient::new_simulator(&config.fullnode_host.clone(), config.fullnode_port, 60)?;
         Ok(Self {

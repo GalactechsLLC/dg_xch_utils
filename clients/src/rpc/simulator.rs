@@ -42,7 +42,7 @@ impl SimulatorClient {
         additional_headers: &Option<HashMap<String, String>>,
     ) -> Result<Self, Error> {
         Ok(SimulatorClient {
-            client: get_http_client(timeout).unwrap(),
+            client: get_http_client(timeout)?,
             full_node_client: Arc::new(FullnodeClient::new_simulator(host, port, timeout)?),
             host: host.to_string(),
             port,

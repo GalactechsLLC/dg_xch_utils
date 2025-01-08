@@ -34,7 +34,6 @@ pub struct Simulator<'a> {
     users: Mutex<HashMap<String, Arc<ChainUser<'a>>>>,
 }
 impl<'a> Simulator<'a> {
-    #[must_use]
     pub fn new(
         host: &str,
         port: u16,
@@ -56,10 +55,14 @@ impl<'a> Simulator<'a> {
     pub fn constants(&self) -> &ConsensusConstants {
         &self.network
     }
-    pub async fn get_user(&self, name: &str,) -> Option<Arc<ChainUser<'a>>> {
+    pub async fn get_user(&self, name: &str) -> Option<Arc<ChainUser<'a>>> {
         self.users.lock().await.get(name).cloned()
     }
-    pub async fn new_user(&'a self, name: &str, menmonic: Option<String>) -> Result<Arc<ChainUser<'a>>, Error> {
+    pub async fn new_user(
+        &'a self,
+        name: &str,
+        menmonic: Option<String>,
+    ) -> Result<Arc<ChainUser<'a>>, Error> {
         let mut map_lock = self.users.lock().await;
         if map_lock.contains_key(name) {
             return Err(Error::new(ErrorKind::AlreadyExists, "User already exists"));
