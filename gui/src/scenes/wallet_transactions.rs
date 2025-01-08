@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use eframe::egui;
-use eframe::egui::Context;
 use crate::app::DgXchGui;
 use crate::scenes::Scene;
 use crate::state::WalletState;
+use eframe::egui;
+use eframe::egui::Context;
+use std::sync::Arc;
 
 pub struct WalletTransactionsScene {}
 

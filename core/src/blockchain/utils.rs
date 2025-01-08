@@ -2,7 +2,10 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
-use crate::clvm::condition_utils::{agg_sig_additional_data, conditions_dict_for_solution, created_outputs_for_conditions_dict, ConditionsDict};
+use crate::clvm::condition_utils::{
+    agg_sig_additional_data, conditions_dict_for_solution, created_outputs_for_conditions_dict,
+    ConditionsDict,
+};
 use crate::clvm::program::SerializedProgram;
 use crate::formatting::number_from_slice;
 use crate::traits::SizedBytes;

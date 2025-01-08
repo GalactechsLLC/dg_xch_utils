@@ -1,13 +1,13 @@
-use std::sync::{Arc, OnceLock};
-use std::sync::atomic::Ordering;
-use eframe::egui;
-use eframe::egui::mutex::Mutex;
-use log::error;
-use dg_xch_clients::api::full_node::FullnodeAPI;
 use crate::app::DgXchGui;
 use crate::scenes::fullnode_overview::FullNodeOverviewScene;
 use crate::scenes::Scene;
 use crate::state::{FullNodeState, FullNodeTab};
+use dg_xch_clients::api::full_node::FullnodeAPI;
+use eframe::egui;
+use eframe::egui::mutex::Mutex;
+use log::error;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 
 static OVERVIEW: OnceLock<Mutex<FullNodeOverviewScene>> = OnceLock::new();
 static COINS: OnceLock<Mutex<FullNodeOverviewScene>> = OnceLock::new();
@@ -44,38 +44,46 @@ impl FullNodeScene {
                 (String::from("Coins"), FullNodeTab::Coins),
                 (String::from("Blocks"), FullNodeTab::Blocks),
             ],
-            selected_tab: FullNodeTab::Overview
+            selected_tab: FullNodeTab::Overview,
         }
     }
 }
 
 impl Scene for FullNodeScene {
     fn update(&mut self, gui: &mut DgXchGui, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        egui::SidePanel::left("fullnode_nav").resizable(false).show(ctx, |ui| {
-            ui.vertical(|ui| {
-                for (label, tab) in &self.tabs {
-                    if ui.selectable_label(self.selected_tab == *tab, label).clicked() {
-                        self.selected_tab = *tab;
+        egui::SidePanel::left("fullnode_nav")
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    for (label, tab) in &self.tabs {
+                        if ui
+                            .selectable_label(self.selected_tab == *tab, label)
+                            .clicked()
+                        {
+                            self.selected_tab = *tab;
+                        }
                     }
-                }
+                });
             });
-        });
         let state = self.shared_state.clone();
         match self.selected_tab {
             FullNodeTab::Overview => {
-                OVERVIEW.get_or_init(|| {
-                    Mutex::new(FullNodeOverviewScene::new(state))
-                }).lock().update(gui, ctx, frame);
+                OVERVIEW
+                    .get_or_init(|| Mutex::new(FullNodeOverviewScene::new(state)))
+                    .lock()
+                    .update(gui, ctx, frame);
             }
             FullNodeTab::Coins => {
-                COINS.get_or_init(|| {
-                    Mutex::new(FullNodeOverviewScene::new(state))
-                }).lock().update(gui, ctx, frame);
+                COINS
+                    .get_or_init(|| Mutex::new(FullNodeOverviewScene::new(state)))
+                    .lock()
+                    .update(gui, ctx, frame);
             }
             FullNodeTab::Blocks => {
-                BLOCKS.get_or_init(|| {
-                    Mutex::new(FullNodeOverviewScene::new(state))
-                }).lock().update(gui, ctx, frame);
+                BLOCKS
+                    .get_or_init(|| Mutex::new(FullNodeOverviewScene::new(state)))
+                    .lock()
+                    .update(gui, ctx, frame);
             }
         }
     }

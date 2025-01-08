@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use std::hash::{Hash, Hasher};
     use dg_xch_core::blockchain::coin::Coin;
     use dg_xch_core::blockchain::sized_bytes::Bytes32;
+    use std::hash::{Hash, Hasher};
 
     #[test]
     fn test_coin_id_zero_amount() {
@@ -58,15 +58,15 @@ mod tests {
         let amounts = [
             0u64,
             1u64,
-            0xFFu64,                 // 255
-            0xFFFFu64,               // 65535
-            0xFFFFFFu64,             // 16777215
-            0xFFFFFFFFu64,           // 4294967295
-            0xFFFFFFFFFFu64,         // 1099511627775
-            0xFFFFFFFFFFFFu64,       // 281474976710655
-            0xFFFFFFFFFFFFFFu64,     // 72057594037927935
-            0x7FFFFFFFFFFFFFFF_u64,  // Max 63-bit value
-            0x8000000000000000_u64,  // Min value triggering other branch
+            0xFFu64,                // 255
+            0xFFFFu64,              // 65535
+            0xFFFFFFu64,            // 16777215
+            0xFFFFFFFFu64,          // 4294967295
+            0xFFFFFFFFFFu64,        // 1099511627775
+            0xFFFFFFFFFFFFu64,      // 281474976710655
+            0xFFFFFFFFFFFFFFu64,    // 72057594037927935
+            0x7FFFFFFFFFFFFFFF_u64, // Max 63-bit value
+            0x8000000000000000_u64, // Min value triggering other branch
             u64::MAX,
         ];
 

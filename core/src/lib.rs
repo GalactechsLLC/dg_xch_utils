@@ -9,10 +9,10 @@ pub mod formatting;
 pub mod plots;
 pub mod pool;
 pub mod protocols;
+pub mod puzzles;
 pub mod ssl;
 pub mod traits;
 pub mod utils;
-pub mod puzzles;
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")

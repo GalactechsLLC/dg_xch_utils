@@ -1,5 +1,5 @@
 use crate::clvm::dialect::Dialect;
-use crate::clvm::sexp::{SExp};
+use crate::clvm::sexp::SExp;
 use crate::clvm::utils::{atom, check_arg_count};
 use crate::constants::{NULL_SEXP, ONE_SEXP};
 use std::io::{Error, ErrorKind};

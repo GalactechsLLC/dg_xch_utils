@@ -1,21 +1,21 @@
+use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 use std::fs;
 use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Config {
-    pub enabled : bool,
+    pub enabled: bool,
     pub full_node_config: FullNodeConfig,
     pub wallet_config: WalletConfig,
     pub simulator_config: SimulatorConfig,
-    pub farmer_config: FarmerConfig
+    pub farmer_config: FarmerConfig,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct WalletConfig {
-    pub enabled : bool,
+    pub enabled: bool,
     pub full_node_hostname: String,
     pub full_node_rpc_port: u16,
     pub full_node_ssl: Option<String>,
@@ -23,7 +23,7 @@ pub struct WalletConfig {
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct FullNodeConfig {
-    pub enabled : bool,
+    pub enabled: bool,
     pub full_node_hostname: String,
     pub full_node_ws_port: u16,
     pub full_node_rpc_port: u16,
@@ -32,14 +32,14 @@ pub struct FullNodeConfig {
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct SimulatorConfig {
-    pub enabled : bool,
+    pub enabled: bool,
     pub full_node_hostname: String,
     pub full_node_rpc_port: u16,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct FarmerConfig {
-    pub enabled : bool,
+    pub enabled: bool,
     pub full_node_hostname: String,
     pub full_node_rpc_port: u16,
     pub full_node_ssl: Option<String>,
@@ -69,15 +69,14 @@ impl TryFrom<&PathBuf> for Config {
     }
 }
 
-
 impl Default for Config {
     fn default() -> Self {
         Config {
-            enabled : true,
+            enabled: true,
             full_node_config: FullNodeConfig::default(),
             wallet_config: WalletConfig::default(),
             simulator_config: SimulatorConfig::default(),
-            farmer_config: FarmerConfig::default()
+            farmer_config: FarmerConfig::default(),
         }
     }
 }
@@ -85,7 +84,7 @@ impl Default for Config {
 impl Default for WalletConfig {
     fn default() -> Self {
         WalletConfig {
-            enabled : true,
+            enabled: true,
             full_node_hostname: "chia-proxy.galactechs.com".to_string(),
             full_node_rpc_port: 443,
             full_node_ssl: None,
@@ -96,11 +95,11 @@ impl Default for WalletConfig {
 impl Default for FullNodeConfig {
     fn default() -> Self {
         FullNodeConfig {
-            enabled : true,
+            enabled: true,
             full_node_hostname: "chia-proxy.galactechs.com".to_string(),
             full_node_ws_port: 443,
             full_node_rpc_port: 443,
-            full_node_ssl: None
+            full_node_ssl: None,
         }
     }
 }
@@ -108,7 +107,7 @@ impl Default for FullNodeConfig {
 impl Default for SimulatorConfig {
     fn default() -> Self {
         SimulatorConfig {
-            enabled : true,
+            enabled: true,
             full_node_hostname: "chia-proxy.galactechs.com".to_string(),
             full_node_rpc_port: 443,
         }
@@ -118,10 +117,10 @@ impl Default for SimulatorConfig {
 impl Default for FarmerConfig {
     fn default() -> Self {
         FarmerConfig {
-            enabled : true,
+            enabled: true,
             full_node_hostname: "chia-proxy.galactechs.com".to_string(),
             full_node_rpc_port: 443,
-            full_node_ssl: None
+            full_node_ssl: None,
         }
     }
 }

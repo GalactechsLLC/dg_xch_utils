@@ -1,16 +1,16 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use eframe::egui::mutex::Mutex;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
+use eframe::egui::mutex::Mutex;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
 pub enum SelectedTab {
     Farmer,
     Wallet,
     FullNode,
-    Config
+    Config,
 }
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
 pub enum FullNodeTab {
@@ -29,7 +29,7 @@ pub struct State {
     pub full_node_client: Arc<FullnodeClient>,
     // pub farmer_client: Arc<FullnodeClient>,
     // pub wallet_client: Arc<FullnodeClient>,
-    pub shutdown_signal: Arc<AtomicBool>
+    pub shutdown_signal: Arc<AtomicBool>,
 }
 #[derive(Default)]
 pub struct FullNodeState {
@@ -42,6 +42,5 @@ pub struct WalletState {
     // pub wallet: Mutex<Option<MemoryWallet>>,
     pub confirmed_balance: u128,
     pub unconfirmed_balance: u128,
-    pub balance_history: HashMap<u128, u128>
+    pub balance_history: HashMap<u128, u128>,
 }
-

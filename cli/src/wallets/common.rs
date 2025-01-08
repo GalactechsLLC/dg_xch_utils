@@ -62,11 +62,9 @@ where
         )?
         .0;
         //Create signature
-        for (pk_bytes, msg) in pkm_pairs_for_conditions_dict(
-            &conditions_dict,
-            coin_spend.coin,
-            additional_data,
-        )? {
+        for (pk_bytes, msg) in
+            pkm_pairs_for_conditions_dict(&conditions_dict, coin_spend.coin, additional_data)?
+        {
             let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
                 Error::new(
                     ErrorKind::Other,

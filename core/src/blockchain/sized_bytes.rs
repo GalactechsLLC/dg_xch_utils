@@ -1,4 +1,3 @@
-use std::cmp::min;
 use crate::clvm::program::Program;
 use crate::formatting::prep_hex_str;
 use crate::traits::SizedBytes;
@@ -11,12 +10,13 @@ use num_traits::AsPrimitive;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::{Fill, Rng};
+use secrets::traits::Bytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::cmp::min;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::ops::{Index, IndexMut, Range};
 use std::str::FromStr;
-use secrets::traits::Bytes;
 
 #[derive(Copy, Clone)]
 pub struct SizedBytesImpl<const SIZE: usize> {

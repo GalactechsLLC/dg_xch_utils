@@ -395,7 +395,11 @@ pub fn op_strlen<D: Dialect>(
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::cast_sign_loss)]
 #[allow(clippy::cast_possible_wrap)]
-pub fn op_substr<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
+pub fn op_substr<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
     let ac = args.arg_count(3);
     if !(2..=3).contains(&ac) {
         return Err(Error::new(
