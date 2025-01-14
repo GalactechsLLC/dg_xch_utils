@@ -52,18 +52,12 @@ macro_rules! test_bytes {
 }
 
 test_bytes!(
-    Bytes4, 4,
-    Bytes8, 8,
-    Bytes32, 32,
-    Bytes48, 48,
-    Bytes96, 96,
-    Bytes100, 100,
-    Bytes480, 480
+    Bytes4, 4, Bytes8, 8, Bytes32, 32, Bytes48, 48, Bytes96, 96, Bytes100, 100, Bytes480, 480
 );
 
 #[test]
 pub fn test_sized_bytes_helpers() {
-    use dg_xch_core::blockchain::sized_bytes::{prep_hex_str, hex_to_bytes, u64_to_bytes};
+    use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, prep_hex_str, u64_to_bytes};
 
     let test_hex: String = format!("0x0000000000000008");
     let trimmed_hex_str = prep_hex_str(&test_hex);
@@ -76,5 +70,8 @@ pub fn test_sized_bytes_helpers() {
 
     assert_eq!(trimmed_hex_str, "0000000000000008");
     assert_eq!(num_be_bytes, hex_bytes);
-    assert_eq!(u64_to_bytes(numeric_value_with_leading), u64_to_bytes(numeric_value));
+    assert_eq!(
+        u64_to_bytes(numeric_value_with_leading),
+        u64_to_bytes(numeric_value)
+    );
 }

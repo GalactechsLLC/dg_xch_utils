@@ -56,10 +56,14 @@ impl<'a> Simulator<'a> {
     pub fn constants(&self) -> &ConsensusConstants {
         &self.network
     }
-    pub async fn get_user(&self, name: &str,) -> Option<Arc<ChainUser<'a>>> {
+    pub async fn get_user(&self, name: &str) -> Option<Arc<ChainUser<'a>>> {
         self.users.lock().await.get(name).cloned()
     }
-    pub async fn new_user(&'a self, name: &str, menmonic: Option<String>) -> Result<Arc<ChainUser<'a>>, Error> {
+    pub async fn new_user(
+        &'a self,
+        name: &str,
+        menmonic: Option<String>,
+    ) -> Result<Arc<ChainUser<'a>>, Error> {
         let mut map_lock = self.users.lock().await;
         if map_lock.contains_key(name) {
             return Err(Error::new(ErrorKind::AlreadyExists, "User already exists"));
@@ -113,12 +117,14 @@ impl<'a> Simulator<'a> {
         self.client
             .farm_blocks(address, blocks, transaction_block)
             .await
+            .map_err(Into::into)
             .map(|_| ())
     }
     pub async fn is_auto_farming(&self) -> Result<bool, Error> {
         self.client
             .get_auto_farming()
             .await
+            .map_err(Into::into)
             .map(|r| r.auto_farm_enabled)
     }
     pub async fn run(&self, block_interval: Option<Duration>) -> Result<(), Error> {

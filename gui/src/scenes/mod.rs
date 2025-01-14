@@ -1,13 +1,13 @@
-use eframe::egui;
 use crate::app::DgXchGui;
+use eframe::egui;
 
-pub mod wallet;
 pub mod config;
-pub mod fullnode;
 pub mod farmer;
+pub mod fullnode;
 pub mod fullnode_overview;
-mod wallet_overview;
+pub mod wallet;
 mod wallet_import_mnemonic;
+mod wallet_overview;
 mod wallet_transactions;
 
 pub trait Scene {

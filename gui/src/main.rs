@@ -1,21 +1,24 @@
-use std::env;
-use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use log::LevelFilter;
-use simple_logger::SimpleLogger;
 use crate::app::DgXchGui;
 use crate::config::Config;
+use log::LevelFilter;
+use simple_logger::SimpleLogger;
+use std::env;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 mod app;
-mod state;
-mod scenes;
 mod components;
 mod config;
+mod scenes;
+mod state;
 
 #[tokio::main]
 async fn main() -> eframe::Result {
-    SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
+    SimpleLogger::new()
+        .with_level(LevelFilter::Info)
+        .init()
+        .unwrap();
     let options = eframe::NativeOptions::default();
     let config_path_str = env::var("DG_CONFIG").unwrap_or_else(|_| "config.yaml".into());
     let config_path = Path::new(&config_path_str);

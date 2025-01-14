@@ -102,6 +102,19 @@ pub struct ChiaRpcError {
     pub success: bool,
 }
 
+impl From<ChiaRpcError> for Error {
+    fn from(error: ChiaRpcError) -> Self {
+        Error::new(
+            ErrorKind::Other,
+            format!(
+                "Success: {}, Message: {}",
+                error.success,
+                error.error.unwrap_or_default()
+            ),
+        )
+    }
+}
+
 pub async fn post<T, S: std::hash::BuildHasher>(
     client: &Client,
     url: &str,

@@ -43,7 +43,8 @@ lazy_static! {
 
 #[tokio::test]
 pub async fn test_calculate_synthetic_offset() {
-    let key = Bytes48::from("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb");
+    use std::str::FromStr;
+    let key = Bytes48::from_str("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap();
     let result = calculate_synthetic_offset(key, *DEFAULT_HIDDEN_PUZZLE_HASH);
     assert_eq!(
         "19134605735515143581103004370522950503760660832695882105316807119860397047163",
@@ -139,9 +140,11 @@ pub fn puzzle_hash_for_pk(public_key: Bytes48) -> Result<Bytes32, Error> {
 
 #[tokio::test]
 pub async fn test_puzzle_hash_for_pk() {
-    let key = Bytes48::from("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb");
+    use std::str::FromStr;
+    let key = Bytes48::from_str("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap();
     let expected_puzzlehash =
-        Bytes32::from("48068eb6150f738fe90a001c562f0c4b769b7d64a59915aa8c0886b978e38137");
+        Bytes32::from_str("48068eb6150f738fe90a001c562f0c4b769b7d64a59915aa8c0886b978e38137")
+            .unwrap();
     let result = puzzle_hash_for_pk(key).unwrap();
     assert_eq!(expected_puzzlehash, result);
 }

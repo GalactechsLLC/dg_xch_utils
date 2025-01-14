@@ -1,21 +1,19 @@
-
 #[cfg(test)]
 mod tests {
-    use std::io::ErrorKind;
-    use std::vec;
-    use num_bigint::BigInt;
     use dg_xch_core::blockchain::coin::Coin;
-    use dg_xch_core::blockchain::coin_spend::{CoinSpend, compute_additions_with_cost};
+    use dg_xch_core::blockchain::coin_spend::{compute_additions_with_cost, CoinSpend};
     use dg_xch_core::blockchain::sized_bytes::Bytes32;
     use dg_xch_core::clvm::assemble::assemble_text;
     use dg_xch_core::clvm::program::{Program, SerializedProgram};
-
+    use num_bigint::BigInt;
+    use std::io::ErrorKind;
+    use std::vec;
 
     #[test]
     fn test_compute_additions_with_cost_success() {
         let puzzle_reveal = assemble_text("(c (c (q . 51) (c 2 (q 1))) ())").unwrap();
         let puzzle_reveal_hash = puzzle_reveal.to_program().tree_hash();
-        
+
         let coin = Coin {
             parent_coin_info: Bytes32::default(),
             puzzle_hash: puzzle_reveal_hash,

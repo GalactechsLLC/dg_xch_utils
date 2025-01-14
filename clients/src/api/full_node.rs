@@ -81,23 +81,23 @@ pub trait FullnodeAPI {
     async fn get_coin_records_by_names(
         &self,
         names: &[Bytes32],
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, ChiaRpcError>;
     async fn get_coin_records_by_parent_ids(
         &self,
         parent_ids: &[Bytes32],
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, ChiaRpcError>;
     async fn get_coin_records_by_hint(
         &self,
         hint: &Bytes32,
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, ChiaRpcError>;
     async fn push_tx(&self, spend_bundle: &SpendBundle) -> Result<TXStatus, ChiaRpcError>;
     async fn get_puzzle_and_solution(

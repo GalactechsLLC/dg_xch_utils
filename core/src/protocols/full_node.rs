@@ -269,7 +269,7 @@ pub struct CoinRecordByNameRequest {
 
 #[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct CoinRecordByNamesRequest {
-    pub names: Vec<String>,
+    pub names: Vec<Bytes32>,
     pub include_spent_coins: Option<bool>,
     pub start_height: Option<u32>,
     pub end_height: Option<u32>,

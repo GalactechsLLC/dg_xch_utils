@@ -1,13 +1,12 @@
-use std::io::Error;
 use crate::app::DgXchGui;
 use crate::scenes::Scene;
 use crate::state::WalletState;
-use eframe::{egui, Frame};
-use eframe::egui::Context;
-use std::sync::Arc;
 use arboard::Clipboard;
 use blst::min_pk::SecretKey;
 use dg_xch_keys::{key_from_mnemonic_str, master_sk_to_wallet_sk};
+use eframe::egui::Context;
+use eframe::{egui, Frame};
+use std::sync::Arc;
 
 pub struct WalletImportMnemonicScene {
     mnemonic_words: Vec<String>,
@@ -34,10 +33,7 @@ impl WalletImportMnemonicScene {
             .collect();
 
         if words.len() != 12 && words.len() != 24 {
-            self.error_message = Some(format!(
-                "Expected 12 or 24 words, but got {}",
-                words.len()
-            ));
+            self.error_message = Some(format!("Expected 12 or 24 words, but got {}", words.len()));
             return;
         }
 
@@ -78,7 +74,8 @@ impl Scene for WalletImportMnemonicScene {
 
             // Adjust the mnemonic_words vector to match the selected length
             if self.mnemonic_words.len() != self.mnemonic_length {
-                self.mnemonic_words.resize(self.mnemonic_length, String::new());
+                self.mnemonic_words
+                    .resize(self.mnemonic_length, String::new());
             }
 
             ui.add_space(10.0);
@@ -91,7 +88,8 @@ impl Scene for WalletImportMnemonicScene {
                             self.handle_paste(&pasted_text);
                         }
                         Err(err) => {
-                            self.error_message = Some(format!("Failed to read clipboard content: {}", err));
+                            self.error_message =
+                                Some(format!("Failed to read clipboard content: {}", err));
                         }
                     },
                     Err(err) => {
@@ -133,12 +131,14 @@ impl Scene for WalletImportMnemonicScene {
             } else if let Some(ref message) = self.success_message {
                 ui.colored_label(egui::Color32::GREEN, message);
             }
-
         });
     }
 }
 
-fn import_wallet_with_mnemonic(gui: &mut DgXchGui, mnemonic_vec: &Vec<String>) -> Result<(SecretKey, SecretKey), String> {
+fn import_wallet_with_mnemonic(
+    _gui: &mut DgXchGui,
+    mnemonic_vec: &[String],
+) -> Result<(SecretKey, SecretKey), String> {
     let word_count = mnemonic_vec.len();
 
     if word_count != 12 && word_count != 24 {
@@ -150,22 +150,16 @@ fn import_wallet_with_mnemonic(gui: &mut DgXchGui, mnemonic_vec: &Vec<String>) -
 
     let mnemonic_str = mnemonic_vec.join(" ");
     let mut master_sk = SecretKey::default();
-    let mut wallet_sk= SecretKey::default();
-    
-    match key_from_mnemonic_str(&mnemonic_str) {
-        Ok(sk) => {
-            master_sk = sk;
-        }
-        Err(_) => {}
+    let mut wallet_sk = SecretKey::default();
+
+    if let Ok(sk) = key_from_mnemonic_str(&mnemonic_str) {
+        master_sk = sk;
     }
 
-    match master_sk_to_wallet_sk(&master_sk, 0) {
-        Ok(sk) => {
-            wallet_sk = sk;
-        }
-        Err(_) => {}
+    if let Ok(sk) = master_sk_to_wallet_sk(&master_sk, 0) {
+        wallet_sk = sk;
     }
-    
+
     //should return memory wallet?
     Ok((master_sk, wallet_sk))
 }

@@ -1,17 +1,17 @@
-use blst::min_pk::{AggregatePublicKey, SecretKey};
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::clvm::program::{Program, SerializedProgram};
 use crate::clvm::sexp::IntoSExp;
 use crate::constants::NULL_SEXP;
 use crate::curry_and_treehash::{calculate_hash_of_quoted_mod_hash, curry_and_treehash};
 use crate::formatting::hex_to_bytes;
+use crate::puzzles::p2_conditions::puzzle_for_conditions;
 use crate::traits::SizedBytes;
 use crate::utils::hash_256;
+use blst::min_pk::{AggregatePublicKey, SecretKey};
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use num_integer::Integer;
 use std::io::{Error, ErrorKind};
-use crate::puzzles::p2_conditions::puzzle_for_conditions;
 
 const P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE_HEX: &str = "ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080";
 
@@ -43,7 +43,8 @@ lazy_static! {
 
 #[tokio::test]
 pub async fn test_calculate_synthetic_offset() {
-    let key = Bytes48::from("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb");
+    use std::str::FromStr;
+    let key = Bytes48::from_str("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap();
     let result = calculate_synthetic_offset(key, *DEFAULT_HIDDEN_PUZZLE_HASH);
     assert_eq!(
         "19134605735515143581103004370522950503760660832695882105316807119860397047163",
@@ -139,9 +140,11 @@ pub fn puzzle_hash_for_pk(public_key: Bytes48) -> Result<Bytes32, Error> {
 
 #[tokio::test]
 pub async fn test_puzzle_hash_for_pk() {
-    let key = Bytes48::from("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb");
+    use std::str::FromStr;
+    let key = Bytes48::from_str("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap();
     let expected_puzzlehash =
-        Bytes32::from("48068eb6150f738fe90a001c562f0c4b769b7d64a59915aa8c0886b978e38137");
+        Bytes32::from_str("48068eb6150f738fe90a001c562f0c4b769b7d64a59915aa8c0886b978e38137")
+            .unwrap();
     let result = puzzle_hash_for_pk(key).unwrap();
     assert_eq!(expected_puzzlehash, result);
 }

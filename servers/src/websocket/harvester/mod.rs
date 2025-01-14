@@ -47,6 +47,7 @@ impl HarvesterServer {
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::Handshake),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(HandshakeHandle { config }),
             )),

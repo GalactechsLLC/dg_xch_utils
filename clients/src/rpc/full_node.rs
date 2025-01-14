@@ -382,18 +382,30 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_coin_records_by_names(
         &self,
         names: &[Bytes32],
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("names".to_string(), json!(names));
-        request_body.insert(
-            "include_spent_coins".to_string(),
-            json!(include_spent_coins),
-        );
-        request_body.insert("start_height".to_string(), json!(start_height));
-        request_body.insert("end_height".to_string(), json!(end_height));
+        if let Some(v) = include_spent_coins {
+            request_body.insert(
+                "include_spent_coins".to_string(),
+                json!(v),
+            );
+        }
+        if let Some(v) = start_height {
+            request_body.insert(
+                "start_height".to_string(),
+                json!(v),
+            );
+        }
+        if let Some(v) = end_height {
+            request_body.insert(
+                "end_height".to_string(),
+                json!(v),
+            );
+        }
         Ok(post::<CoinRecordAryResp, RandomState>(
             &self.client,
             &(self.url_function)(self.host.as_str(), self.port, "get_coin_records_by_names"),
@@ -406,9 +418,9 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_coin_records_by_parent_ids(
         &self,
         parent_ids: &[Bytes32],
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
         //todo make options
         let mut request_body = Map::new();
@@ -435,9 +447,9 @@ impl FullnodeAPI for FullnodeClient {
     async fn get_coin_records_by_hint(
         &self,
         hint: &Bytes32,
-        include_spent_coins: bool,
-        start_height: u32,
-        end_height: u32,
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
     ) -> Result<Vec<CoinRecord>, ChiaRpcError> {
         //todo make options
         let mut request_body = Map::new();

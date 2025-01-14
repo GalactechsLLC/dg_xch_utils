@@ -1,10 +1,10 @@
-use std::sync::Arc;
-use eframe::egui;
-use eframe::egui::{Context, Ui};
 use crate::app::DgXchGui;
 use crate::scenes::Scene;
 use crate::state::WalletState;
-use egui_plot::{Line, Plot, PlotPoints, BarChart, Bar, Legend};
+use eframe::egui;
+use eframe::egui::Context;
+use egui_plot::{Bar, BarChart, Legend, Line, Plot, PlotPoints};
+use std::sync::Arc;
 pub struct WalletOverviewScene {
     wallet_state: Arc<WalletState>,
 }
@@ -20,16 +20,13 @@ impl Scene for WalletOverviewScene {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Wallet Overview");
             ui.separator();
-            
+
             let (confirmed_balance, unconfirmed_balance) = if let Some(ref wal) = gui.wallet {
-                (
-                    wal.confirmed_balance.clone(),
-                    wal.unconfirmed_balance.clone(),
-                )
+                (wal.confirmed_balance, wal.unconfirmed_balance)
             } else {
                 (0, 0)
             };
-    
+
             ui.label(format!(
                 "Confirmed Balance: {:.12} XCH",
                 confirmed_balance as f64 / 1_000_000_000_000.0
@@ -47,9 +44,12 @@ impl Scene for WalletOverviewScene {
             ui.add_space(20.0);
 
             if balance_history.len() >= 2 {
-                let line_points: PlotPoints = balance_history.iter().map(|(block_height, balance)| {
-                    [*block_height as f64, *balance as f64 / 1_000_000_000_000.0]
-                }).collect();
+                let line_points: PlotPoints = balance_history
+                    .iter()
+                    .map(|(block_height, balance)| {
+                        [*block_height as f64, *balance as f64 / 1_000_000_000_000.0]
+                    })
+                    .collect();
 
                 let line = Line::new(line_points).name("Total Balance");
 
@@ -62,14 +62,12 @@ impl Scene for WalletOverviewScene {
                     });
 
                 let gain_loss_bars: Vec<Bar> = balance_history
-                    .into_iter().map(|window| {
-                        let (prev_height, prev_balance) = window;
+                    .into_iter()
+                    .map(|window| {
+                        let (_prev_height, prev_balance) = window;
                         let (curr_height, curr_balance) = window;
                         let delta = curr_balance - prev_balance;
-                        Bar::new(
-                            curr_height as f64,
-                            delta as f64 / 1_000_000_000_000.0,
-                        )
+                        Bar::new(curr_height as f64, delta as f64 / 1_000_000_000_000.0)
                     })
                     .collect();
 

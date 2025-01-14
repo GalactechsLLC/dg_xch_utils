@@ -1,8 +1,8 @@
-use eframe::egui;
 use crate::app::DgXchGui;
-use crate::scenes::Scene;
-use std::path::Path;
 use crate::config::Config;
+use crate::scenes::Scene;
+use eframe::egui;
+use std::path::Path;
 
 pub struct ConfigScene {
     last_message: Option<String>,
@@ -42,11 +42,15 @@ impl Scene for ConfigScene {
                 });
                 ui.horizontal(|ui| {
                     ui.label("WS Port:");
-                    ui.add(egui::DragValue::new(&mut gui.config.full_node_config.full_node_ws_port));
+                    ui.add(egui::DragValue::new(
+                        &mut gui.config.full_node_config.full_node_ws_port,
+                    ));
                 });
                 ui.horizontal(|ui| {
                     ui.label("RPC Port:");
-                    ui.add(egui::DragValue::new(&mut gui.config.full_node_config.full_node_rpc_port));
+                    ui.add(egui::DragValue::new(
+                        &mut gui.config.full_node_config.full_node_rpc_port,
+                    ));
                 });
                 ui.horizontal(|ui| {
                     ui.label("SSL:");
@@ -55,10 +59,8 @@ impl Scene for ConfigScene {
                         if ui.button("Clear SSL").clicked() {
                             gui.config.full_node_config.full_node_ssl = None;
                         }
-                    } else {
-                        if ui.button("Set SSL").clicked() {
-                            gui.config.full_node_config.full_node_ssl = Some(String::new());
-                        }
+                    } else if ui.button("Set SSL").clicked() {
+                        gui.config.full_node_config.full_node_ssl = Some(String::new());
                     }
                 });
             });
@@ -72,7 +74,9 @@ impl Scene for ConfigScene {
                 });
                 ui.horizontal(|ui| {
                     ui.label("RPC Port:");
-                    ui.add(egui::DragValue::new(&mut gui.config.wallet_config.full_node_rpc_port));
+                    ui.add(egui::DragValue::new(
+                        &mut gui.config.wallet_config.full_node_rpc_port,
+                    ));
                 });
                 ui.horizontal(|ui| {
                     ui.label("SSL:");
@@ -81,10 +85,8 @@ impl Scene for ConfigScene {
                         if ui.button("Clear SSL").clicked() {
                             gui.config.wallet_config.full_node_ssl = None;
                         }
-                    } else {
-                        if ui.button("Set SSL").clicked() {
-                            gui.config.wallet_config.full_node_ssl = Some(String::new());
-                        }
+                    } else if ui.button("Set SSL").clicked() {
+                        gui.config.wallet_config.full_node_ssl = Some(String::new());
                     }
                 });
             });
@@ -98,7 +100,9 @@ impl Scene for ConfigScene {
                 });
                 ui.horizontal(|ui| {
                     ui.label("RPC Port:");
-                    ui.add(egui::DragValue::new(&mut gui.config.simulator_config.full_node_rpc_port));
+                    ui.add(egui::DragValue::new(
+                        &mut gui.config.simulator_config.full_node_rpc_port,
+                    ));
                 });
             });
 
@@ -111,7 +115,9 @@ impl Scene for ConfigScene {
                 });
                 ui.horizontal(|ui| {
                     ui.label("RPC Port:");
-                    ui.add(egui::DragValue::new(&mut gui.config.farmer_config.full_node_rpc_port));
+                    ui.add(egui::DragValue::new(
+                        &mut gui.config.farmer_config.full_node_rpc_port,
+                    ));
                 });
                 ui.horizontal(|ui| {
                     ui.label("SSL:");
@@ -120,10 +126,8 @@ impl Scene for ConfigScene {
                         if ui.button("Clear SSL").clicked() {
                             gui.config.farmer_config.full_node_ssl = None;
                         }
-                    } else {
-                        if ui.button("Set SSL").clicked() {
-                            gui.config.farmer_config.full_node_ssl = Some(String::new());
-                        }
+                    } else if ui.button("Set SSL").clicked() {
+                        gui.config.farmer_config.full_node_ssl = Some(String::new());
                     }
                 });
             });

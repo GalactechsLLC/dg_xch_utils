@@ -1,6 +1,6 @@
-use eframe::egui;
 use crate::app::DgXchGui;
 use crate::scenes::Scene;
+use eframe::egui;
 
 pub struct FarmerScene {}
 impl FarmerScene {
@@ -18,6 +18,5 @@ impl Scene for FarmerScene {
                 ui.add_space(20.0);
             });
         });
-
     }
 }

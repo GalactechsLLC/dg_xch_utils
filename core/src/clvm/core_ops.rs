@@ -1,8 +1,8 @@
+use crate::clvm::dialect::Dialect;
 use crate::clvm::sexp::SExp;
 use crate::clvm::utils::{atom, check_arg_count};
 use crate::constants::{NULL_SEXP, ONE_SEXP};
 use std::io::{Error, ErrorKind};
-use crate::clvm::dialect::Dialect;
 
 const FIRST_COST: u64 = 30;
 const IF_COST: u64 = 33;
@@ -24,23 +24,39 @@ pub fn op_if<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u
     Ok((IF_COST, chosen_node.split()?.0.clone()))
 }
 
-pub fn op_cons<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
+pub fn op_cons<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
     check_arg_count(args, 2, "c")?;
     let (first, rest) = args.split()?;
     Ok((CONS_COST, SExp::Pair((first, rest.split()?.0).into())))
 }
 
-pub fn op_first<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
+pub fn op_first<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
     check_arg_count(args, 1, "f")?;
     Ok((FIRST_COST, args.split()?.0.split()?.0.clone()))
 }
 
-pub fn op_rest<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
+pub fn op_rest<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
     check_arg_count(args, 1, "r")?;
     Ok((REST_COST, args.split()?.0.split()?.1.clone()))
 }
 
-pub fn op_listp<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
+pub fn op_listp<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
     check_arg_count(args, 1, "l")?;
     match args.first()?.pair() {
         Ok(_) => Ok((LISTP_COST, ONE_SEXP.clone())),
@@ -48,7 +64,11 @@ pub fn op_listp<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result
     }
 }
 
-pub fn op_raise<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
+pub fn op_raise<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
     match args {
         SExp::Atom(atom) => Err(Error::new(
             ErrorKind::Other,

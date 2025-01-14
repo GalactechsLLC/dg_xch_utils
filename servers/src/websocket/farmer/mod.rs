@@ -92,6 +92,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                     Arc::new(ChiaMessageFilter {
                         msg_type: Some(ProtocolMessageTypes::Handshake),
                         id: None,
+                        custom_fn: None,
                     }),
                     Arc::new(HandshakeHandle {
                         config: config.clone(),
@@ -106,6 +107,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                     Arc::new(ChiaMessageFilter {
                         msg_type: Some(ProtocolMessageTypes::NewProofOfSpace),
                         id: None,
+                        custom_fn: None,
                     }),
                     Arc::new(NewProofOfSpaceHandle {
                         pool_client,
@@ -131,6 +133,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                     Arc::new(ChiaMessageFilter {
                         msg_type: Some(ProtocolMessageTypes::RespondSignatures),
                         id: None,
+                        custom_fn: None,
                     }),
                     Arc::new(RespondSignaturesHandle {
                         signage_points: shared_state.signage_points.clone(),
