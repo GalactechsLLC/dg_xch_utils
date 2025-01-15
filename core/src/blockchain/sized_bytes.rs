@@ -13,6 +13,7 @@ use rand::{Fill, Rng};
 use secrets::traits::Bytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::cmp::min;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::ops::{Index, IndexMut, Range};
 use std::str::FromStr;
@@ -123,6 +124,13 @@ impl<const SIZE: usize> From<SizedBytesImpl<SIZE>> for Vec<u8> {
 }
 impl<const SIZE: usize> From<[u8; SIZE]> for SizedBytesImpl<SIZE> {
     fn from(bytes: [u8; SIZE]) -> SizedBytesImpl<SIZE> {
+        SizedBytesImpl { bytes }
+    }
+}
+impl<const SIZE: usize> From<Vec<u8>> for SizedBytesImpl<SIZE> {
+    fn from(vec: Vec<u8>) -> SizedBytesImpl<SIZE> {
+        let mut bytes = [0; SIZE];
+        bytes[0..min(SIZE, vec.len())].copy_from_slice(&vec[0..min(SIZE, vec.len())]);
         SizedBytesImpl { bytes }
     }
 }

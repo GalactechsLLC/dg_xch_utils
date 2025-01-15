@@ -24,9 +24,6 @@ pub struct WalletScene {
 impl WalletScene {
     pub fn new(_gui: &DgXchGui) -> Self {
         let shared_state = Arc::new(WalletState::default());
-        // let background_state = shared_state.clone();
-        // let client = gui.state.wallet_client.clone();
-        // let shutdown_signal = gui.state.shutdown_signal.clone();
         WalletScene {
             shared_state,
             tabs: [

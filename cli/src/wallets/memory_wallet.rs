@@ -3,18 +3,18 @@ use crate::wallets::{SecretKeyStore, Wallet, WalletInfo, WalletStore};
 use async_trait::async_trait;
 use blst::min_pk::SecretKey;
 use dashmap::DashMap;
-use dg_xch_clients::api::full_node::{FullnodeAPI, FullnodeExtAPI};
+use dg_xch_clients::api::full_node::FullnodeAPI;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
-use dg_xch_core::blockchain::coin_record::{CatCoinRecord, CatVersion, CoinRecord};
+use dg_xch_core::blockchain::coin_record::{CatCoinRecord, CoinRecord};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::wallet_type::{AmountWithPuzzleHash, WalletType};
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
-use dg_xch_core::clvm::sexp::IntoSExp;
+// use dg_xch_core::clvm::sexp::IntoSExp;
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use dg_xch_puzzles::cats::{CAT_1_PROGRAM, CAT_2_PROGRAM};
+// use dg_xch_puzzles::cats::{CAT_1_PROGRAM, CAT_2_PROGRAM};
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     calculate_synthetic_secret_key, DEFAULT_HIDDEN_PUZZLE_HASH,
 };
@@ -165,12 +165,11 @@ pub struct MemoryWallet {
     pub fullnode_client: FullnodeClient,
 }
 impl MemoryWallet {
-    #[must_use]
     pub fn new(
         master_secret_key: SecretKey,
         client: &FullnodeClient,
         constants: Arc<ConsensusConstants>,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         Self::create(
             WalletInfo {
                 id: 1,
@@ -192,28 +191,34 @@ impl MemoryWallet {
 }
 #[async_trait]
 impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
-    fn create(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Self {
+    fn create(
+        info: WalletInfo<MemoryWalletStore>,
+        config: MemoryWalletConfig,
+    ) -> Result<Self, Error> {
         let fullnode_client = FullnodeClient::new(
             &config.fullnode_host.clone(),
             config.fullnode_port,
             60,
             config.fullnode_ssl_path.clone(),
             &config.additional_headers.clone(),
-        );
-        Self {
+        )?;
+        Ok(Self {
             info,
             config,
             fullnode_client,
-        }
+        })
     }
-    fn create_simulator(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Self {
+    fn create_simulator(
+        info: WalletInfo<MemoryWalletStore>,
+        config: MemoryWalletConfig,
+    ) -> Result<Self, Error> {
         let fullnode_client =
-            FullnodeClient::new_simulator(&config.fullnode_host.clone(), config.fullnode_port, 60);
-        Self {
+            FullnodeClient::new_simulator(&config.fullnode_host.clone(), config.fullnode_port, 60)?;
+        Ok(Self {
             info,
             config,
             fullnode_client,
-        }
+        })
     }
 
     fn name(&self) -> &str {
@@ -223,7 +228,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
     #[allow(clippy::cast_possible_wrap)]
     async fn sync(&self) -> Result<bool, Error> {
         let standard_coins_arc = self.wallet_store().lock().await.standard_coins().clone();
-        let cat_coins_arc = self.wallet_store().lock().await.cat_coins().clone();
+        // let cat_coins_arc = self.wallet_store().lock().await.cat_coins().clone();
         let puzzle_hashes = self
             .wallet_store()
             .lock()
@@ -239,55 +244,55 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
             arc_mut.clear();
             arc_mut.extend(standard_coins);
         }
-        let hinted_coins = self
-            .fullnode_client
-            .get_coin_records_by_hints(&puzzle_hashes, Some(true), None, None)
-            .await?;
-        let mut cat_records = vec![];
-        for hinted_coin in hinted_coins {
-            if let Some(parent_coin) = self
-                .fullnode_client
-                .get_coin_record_by_name(&hinted_coin.coin.parent_coin_info)
-                .await?
-            {
-                if let Ok(parent_coin_spend) =
-                    self.fullnode_client.get_coin_spend(&parent_coin).await
-                {
-                    let (cat_program, args) =
-                        parent_coin_spend.puzzle_reveal.to_program().uncurry()?;
-                    let is_cat_v1 = cat_program == *CAT_1_PROGRAM;
-                    let is_cat_v2 = !is_cat_v1 && cat_program == *CAT_2_PROGRAM;
-                    if is_cat_v1 || is_cat_v2 {
-                        let asset_id: Bytes32 = args.rest()?.first()?.try_into()?;
-                        let inner_puzzle: Bytes32 = args.rest()?.rest()?.first()?.try_into()?;
-                        let lineage_proof = Program::to(vec![
-                            parent_coin_spend.coin.parent_coin_info.to_sexp(),
-                            inner_puzzle.to_sexp(),
-                            parent_coin_spend.coin.amount.to_sexp(),
-                        ]);
-                        cat_records.push(CatCoinRecord {
-                            delegate: hinted_coin,
-                            version: if is_cat_v1 {
-                                CatVersion::V1
-                            } else {
-                                CatVersion::V2
-                            },
-                            asset_id,
-                            cat_program,
-                            lineage_proof,
-                            parent_coin_spend,
-                        });
-                    } else {
-                        error!("Error Parsing Coin as CAT: {hinted_coin:?}");
-                    }
-                }
-            }
-        }
-        {
-            let mut arc_mut = cat_coins_arc.lock().await;
-            arc_mut.clear();
-            arc_mut.extend(cat_records);
-        }
+        // let hinted_coins = self
+        //     .fullnode_client
+        //     .get_coin_records_by_hints(&puzzle_hashes, Some(true), None, None)
+        //     .await?;
+        // let mut cat_records = vec![];
+        // for hinted_coin in hinted_coins {
+        //     if let Some(parent_coin) = self
+        //         .fullnode_client
+        //         .get_coin_record_by_name(&hinted_coin.coin.parent_coin_info)
+        //         .await?
+        //     {
+        //         if let Ok(parent_coin_spend) =
+        //             self.fullnode_client.get_coin_spend(&parent_coin).await
+        //         {
+        //             let (cat_program, args) =
+        //                 parent_coin_spend.puzzle_reveal.to_program().uncurry()?;
+        //             let is_cat_v1 = cat_program == *CAT_1_PROGRAM;
+        //             let is_cat_v2 = !is_cat_v1 && cat_program == *CAT_2_PROGRAM;
+        //             if is_cat_v1 || is_cat_v2 {
+        //                 let asset_id: Bytes32 = args.rest()?.first()?.try_into()?;
+        //                 let inner_puzzle: Bytes32 = args.rest()?.rest()?.first()?.try_into()?;
+        //                 let lineage_proof = Program::to(vec![
+        //                     parent_coin_spend.coin.parent_coin_info.to_sexp(),
+        //                     inner_puzzle.to_sexp(),
+        //                     parent_coin_spend.coin.amount.to_sexp(),
+        //                 ]);
+        //                 cat_records.push(CatCoinRecord {
+        //                     delegate: hinted_coin,
+        //                     version: if is_cat_v1 {
+        //                         CatVersion::V1
+        //                     } else {
+        //                         CatVersion::V2
+        //                     },
+        //                     asset_id,
+        //                     cat_program,
+        //                     lineage_proof,
+        //                     parent_coin_spend,
+        //                 });
+        //             } else {
+        //                 error!("Error Parsing Coin as CAT: {hinted_coin:?}");
+        //             }
+        //         }
+        //     }
+        // }
+        // {
+        //     let mut arc_mut = cat_coins_arc.lock().await;
+        //     arc_mut.clear();
+        //     arc_mut.extend(cat_records);
+        // }
         Ok(true)
     }
 
@@ -309,24 +314,32 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
     #[allow(clippy::cast_sign_loss)]
     async fn create_spend_bundle(
         &self,
-        payments: &[AmountWithPuzzleHash],
+        mut payments: Vec<AmountWithPuzzleHash>,
         input_coins: &[CoinRecord],
         change_puzzle_hash: Option<Bytes32>,
         allow_excess: bool,
         fee: i64,
-        surplus: i64,
         origin_id: Option<Bytes32>,
         solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
     ) -> Result<SpendBundle, Error> {
         let mut coins = input_coins.to_vec();
         let total_coin_value: u64 = coins.iter().map(|c| c.coin.amount).sum();
         let total_payment_value: u64 = payments.iter().map(|p| p.amount).sum();
-        let change = total_coin_value as i64 - total_payment_value as i64 - fee - surplus;
+        let change = total_coin_value as i64 - total_payment_value as i64 - fee;
         if change_puzzle_hash.is_none() && change > 0 && !allow_excess {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 "Found change but not Change Puzzle Hash was provided.",
             ));
+        }
+        if let Some(change_puzzle_hash) = change_puzzle_hash {
+            if change > 0 {
+                payments.push(AmountWithPuzzleHash {
+                    puzzle_hash: change_puzzle_hash,
+                    amount: change as u64,
+                    memos: vec![],
+                })
+            }
         }
         let mut spends = vec![];
         let origin_index = match origin_id {
@@ -354,7 +367,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
         }
         for coin in &coins {
             let mut solution =
-                self.make_solution(payments, 0, None, None, None, None, fee as u64)?;
+                self.make_solution(&payments, 0, None, None, None, None, fee as u64)?;
             if let Some(solution_transformer) = &solution_transformer {
                 solution = solution_transformer(solution)
             }

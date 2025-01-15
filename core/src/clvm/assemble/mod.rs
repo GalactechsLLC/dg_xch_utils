@@ -131,14 +131,14 @@ pub fn handle_quote(token: &[u8]) -> Option<SExp> {
     }
 }
 
-pub fn handle_hex(bytes: &[u8]) -> Result<Option<SExp>, Error> {
-    if is_hex(bytes) {
-        let mut bytes = if bytes.len() % 2 > 0 {
+pub fn handle_hex(token: &[u8]) -> Result<Option<SExp>, Error> {
+    if is_hex(token) {
+        let mut bytes = if token.len() % 2 > 0 {
             vec![b'0']
         } else {
             vec![]
         };
-        bytes.extend(bytes[2..].to_vec());
+        bytes.extend(token[2..].to_vec());
         let as_hex = String::from_utf8(bytes).map_err(|e| {
             Error::new(ErrorKind::InvalidInput, format!("Invalid Hex Value: {e:?}"))
         })?;

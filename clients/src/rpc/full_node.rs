@@ -27,10 +27,12 @@ use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::blockchain::unfinished_header_block::UnfinishedHeaderBlock;
 use dg_xch_core::protocols::full_node::BlockCountMetrics;
 use dg_xch_core::protocols::full_node::FeeEstimate;
+use log::error;
 use reqwest::Client;
 use serde_json::{json, Map};
 use std::collections::HashMap;
 use std::hash::RandomState;
+use std::io::Error;
 use std::sync::Arc;
 
 pub type UrlFunction = Arc<dyn Fn(&str, u16, &str) -> String + Send + Sync + 'static>;
@@ -52,25 +54,25 @@ impl FullnodeClient {
         timeout: u64,
         ssl_path: Option<ClientSSLConfig>,
         additional_headers: &Option<HashMap<String, String>>,
-    ) -> Self {
-        FullnodeClient {
-            client: get_client(&ssl_path, timeout).unwrap(),
+    ) -> Result<Self, Error> {
+        Ok(FullnodeClient {
+            client: get_client(&ssl_path, timeout)?,
             host: host.to_string(),
             port,
             ssl_path,
             additional_headers: additional_headers.clone(),
             url_function: Arc::new(get_url),
-        }
+        })
     }
-    pub fn new_simulator(host: &str, port: u16, timeout: u64) -> Self {
-        FullnodeClient {
-            client: get_http_client(timeout).unwrap(),
+    pub fn new_simulator(host: &str, port: u16, timeout: u64) -> Result<Self, Error> {
+        Ok(FullnodeClient {
+            client: get_http_client(timeout)?,
             host: host.to_string(),
             port,
             ssl_path: None,
             additional_headers: None,
             url_function: Arc::new(get_insecure_url),
-        }
+        })
     }
 }
 
@@ -389,22 +391,13 @@ impl FullnodeAPI for FullnodeClient {
         let mut request_body = Map::new();
         request_body.insert("names".to_string(), json!(names));
         if let Some(v) = include_spent_coins {
-            request_body.insert(
-                "include_spent_coins".to_string(),
-                json!(v),
-            );
+            request_body.insert("include_spent_coins".to_string(), json!(v));
         }
         if let Some(v) = start_height {
-            request_body.insert(
-                "start_height".to_string(),
-                json!(v),
-            );
+            request_body.insert("start_height".to_string(), json!(v));
         }
         if let Some(v) = end_height {
-            request_body.insert(
-                "end_height".to_string(),
-                json!(v),
-            );
+            request_body.insert("end_height".to_string(), json!(v));
         }
         Ok(post::<CoinRecordAryResp, RandomState>(
             &self.client,
@@ -470,16 +463,31 @@ impl FullnodeAPI for FullnodeClient {
         .coin_records)
     }
     async fn push_tx(&self, spend_bundle: &SpendBundle) -> Result<TXStatus, ChiaRpcError> {
+        let mut retries = 0;
         let mut request_body = Map::new();
         request_body.insert("spend_bundle".to_string(), json!(spend_bundle));
-        Ok(post::<TXResp, RandomState>(
-            &self.client,
-            &(self.url_function)(self.host.as_str(), self.port, "push_tx"),
-            &request_body,
-            &self.additional_headers,
-        )
-        .await?
-        .status)
+        while retries < 3 {
+            match post::<TXResp, RandomState>(
+                &self.client,
+                &(self.url_function)(self.host.as_str(), self.port, "push_tx"),
+                &request_body,
+                &self.additional_headers,
+            )
+            .await
+            {
+                Ok(v) => {
+                    return Ok(v.status);
+                }
+                Err(e) => {
+                    error!("Failed to Push TX({retries}): {e:?}");
+                    retries += 1;
+                }
+            }
+        }
+        Err(ChiaRpcError {
+            error: Some("Failed to push TX After 3 Tries".to_string()),
+            success: false,
+        })
     }
     async fn get_puzzle_and_solution(
         &self,
@@ -577,25 +585,6 @@ impl FullnodeAPI for FullnodeClient {
 
 #[async_trait]
 impl FullnodeExtAPI for FullnodeClient {
-    async fn get_singleton_by_launcher_id(
-        &self,
-        launcher_id: &Bytes32,
-    ) -> Result<(CoinRecord, CoinSpend), ChiaRpcError> {
-        let mut request_body = Map::new();
-        request_body.insert("launcher_id".to_string(), json!(launcher_id));
-        let resp = post::<SingletonByLauncherIdResp, RandomState>(
-            &self.client,
-            &(self.url_function)(
-                self.host.as_str(),
-                self.port,
-                "get_singleton_by_launcher_id",
-            ),
-            &request_body,
-            &self.additional_headers,
-        )
-        .await?;
-        Ok((resp.coin_record, resp.parent_spend))
-    }
     async fn get_additions_and_removals_with_hints(
         &self,
         header_hash: &Bytes32,
@@ -614,6 +603,25 @@ impl FullnodeExtAPI for FullnodeClient {
         )
         .await?;
         Ok((resp.additions, resp.removals))
+    }
+    async fn get_singleton_by_launcher_id(
+        &self,
+        launcher_id: &Bytes32,
+    ) -> Result<(CoinRecord, CoinSpend), ChiaRpcError> {
+        let mut request_body = Map::new();
+        request_body.insert("launcher_id".to_string(), json!(launcher_id));
+        let resp = post::<SingletonByLauncherIdResp, RandomState>(
+            &self.client,
+            &(self.url_function)(
+                self.host.as_str(),
+                self.port,
+                "get_singleton_by_launcher_id",
+            ),
+            &request_body,
+            &self.additional_headers,
+        )
+        .await?;
+        Ok((resp.coin_record, resp.parent_spend))
     }
 
     async fn get_coin_records_by_hints(

@@ -72,7 +72,7 @@ pub async fn run_cli() -> Result<(), Error> {
     };
     match cli.action {
         RootCommands::PrintPlottingInfo { launcher_id } => {
-            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
+            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None)?);
             let master_key = key_from_mnemonic(&prompt_for_mnemonic()?)?;
             let mut page = 0;
             let mut plotnfts = vec![];
@@ -144,7 +144,7 @@ pub async fn run_cli() -> Result<(), Error> {
             info!("}}");
         }
         RootCommands::GetBlockchainState => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_blockchain_state().await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -156,7 +156,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetBlock { header_hash } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_block(&header_hash).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -168,7 +168,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetBlockCountMetrics => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_block_count_metrics().await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -185,7 +185,7 @@ pub async fn run_cli() -> Result<(), Error> {
             exclude_header_hash,
             exclude_reorged,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_blocks(start, end, exclude_header_hash, exclude_reorged)
                 .await?;
@@ -199,7 +199,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetAllBlocks { start, end } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_all_blocks(start, end).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -211,7 +211,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetBlockRecord { header_hash } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_block_record(&header_hash).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -223,7 +223,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetBlockRecordByHeight { height } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_block_record_by_height(height).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -235,7 +235,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetBlockRecords { start, end } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_block_records(start, end).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -247,7 +247,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetUnfinishedBlocks => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_unfinished_block_headers().await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -262,7 +262,7 @@ pub async fn run_cli() -> Result<(), Error> {
             older_block_header_hash,
             newer_block_header_hash,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_network_space(&older_block_header_hash, &newer_block_header_hash)
                 .await?;
@@ -276,7 +276,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetNetworkSpaceaByHeight { start, end } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_network_space_by_height(start, end).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -288,7 +288,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetAdditionsAndRemovals { header_hash } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_additions_and_removals(&header_hash).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -300,7 +300,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetInitialFreezePeriod => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_initial_freeze_period().await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -312,7 +312,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetNetworkInfo => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_network_info().await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -327,7 +327,7 @@ pub async fn run_cli() -> Result<(), Error> {
             sp_hash,
             challenge_hash,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_recent_signage_point_or_eos(sp_hash.as_ref(), challenge_hash.as_ref())
                 .await?;
@@ -346,7 +346,7 @@ pub async fn run_cli() -> Result<(), Error> {
             start_height,
             end_height,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_coin_records_by_puzzle_hashes(
                     &puzzle_hashes,
@@ -365,7 +365,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetCoinRecordByName { name } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_coin_record_by_name(&name).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -382,9 +382,14 @@ pub async fn run_cli() -> Result<(), Error> {
             start_height,
             end_height,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
-                .get_coin_records_by_names(&names, include_spent_coins, start_height, end_height)
+                .get_coin_records_by_names(
+                    &names,
+                    Some(include_spent_coins),
+                    Some(start_height),
+                    Some(end_height),
+                )
                 .await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -401,13 +406,13 @@ pub async fn run_cli() -> Result<(), Error> {
             start_height,
             end_height,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_coin_records_by_parent_ids(
                     &parent_ids,
-                    include_spent_coins,
-                    start_height,
-                    end_height,
+                    Some(include_spent_coins),
+                    Some(start_height),
+                    Some(end_height),
                 )
                 .await?;
             match serde_json::to_string_pretty(&results) {
@@ -425,9 +430,14 @@ pub async fn run_cli() -> Result<(), Error> {
             start_height,
             end_height,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
-                .get_coin_records_by_hint(&hint, include_spent_coins, start_height, end_height)
+                .get_coin_records_by_hint(
+                    &hint,
+                    Some(include_spent_coins),
+                    Some(start_height),
+                    Some(end_height),
+                )
                 .await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -439,7 +449,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetPuzzleAndSolution { coin_id, height } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_puzzle_and_solution(&coin_id, height).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -451,7 +461,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetCoinSpend { coin_id, height } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_puzzle_and_solution(&coin_id, height).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -463,7 +473,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetAllMempoolTxIds => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_all_mempool_tx_ids().await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -475,7 +485,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetAllMempoolItems => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_all_mempool_items().await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -487,7 +497,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetMempoolItemByTxID { tx_id } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_mempool_item_by_tx_id(&tx_id).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -499,7 +509,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetMempoolItemByName { coin_name } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_mempool_items_by_coin_name(&coin_name).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -516,7 +526,7 @@ pub async fn run_cli() -> Result<(), Error> {
             spend_type,
             target_times,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_fee_estimate(
                     cost,
@@ -546,7 +556,7 @@ pub async fn run_cli() -> Result<(), Error> {
         }
         //End Fullnode API, Start of Extended Fullnode API
         RootCommands::GetSingletonByLauncherId { launcher_id } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_singleton_by_launcher_id(&launcher_id).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -558,7 +568,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetAdditionsAndRemovalsWithHints { header_hash } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_additions_and_removals_with_hints(&header_hash)
                 .await?;
@@ -577,7 +587,7 @@ pub async fn run_cli() -> Result<(), Error> {
             start_height,
             end_height,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_coin_records_by_hints(
                     &hints,
@@ -603,7 +613,7 @@ pub async fn run_cli() -> Result<(), Error> {
             page_size,
             last_id,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_coin_records_by_hints_paginated(
                     &hints,
@@ -631,7 +641,7 @@ pub async fn run_cli() -> Result<(), Error> {
             page_size,
             last_id,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_coin_records_by_puzzle_hashes_paginated(
                     &puzzle_hashes,
@@ -652,7 +662,7 @@ pub async fn run_cli() -> Result<(), Error> {
             }
         }
         RootCommands::GetHintsByCoinIds { coin_ids } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client.get_hints_by_coin_ids(&coin_ids).await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -669,7 +679,7 @@ pub async fn run_cli() -> Result<(), Error> {
             start_height,
             end_height,
         } => {
-            let client = FullnodeClient::new(&host, port, timeout, ssl, &None);
+            let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
                 .get_puzzles_and_solutions_by_names(
                     &names,
@@ -695,7 +705,7 @@ pub async fn run_cli() -> Result<(), Error> {
             mnemonic,
             fee,
         } => {
-            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
+            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None)?);
             migrate_plot_nft(
                 client,
                 &target_pool,
@@ -713,8 +723,8 @@ pub async fn run_cli() -> Result<(), Error> {
             target_address,
             owner_key,
         } => {
-            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
-            let owner_key = SecretKey::from_bytes(Bytes32::from_str(owner_key.as_str())?.as_ref())
+            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None)?);
+            let owner_key = SecretKey::from_bytes(Bytes32::from_str(&owner_key)?.as_ref())
                 .expect("Failed to Parse Owner Secret Key");
             migrate_plot_nft_with_owner_key(
                 client,
@@ -726,7 +736,7 @@ pub async fn run_cli() -> Result<(), Error> {
             .await?;
         }
         RootCommands::GetPlotnftState { launcher_id } => {
-            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None));
+            let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None)?);
             get_plotnft_ready_state(client, launcher_id, None)
                 .await
                 .map(|_| ())?;

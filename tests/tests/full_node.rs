@@ -112,7 +112,7 @@ use dg_xch_clients::api::full_node::FullnodeAPI;
 pub async fn get_parent_spend(
     client: &FullnodeClient,
     coin_record: &CoinRecord,
-) -> Result<CoinSpend, Error> {
+) -> Result<CoinSpend, dg_xch_clients::rpc::ChiaRpcError> {
     client
         .get_puzzle_and_solution(
             &coin_record.coin.parent_coin_info,

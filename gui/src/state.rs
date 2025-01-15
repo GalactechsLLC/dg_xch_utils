@@ -1,7 +1,5 @@
-use dg_xch_cli_lib::wallets::memory_wallet::MemoryWallet;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_core::blockchain::blockchain_state::BlockchainState;
-use dg_xch_core::blockchain::network_info::NetworkInfo;
 use eframe::egui::mutex::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -29,19 +27,15 @@ pub enum WalletTab {
 pub struct State {
     pub selected_tab: SelectedTab,
     pub full_node_client: Arc<FullnodeClient>,
-    pub farmer_client: Arc<FullnodeClient>,
-    pub wallet_client: Arc<FullnodeClient>,
     pub shutdown_signal: Arc<AtomicBool>,
 }
 #[derive(Default)]
 pub struct FullNodeState {
     pub blockchain_state: Mutex<Option<BlockchainState>>,
-    pub network_info: Mutex<Option<NetworkInfo>>,
 }
 
 #[derive(Default)]
 pub struct WalletState {
-    pub wallet: Mutex<Option<MemoryWallet>>,
     pub confirmed_balance: u128,
     pub unconfirmed_balance: u128,
     pub balance_history: HashMap<u128, u128>,

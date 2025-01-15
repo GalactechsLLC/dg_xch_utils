@@ -28,7 +28,11 @@ async fn main() -> eframe::Result {
     let result = eframe::run_native(
         "Druid Garden GUI",
         options,
-        Box::new(|cc| Ok(Box::new(DgXchGui::new(cc, config, shutdown_signal.clone())))),
+        Box::new(|cc| {
+            Ok(Box::new(
+                DgXchGui::new(cc, config, shutdown_signal.clone()).unwrap(),
+            ))
+        }),
     );
     shutdown_signal.store(false, Ordering::SeqCst);
     result

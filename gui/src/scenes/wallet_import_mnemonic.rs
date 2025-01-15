@@ -152,12 +152,12 @@ fn import_wallet_with_mnemonic(
     let mut master_sk = SecretKey::default();
     let mut wallet_sk = SecretKey::default();
 
-    if let Ok(sk) = key_from_mnemonic_str(&mnemonic_str) {
-        master_sk = sk;
+    if let Ok(key) = key_from_mnemonic_str(&mnemonic_str) {
+        master_sk = key;
     }
 
-    if let Ok(sk) = master_sk_to_wallet_sk(&master_sk, 0) {
-        wallet_sk = sk;
+    if let Ok(key) = master_sk_to_wallet_sk(&master_sk, 0) {
+        wallet_sk = key;
     }
 
     //should return memory wallet?

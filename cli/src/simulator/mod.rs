@@ -34,21 +34,20 @@ pub struct Simulator<'a> {
     users: Mutex<HashMap<String, Arc<ChainUser<'a>>>>,
 }
 impl<'a> Simulator<'a> {
-    #[must_use]
     pub fn new(
         host: &str,
         port: u16,
         timeout: u64,
         additional_headers: &Option<HashMap<String, String>>,
         network: Option<ConsensusConstants>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, Error> {
+        Ok(Self {
             network: network.unwrap_or_default(),
-            client: SimulatorClient::new(host, port, timeout, additional_headers),
+            client: SimulatorClient::new(host, port, timeout, additional_headers)?,
             run: Arc::new(AtomicBool::new(false)),
             background: Mutex::new(None),
             users: Mutex::new(HashMap::default()),
-        }
+        })
     }
     pub fn client(&self) -> &SimulatorClient {
         &self.client
@@ -76,7 +75,7 @@ impl<'a> Simulator<'a> {
             key_from_mnemonic(&mnemonic).map_err(|e| Error::new(ErrorKind::Other, e))?;
         let chain_user = Arc::new(ChainUser {
             simulator: self,
-            wallet: MemoryWallet::create_simulator(
+            wallet: Arc::new(MemoryWallet::create_simulator(
                 WalletInfo {
                     id: 0,
                     name: format!("{name}'s Wallet"),
@@ -92,7 +91,7 @@ impl<'a> Simulator<'a> {
                     fullnode_ssl_path: None,
                     additional_headers: self.client.additional_headers.clone(),
                 },
-            ),
+            )?),
             name: name.to_string(),
         });
         map_lock.insert(name.to_string(), chain_user.clone());

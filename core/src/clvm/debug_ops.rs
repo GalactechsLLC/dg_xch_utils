@@ -22,7 +22,8 @@ pub fn op_print<D: Dialect>(
                     Some(arg) => {
                         buffer.extend(format!("{}:", arg).chars());
                         let mut cost = BOOL_BASE_COST * 2;
-                        for arg in args.iter().skip(1) {
+                        let iter = args.iter().skip(1);
+                        for arg in iter {
                             cost += BOOL_BASE_COST;
                             buffer.extend(format!(" {},", arg).chars());
                         }

@@ -122,7 +122,7 @@ pub async fn migrate_plot_nft(
         })
     };
     let pool_wallet =
-        PlotNFTWallet::new(key_from_mnemonic_str(mnemonic)?, client.as_ref(), constants);
+        PlotNFTWallet::new(key_from_mnemonic_str(mnemonic)?, client.as_ref(), constants)?;
     info!("Searching for PlotNFT with LauncherID: {launcher_id}");
     if let Some(mut plot_nft) =
         get_plotnft_by_launcher_id(client.clone(), launcher_id, None).await?

@@ -45,29 +45,35 @@ pub struct PlotNFTWallet {
 }
 #[async_trait]
 impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
-    fn create(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Self {
-        Self {
+    fn create(
+        info: WalletInfo<MemoryWalletStore>,
+        config: MemoryWalletConfig,
+    ) -> Result<Self, Error> {
+        Ok(Self {
             fullnode_client: Arc::new(FullnodeClient::new(
                 &config.fullnode_host,
                 config.fullnode_port,
                 60,
                 config.fullnode_ssl_path.clone(),
                 &config.additional_headers,
-            )),
+            )?),
             info,
             config,
-        }
+        })
     }
-    fn create_simulator(info: WalletInfo<MemoryWalletStore>, config: MemoryWalletConfig) -> Self {
-        Self {
+    fn create_simulator(
+        info: WalletInfo<MemoryWalletStore>,
+        config: MemoryWalletConfig,
+    ) -> Result<Self, Error> {
+        Ok(Self {
             fullnode_client: Arc::new(FullnodeClient::new_simulator(
                 &config.fullnode_host,
                 config.fullnode_port,
                 60,
-            )),
+            )?),
             info,
             config,
-        }
+        })
     }
 
     fn name(&self) -> &str {
@@ -120,12 +126,11 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
 
     async fn create_spend_bundle(
         &self,
-        _payments: &[AmountWithPuzzleHash],
+        _payments: Vec<AmountWithPuzzleHash>,
         _input_coins: &[CoinRecord],
         _change_puzzle_hash: Option<Bytes32>,
         _allow_excess: bool,
         _fee: i64,
-        _surplus: i64,
         _origin_id: Option<Bytes32>,
         _solution_transformer: Option<Box<dyn Fn(Program) -> Program + 'static + Send + Sync>>,
     ) -> Result<SpendBundle, Error> {
@@ -133,12 +138,11 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for PlotNFTWallet {
     }
 }
 impl PlotNFTWallet {
-    #[must_use]
     pub fn new(
         master_secret_key: SecretKey,
         client: &FullnodeClient,
         constants: Arc<ConsensusConstants>,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         Self::create(
             WalletInfo {
                 id: 1,
