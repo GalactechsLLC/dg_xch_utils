@@ -229,10 +229,10 @@ pub fn op_subtract<D: Dialect>(
     let mut byte_count: usize = 0;
     let mut total: BigInt = 0.into();
     let mut is_first = true;
-    for (index, arg) in args.iter().enumerate() {
+    for arg in args {
         cost += ARITH_COST_PER_ARG;
         check_cost(cost + byte_count as u64 * ARITH_COST_PER_BYTE, max_cost)?;
-        let blob = int_atom(arg, &format!("-({index})"))?;
+        let blob = int_atom(arg, "-")?;
         let v: BigInt = number_from_slice(blob);
         byte_count += blob.len();
         if is_first {

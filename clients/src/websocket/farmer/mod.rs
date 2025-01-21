@@ -60,6 +60,7 @@ fn handles<T>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::NewSignagePoint),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(NewSignagePointHandle {
                     constants,
@@ -80,6 +81,7 @@ fn handles<T>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::RequestSignedValues),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(RequestSignedValuesHandle {
                     quality_to_identifiers: shared_state.quality_to_identifiers.clone(),

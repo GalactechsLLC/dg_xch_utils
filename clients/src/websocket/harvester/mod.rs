@@ -65,6 +65,7 @@ fn handles<T: PlotManagerAsync + Send + Sync + 'static>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::HarvesterHandshake),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(HarvesterHandshakeHandle {
                     plot_manager: plot_manager.clone(),
@@ -78,6 +79,7 @@ fn handles<T: PlotManagerAsync + Send + Sync + 'static>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::NewSignagePointHarvester),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(NewSignagePointHarvesterHandle {
                     constants,
@@ -92,6 +94,7 @@ fn handles<T: PlotManagerAsync + Send + Sync + 'static>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::RequestSignatures),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(RequestSignaturesHandle { plot_manager }),
             )),

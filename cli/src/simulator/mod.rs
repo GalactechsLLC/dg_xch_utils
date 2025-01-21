@@ -116,12 +116,14 @@ impl<'a> Simulator<'a> {
         self.client
             .farm_blocks(address, blocks, transaction_block)
             .await
+            .map_err(Into::into)
             .map(|_| ())
     }
     pub async fn is_auto_farming(&self) -> Result<bool, Error> {
         self.client
             .get_auto_farming()
             .await
+            .map_err(Into::into)
             .map(|r| r.auto_farm_enabled)
     }
     pub async fn run(&self, block_interval: Option<Duration>) -> Result<(), Error> {

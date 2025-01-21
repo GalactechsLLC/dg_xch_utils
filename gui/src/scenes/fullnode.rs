@@ -31,7 +31,7 @@ impl FullNodeScene {
                         *background_state.blockchain_state.lock() = Some(state);
                     }
                     Err(e) => {
-                        error!("Error getting blockchain state: {}", e);
+                        error!("Error getting blockchain state: {:?}", e.error);
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(4)).await;

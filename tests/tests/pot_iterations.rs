@@ -100,11 +100,12 @@ async fn test_calculate_ip_iters() {
 #[tokio::test]
 #[allow(clippy::cast_precision_loss)]
 async fn test_win_percentage() {
-    use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+    use dg_xch_core::blockchain::sized_bytes::Bytes32;
     use dg_xch_core::consensus::pot_iterations::{
         calculate_iterations_quality, expected_plot_size,
     };
-    use dg_xch_serialize::hash_256;
+    use dg_xch_core::traits::SizedBytes;
+    use dg_xch_core::utils::hash_256;
     use num_traits::abs;
     use std::collections::HashMap;
     /*
@@ -138,7 +139,7 @@ async fn test_win_percentage() {
                     .chain(sp_index.to_be_bytes().into_iter())
                     .collect::<Vec<u8>>(),
             );
-            let sp_hash = Bytes32::new(&sp_hash);
+            let sp_hash = Bytes32::new(sp_hash);
             for (k, count) in &farmer_ks {
                 for farmer_index in 0i32..*count {
                     let quality = hash_256(
@@ -149,13 +150,13 @@ async fn test_win_percentage() {
                             .chain(farmer_index.to_be_bytes().into_iter())
                             .collect::<Vec<u8>>(),
                     );
-                    let quality = Bytes32::new(&quality);
+                    let quality = Bytes32::new(quality);
                     let required_iters = calculate_iterations_quality(
                         2u128.pow(25),
-                        &quality,
+                        quality,
                         *k,
                         difficulty,
-                        &sp_hash,
+                        sp_hash,
                     );
                     if required_iters < sp_interval_iters {
                         *wins.get_mut(k).unwrap() += 1;

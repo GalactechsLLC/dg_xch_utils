@@ -5,11 +5,15 @@ use eframe::egui;
 use eframe::egui::Context;
 use std::sync::Arc;
 
-pub struct WalletTransactionsScene {}
+pub struct WalletTransactionsScene {
+    _wallet_state: Arc<WalletState>,
+}
 
 impl WalletTransactionsScene {
-    pub fn new(_wallet_state: Arc<WalletState>) -> Self {
-        WalletTransactionsScene {}
+    pub fn new(wallet_state: Arc<WalletState>) -> Self {
+        WalletTransactionsScene {
+            _wallet_state: wallet_state,
+        }
     }
 }
 

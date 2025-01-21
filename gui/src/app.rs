@@ -10,6 +10,7 @@ use dg_xch_clients::rpc::full_node::FullnodeClient;
 use dg_xch_clients::ClientSSLConfig;
 use eframe::egui;
 use eframe::egui::mutex::Mutex;
+use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
@@ -29,8 +30,8 @@ impl DgXchGui {
         _cc: &eframe::CreationContext<'_>,
         config: Config,
         shutdown_signal: Arc<AtomicBool>,
-    ) -> Result<Self, std::io::Error> {
-        let app = Self {
+    ) -> Result<Self, Error> {
+        Ok(Self {
             state: State {
                 selected_tab: SelectedTab::FullNode,
                 full_node_client: Arc::new(FullnodeClient::new(
@@ -48,34 +49,11 @@ impl DgXchGui {
                         }),
                     &None,
                 )?),
-                // farmer_client: Arc::new(FullnodeClient::new(
-                //     &config.farmer_config.full_node_hostname,
-                //     config.farmer_config.full_node_rpc_port,
-                //     10,
-                //     config.farmer_config.full_node_ssl.clone().map(|v| ClientSSLConfig {
-                //         ssl_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
-                //         ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
-                //         ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
-                //     }),
-                //     &None
-                // )?),
-                // wallet_client: Arc::new(FullnodeClient::new(
-                //     &config.wallet_config.full_node_hostname,
-                //     config.wallet_config.full_node_rpc_port,
-                //     10,
-                //     config.wallet_config.full_node_ssl.clone().map(|v| ClientSSLConfig {
-                //         ssl_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
-                //         ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
-                //         ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
-                //     }),
-                //     &None
-                // )?),
                 shutdown_signal,
             },
             config,
             wallet: None,
-        };
-        Ok(app)
+        })
     }
 }
 

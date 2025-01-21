@@ -327,13 +327,14 @@ pub async fn oneshot<R: ChiaSerialize>(
         channel: tx,
     };
     let handle = Arc::new(handle);
-    let chia_handle = ChiaMessageHandler {
+    let chia_handle = Arc::new(ChiaMessageHandler {
         filter: Arc::new(ChiaMessageFilter {
             msg_type: resp_type,
             id: msg_id,
+            custom_fn: None,
         }),
         handle: handle.clone(),
-    };
+    });
     connection
         .write()
         .await

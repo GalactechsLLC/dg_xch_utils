@@ -384,7 +384,12 @@ pub async fn run_cli() -> Result<(), Error> {
         } => {
             let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
-                .get_coin_records_by_names(&names, include_spent_coins, start_height, end_height)
+                .get_coin_records_by_names(
+                    &names,
+                    Some(include_spent_coins),
+                    Some(start_height),
+                    Some(end_height),
+                )
                 .await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {
@@ -405,9 +410,9 @@ pub async fn run_cli() -> Result<(), Error> {
             let results = client
                 .get_coin_records_by_parent_ids(
                     &parent_ids,
-                    include_spent_coins,
-                    start_height,
-                    end_height,
+                    Some(include_spent_coins),
+                    Some(start_height),
+                    Some(end_height),
                 )
                 .await?;
             match serde_json::to_string_pretty(&results) {
@@ -427,7 +432,12 @@ pub async fn run_cli() -> Result<(), Error> {
         } => {
             let client = FullnodeClient::new(&host, port, timeout, ssl, &None)?;
             let results = client
-                .get_coin_records_by_hint(&hint, include_spent_coins, start_height, end_height)
+                .get_coin_records_by_hint(
+                    &hint,
+                    Some(include_spent_coins),
+                    Some(start_height),
+                    Some(end_height),
+                )
                 .await?;
             match serde_json::to_string_pretty(&results) {
                 Ok(json) => {

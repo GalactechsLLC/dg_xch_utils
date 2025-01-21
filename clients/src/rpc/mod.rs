@@ -9,12 +9,11 @@ use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
     load_private_key_from_bytes,
 };
-use log::debug;
 use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::cmp::min;
 use std::collections::HashMap;
 use std::env;
 use std::io::{Error, ErrorKind};
@@ -97,12 +96,31 @@ pub fn get_http_client(timeout: u64) -> Result<Client, Error> {
         .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChiaRpcError {
+    pub error: Option<String>,
+    pub success: bool,
+}
+
+impl From<ChiaRpcError> for Error {
+    fn from(error: ChiaRpcError) -> Self {
+        Error::new(
+            ErrorKind::Other,
+            format!(
+                "Success: {}, Message: {}",
+                error.success,
+                error.error.unwrap_or_default()
+            ),
+        )
+    }
+}
+
 pub async fn post<T, S: std::hash::BuildHasher>(
     client: &Client,
     url: &str,
     data: &Map<String, Value>,
     additional_headers: &Option<HashMap<String, String, S>>,
-) -> Result<T, Error>
+) -> Result<T, ChiaRpcError>
 where
     T: DeserializeOwned,
 {
@@ -113,29 +131,25 @@ where
         }
     }
     match request_builder.json(data).send().await {
-        Ok(resp) => match resp.status() {
-            reqwest::StatusCode::OK => {
-                let body = resp
-                    .text()
-                    .await
-                    .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
-                debug!("{body}");
-                serde_json::from_str(body.as_str()).map_err(|e| {
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        format!(
-                            "Failed to Parse Json {},\r\n {}",
-                            &body[0..min(body.len(), 1024)],
-                            e
-                        ),
-                    )
-                })
+        Ok(resp) => {
+            let body = resp.text().await.map_err(|e| ChiaRpcError {
+                error: Some(format!("{}", e)),
+                success: false,
+            })?;
+            match serde_json::from_str(body.as_str()) {
+                Ok(t) => Ok(t),
+                Err(_) => match serde_json::from_str::<ChiaRpcError>(body.as_str()) {
+                    Ok(e) => Err(e),
+                    Err(e) => Err(ChiaRpcError {
+                        error: Some(format!("{}", e)),
+                        success: false,
+                    }),
+                },
             }
-            _ => Err(Error::new(
-                ErrorKind::InvalidData,
-                format!("Bad Status Code: {:?}, for URL {:?}", resp.status(), url),
-            )),
-        },
-        Err(err) => Err(Error::new(ErrorKind::InvalidData, format!("{err:?}"))),
+        }
+        Err(e) => Err(ChiaRpcError {
+            error: Some(format!("{}", e)),
+            success: false,
+        }),
     }
 }

@@ -1,12 +1,10 @@
 #[cfg(test)]
 mod tests {
     use dg_xch_core::blockchain::coin::Coin;
-    use dg_xch_core::blockchain::coin_spend::{compute_additions_with_cost, CoinSpend};
+    use dg_xch_core::blockchain::coin_spend::CoinSpend;
     use dg_xch_core::blockchain::sized_bytes::Bytes32;
     use dg_xch_core::clvm::assemble::assemble_text;
-    use dg_xch_core::clvm::program::{Program, SerializedProgram};
-    use num_bigint::BigInt;
-    use std::io::ErrorKind;
+    use dg_xch_core::clvm::program::Program;
     use std::vec;
 
     #[test]
@@ -20,7 +18,7 @@ mod tests {
             amount: 1,
         };
 
-        let solution: Program = Program::to(vec![puzzle_reveal_hash]).try_into().unwrap();
+        let solution: Program = Program::to(vec![puzzle_reveal_hash]);
         let cs = CoinSpend {
             coin,
             puzzle_reveal,
@@ -29,7 +27,7 @@ mod tests {
 
         let max_cost = 1000000u64;
 
-        let (additions, _costs) = compute_additions_with_cost(&cs, max_cost).unwrap();
+        let (additions, _costs) = cs.compute_additions_with_cost(max_cost).unwrap();
         assert_eq!(additions.len(), 1);
         assert_eq!(additions[0].parent_coin_info, coin.coin_id());
         assert_eq!(additions[0].puzzle_hash, puzzle_reveal_hash);
