@@ -40,12 +40,12 @@ impl TMemoCache {
 
     #[must_use]
     pub fn ct_get(&self, r: f64) -> Option<&Vec<CTable>> {
-        return self.ct_memo.get(&r.to_be_bytes());
+        self.ct_memo.get(&r.to_be_bytes())
     }
 
     #[must_use]
     pub fn dt_get(&self, r: f64) -> Option<Arc<DTable>> {
-        return self.dt_memo.get(&r.to_be_bytes()).cloned();
+        self.dt_memo.get(&r.to_be_bytes()).cloned()
     }
 }
 lazy_static! {

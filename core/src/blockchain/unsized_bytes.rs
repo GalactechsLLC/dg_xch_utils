@@ -85,7 +85,7 @@ impl Serialize for UnsizedBytes {
 
 struct UnsizedBytesVisitor;
 
-impl<'de> Visitor<'de> for UnsizedBytesVisitor {
+impl Visitor<'_> for UnsizedBytesVisitor {
     type Value = UnsizedBytes;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

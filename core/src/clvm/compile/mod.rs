@@ -26,7 +26,7 @@ use std::vec::IntoIter;
 pub struct UnparsedCondition<'a> {
     tokens: Vec<Token<'a>>,
 }
-impl<'a> Debug for UnparsedCondition<'a> {
+impl Debug for UnparsedCondition<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.tokens)
     }
@@ -37,7 +37,7 @@ pub struct Function<'a> {
     argument_names: Vec<Token<'a>>,
     function_body: Vec<Token<'a>>,
 }
-impl<'a> Debug for Function<'a> {
+impl Debug for Function<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.name)
     }
@@ -46,7 +46,7 @@ pub struct Constant<'a> {
     name: Token<'a>,
     value: Token<'a>,
 }
-impl<'a> Debug for Constant<'a> {
+impl Debug for Constant<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Constant({:?}: {:?})", self.name, self.value)
     }

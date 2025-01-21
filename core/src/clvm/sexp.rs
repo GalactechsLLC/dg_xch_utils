@@ -31,6 +31,11 @@ impl<'a> IntoIterator for &'a SExp {
         self.iter()
     }
 }
+impl Default for SExp {
+    fn default() -> SExp {
+        NULL_SEXP.clone()
+    }
+}
 
 impl SExp {
     pub fn atom(&self) -> Result<&AtomBuf, Error> {

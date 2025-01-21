@@ -17,7 +17,7 @@ pub struct Token<'a> {
     pub index: usize,
     pub t_type: TokenType,
 }
-impl<'a> Debug for Token<'a> {
+impl Debug for Token<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

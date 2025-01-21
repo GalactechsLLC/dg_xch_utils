@@ -99,15 +99,15 @@ pub const fn cdiv(a: i32, b: i32) -> i32 {
 }
 #[must_use]
 pub const fn ucdiv(a: u32, b: u32) -> u32 {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
 #[must_use]
 pub const fn ucdiv64(a: u64, b: u64) -> u64 {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
 #[must_use]
 pub const fn ucdiv_t(a: usize, b: usize) -> usize {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
 #[must_use]
 pub const fn byte_align(num_bits: u32) -> u32 {

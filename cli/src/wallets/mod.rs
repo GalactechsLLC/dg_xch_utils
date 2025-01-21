@@ -309,7 +309,7 @@ pub trait WalletStore {
     fn mapping_function<'a, F>(
         &'a self,
         public_key: &'a Bytes48,
-    ) -> Box<dyn Future<Output = Result<SecretKey, Error>> + Send + '_> {
+    ) -> Box<dyn Future<Output = Result<SecretKey, Error>> + Send + 'a> {
         Box::new(self.secret_key_for_public_key(public_key))
     }
 }

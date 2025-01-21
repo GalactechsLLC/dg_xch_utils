@@ -100,8 +100,8 @@ pub struct CompressedQualitiesRequest<'a> {
     pub line_points: [LinePoint; 2],
     pub f1_generator: Option<Arc<F1Generator>>,
 }
-unsafe impl<'a> Send for CompressedQualitiesRequest<'a> {}
-unsafe impl<'a> Sync for CompressedQualitiesRequest<'a> {}
+unsafe impl Send for CompressedQualitiesRequest<'_> {}
+unsafe impl Sync for CompressedQualitiesRequest<'_> {}
 
 #[derive(Debug)]
 pub struct TableContext<'a> {
@@ -112,8 +112,8 @@ pub struct TableContext<'a> {
     out_pairs: Span<Pair>,
     pub f1_generator: Arc<F1Generator>,
 }
-unsafe impl<'a> Send for TableContext<'a> {}
-unsafe impl<'a> Sync for TableContext<'a> {}
+unsafe impl Send for TableContext<'_> {}
+unsafe impl Sync for TableContext<'_> {}
 
 #[derive(Debug)]
 pub struct ProofRequest {

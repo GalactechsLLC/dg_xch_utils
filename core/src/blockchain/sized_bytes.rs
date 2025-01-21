@@ -22,7 +22,7 @@ use std::str::FromStr;
 pub struct SizedBytesImpl<const SIZE: usize> {
     bytes: [u8; SIZE],
 }
-impl<'a, const SIZE: usize> SizedBytes<'a, SIZE> for SizedBytesImpl<SIZE> {
+impl<const SIZE: usize> SizedBytes<'_, SIZE> for SizedBytesImpl<SIZE> {
     const SIZE: usize = SIZE;
     fn new(bytes: [u8; SIZE]) -> Self {
         Self { bytes }
@@ -169,7 +169,7 @@ impl<const SIZE: usize> std::fmt::Debug for SizedBytesImpl<SIZE> {
     }
 }
 struct SizedBytesImplVisitor<const SIZE: usize>;
-impl<'de, const SIZE: usize> Visitor<'de> for SizedBytesImplVisitor<SIZE> {
+impl<const SIZE: usize> Visitor<'_> for SizedBytesImplVisitor<SIZE> {
     type Value = SizedBytesImpl<SIZE>;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {

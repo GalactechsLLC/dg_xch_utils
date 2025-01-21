@@ -68,7 +68,7 @@ impl Serialize for ProofBytes {
 
 struct ProofBytesVisitor;
 
-impl<'de> Visitor<'de> for ProofBytesVisitor {
+impl Visitor<'_> for ProofBytesVisitor {
     type Value = ProofBytes;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

@@ -37,7 +37,7 @@ where
     D: Deserializer<'de>,
 {
     struct PU128(PhantomData<fn() -> u128>);
-    impl<'de> Visitor<'de> for PU128 {
+    impl Visitor<'_> for PU128 {
         type Value = u128;
 
         fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {

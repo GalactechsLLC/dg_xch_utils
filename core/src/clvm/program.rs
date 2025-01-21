@@ -540,7 +540,7 @@ impl From<Program> for SerializedProgram {
 }
 struct SerializedProgramVisitor;
 
-impl<'de> Visitor<'de> for SerializedProgramVisitor {
+impl Visitor<'_> for SerializedProgramVisitor {
     type Value = SerializedProgram;
 
     fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
