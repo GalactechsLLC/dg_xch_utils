@@ -1508,7 +1508,7 @@ impl Decompressor {
         k: u8,
         c_level: u8,
     ) -> Span<Pair> {
-        assert!(y_entries.len() <= 0xFFFF_FFFF);
+        assert!(y_entries.len() <= isize::MAX);
         debug!("\t\tGroup Scan");
         let group_count = Self::scan_groups(
             self.config.thread_count,
