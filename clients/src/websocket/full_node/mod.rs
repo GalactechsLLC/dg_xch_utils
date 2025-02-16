@@ -1,4 +1,5 @@
 use crate::websocket::{WsClient, WsClientConfig};
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::NodeType;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
@@ -14,7 +15,15 @@ impl FullnodeClient {
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         let handles = Arc::new(RwLock::new(Default::default()));
-        let client = WsClient::new(client_config, NodeType::FullNode, handles, run.clone()).await?;
+        let client = WsClient::with_ca(
+            client_config,
+            NodeType::FullNode,
+            handles,
+            run,
+            CHIA_CA_CRT.as_bytes(),
+            CHIA_CA_KEY.as_bytes(),
+        )
+        .await?;
         Ok(FullnodeClient { client })
     }
 

@@ -2,6 +2,7 @@ use crate::websocket::farmer::request_signed_values::RequestSignedValuesHandle;
 use crate::websocket::farmer::signage_point::NewSignagePointHandle;
 use crate::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::consensus::constants::{ConsensusConstants, CONSENSUS_CONSTANTS_MAP, MAINNET};
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::farmer::FarmerSharedState;
 use dg_xch_core::protocols::{
     ChiaMessageFilter, ChiaMessageHandler, NodeType, ProtocolMessageTypes,
@@ -31,7 +32,15 @@ impl<T> FarmerClient<T> {
             .cloned()
             .unwrap_or(MAINNET.clone());
         let handles = Arc::new(RwLock::new(handles(constants, &shared_state)));
-        let client = WsClient::new(client_config, NodeType::Farmer, handles, run).await?;
+        let client = WsClient::with_ca(
+            client_config,
+            NodeType::Farmer,
+            handles,
+            run,
+            CHIA_CA_CRT.as_bytes(),
+            CHIA_CA_KEY.as_bytes(),
+        )
+        .await?;
         Ok(FarmerClient {
             client,
             shared_state,

@@ -14,5 +14,6 @@ name = "dg_xch_simulator"
 [dependencies]
 log = "0.4.20"
 portfu = { git = "https://github.com/GalactechsLLC/portfu", branch = "pf_admin_updates" }
+portfu_core = { git = "https://github.com/GalactechsLLC/portfu", branch = "pf_admin_updates", default-features = false, features = ["ring"]}
 simple_logger = "4.3.3"
 tokio = {version = "1.36.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

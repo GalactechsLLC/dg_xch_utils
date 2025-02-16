@@ -3,6 +3,7 @@ use crate::websocket::harvester::new_signage_point_harvester::NewSignagePointHar
 use crate::websocket::harvester::request_signatures::RequestSignaturesHandle;
 use crate::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::consensus::constants::{ConsensusConstants, CONSENSUS_CONSTANTS_MAP, MAINNET};
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::harvester::HarvesterState;
 use dg_xch_core::protocols::{
     ChiaMessageFilter, ChiaMessageHandler, NodeType, ProtocolMessageTypes,
@@ -38,7 +39,15 @@ impl HarvesterClient {
             plots_ready,
             harvester_state,
         )));
-        let client = WsClient::new(client_config, NodeType::Harvester, handles, run).await?;
+        let client = WsClient::with_ca(
+            client_config,
+            NodeType::Harvester,
+            handles,
+            run,
+            CHIA_CA_CRT.as_bytes(),
+            CHIA_CA_KEY.as_bytes(),
+        )
+        .await?;
         Ok(HarvesterClient { client })
     }
 

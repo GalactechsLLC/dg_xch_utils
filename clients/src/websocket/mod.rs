@@ -110,7 +110,7 @@ impl WsClient {
         .await
     }
     pub async fn with_ca(
-        client_config: Arc<crate::websocket::WsClientConfig>,
+        client_config: Arc<WsClientConfig>,
         node_type: NodeType,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
@@ -139,7 +139,7 @@ impl WsClient {
     }
 
     async fn build(
-        client_config: Arc<crate::websocket::WsClientConfig>,
+        client_config: Arc<WsClientConfig>,
         node_type: NodeType,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
