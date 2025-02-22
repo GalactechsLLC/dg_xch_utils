@@ -29,12 +29,12 @@ impl IntoIterator for ProofBytes {
 }
 impl Display for ProofBytes {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&encode(&self.0))
+        write!(f, "0x{}", encode(&self.0))
     }
 }
 impl Debug for ProofBytes {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&encode(&self.0))
+        write!(f, "0x{}", encode(&self.0))
     }
 }
 
@@ -62,7 +62,7 @@ impl Serialize for ProofBytes {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&encode(&self.0))
+        serializer.serialize_str(&format!("0x{}", encode(&self.0)))
     }
 }
 
@@ -71,8 +71,8 @@ struct ProofBytesVisitor;
 impl Visitor<'_> for ProofBytesVisitor {
     type Value = ProofBytes;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("Expecting a hex String")
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Expecting a hex String")
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
