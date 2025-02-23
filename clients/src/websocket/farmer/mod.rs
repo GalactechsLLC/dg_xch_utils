@@ -41,6 +41,7 @@ impl<T> FarmerClient<T> {
             CHIA_CA_KEY.as_bytes(),
         )
         .await?;
+        *shared_state.upstream_handshake.write().await = client.handshake.clone();
         Ok(FarmerClient {
             client,
             shared_state,
