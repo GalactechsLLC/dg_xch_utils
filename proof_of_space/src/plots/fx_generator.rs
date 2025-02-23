@@ -287,9 +287,9 @@ fn generate_fx_table2(
     ) {
         let l = u64::from(meta_in[pair.left as usize]);
         let r = u64::from(meta_in[pair.right as usize]);
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l >> 6).to_be_bytes());
-        input[8..16].copy_from_slice(&(l << 58 | r << 26).to_be_bytes());
-        *meta_out = l << 32 | r;
+        input[0..8].copy_from_slice(&((y_in[pair.left as usize] << 26) | (l >> 6)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l << 58) | (r << 26)).to_be_bytes());
+        *meta_out = (l << 32) | r;
         hasher.reset();
         hasher.update(&input[0..buffer_size]);
         u64_buffer.copy_from_slice(&hasher.finalize().as_bytes()[0..8]);
@@ -348,8 +348,8 @@ fn generate_fx_table3(
     ) {
         let l = &meta_in[pair.left as usize];
         let r = &meta_in[pair.right as usize];
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l >> 38).to_be_bytes());
-        input[8..16].copy_from_slice(&(l << 26 | r >> 38).to_be_bytes());
+        input[0..8].copy_from_slice(&((y_in[pair.left as usize] << 26) | (l >> 38)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l << 26) | (r >> 38)).to_be_bytes());
         input[16..24].copy_from_slice(&(r << 26).to_be_bytes());
         meta_out.m0 = *l;
         meta_out.m1 = *r;
@@ -412,10 +412,11 @@ fn generate_fx_table4(
     ) {
         let l = &meta_in[pair.left as usize];
         let r = &meta_in[pair.right as usize];
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l.m0 >> 38).to_be_bytes());
-        input[8..16].copy_from_slice(&(l.m0 << 26 | l.m1 >> 38).to_be_bytes());
-        input[16..24].copy_from_slice(&(l.m1 << 26 | r.m0 >> 38).to_be_bytes());
-        input[24..32].copy_from_slice(&(r.m0 << 26 | r.m1 >> 38).to_be_bytes());
+        input[0..8]
+            .copy_from_slice(&((y_in[pair.left as usize] << 26) | (l.m0 >> 38)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l.m0 << 26) | (l.m1 >> 38)).to_be_bytes());
+        input[16..24].copy_from_slice(&((l.m1 << 26) | (r.m0 >> 38)).to_be_bytes());
+        input[24..32].copy_from_slice(&((r.m0 << 26) | (r.m1 >> 38)).to_be_bytes());
         input[32..40].copy_from_slice(&(r.m1 << 26).to_be_bytes());
         hasher.reset();
         hasher.update(&input[0..buffer_size]);
@@ -428,8 +429,8 @@ fn generate_fx_table4(
         let h1 = u64::from_be_bytes(u64_buffer);
         u64_buffer.copy_from_slice(&output[16..24]);
         let h2 = u64::from_be_bytes(u64_buffer);
-        meta_out.m0 = o2 << y_size | h1 >> 26;
-        meta_out.m1 = h1 << 38 | h2 >> 26;
+        meta_out.m0 = (o2 << y_size) | (h1 >> 26);
+        meta_out.m1 = (h1 << 38) | (h2 >> 26);
     }
 }
 
@@ -485,10 +486,11 @@ fn generate_fx_table5(
     ) {
         let l = &meta_in[pair.left as usize];
         let r = &meta_in[pair.right as usize];
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l.m0 >> 38).to_be_bytes());
-        input[8..16].copy_from_slice(&(l.m0 << 26 | l.m1 >> 38).to_be_bytes());
-        input[16..24].copy_from_slice(&(l.m1 << 26 | r.m0 >> 38).to_be_bytes());
-        input[24..32].copy_from_slice(&(r.m0 << 26 | r.m1 >> 38).to_be_bytes());
+        input[0..8]
+            .copy_from_slice(&((y_in[pair.left as usize] << 26) | (l.m0 >> 38)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l.m0 << 26) | (l.m1 >> 38)).to_be_bytes());
+        input[16..24].copy_from_slice(&((l.m1 << 26) | (r.m0 >> 38)).to_be_bytes());
+        input[24..32].copy_from_slice(&((r.m0 << 26) | (r.m1 >> 38)).to_be_bytes());
         input[32..40].copy_from_slice(&(r.m1 << 26).to_be_bytes());
         hasher.reset();
         hasher.update(&input[0..buffer_size]);
@@ -501,8 +503,8 @@ fn generate_fx_table5(
         let h1 = u64::from_be_bytes(u64_buffer);
         u64_buffer.copy_from_slice(&output[16..24]);
         let h2 = u64::from_be_bytes(u64_buffer);
-        meta_out.m0 = o2 << y_size | h1 >> 26;
-        meta_out.m1 = ((h1 << 6) & 0xFFFF_FFC0) | h2 >> 58;
+        meta_out.m0 = (o2 << y_size) | (h1 >> 26);
+        meta_out.m1 = ((h1 << 6) & 0xFFFF_FFC0) | (h2 >> 58);
     }
 }
 
@@ -560,10 +562,10 @@ fn generate_fx_table6(
         let l1 = &meta_in[pair.left as usize].m1 & 0xFFFF_FFFF;
         let r0 = &meta_in[pair.right as usize].m0;
         let r1 = &meta_in[pair.right as usize].m1 & 0xFFFF_FFFF;
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l0 >> 38).to_be_bytes());
-        input[8..16].copy_from_slice(&(l0 << 26 | l1 >> 6).to_be_bytes());
-        input[16..24].copy_from_slice(&(l1 << 58 | r0 >> 6).to_be_bytes());
-        input[24..32].copy_from_slice(&(r0 << 58 | r1 << 26).to_be_bytes());
+        input[0..8].copy_from_slice(&((y_in[pair.left as usize] << 26) | (l0 >> 38)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l0 << 26) | (l1 >> 6)).to_be_bytes());
+        input[16..24].copy_from_slice(&((l1 << 58) | (r0 >> 6)).to_be_bytes());
+        input[24..32].copy_from_slice(&((r0 << 58) | (r1 << 26)).to_be_bytes());
         hasher.reset();
         hasher.update(&input[0..buffer_size]);
         let output = hasher.finalize();
@@ -573,7 +575,7 @@ fn generate_fx_table6(
         *y_out = o2 >> y_shift;
         u64_buffer.copy_from_slice(&output[8..16]);
         let h1 = u64::from_be_bytes(u64_buffer);
-        *meta_out = o2 << y_size | h1 >> 26;
+        *meta_out = (o2 << y_size) | (h1 >> 26);
     }
 }
 

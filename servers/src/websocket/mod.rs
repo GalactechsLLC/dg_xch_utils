@@ -167,6 +167,8 @@ impl WebsocketServer {
                                             message_handlers: message_handlers.clone(),
                                             run: run.clone(),
                                         };
+                                        #[cfg(feature = "metrics")]
+                                        let metrics = metrics.clone();
                                         async move {
                                             connection_handler(
                                                 data,

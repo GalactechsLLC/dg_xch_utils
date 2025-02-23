@@ -14,6 +14,7 @@ use blst::min_pk::SecretKey;
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::ChiaProtocolVersion;
 
+use crate::protocols::shared::Handshake;
 #[cfg(feature = "metrics")]
 use prometheus::core::{AtomicU64, GenericGauge, GenericGaugeVec};
 #[cfg(feature = "metrics")]
@@ -420,6 +421,7 @@ pub struct FarmerSharedState<T> {
     pub recent_errors: Arc<RwLock<RecentErrors<String>>>,
     pub running_state: Arc<RwLock<FarmerRunningState>>,
     pub missing_keys: Arc<RwLock<Bytes48>>,
+    pub upstream_handshake: Arc<RwLock<Option<Handshake>>>,
     pub data: Arc<T>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,

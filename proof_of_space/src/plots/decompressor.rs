@@ -1792,7 +1792,7 @@ impl Decompressor {
         assert!(entries_per_bucket <= 0xFFFF_FFFF);
         let mut x_groups = [0u32; 16];
         let mut num_xgroups;
-        let lp_index = (req.line_points[0].hi as u128) << 64 | req.line_points[0].lo as u128;
+        let lp_index = ((req.line_points[0].hi as u128) << 64) | req.line_points[0].lo as u128;
         let p = line_point_to_square(lp_index);
         let (x1, x2) = line_point_to_square64(p.0);
         let (x3, x4) = line_point_to_square64(p.1);
@@ -1818,7 +1818,7 @@ impl Decompressor {
             x_groups[7] = (x4 as u32) >> entrybits;
         }
         if req.compression_level >= 6 && req.compression_level < 9 {
-            let lp_index = (req.line_points[1].hi as u128) << 64 | req.line_points[1].lo as u128;
+            let lp_index = ((req.line_points[1].hi as u128) << 64) | req.line_points[1].lo as u128;
             let p = line_point_to_square(lp_index);
             let (x1, x2) = line_point_to_square64(p.0);
             let (x3, x4) = line_point_to_square64(p.1);

@@ -108,7 +108,7 @@ impl BitReader {
                 let first_field_avail = 64 - bit_offset;
                 let first_field_bits = min(first_field_avail, bit_size);
                 let mask = 0xFFFF_FFFF_FFFF_FFFF >> (64 - first_field_bits);
-                field = field >> (first_field_avail - first_field_bits) & mask;
+                field = (field >> (first_field_avail - first_field_bits)) & mask;
                 reader.append_value(field, first_field_bits);
                 big_endian_bytes = &big_endian_bytes[size_of::<u64>()..];
             }

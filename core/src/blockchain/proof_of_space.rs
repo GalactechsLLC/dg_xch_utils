@@ -206,7 +206,7 @@ pub fn passes_plot_filter(
         let mut index = 0;
         for b in calculate_plot_filter_input(plot_id, challenge_hash, signage_point).bytes() {
             for i in (0..=7).rev() {
-                filter[index] = (b >> i & 1) == 1;
+                filter[index] = ((b >> i) & 1) == 1;
                 index += 1;
             }
         }

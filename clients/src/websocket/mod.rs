@@ -60,6 +60,7 @@ fn test_version() {
 pub struct WsClient {
     pub connection: Arc<RwLock<WebsocketConnection>>,
     pub client_config: Arc<WsClientConfig>,
+    pub handshake: Option<Handshake>,
     handle: JoinHandle<()>,
     run: Arc<AtomicBool>,
 }
@@ -217,9 +218,10 @@ impl WsClient {
         );
         let handle_run = run.clone();
         let protocol_version = client_config.protocol_version;
-        let ws_client = WsClient {
+        let mut ws_client = WsClient {
             connection,
             client_config,
+            handshake: None,
             handle: tokio::spawn(async move { stream.run(handle_run).await }),
             run,
         };
@@ -246,11 +248,11 @@ impl WsClient {
     }
 
     async fn perform_handshake(
-        &self,
+        &mut self,
         node_type: NodeType,
         chia_protocol_version: ChiaProtocolVersion,
-    ) -> Result<Handshake, Error> {
-        oneshot::<Handshake>(
+    ) -> Result<(), Error> {
+        let handshake = oneshot::<Handshake>(
             self.connection.clone(),
             ChiaMessage::new(
                 ProtocolMessageTypes::Handshake,
@@ -273,7 +275,9 @@ impl WsClient {
             None,
             Some(15000),
         )
-        .await
+        .await?;
+        self.handshake = Some(handshake);
+        Ok(())
     }
 }
 
