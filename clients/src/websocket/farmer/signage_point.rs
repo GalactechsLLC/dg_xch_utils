@@ -104,7 +104,8 @@ impl MessageHandler for NewSignagePointHandle {
                                 &harvester_point,
                                 None,
                             )
-                            .to_bytes(protocol_version).into(),
+                            .to_bytes(protocol_version)
+                            .into(),
                         )
                         .clone(),
                     )

@@ -7,6 +7,7 @@ use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
 use num_traits::AsPrimitive;
+use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::{Fill, Rng};
 use secrets::traits::Bytes;
@@ -16,7 +17,6 @@ use std::cmp::min;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::ops::{Index, IndexMut, Range};
 use std::str::FromStr;
-use rand::distributions::Standard;
 
 #[derive(Copy, Clone)]
 pub struct SizedBytesImpl<const SIZE: usize> {

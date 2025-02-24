@@ -282,7 +282,8 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                 )
                                                 .to_bytes(
                                                     client.client.client_config.protocol_version,
-                                                ),
+                                                )
+                                                .into(),
                                             ))
                                             .await;
                                         info!("Declaring Proof of Space: {:?}", request);
@@ -440,7 +441,8 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                 )
                                                 .to_bytes(
                                                     client.client.client_config.protocol_version,
-                                                ),
+                                                )
+                                                .into(),
                                             ))
                                             .await;
                                         info!("Sending Signed Values: {:?}", request);

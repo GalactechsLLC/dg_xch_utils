@@ -84,7 +84,8 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
                         },
                         msg.id,
                     )
-                    .to_bytes(protocol_version).into(),
+                    .to_bytes(protocol_version)
+                    .into(),
                 ))
                 .await;
         } else {

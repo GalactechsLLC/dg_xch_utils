@@ -10,7 +10,7 @@ use dg_xch_core::ssl::{
     load_private_key_from_bytes,
 };
 use reqwest::{Client, ClientBuilder};
-use rustls::{ClientConfig};
+use rustls::ClientConfig;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

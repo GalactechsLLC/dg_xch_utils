@@ -23,7 +23,8 @@ use hyper_util::rt::TokioIo;
 use log::{debug, error};
 #[cfg(feature = "metrics")]
 use prometheus::core::{AtomicU64, GenericGauge};
-use rustls::{Certificate, PrivateKey, RootCertStore, ServerConfig};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{RootCertStore, ServerConfig};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -154,7 +155,7 @@ impl WebsocketServer {
                                     let mut peer_id = None;
                                     if let Some(certs) = stream.get_ref().1.peer_certificates() {
                                         if !certs.is_empty() {
-                                            peer_id = Some(Bytes32::new(hash_256(&certs[0].0)));
+                                            peer_id = Some(Bytes32::new(hash_256(&certs[0])));
                                         }
                                     }
                                     let peer_id = Arc::new(peer_id);
@@ -202,13 +203,13 @@ impl WebsocketServer {
     }
 
     pub fn init(
-        certs: Vec<Certificate>,
-        key: PrivateKey,
-        root_certs: Vec<Certificate>,
+        certs: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+        root_certs: Vec<CertificateDer<'static>>,
     ) -> Result<Arc<ServerConfig>, Error> {
         let mut root_cert_store = RootCertStore::empty();
         for cert in root_certs {
-            root_cert_store.add(&cert).map_err(|e| {
+            root_cert_store.add(cert).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
                     format!("Invalid Root Cert for Server: {e:?}"),
@@ -217,7 +218,6 @@ impl WebsocketServer {
         }
         Ok(Arc::new(
             ServerConfig::builder()
-                .with_safe_defaults()
                 .with_client_cert_verifier(AllowAny::new())
                 .with_single_cert(certs, key)
                 .map_err(|e| {

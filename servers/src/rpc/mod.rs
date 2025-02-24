@@ -335,7 +335,7 @@ impl RpcServer {
         };
         let mut root_cert_store = RootCertStore::empty();
         for cert in root_certs {
-            root_cert_store.add(&cert).map_err(|e| {
+            root_cert_store.add(cert).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
                     format!("Invalid Root Cert for Server: {e:?}"),
@@ -344,7 +344,6 @@ impl RpcServer {
         }
         Ok(Arc::new(
             ServerConfig::builder()
-                .with_safe_defaults()
                 .with_client_cert_verifier(AllowAny::new())
                 .with_single_cert(certs, key)
                 .map_err(|e| {

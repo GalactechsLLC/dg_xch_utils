@@ -1,3 +1,4 @@
+use bech32::{Bech32m, Hrp};
 use bip39::Mnemonic;
 use blst::min_pk::{PublicKey, SecretKey};
 use blst::{blst_bendian_from_scalar, blst_scalar, blst_scalar_from_be_bytes, blst_sk_add_n_check};
@@ -11,7 +12,6 @@ use sha2::Sha256;
 use std::io::{Error, ErrorKind};
 use std::mem::size_of;
 use std::str::FromStr;
-use bech32::{Bech32m, Hrp};
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")

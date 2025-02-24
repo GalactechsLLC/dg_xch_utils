@@ -7,8 +7,13 @@ use rand::Rng;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
-use rustls::server::{ ParsedCertificate};
-use rustls::{DigitallySignedStruct};
+use rustls::client::danger::HandshakeSignatureValid;
+use rustls::internal::msgs::handshake::DistinguishedName;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+use rustls::server::ParsedCertificate;
+use rustls::DigitallySignedStruct;
+use rustls::SignatureScheme;
 use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -21,16 +26,11 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use rustls::client::danger::HandshakeSignatureValid;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
-use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-use rustls::SignatureScheme;
-use rustls::internal::msgs::handshake::DistinguishedName;
 use x509_cert::builder::{Builder, CertificateBuilder, Profile};
 use x509_cert::der::DecodePem;
 use x509_cert::ext::pkix::name::GeneralName;
 use x509_cert::ext::pkix::SubjectAltName;
-use x509_cert::name::{Name};
+use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::SubjectPublicKeyInfo;
 use x509_cert::time::{Time, Validity};
@@ -54,15 +54,30 @@ impl ClientCertVerifier for AllowAny {
         &[]
     }
 
-    fn verify_client_cert(&self, _end_entity: &CertificateDer<'_>, _intermediates: &[CertificateDer<'_>], _now: UnixTime) -> Result<ClientCertVerified, rustls::Error> {
+    fn verify_client_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
         Ok(ClientCertVerified::assertion())
     }
 
-    fn verify_tls12_signature(&self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         Ok(HandshakeSignatureValid::assertion())
     }
 
-    fn verify_tls13_signature(&self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         Ok(HandshakeSignatureValid::assertion())
     }
 
@@ -109,10 +124,10 @@ pub fn load_private_key(filename: &str) -> Result<PrivateKeyDer<'static>, Error>
     let mut reader = BufReader::new(keyfile);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
-            Ok(Item::Pkcs1Key(key))=> {
+            Ok(Item::Pkcs1Key(key)) => {
                 return Ok(PrivateKeyDer::from(key));
             }
-            Ok(Item::Pkcs8Key(key))=> {
+            Ok(Item::Pkcs8Key(key)) => {
                 return Ok(PrivateKeyDer::from(key));
             }
             Ok(Item::Sec1Key(key)) => {
@@ -131,10 +146,10 @@ pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKeyDer<'static
     let mut reader = BufReader::new(bytes);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
-            Ok(Item::Pkcs1Key(key))=> {
+            Ok(Item::Pkcs1Key(key)) => {
                 return Ok(PrivateKeyDer::from(key.clone_key()));
             }
-            Ok(Item::Pkcs8Key(key))=> {
+            Ok(Item::Pkcs8Key(key)) => {
                 return Ok(PrivateKeyDer::from(key.clone_key()));
             }
             Ok(Item::Sec1Key(key)) => {

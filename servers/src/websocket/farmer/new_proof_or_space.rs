@@ -238,7 +238,8 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                         &request,
                         None,
                     )
-                    .to_bytes(protocol_version),
+                    .to_bytes(protocol_version)
+                    .into(),
                 ))
                 .await;
         }
