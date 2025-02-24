@@ -10,7 +10,7 @@ use num_traits::AsPrimitive;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::{Fill, Rng};
-use secrets::traits::Bytes;
+use secrecy::zeroize::DefaultIsZeroes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cmp::min;
@@ -207,7 +207,7 @@ macro_rules! impl_sized_bytes {
     ($($name: ident, $size:expr);*) => {
         $(
             pub type $name = SizedBytesImpl<$size>;
-            unsafe impl Bytes for $name {}
+            impl DefaultIsZeroes for SizedBytesImpl<$size> {}
             impl TryFrom<Program> for $name {
                 type Error = Error;
                 fn try_from(value: Program) -> Result<Self, Self::Error> {
