@@ -22,7 +22,7 @@ use dg_xch_core::utils::hash_256;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::debug;
 use reqwest::header::{HeaderName, HeaderValue};
-use rustls::{Certificate, ClientConfig, PrivateKey};
+use rustls::{ClientConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fs};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::RwLock;
@@ -71,12 +72,17 @@ impl WsClient {
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
-        let (certs, key, cert_str) = if let Some(ssl_info) = &client_config.ssl_info {
-            (
-                load_certs(&ssl_info.ssl_crt_path)?,
-                load_private_key(&ssl_info.ssl_key_path)?,
-                fs::read(&ssl_info.ssl_crt_path)?,
-            )
+         if let Some(ssl_info) = &client_config.ssl_info {
+             Self::build(
+                 client_config.clone(),
+                 node_type,
+                 message_handlers,
+                 run,
+                 load_certs(&ssl_info.ssl_crt_path)?,
+                 load_private_key(&ssl_info.ssl_key_path)?,
+                 &fs::read(&ssl_info.ssl_crt_path)?,
+             )
+                 .await
         } else if let (Some(crt), Some(key)) = (
             env::var("PRIVATE_CA_CRT").ok(),
             env::var("PRIVATE_CA_KEY").ok(),
@@ -84,31 +90,31 @@ impl WsClient {
             let (cert_bytes, key_bytes) =
                 generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes())
                     .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
-            (
-                load_certs_from_bytes(&cert_bytes)?,
-                load_private_key_from_bytes(&key_bytes)?,
-                cert_bytes,
-            )
+             Self::build(
+                 client_config,
+                 node_type,
+                 message_handlers,
+                 run,
+                 load_certs_from_bytes(&cert_bytes)?,
+                 load_private_key_from_bytes(&key_bytes)?,
+                 &cert_bytes,
+             )
+                 .await
         } else {
             let (cert_bytes, key_bytes) =
                 generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
                     .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
-            (
-                load_certs_from_bytes(&cert_bytes)?,
-                load_private_key_from_bytes(&key_bytes)?,
-                cert_bytes,
-            )
-        };
-        Self::build(
-            client_config,
-            node_type,
-            message_handlers,
-            run,
-            certs,
-            key,
-            &cert_str,
-        )
-        .await
+             Self::build(
+                 client_config,
+                 node_type,
+                 message_handlers,
+                 run,
+                 load_certs_from_bytes(&cert_bytes)?,
+                 load_private_key_from_bytes(&key_bytes)?,
+                 &cert_bytes,
+             )
+                 .await
+        }
     }
     pub async fn with_ca(
         client_config: Arc<WsClientConfig>,
@@ -118,25 +124,18 @@ impl WsClient {
         cert_data: &[u8],
         key_data: &[u8],
     ) -> Result<Self, Error> {
-        let (certs, key, cert_str) = {
-            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
-                .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
-            (
-                load_certs_from_bytes(&cert_bytes)?,
-                load_private_key_from_bytes(&key_bytes)?,
-                cert_bytes,
-            )
-        };
+        let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
+            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
         Self::build(
             client_config,
             node_type,
             message_handlers,
             run,
-            certs,
-            key,
-            &cert_str,
+            load_certs_from_bytes(&cert_bytes)?,
+            load_private_key_from_bytes(&key_bytes)?,
+            &cert_bytes,
         )
-        .await
+            .await
     }
 
     async fn build(
@@ -144,8 +143,8 @@ impl WsClient {
         node_type: NodeType,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
-        certs: Vec<Certificate>,
-        key: PrivateKey,
+        certs: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
         cert_str: &[u8],
     ) -> Result<Self, Error> {
         let mut request = format!("wss://{}:{}/ws", client_config.host, client_config.port)
@@ -183,14 +182,14 @@ impl WsClient {
                 )
             })?,
         );
-        let peer_id = Arc::new(Bytes32::new(hash_256(&certs[0].0)));
+        let peer_id = Arc::new(Bytes32::new(hash_256(certs[0].as_ref())));
         let (stream, _) = connect_async_tls_with_config(
             request,
             None,
             false,
             Some(Connector::Rustls(Arc::new(
                 ClientConfig::builder()
-                    .with_safe_defaults()
+                    .dangerous()
                     .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
                     .with_client_auth_cert(certs, key)
                     .map_err(|e| {

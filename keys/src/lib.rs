@@ -1,4 +1,3 @@
-use bech32::{FromBase32, ToBase32, Variant};
 use bip39::Mnemonic;
 use blst::min_pk::{PublicKey, SecretKey};
 use blst::{blst_bendian_from_scalar, blst_scalar, blst_scalar_from_be_bytes, blst_sk_add_n_check};
@@ -12,6 +11,7 @@ use sha2::Sha256;
 use std::io::{Error, ErrorKind};
 use std::mem::size_of;
 use std::str::FromStr;
+use bech32::{Bech32m, Hrp};
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -218,23 +218,23 @@ pub fn fingerprint(key: &PublicKey) -> u32 {
 }
 
 pub fn encode_puzzle_hash(puzzle_hash: &Bytes32, prefix: &str) -> Result<String, Error> {
-    bech32::encode(prefix, puzzle_hash.bytes().to_base32(), Variant::Bech32m)
+    bech32::encode::<Bech32m>(Hrp::parse_unchecked(prefix), &puzzle_hash.bytes())
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
 pub fn decode_puzzle_hash(address: &str) -> Result<Bytes32, Error> {
-    let (_, data, _) = bech32::decode(address).map_err(|e| {
+    let (_, data) = bech32::decode(address).map_err(|e| {
         Error::new(
             ErrorKind::InvalidInput,
             format!("Error Decoding address: ({address}): {e:?}"),
         )
     })?;
-    Bytes32::parse(&Vec::<u8>::from_base32(&data).map_err(|e| {
+    Bytes32::parse(&data).map_err(|e| {
         Error::new(
             ErrorKind::InvalidInput,
             format!("Error Decoding address: ({address}): {e:?}"),
         )
-    })?)
+    })
 }
 pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, Error> {
     let wallet_sk = master_sk_to_wallet_sk(key, index)?;

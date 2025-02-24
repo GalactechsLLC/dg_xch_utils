@@ -9,5 +9,5 @@ homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
 repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
-log = "0.4.20"
-serde = { version = "1.0.197", features = ["derive"] }
+log = "0.4.26"
+serde = { version = "1.0.218", features = ["derive"] }

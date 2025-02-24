@@ -222,7 +222,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                 },
                                                 None,
                                             )
-                                            .to_bytes(protocol_version),
+                                            .to_bytes(protocol_version).into(),
                                         ))
                                         .await;
                                     if is_partial {

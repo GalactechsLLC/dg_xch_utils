@@ -7,7 +7,6 @@ use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
 use num_traits::AsPrimitive;
-use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::{Fill, Rng};
 use secrets::traits::Bytes;
@@ -17,6 +16,7 @@ use std::cmp::min;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::ops::{Index, IndexMut, Range};
 use std::str::FromStr;
+use rand::distributions::Standard;
 
 #[derive(Copy, Clone)]
 pub struct SizedBytesImpl<const SIZE: usize> {
@@ -200,15 +200,6 @@ impl<'a, const SIZE: usize> Deserialize<'a> for SizedBytesImpl<SIZE> {
             Ok(hex) => Ok(hex),
             Err(er) => Err(er),
         }
-    }
-}
-#[cfg(feature = "paperclip")]
-impl<const SIZE: usize> paperclip::v2::schema::TypedData for SizedBytesImpl<SIZE> {
-    fn data_type() -> paperclip::v2::models::DataType {
-        paperclip::v2::models::DataType::String
-    }
-    fn format() -> Option<paperclip::v2::models::DataTypeFormat> {
-        Some(paperclip::v2::models::DataTypeFormat::Other)
     }
 }
 

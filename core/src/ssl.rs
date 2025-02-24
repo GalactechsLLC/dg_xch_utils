@@ -7,8 +7,8 @@ use rand::Rng;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
-use rustls::server::{ClientCertVerified, ClientCertVerifier, ParsedCertificate};
-use rustls::{DistinguishedName, PrivateKey};
+use rustls::server::{ ParsedCertificate};
+use rustls::{DigitallySignedStruct};
 use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -21,16 +21,22 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use rustls::client::danger::HandshakeSignatureValid;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+use rustls::SignatureScheme;
+use rustls::internal::msgs::handshake::DistinguishedName;
 use x509_cert::builder::{Builder, CertificateBuilder, Profile};
 use x509_cert::der::DecodePem;
 use x509_cert::ext::pkix::name::GeneralName;
 use x509_cert::ext::pkix::SubjectAltName;
-use x509_cert::name::Name;
+use x509_cert::name::{Name};
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::SubjectPublicKeyInfo;
 use x509_cert::time::{Time, Validity};
 use x509_cert::Certificate;
 
+#[derive(Debug)]
 pub struct AllowAny {}
 impl AllowAny {
     #[must_use]
@@ -40,42 +46,77 @@ impl AllowAny {
 }
 
 impl ClientCertVerifier for AllowAny {
-    fn client_auth_root_subjects(&self) -> &[DistinguishedName] {
-        &[]
-    }
     fn client_auth_mandatory(&self) -> bool {
         false
     }
-    fn verify_client_cert(
-        &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _now: SystemTime,
-    ) -> Result<ClientCertVerified, rustls::Error> {
+
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        &[]
+    }
+
+    fn verify_client_cert(&self, _end_entity: &CertificateDer<'_>, _intermediates: &[CertificateDer<'_>], _now: UnixTime) -> Result<ClientCertVerified, rustls::Error> {
         Ok(ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(&self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(&self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::ECDSA_NISTP521_SHA512,
+            SignatureScheme::ED25519,
+        ]
     }
 }
 
-pub fn load_certs(filename: &str) -> Result<Vec<rustls::Certificate>, Error> {
+pub fn load_certs(filename: &str) -> Result<Vec<CertificateDer<'static>>, Error> {
     let cert_file = File::open(filename)?;
     let mut reader = BufReader::new(cert_file);
-    let certs = certs(&mut reader)?;
-    Ok(certs.into_iter().map(rustls::Certificate).collect())
+    let mut output = vec![];
+    for cert in certs(&mut reader) {
+        match cert {
+            Ok(cert) => output.push(cert.to_owned()),
+            Err(err) => return Err(Error::new(ErrorKind::Other, err)),
+        }
+    }
+    Ok(output)
 }
 
-pub fn load_certs_from_bytes(bytes: &[u8]) -> Result<Vec<rustls::Certificate>, Error> {
+pub fn load_certs_from_bytes(bytes: &[u8]) -> Result<Vec<CertificateDer<'static>>, Error> {
     let mut reader = BufReader::new(bytes);
-    let certs = certs(&mut reader)?;
-    Ok(certs.into_iter().map(rustls::Certificate).collect())
+    let mut output = vec![];
+    for cert in certs(&mut reader) {
+        match cert {
+            Ok(cert) => output.push(cert.to_owned()),
+            Err(err) => return Err(Error::new(ErrorKind::Other, err)),
+        }
+    }
+    Ok(output)
 }
 
-pub fn load_private_key(filename: &str) -> Result<PrivateKey, Error> {
+pub fn load_private_key(filename: &str) -> Result<PrivateKeyDer<'static>, Error> {
     let keyfile = File::open(filename)?;
     let mut reader = BufReader::new(keyfile);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
-            Ok(Item::RSAKey(key) | Item::PKCS8Key(key) | Item::ECKey(key)) => {
-                return Ok(PrivateKey(key));
+            Ok(Item::Pkcs1Key(key))=> {
+                return Ok(PrivateKeyDer::from(key));
+            }
+            Ok(Item::Pkcs8Key(key))=> {
+                return Ok(PrivateKeyDer::from(key));
+            }
+            Ok(Item::Sec1Key(key)) => {
+                return Ok(PrivateKeyDer::from(key));
             }
             Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
             _ => {
@@ -86,12 +127,18 @@ pub fn load_private_key(filename: &str) -> Result<PrivateKey, Error> {
     Err(Error::new(ErrorKind::NotFound, "Private Key Not Found"))
 }
 
-pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKey, Error> {
+pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKeyDer<'static>, Error> {
     let mut reader = BufReader::new(bytes);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
-            Ok(Item::RSAKey(key) | Item::PKCS8Key(key) | Item::ECKey(key)) => {
-                return Ok(PrivateKey(key));
+            Ok(Item::Pkcs1Key(key))=> {
+                return Ok(PrivateKeyDer::from(key.clone_key()));
+            }
+            Ok(Item::Pkcs8Key(key))=> {
+                return Ok(PrivateKeyDer::from(key.clone_key()));
+            }
+            Ok(Item::Sec1Key(key)) => {
+                return Ok(PrivateKeyDer::from(key.clone_key()));
             }
             Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
             _ => {
@@ -223,7 +270,7 @@ pub fn make_ca_cert(cert_path: &Path, key_path: &Path) -> Result<(Vec<u8>, Vec<u
 }
 
 fn make_ca_cert_data() -> Result<(Vec<u8>, Vec<u8>), Error> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rngs::OsRng;
     let root_key = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate a key");
     let pub_key = root_key.to_public_key();
     let signing_key: SigningKey<Sha256> = SigningKey::new(root_key.clone());
@@ -413,21 +460,21 @@ fn validate_cert(path: &Path) -> bool {
     match File::open(path) {
         Ok(cert_file) => {
             let mut reader = BufReader::new(cert_file);
-            match certs(&mut reader) {
-                Ok(certs) => {
-                    for cert in certs.into_iter().map(rustls::Certificate) {
+            for cert in certs(&mut reader) {
+                match cert {
+                    Ok(cert) => {
                         if let Err(e) = ParsedCertificate::try_from(&cert) {
                             error!("Error Parsing Cert: {e:?}");
                             return false;
                         }
                     }
-                    true
-                }
-                Err(e) => {
-                    error!("Failed to read Cert File: {path:?}, {:?}", e);
-                    false
+                    Err(e) => {
+                        error!("Failed to read Cert File: {path:?}, {:?}", e);
+                        return false;
+                    }
                 }
             }
+            true
         }
         Err(e) => {
             error!("Failed to read Cert File: {path:?}, {:?}", e);
@@ -442,19 +489,19 @@ fn validate_key(path: &Path) -> bool {
             let mut reader = BufReader::new(cert_file);
             for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
                 match item {
-                    Ok(Item::RSAKey(key)) => {
-                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs1_der(&key) {
+                    Ok(Item::Pkcs1Key(key)) => {
+                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs1_der(key.secret_pkcs1_der()) {
                             error!("Error Validating Private Key: {path:?}, {e:?}");
                             return false;
                         }
                     }
-                    Ok(Item::PKCS8Key(key)) => {
-                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs8_der(&key) {
+                    Ok(Item::Pkcs8Key(key)) => {
+                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs8_der(key.secret_pkcs8_der()) {
                             error!("Error Validating Private Key: {path:?}, {e:?}");
                             return false;
                         }
                     }
-                    Ok(Item::ECKey(_)) => {
+                    Ok(Item::Sec1Key(_)) => {
                         error!("ECKey is not supported");
                         return false;
                     }

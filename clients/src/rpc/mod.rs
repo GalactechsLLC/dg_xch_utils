@@ -10,7 +10,7 @@ use dg_xch_core::ssl::{
     load_private_key_from_bytes,
 };
 use reqwest::{Client, ClientBuilder};
-use rustls::ClientConfig;
+use rustls::{ClientConfig};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -78,7 +78,7 @@ pub fn get_client(ssl_path: &Option<ClientSSLConfig>, timeout: u64) -> Result<Cl
         )
     };
     let config = ClientConfig::builder()
-        .with_safe_defaults()
+        .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
         .with_client_auth_cert(certs, key)
         .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;

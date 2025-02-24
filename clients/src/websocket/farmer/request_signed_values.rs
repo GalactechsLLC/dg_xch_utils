@@ -91,7 +91,7 @@ impl MessageHandler for RequestSignedValuesHandle {
                             },
                             None,
                         )
-                        .to_bytes(protocol_version),
+                        .to_bytes(protocol_version).into(),
                     ))
                     .await;
             }

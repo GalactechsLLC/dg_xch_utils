@@ -487,7 +487,7 @@ impl ChiaMessage {
 }
 impl From<ChiaMessage> for Message {
     fn from(val: ChiaMessage) -> Self {
-        Message::Binary(val.to_bytes(ChiaProtocolVersion::default()))
+        Message::Binary(val.to_bytes(ChiaProtocolVersion::default()).into())
     }
 }
 
