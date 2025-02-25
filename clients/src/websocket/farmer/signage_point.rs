@@ -128,17 +128,14 @@ impl MessageHandler for NewSignagePointHandle {
                 s.points_found_24h
                     .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
                 if let Some(r) = self.metrics.read().await.as_ref() {
-                    if let Some(c) = &r.points_acknowledged_24h {
-                        c.with_label_values(&[&v.to_string()])
-                            .set(s.points_acknowledged_24h.iter().map(|(_, v)| *v).sum());
-                    }
-                    if let Some(c) = &r.points_found_24h {
-                        c.with_label_values(&[&v.to_string()])
-                            .set(s.points_found_24h.iter().map(|(_, v)| *v).sum());
-                    }
-                    if let Some(c) = &r.last_signage_point_index {
-                        c.set(sp.signage_point_index as u64);
-                    }
+                    r.points_acknowledged_24h
+                        .with_label_values(&[&v.to_string()])
+                        .set(s.points_acknowledged_24h.iter().map(|(_, v)| *v).sum());
+                    r.points_found_24h
+                        .with_label_values(&[&v.to_string()])
+                        .set(s.points_found_24h.iter().map(|(_, v)| *v).sum());
+                    r.last_signage_point_index
+                        .set(sp.signage_point_index as u64);
                 }
             }
         }
