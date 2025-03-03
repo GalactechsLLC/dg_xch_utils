@@ -34,7 +34,7 @@ impl TryFrom<&SExp> for ConditionWithArgs {
                     }
                 }
                 SExp::Pair(_) => {
-                    warn!("Got pair in opcode args");
+                    warn!("Got pair in opcode({}) args: {:?}", opcode, arg);
                     break;
                 }
             }

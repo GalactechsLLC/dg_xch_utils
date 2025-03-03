@@ -4,7 +4,7 @@ use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
 use crate::clvm::program::Program;
-use crate::clvm::sexp::AtomBuf;
+use crate::clvm::sexp::{AtomBuf, AtomRef};
 use crate::clvm::utils::INFINITE_COST;
 use crate::traits::SizedBytes;
 use crate::utils::hash_256;
@@ -122,7 +122,7 @@ impl SpendBundle {
                 .into();
         Ok(self)
     }
-    pub fn validate(&self) -> Result<bool, Error> {
+    pub fn validate(&self, print: bool) -> Result<bool, Error> {
         //Validate Signature
 
         //Validate Spends
@@ -138,6 +138,14 @@ impl SpendBundle {
                 (&output_conditions.sexp).try_into()?;
             let mut create_conditions = vec![];
             for condition_with_args in conditions_with_args {
+                if print {
+                    let mut buffer = String::new();
+                    buffer.extend(format!("{} ", condition_with_args.opcode).chars());
+                    for var in &condition_with_args.vars {
+                        buffer.extend(format!("{} ", AtomRef::new(var)).chars());
+                    }
+                    log::info!("{buffer}");
+                }
                 if condition_with_args.opcode == ConditionOpcode::CreateCoin {
                     coins_to_create.push(Coin {
                         parent_coin_info: spend.coin.coin_id(),
@@ -151,19 +159,21 @@ impl SpendBundle {
             coins_to_spend.push(spend.coin);
             if !create_conditions.is_empty() {
                 match origin_id {
-                    Some(_) => Err(Error::new(
-                        ErrorKind::InvalidInput,
-                        "Cannot have multiple Origin coins",
-                    ))?,
+                    Some(_) => {
+                        if origin_id != Some(spend.coin.coin_id()) {
+                            Err(Error::new(
+                                ErrorKind::InvalidInput,
+                                "Cannot have multiple Origin coins",
+                            ))?
+                        }
+                    }
                     None => origin_id = Some(spend.coin.coin_id()),
                 }
             }
         }
-
         //Validate Coins Created
-
         //Validate Conditions
 
-        todo!()
+        Ok(true)
     }
 }

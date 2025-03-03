@@ -366,35 +366,55 @@ impl Debug for AtomBuf {
 
 impl Display for AtomBuf {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if self.data.is_empty() {
-            f.write_str("()")
-        } else if self.data.len() > 2 {
-            match String::from_utf8(self.data.clone()) {
-                Ok(as_utf8) => {
-                    for s in as_utf8.chars() {
-                        if !PRINTABLE.contains(&s.to_string()) {
-                            return f.write_str(&format!("0x{}", encode(&self.data)));
-                        }
-                    }
-                    if as_utf8.contains('"') && as_utf8.contains('\'') {
-                        f.write_str(&format!("0x{}", encode(&self.data)))
-                    } else if as_utf8.contains('"') {
-                        f.write_str(&format!("'{as_utf8}'"))
-                    } else if as_utf8.contains('\'') {
-                        f.write_str(&format!("\"{as_utf8}\""))
-                    } else if is_hex(as_utf8.as_bytes()) {
-                        f.write_str(&format!("0x{as_utf8}"))
-                    } else {
-                        f.write_str(&format!("\"{as_utf8}\""))
+        display_atom(&self.data, f)
+    }
+}
+
+pub struct AtomRef<'a> {
+    pub data: &'a [u8],
+}
+
+impl Debug for AtomRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl Display for AtomRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        display_atom(self.data, f)
+    }
+}
+
+fn display_atom(data: &[u8], f: &mut Formatter<'_>) -> fmt::Result {
+    if data.is_empty() {
+        f.write_str("()")
+    } else if data.len() > 2 {
+        match String::from_utf8(data.to_vec()) {
+            Ok(as_utf8) => {
+                for s in as_utf8.chars() {
+                    if !PRINTABLE.contains(&s.to_string()) {
+                        return f.write_str(&format!("0x{}", encode(data)));
                     }
                 }
-                Err(_) => f.write_str(&format!("0x{}", encode(&self.data))),
+                if as_utf8.contains('"') && as_utf8.contains('\'') {
+                    f.write_str(&format!("0x{}", encode(data)))
+                } else if as_utf8.contains('"') {
+                    f.write_str(&format!("'{as_utf8}'"))
+                } else if as_utf8.contains('\'') {
+                    f.write_str(&format!("\"{as_utf8}\""))
+                } else if is_hex(as_utf8.as_bytes()) {
+                    f.write_str(&format!("0x{as_utf8}"))
+                } else {
+                    f.write_str(&format!("\"{as_utf8}\""))
+                }
             }
-        } else if *self.data == BigInt::from_signed_bytes_be(&self.data).to_signed_bytes_be() {
-            f.write_str(&format!("{}", BigInt::from_signed_bytes_be(&self.data)))
-        } else {
-            f.write_str(&format!("0x{}", encode(&self.data)))
+            Err(_) => f.write_str(&format!("0x{}", encode(data))),
         }
+    } else if data == BigInt::from_signed_bytes_be(data).to_signed_bytes_be() {
+        f.write_str(&format!("{}", BigInt::from_signed_bytes_be(data)))
+    } else {
+        f.write_str(&format!("0x{}", encode(data)))
     }
 }
 
@@ -424,6 +444,35 @@ impl AtomBuf {
     }
     pub fn as_i32(&self) -> Option<u32> {
         u32_from_slice(&self.data)
+    }
+}
+
+impl<'a> AtomRef<'a> {
+    #[must_use]
+    pub fn new(v: &'a [u8]) -> AtomRef<'a> {
+        AtomRef { data: v }
+    }
+    pub fn as_bytes32(&self) -> Result<Bytes32, Error> {
+        if self.data.len() == Bytes32::SIZE {
+            Bytes32::parse(self.data)
+        } else {
+            Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("Invalid Length for Bytes32: {}", self.data.len()),
+            ))
+        }
+    }
+    pub fn as_int(&self) -> BigInt {
+        number_from_slice(self.data)
+    }
+    pub fn as_u64(&self) -> Result<u64, Error> {
+        u64_from_bigint(&number_from_slice(self.data))
+    }
+    pub fn as_u32(&self) -> Option<u32> {
+        u32_from_slice(self.data)
+    }
+    pub fn as_i32(&self) -> Option<u32> {
+        u32_from_slice(self.data)
     }
 }
 impl<T: AsRef<[u8]>> From<T> for AtomBuf {
