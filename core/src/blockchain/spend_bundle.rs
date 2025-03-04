@@ -160,12 +160,12 @@ impl SpendBundle {
             if !create_conditions.is_empty() {
                 match origin_id {
                     Some(_) => {
-                        if origin_id != Some(spend.coin.coin_id()) {
-                            Err(Error::new(
-                                ErrorKind::InvalidInput,
-                                "Cannot have multiple Origin coins",
-                            ))?
-                        }
+                        // if origin_id != Some(spend.coin.coin_id()) {
+                        //     Err(Error::new(
+                        //         ErrorKind::InvalidInput,
+                        //         "Cannot have multiple Origin coins",
+                        //     ))?
+                        // }
                     }
                     None => origin_id = Some(spend.coin.coin_id()),
                 }
