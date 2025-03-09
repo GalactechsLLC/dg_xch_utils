@@ -15,6 +15,7 @@ use dg_xch_core::constants::{FARMING_TO_POOL, POOL_PROTOCOL_VERSION, SELF_POOLIN
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
 use dg_xch_core::protocols::pool::GetPoolInfoResponse;
+use dg_xch_core::traits::SizedBytes;
 use dg_xch_keys::{
     encode_puzzle_hash, fingerprint, key_from_mnemonic_str, master_sk_to_farmer_sk,
     master_sk_to_pool_sk, master_sk_to_wallet_sk, BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER,
@@ -38,6 +39,7 @@ pub fn create_cold_wallet() -> Result<(), Error> {
     let fp = fingerprint(&master_public_key);
     info!("Fingerprint: {fp}");
     info!("Mnemonic Phrase: {}", &mnemonic.to_string());
+    info!("Master SK: {}", Bytes32::new(master_secret_key.to_bytes()));
     info!(
         "Master public key (m): {}",
         Bytes48::from(master_public_key.to_bytes())
