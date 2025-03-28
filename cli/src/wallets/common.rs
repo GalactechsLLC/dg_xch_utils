@@ -8,11 +8,11 @@ use dg_xch_core::clvm::bls_bindings;
 use dg_xch_core::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
 use dg_xch_core::clvm::condition_utils::conditions_dict_for_solution;
 use dg_xch_core::consensus::constants::ConsensusConstants;
+use log::info;
 use num_traits::cast::ToPrimitive;
 use std::future::Future;
 use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
-use log::info;
 
 pub struct DerivationRecord {
     pub index: u32,

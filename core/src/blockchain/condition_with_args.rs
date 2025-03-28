@@ -1,14 +1,14 @@
-use std::fmt::Display;
 use crate::blockchain::condition_opcode::ConditionOpcode;
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::clvm::sexp::{AtomBuf, IntoSExp, SExp};
 use crate::constants::NULL_SEXP;
-use log::warn;
-use std::io::{Cursor, Error, ErrorKind};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::Error as SerialError;
-use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
-use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::formatting::{number_from_slice, u32_from_slice, u64_from_bigint};
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
+use log::warn;
+use serde::de::Error as SerialError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt::Display;
+use std::io::{Cursor, Error, ErrorKind};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Message(usize, [u8; 1024]);
@@ -43,7 +43,7 @@ impl IntoSExp for Message {
 impl Serialize for Message {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer
+        S: Serializer,
     {
         serializer.serialize_bytes(&self.1[0..self.0])
     }
@@ -51,12 +51,14 @@ impl Serialize for Message {
 impl<'de> Deserialize<'de> for Message {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         if let Ok(data) = <Vec<u8>>::deserialize(deserializer) {
             Ok(Message::new(data).map_err(|e| D::Error::custom(e.to_string()))?)
         } else {
-            Err(D::Error::custom("Expected Byte Array to Deserialize Message"))
+            Err(D::Error::custom(
+                "Expected Byte Array to Deserialize Message",
+            ))
         }
     }
 }
@@ -64,14 +66,17 @@ impl<'de> Deserialize<'de> for Message {
 impl ChiaSerialize for Message {
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
     where
-        Self: Sized
+        Self: Sized,
     {
         self.as_ref().to_vec().to_bytes(version)
     }
 
-    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>, version: ChiaProtocolVersion) -> Result<Self, Error>
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
     where
-        Self: Sized
+        Self: Sized,
     {
         let vec_data: Vec<u8> = Vec::from_bytes(bytes, version)?;
         Message::new(vec_data)
@@ -156,40 +161,132 @@ impl ConditionWithArgs {
         match *self {
             ConditionWithArgs::Unknown => (ConditionOpcode::Unknown, vec![]),
             ConditionWithArgs::Remark => (ConditionOpcode::Remark, vec![]),
-            ConditionWithArgs::AggSigParent(key, msg) => (ConditionOpcode::AggSigParent, vec![key.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::AggSigPuzzle(key, msg) => (ConditionOpcode::AggSigPuzzle, vec![key.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::AggSigAmount(key, msg) => (ConditionOpcode::AggSigAmount, vec![key.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::AggSigPuzzleAmount(key, msg) => (ConditionOpcode::AggSigPuzzleAmount, vec![key.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::AggSigParentAmount(key, msg) => (ConditionOpcode::AggSigParentAmount, vec![key.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::AggSigParentPuzzle(key, msg) => (ConditionOpcode::AggSigParentPuzzle, vec![key.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::AggSigUnsafe(key, msg) => (ConditionOpcode::AggSigUnsafe, vec![key.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::AggSigMe(key, msg) => (ConditionOpcode::AggSigMe, vec![key.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::CreateCoin(puzzle_hash, amount, hint) => (ConditionOpcode::CreateCoin, vec![puzzle_hash.to_sexp(), amount.to_sexp(), hint.to_sexp()]),
-            ConditionWithArgs::ReserveFee(fee) => (ConditionOpcode::ReserveFee, vec![fee.to_sexp()]),
-            ConditionWithArgs::CreateCoinAnnouncement(puzzle_hash) => (ConditionOpcode::CreateCoinAnnouncement, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::AssertCoinAnnouncement(puzzle_hash) => (ConditionOpcode::AssertCoinAnnouncement, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::CreatePuzzleAnnouncement(puzzle_hash) => (ConditionOpcode::CreatePuzzleAnnouncement, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::AssertPuzzleAnnouncement(puzzle_hash) => (ConditionOpcode::AssertPuzzleAnnouncement, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::AssertConcurrentSpend(puzzle_hash) => (ConditionOpcode::AssertConcurrentSpend, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::AssertConcurrentPuzzle(puzzle_hash) => (ConditionOpcode::AssertConcurrentPuzzle, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::SendMessage(mode, puzzle_hash, msg) => (ConditionOpcode::SendMessage, vec![mode.to_sexp(), puzzle_hash.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::ReceiveMessage(puzzle_hash, mode, msg) => (ConditionOpcode::ReceiveMessage, vec![puzzle_hash.to_sexp(), mode.to_sexp(), msg.to_sexp()]),
-            ConditionWithArgs::AssertMyCoinId(puzzle_hash) => (ConditionOpcode::AssertMyCoinId, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::AssertMyParentId(puzzle_hash) => (ConditionOpcode::AssertMyParentId, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::AssertMyPuzzlehash(puzzle_hash) => (ConditionOpcode::AssertMyPuzzlehash, vec![puzzle_hash.to_sexp()]),
-            ConditionWithArgs::AssertMyAmount(amount) => (ConditionOpcode::AssertMyAmount, vec![amount.to_sexp()]),
-            ConditionWithArgs::AssertMyBirthSeconds(seconds) => (ConditionOpcode::AssertMyBirthSeconds, vec![seconds.to_sexp()]),
-            ConditionWithArgs::AssertMyBirthHeight(height) => (ConditionOpcode::AssertMyBirthHeight, vec![height.to_sexp()]),
+            ConditionWithArgs::AggSigParent(key, msg) => (
+                ConditionOpcode::AggSigParent,
+                vec![key.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::AggSigPuzzle(key, msg) => (
+                ConditionOpcode::AggSigPuzzle,
+                vec![key.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::AggSigAmount(key, msg) => (
+                ConditionOpcode::AggSigAmount,
+                vec![key.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::AggSigPuzzleAmount(key, msg) => (
+                ConditionOpcode::AggSigPuzzleAmount,
+                vec![key.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::AggSigParentAmount(key, msg) => (
+                ConditionOpcode::AggSigParentAmount,
+                vec![key.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::AggSigParentPuzzle(key, msg) => (
+                ConditionOpcode::AggSigParentPuzzle,
+                vec![key.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::AggSigUnsafe(key, msg) => (
+                ConditionOpcode::AggSigUnsafe,
+                vec![key.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::AggSigMe(key, msg) => (
+                ConditionOpcode::AggSigMe,
+                vec![key.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::CreateCoin(puzzle_hash, amount, hint) => (
+                ConditionOpcode::CreateCoin,
+                vec![puzzle_hash.to_sexp(), amount.to_sexp(), hint.to_sexp()],
+            ),
+            ConditionWithArgs::ReserveFee(fee) => {
+                (ConditionOpcode::ReserveFee, vec![fee.to_sexp()])
+            }
+            ConditionWithArgs::CreateCoinAnnouncement(puzzle_hash) => (
+                ConditionOpcode::CreateCoinAnnouncement,
+                vec![puzzle_hash.to_sexp()],
+            ),
+            ConditionWithArgs::AssertCoinAnnouncement(puzzle_hash) => (
+                ConditionOpcode::AssertCoinAnnouncement,
+                vec![puzzle_hash.to_sexp()],
+            ),
+            ConditionWithArgs::CreatePuzzleAnnouncement(puzzle_hash) => (
+                ConditionOpcode::CreatePuzzleAnnouncement,
+                vec![puzzle_hash.to_sexp()],
+            ),
+            ConditionWithArgs::AssertPuzzleAnnouncement(puzzle_hash) => (
+                ConditionOpcode::AssertPuzzleAnnouncement,
+                vec![puzzle_hash.to_sexp()],
+            ),
+            ConditionWithArgs::AssertConcurrentSpend(puzzle_hash) => (
+                ConditionOpcode::AssertConcurrentSpend,
+                vec![puzzle_hash.to_sexp()],
+            ),
+            ConditionWithArgs::AssertConcurrentPuzzle(puzzle_hash) => (
+                ConditionOpcode::AssertConcurrentPuzzle,
+                vec![puzzle_hash.to_sexp()],
+            ),
+            ConditionWithArgs::SendMessage(mode, puzzle_hash, msg) => (
+                ConditionOpcode::SendMessage,
+                vec![mode.to_sexp(), puzzle_hash.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::ReceiveMessage(puzzle_hash, mode, msg) => (
+                ConditionOpcode::ReceiveMessage,
+                vec![puzzle_hash.to_sexp(), mode.to_sexp(), msg.to_sexp()],
+            ),
+            ConditionWithArgs::AssertMyCoinId(puzzle_hash) => {
+                (ConditionOpcode::AssertMyCoinId, vec![puzzle_hash.to_sexp()])
+            }
+            ConditionWithArgs::AssertMyParentId(puzzle_hash) => (
+                ConditionOpcode::AssertMyParentId,
+                vec![puzzle_hash.to_sexp()],
+            ),
+            ConditionWithArgs::AssertMyPuzzlehash(puzzle_hash) => (
+                ConditionOpcode::AssertMyPuzzlehash,
+                vec![puzzle_hash.to_sexp()],
+            ),
+            ConditionWithArgs::AssertMyAmount(amount) => {
+                (ConditionOpcode::AssertMyAmount, vec![amount.to_sexp()])
+            }
+            ConditionWithArgs::AssertMyBirthSeconds(seconds) => (
+                ConditionOpcode::AssertMyBirthSeconds,
+                vec![seconds.to_sexp()],
+            ),
+            ConditionWithArgs::AssertMyBirthHeight(height) => {
+                (ConditionOpcode::AssertMyBirthHeight, vec![height.to_sexp()])
+            }
             ConditionWithArgs::AssertEphemeral => (ConditionOpcode::AssertEphemeral, vec![]),
-            ConditionWithArgs::AssertSecondsRelative(seconds) => (ConditionOpcode::AssertSecondsRelative, vec![seconds.to_sexp()]),
-            ConditionWithArgs::AssertSecondsAbsolute(seconds) =>(ConditionOpcode::AssertSecondsAbsolute, vec![seconds.to_sexp()]),
-            ConditionWithArgs::AssertHeightRelative(height) => (ConditionOpcode::AssertHeightRelative, vec![height.to_sexp()]),
-            ConditionWithArgs::AssertHeightAbsolute(height) =>(ConditionOpcode::AssertHeightAbsolute, vec![height.to_sexp()]),
-            ConditionWithArgs::AssertBeforeSecondsRelative(seconds) => (ConditionOpcode::AssertBeforeSecondsRelative, vec![seconds.to_sexp()]),
-            ConditionWithArgs::AssertBeforeSecondsAbsolute(seconds) => (ConditionOpcode::AssertBeforeSecondsAbsolute, vec![seconds.to_sexp()]),
-            ConditionWithArgs::AssertBeforeHeightRelative(height) => (ConditionOpcode::AssertBeforeHeightRelative, vec![height.to_sexp()]),
-            ConditionWithArgs::AssertBeforeHeightAbsolute(height) => (ConditionOpcode::AssertBeforeHeightAbsolute, vec![height.to_sexp()]),
-            ConditionWithArgs::SoftFork(cost) => (ConditionOpcode::SoftFork, vec![cost.to_sexp()])
+            ConditionWithArgs::AssertSecondsRelative(seconds) => (
+                ConditionOpcode::AssertSecondsRelative,
+                vec![seconds.to_sexp()],
+            ),
+            ConditionWithArgs::AssertSecondsAbsolute(seconds) => (
+                ConditionOpcode::AssertSecondsAbsolute,
+                vec![seconds.to_sexp()],
+            ),
+            ConditionWithArgs::AssertHeightRelative(height) => (
+                ConditionOpcode::AssertHeightRelative,
+                vec![height.to_sexp()],
+            ),
+            ConditionWithArgs::AssertHeightAbsolute(height) => (
+                ConditionOpcode::AssertHeightAbsolute,
+                vec![height.to_sexp()],
+            ),
+            ConditionWithArgs::AssertBeforeSecondsRelative(seconds) => (
+                ConditionOpcode::AssertBeforeSecondsRelative,
+                vec![seconds.to_sexp()],
+            ),
+            ConditionWithArgs::AssertBeforeSecondsAbsolute(seconds) => (
+                ConditionOpcode::AssertBeforeSecondsAbsolute,
+                vec![seconds.to_sexp()],
+            ),
+            ConditionWithArgs::AssertBeforeHeightRelative(height) => (
+                ConditionOpcode::AssertBeforeHeightRelative,
+                vec![height.to_sexp()],
+            ),
+            ConditionWithArgs::AssertBeforeHeightAbsolute(height) => (
+                ConditionOpcode::AssertBeforeHeightAbsolute,
+                vec![height.to_sexp()],
+            ),
+            ConditionWithArgs::SoftFork(cost) => (ConditionOpcode::SoftFork, vec![cost.to_sexp()]),
         }
     }
 
@@ -209,8 +306,12 @@ impl ConditionWithArgs {
             ConditionWithArgs::ReserveFee(_) => ConditionOpcode::ReserveFee,
             ConditionWithArgs::CreateCoinAnnouncement(_) => ConditionOpcode::CreateCoinAnnouncement,
             ConditionWithArgs::AssertCoinAnnouncement(_) => ConditionOpcode::AssertCoinAnnouncement,
-            ConditionWithArgs::CreatePuzzleAnnouncement(_) => ConditionOpcode::CreatePuzzleAnnouncement,
-            ConditionWithArgs::AssertPuzzleAnnouncement(_) => ConditionOpcode::AssertPuzzleAnnouncement,
+            ConditionWithArgs::CreatePuzzleAnnouncement(_) => {
+                ConditionOpcode::CreatePuzzleAnnouncement
+            }
+            ConditionWithArgs::AssertPuzzleAnnouncement(_) => {
+                ConditionOpcode::AssertPuzzleAnnouncement
+            }
             ConditionWithArgs::AssertConcurrentSpend(_) => ConditionOpcode::AssertConcurrentSpend,
             ConditionWithArgs::AssertConcurrentPuzzle(_) => ConditionOpcode::AssertConcurrentPuzzle,
             ConditionWithArgs::SendMessage(_, _, _) => ConditionOpcode::SendMessage,
@@ -223,35 +324,40 @@ impl ConditionWithArgs {
             ConditionWithArgs::AssertMyBirthHeight(_) => ConditionOpcode::AssertMyBirthHeight,
             ConditionWithArgs::AssertEphemeral => ConditionOpcode::AssertEphemeral,
             ConditionWithArgs::AssertSecondsRelative(_) => ConditionOpcode::AssertSecondsRelative,
-            ConditionWithArgs::AssertSecondsAbsolute(_) =>ConditionOpcode::AssertSecondsAbsolute,
+            ConditionWithArgs::AssertSecondsAbsolute(_) => ConditionOpcode::AssertSecondsAbsolute,
             ConditionWithArgs::AssertHeightRelative(_) => ConditionOpcode::AssertHeightRelative,
-            ConditionWithArgs::AssertHeightAbsolute(_) =>ConditionOpcode::AssertHeightAbsolute,
-            ConditionWithArgs::AssertBeforeSecondsRelative(_) => ConditionOpcode::AssertBeforeSecondsRelative,
-            ConditionWithArgs::AssertBeforeSecondsAbsolute(_) => ConditionOpcode::AssertBeforeSecondsAbsolute,
-            ConditionWithArgs::AssertBeforeHeightRelative(_) => ConditionOpcode::AssertBeforeHeightRelative,
-            ConditionWithArgs::AssertBeforeHeightAbsolute(_) => ConditionOpcode::AssertBeforeHeightAbsolute,
-            ConditionWithArgs::SoftFork(_) => ConditionOpcode::SoftFork
+            ConditionWithArgs::AssertHeightAbsolute(_) => ConditionOpcode::AssertHeightAbsolute,
+            ConditionWithArgs::AssertBeforeSecondsRelative(_) => {
+                ConditionOpcode::AssertBeforeSecondsRelative
+            }
+            ConditionWithArgs::AssertBeforeSecondsAbsolute(_) => {
+                ConditionOpcode::AssertBeforeSecondsAbsolute
+            }
+            ConditionWithArgs::AssertBeforeHeightRelative(_) => {
+                ConditionOpcode::AssertBeforeHeightRelative
+            }
+            ConditionWithArgs::AssertBeforeHeightAbsolute(_) => {
+                ConditionOpcode::AssertBeforeHeightAbsolute
+            }
+            ConditionWithArgs::SoftFork(_) => ConditionOpcode::SoftFork,
         }
     }
 }
 
 impl ChiaSerialize for ConditionWithArgs {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8> where Self: Sized {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    where
+        Self: Sized,
+    {
         match self {
             ConditionWithArgs::Unknown => {
                 let mut bytes = vec![];
-                bytes.extend(ChiaSerialize::to_bytes(
-                    &ConditionOpcode::Unknown,
-                    version,
-                ));
+                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::Unknown, version));
                 bytes
             }
             ConditionWithArgs::Remark => {
                 let mut bytes = vec![];
-                bytes.extend(ChiaSerialize::to_bytes(
-                    &ConditionOpcode::Remark,
-                    version,
-                ));
+                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::Remark, version));
                 bytes
             }
             ConditionWithArgs::AggSigParent(key, msg) => {
@@ -260,9 +366,10 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AggSigParent,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(2);
-                vars.push(ChiaSerialize::to_bytes(key, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(key, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -272,9 +379,10 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AggSigPuzzle,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(2);
-                vars.push(ChiaSerialize::to_bytes(key, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(key, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -284,9 +392,10 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AggSigAmount,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(2);
-                vars.push(ChiaSerialize::to_bytes(key, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(key, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -296,9 +405,10 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AggSigPuzzleAmount,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(2);
-                vars.push(ChiaSerialize::to_bytes(key, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(key, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -308,9 +418,10 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AggSigParentAmount,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(2);
-                vars.push(ChiaSerialize::to_bytes(key, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(key, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -320,9 +431,10 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AggSigParentPuzzle,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(2);
-                vars.push(ChiaSerialize::to_bytes(key, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(key, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -332,21 +444,20 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AggSigUnsafe,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(2);
-                vars.push(ChiaSerialize::to_bytes(key, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(key, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
             ConditionWithArgs::AggSigMe(key, msg) => {
                 let mut bytes = vec![];
-                bytes.extend(ChiaSerialize::to_bytes(
-                    &ConditionOpcode::AggSigMe,
-                    version,
-                ));
-                let mut vars = Vec::with_capacity(2);
-                vars.push(ChiaSerialize::to_bytes(key, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::AggSigMe, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(key, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -356,9 +467,10 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::CreateCoin,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(3);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
-                vars.push(ChiaSerialize::to_bytes(amount, version));
+                let mut vars = vec![
+                    ChiaSerialize::to_bytes(puzzle_hash, version),
+                    ChiaSerialize::to_bytes(amount, version),
+                ];
                 if let Some(hint) = hint {
                     vars.push(ChiaSerialize::to_bytes(hint, version));
                 }
@@ -371,8 +483,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::ReserveFee,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(fee, version));
+                let vars = vec![ChiaSerialize::to_bytes(fee, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -382,8 +493,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::CreateCoinAnnouncement,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![ChiaSerialize::to_bytes(msg, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -393,8 +503,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertCoinAnnouncement,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -404,8 +513,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::CreatePuzzleAnnouncement,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![ChiaSerialize::to_bytes(msg, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -415,8 +523,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertPuzzleAnnouncement,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -426,8 +533,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertConcurrentSpend,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -437,8 +543,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertConcurrentPuzzle,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -448,10 +553,11 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::SendMessage,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(mode, version));
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(mode, version),
+                    ChiaSerialize::to_bytes(puzzle_hash, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -461,10 +567,11 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::ReceiveMessage,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
-                vars.push(ChiaSerialize::to_bytes(mode, version));
-                vars.push(ChiaSerialize::to_bytes(msg, version));
+                let vars = vec![
+                    ChiaSerialize::to_bytes(puzzle_hash, version),
+                    ChiaSerialize::to_bytes(mode, version),
+                    ChiaSerialize::to_bytes(msg, version),
+                ];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -474,8 +581,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertMyCoinId,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -485,8 +591,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertMyParentId,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -496,8 +601,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertMyPuzzlehash,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(puzzle_hash, version));
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -507,8 +611,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertMyAmount,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(amount, version));
+                let vars = vec![ChiaSerialize::to_bytes(amount, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -518,8 +621,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertMyBirthSeconds,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(seconds, version));
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -529,8 +631,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertMyBirthHeight,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(height, version));
+                let vars = vec![ChiaSerialize::to_bytes(height, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -550,8 +651,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertSecondsRelative,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(seconds, version));
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -561,8 +661,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertSecondsAbsolute,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(seconds, version));
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -572,8 +671,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertHeightRelative,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(height, version));
+                let vars = vec![ChiaSerialize::to_bytes(height, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -583,8 +681,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertHeightAbsolute,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(height, version));
+                let vars = vec![ChiaSerialize::to_bytes(height, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -594,8 +691,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertBeforeSecondsRelative,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(seconds, version));
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -605,8 +701,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertBeforeSecondsAbsolute,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(seconds, version));
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -616,8 +711,7 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertBeforeHeightRelative,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(height, version));
+                let vars = vec![ChiaSerialize::to_bytes(height, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
@@ -627,28 +721,26 @@ impl ChiaSerialize for ConditionWithArgs {
                     &ConditionOpcode::AssertBeforeHeightAbsolute,
                     version,
                 ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(height, version));
+                let vars = vec![ChiaSerialize::to_bytes(height, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
             ConditionWithArgs::SoftFork(cost) => {
                 let mut bytes = vec![];
-                bytes.extend(ChiaSerialize::to_bytes(
-                    &ConditionOpcode::SoftFork,
-                    version,
-                ));
-                let mut vars = Vec::with_capacity(1);
-                vars.push(ChiaSerialize::to_bytes(cost, version));
+                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::SoftFork, version));
+                let vars = vec![ChiaSerialize::to_bytes(cost, version)];
                 bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
         }
     }
 
-    fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>, version: ChiaProtocolVersion) -> Result<Self, Error>
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
     where
-        Self: Sized
+        Self: Sized,
     {
         let op_code: ConditionOpcode = ConditionOpcode::from_bytes(bytes, version)?;
         let args: Vec<Vec<u8>> = Vec::<Vec<u8>>::from_bytes(bytes, version)?;
@@ -656,7 +748,10 @@ impl ChiaSerialize for ConditionWithArgs {
     }
 }
 
-fn from_opcode_with_args(op_code: ConditionOpcode, mut args: Vec<Vec<u8>>)  -> Result<ConditionWithArgs, Error>{
+fn from_opcode_with_args(
+    op_code: ConditionOpcode,
+    mut args: Vec<Vec<u8>>,
+) -> Result<ConditionWithArgs, Error> {
     //Length of Args is Checked for Each type, pop is used to move the memory instead of copy
     //This means args are fetched in reverse order from the array
     Ok(match op_code {
@@ -959,17 +1054,15 @@ fn from_opcode_with_args(op_code: ConditionOpcode, mut args: Vec<Vec<u8>>)  -> R
                 ));
             } else {
                 let height_bytes = args.pop().unwrap_or_default();
-                let height = u32_from_slice(&height_bytes).ok_or(
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        "Invalid Height for AssertMyBirthHeight",
-                    )
-                )?;
+                let height = u32_from_slice(&height_bytes).ok_or(Error::new(
+                    ErrorKind::InvalidData,
+                    "Invalid Height for AssertMyBirthHeight",
+                ))?;
                 ConditionWithArgs::AssertMyBirthHeight(height)
             }
         }
         ConditionOpcode::AssertEphemeral => {
-            if args.len() > 0 {
+            if !args.is_empty() {
                 return Err(Error::new(
                     ErrorKind::InvalidData,
                     "Invalid Vars for AssertEphemeral",
@@ -1010,12 +1103,10 @@ fn from_opcode_with_args(op_code: ConditionOpcode, mut args: Vec<Vec<u8>>)  -> R
                 ));
             } else {
                 let height_bytes = args.pop().unwrap_or_default();
-                let height = u32_from_slice(&height_bytes).ok_or(
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        "Invalid Height for AssertMyBirthHeight",
-                    )
-                )?;
+                let height = u32_from_slice(&height_bytes).ok_or(Error::new(
+                    ErrorKind::InvalidData,
+                    "Invalid Height for AssertMyBirthHeight",
+                ))?;
                 ConditionWithArgs::AssertHeightRelative(height)
             }
         }
@@ -1027,12 +1118,10 @@ fn from_opcode_with_args(op_code: ConditionOpcode, mut args: Vec<Vec<u8>>)  -> R
                 ));
             } else {
                 let height_bytes = args.pop().unwrap_or_default();
-                let height = u32_from_slice(&height_bytes).ok_or(
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        "Invalid Height for AssertMyBirthHeight",
-                    )
-                )?;
+                let height = u32_from_slice(&height_bytes).ok_or(Error::new(
+                    ErrorKind::InvalidData,
+                    "Invalid Height for AssertMyBirthHeight",
+                ))?;
                 ConditionWithArgs::AssertHeightAbsolute(height)
             }
         }
@@ -1068,12 +1157,10 @@ fn from_opcode_with_args(op_code: ConditionOpcode, mut args: Vec<Vec<u8>>)  -> R
                 ));
             } else {
                 let height_bytes = args.pop().unwrap_or_default();
-                let height = u32_from_slice(&height_bytes).ok_or(
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        "Invalid Height for AssertMyBirthHeight",
-                    )
-                )?;
+                let height = u32_from_slice(&height_bytes).ok_or(Error::new(
+                    ErrorKind::InvalidData,
+                    "Invalid Height for AssertMyBirthHeight",
+                ))?;
                 ConditionWithArgs::AssertBeforeHeightRelative(height)
             }
         }
@@ -1085,12 +1172,10 @@ fn from_opcode_with_args(op_code: ConditionOpcode, mut args: Vec<Vec<u8>>)  -> R
                 ));
             } else {
                 let height_bytes = args.pop().unwrap_or_default();
-                let height = u32_from_slice(&height_bytes).ok_or(
-                    Error::new(
-                        ErrorKind::InvalidData,
-                        "Invalid Height for AssertMyBirthHeight",
-                    )
-                )?;
+                let height = u32_from_slice(&height_bytes).ok_or(Error::new(
+                    ErrorKind::InvalidData,
+                    "Invalid Height for AssertMyBirthHeight",
+                ))?;
                 ConditionWithArgs::AssertBeforeHeightAbsolute(height)
             }
         }
@@ -1108,7 +1193,6 @@ fn from_opcode_with_args(op_code: ConditionOpcode, mut args: Vec<Vec<u8>>)  -> R
         }
     })
 }
-
 
 impl TryFrom<&SExp> for Vec<ConditionWithArgs> {
     type Error = Error;

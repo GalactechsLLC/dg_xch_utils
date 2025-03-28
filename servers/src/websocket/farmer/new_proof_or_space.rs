@@ -441,7 +441,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                     };
                     debug!(
                         "Submitting partial for {} to {}",
-                        post_request.payload.launcher_id.to_string(),
+                        post_request.payload.launcher_id,
                         pool_url.as_str()
                     );
                     if let Some(v) = self

@@ -8,10 +8,10 @@ use crate::clvm::condition_utils::{
 };
 use crate::clvm::program::SerializedProgram;
 use crate::traits::SizedBytes;
+use log::warn;
 use num_bigint::BigInt;
 use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
-use log::warn;
 
 pub fn additions_for_solution(
     coin_name: Bytes32,
@@ -102,4 +102,3 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
     }
     Ok(ret)
 }
-

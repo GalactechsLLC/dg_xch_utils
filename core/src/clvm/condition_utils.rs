@@ -4,7 +4,7 @@ use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::Bytes32;
 use crate::clvm::program::SerializedProgram;
 use crate::clvm::sexp::IntoSExp;
-use crate::formatting::{u64_to_bytes};
+use crate::formatting::u64_to_bytes;
 use crate::traits::SizedBytes;
 use crate::utils::hash_256;
 use log::info;
