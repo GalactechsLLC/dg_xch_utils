@@ -379,6 +379,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
             };
             spends.push(coin_spend);
         }
+        info!("Signing Coin Spends");
         let spend_bundle = sign_coin_spends(
             spends,
             |pub_key| {

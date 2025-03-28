@@ -4,11 +4,10 @@ use crate::blockchain::condition_with_args::ConditionWithArgs;
 use crate::blockchain::sized_bytes::Bytes32;
 use crate::clvm::program::SerializedProgram;
 use crate::clvm::sexp::IntoSExp;
-use crate::formatting::{number_from_slice, u64_to_bytes};
+use crate::formatting::{u64_to_bytes};
 use crate::traits::SizedBytes;
 use crate::utils::hash_256;
 use log::info;
-use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 
@@ -20,12 +19,12 @@ pub fn conditions_by_opcode<S: std::hash::BuildHasher + Default>(
 ) -> ConditionsDict<S> {
     let mut hm: ConditionsDict<S> = HashMap::with_hasher(S::default());
     for cvp in conditions {
-        match hm.get_mut(&cvp.opcode) {
+        match hm.get_mut(&cvp.op_code()) {
             Some(list) => {
-                list.push(cvp.clone());
+                list.push(cvp);
             }
             None => {
-                hm.insert(cvp.opcode, vec![cvp.clone()]);
+                hm.insert(cvp.op_code(), vec![cvp]);
             }
         }
     }
@@ -38,16 +37,17 @@ pub fn created_outputs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
 ) -> Result<Vec<Coin>, Error> {
     let mut output_coins = Vec::new();
     if let Some(args) = conditions_dict.get(&ConditionOpcode::CreateCoin) {
-        for cvp in args {
-            let amount = number_from_slice(&cvp.vars[1]).to_u64().ok_or_else(|| {
-                Error::new(ErrorKind::InvalidInput, "Failed to convert atom to int")
-            })?;
-            let coin = Coin {
-                parent_coin_info: input_coin_name,
-                puzzle_hash: Bytes32::parse(&cvp.vars[0])?,
-                amount,
-            };
-            output_coins.push(coin);
+        for cwa in args {
+            if let ConditionWithArgs::CreateCoin(puzzle_hash, amount, _) = *cwa {
+                let coin = Coin {
+                    parent_coin_info: input_coin_name,
+                    puzzle_hash,
+                    amount,
+                };
+                output_coins.push(coin);
+            } else {
+                return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+            }
         }
     }
     Ok(output_coins)

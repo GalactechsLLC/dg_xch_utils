@@ -12,6 +12,7 @@ use num_traits::cast::ToPrimitive;
 use std::future::Future;
 use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
+use log::info;
 
 pub struct DerivationRecord {
     pub index: u32,
@@ -53,6 +54,7 @@ where
     let mut signatures: Vec<Signature> = vec![];
     let mut pk_list: Vec<Bytes48> = vec![];
     let mut msg_list: Vec<Vec<u8>> = vec![];
+    info!("Creating Signatures for Coin Spends");
     for coin_spend in &coin_spends {
         //Get AGG_SIG conditions
         let conditions_dict = conditions_dict_for_solution::<RandomState>(
@@ -77,14 +79,14 @@ where
             })?;
             let secret_key = (key_fn)(&pk_bytes).await?;
             assert_eq!(&secret_key.sk_to_pk(), &pk);
-            let signature = bls_bindings::sign(&secret_key, &msg);
-            assert!(verify_signature(&pk, &msg, &signature));
+            let signature = bls_bindings::sign(&secret_key, msg.as_ref());
+            assert!(verify_signature(&pk, msg.as_ref(), &signature));
             pk_list.push(pk_bytes);
-            msg_list.push(msg);
+            msg_list.push(msg.as_ref().to_vec());
             signatures.push(signature);
         }
     }
-    //Aggregate signatures
+    info!("Creating Aggregate signature");
     let sig_refs: Vec<&Signature> = signatures.iter().collect();
     let msg_list: Vec<&[u8]> = msg_list.iter().map(Vec::as_slice).collect();
     let aggsig = AggregateSignature::aggregate(&sig_refs, true)

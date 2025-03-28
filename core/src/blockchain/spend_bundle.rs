@@ -1,19 +1,27 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::condition_opcode::ConditionOpcode;
-use crate::blockchain::condition_with_args::ConditionWithArgs;
-use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
+use crate::blockchain::condition_with_args::{ConditionWithArgs};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use crate::clvm::program::Program;
-use crate::clvm::sexp::{AtomBuf, AtomRef};
 use crate::clvm::utils::INFINITE_COST;
 use crate::traits::SizedBytes;
 use crate::utils::hash_256;
-use blst::min_pk::{AggregateSignature, Signature};
+use blst::min_pk::{AggregateSignature, PublicKey, SecretKey, Signature};
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::future::Future;
+use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
+use num_traits::ToPrimitive;
+use crate::blockchain::utils::pkm_pairs_for_conditions_dict;
+use crate::clvm::bls_bindings;
+use crate::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
+use crate::clvm::condition_utils::conditions_dict_for_solution;
+use crate::consensus::{AGG_SIG_COST, CREATE_COIN_COST};
+use crate::consensus::constants::{ConsensusConstants, MAINNET};
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 pub struct SpendBundle {
@@ -107,73 +115,124 @@ impl SpendBundle {
         Ok(self)
     }
 
-    pub fn sign<T: Fn(&CoinSpend) -> Result<Signature, Error>>(
+    pub async fn sign<F, Fut>(
         mut self,
-        sig_function: T,
-    ) -> Result<Self, Error> {
-        let mut sigs: Vec<Signature> = vec![];
-        for spend in &self.coin_spends {
-            sigs.push((sig_function)(spend)?);
+        key_function: F,
+        constants: Option<&ConsensusConstants>
+    ) -> Result<Self, Error>
+    where
+        F: Fn(&Bytes48) -> Fut,
+        Fut: Future<Output = Result<SecretKey, Error>>,
+    {
+        let constants = constants.unwrap_or(&*MAINNET);
+        let mut signatures: Vec<Signature> = vec![];
+        let mut pk_list: Vec<Bytes48> = vec![];
+        let mut msg_list: Vec<Vec<u8>> = vec![];
+        let max_cost = constants.max_block_cost_clvm.to_u64().ok_or(
+            Error::new(ErrorKind::InvalidInput, "Invalid Max Cost")
+        )?;
+        for coin_spend in self.coin_spends.iter() {
+            //Get AGG_SIG conditions
+            let conditions_dict = conditions_dict_for_solution::<RandomState>(
+                &coin_spend.puzzle_reveal,
+                &coin_spend.solution,
+                max_cost,
+            )?
+                .0;
+            //Create signature
+            for (pk_bytes, msg) in
+                pkm_pairs_for_conditions_dict(&conditions_dict, coin_spend.coin, &constants.agg_sig_me_additional_data)?
+            {
+                let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
+                    Error::new(
+                        ErrorKind::Other,
+                        format!(
+                            "Failed to parse Public key: {}, {:?}",
+                            hex::encode(pk_bytes),
+                            e
+                        ),
+                    )
+                })?;
+                let secret_key = (key_function)(&pk_bytes).await?;
+                assert_eq!(&secret_key.sk_to_pk(), &pk);
+                let signature = bls_bindings::sign(&secret_key, msg.as_ref());
+                assert!(verify_signature(&pk, msg.as_ref(), &signature));
+                pk_list.push(pk_bytes);
+                msg_list.push(msg.as_ref().to_vec());
+                signatures.push(signature);
+            }
         }
-        self.aggregated_signature =
-            AggregateSignature::aggregate(&sigs.iter().collect::<Vec<&Signature>>(), true)
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?
-                .to_signature()
-                .into();
+        //Aggregate signatures
+        let sig_refs: Vec<&Signature> = signatures.iter().collect();
+        let msg_list: Vec<&[u8]> = msg_list.iter().map(Vec::as_slice).collect();
+        let aggsig = AggregateSignature::aggregate(&sig_refs, true)
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::Other,
+                    format!("Failed to aggregate signatures: {e:?}"),
+                )
+            })?
+            .to_signature();
+        assert!(aggregate_verify_signature(&pk_list, &msg_list, &aggsig));
+        self.aggregated_signature = aggsig.to_bytes().into();
         Ok(self)
     }
-    pub fn validate(&self, print: bool) -> Result<bool, Error> {
-        //Validate Signature
-
-        //Validate Spends
+    pub fn validate(&self, max_cost: Option<u64>, print: bool) -> Result<Vec<ConditionWithArgs>, Error> {
+        let mut max_cost = max_cost.unwrap_or(INFINITE_COST);
+        let mut _total_cost = 0;
+        let mut spent_coins = HashSet::<Bytes32>::new();
         let mut coins_to_create = vec![];
+        let mut create_conditions = vec![];
         let mut coins_to_spend = vec![];
-        let mut origin_id = None;
+        let mut output_conditions = vec![];
         for spend in &self.coin_spends {
-            let (_cost, output_conditions) =
+            let (cost, output_conditions_program) =
                 spend
                     .puzzle_reveal
                     .run(INFINITE_COST, 2, &spend.solution.to_program())?;
-            let conditions_with_args: Vec<ConditionWithArgs> =
-                (&output_conditions.sexp).try_into()?;
-            let mut create_conditions = vec![];
-            for condition_with_args in conditions_with_args {
+            _total_cost += cost;
+            let coin_id = spend.coin.coin_id();
+            if !spent_coins.insert(coin_id) { //Double Spend
+                return Err(Error::new(ErrorKind::InvalidInput, format!("Duplicate Spend: {}", coin_id)));
+            }
+            let conditions_with_args: Vec<ConditionWithArgs> = (&output_conditions_program.sexp).try_into()?;
+            for condition_with_args in &conditions_with_args {
                 if print {
-                    let mut buffer = String::new();
-                    buffer.extend(format!("{} ", condition_with_args.opcode).chars());
-                    for var in &condition_with_args.vars {
-                        buffer.extend(format!("{} ", AtomRef::new(var)).chars());
+                    log::info!("{condition_with_args}");
+                }
+                let (op_code, _args) = (*condition_with_args).op_code_with_args();
+                if op_code == ConditionOpcode::CreateCoin {
+                    coins_to_create.push(spend.coin);
+                    create_conditions.push(*condition_with_args);
+                }
+                //Check Costs
+                match op_code {
+                    ConditionOpcode::CreateCoin => {
+                        if max_cost < CREATE_COIN_COST {
+                            return Err(Error::new(ErrorKind::InvalidInput, "Max Cost Exceeded"));
+                        }
+                        max_cost -= CREATE_COIN_COST;
                     }
-                    log::info!("{buffer}");
-                }
-                if condition_with_args.opcode == ConditionOpcode::CreateCoin {
-                    coins_to_create.push(Coin {
-                        parent_coin_info: spend.coin.coin_id(),
-                        puzzle_hash: AtomBuf::from(condition_with_args.vars[0].clone())
-                            .as_bytes32()?,
-                        amount: AtomBuf::from(condition_with_args.vars[1].clone()).as_u64()?,
-                    });
-                    create_conditions.push(condition_with_args);
-                }
-            }
-            coins_to_spend.push(spend.coin);
-            if !create_conditions.is_empty() {
-                match origin_id {
-                    Some(_) => {
-                        // if origin_id != Some(spend.coin.coin_id()) {
-                        //     Err(Error::new(
-                        //         ErrorKind::InvalidInput,
-                        //         "Cannot have multiple Origin coins",
-                        //     ))?
-                        // }
-                    }
-                    None => origin_id = Some(spend.coin.coin_id()),
-                }
-            }
-        }
-        //Validate Coins Created
-        //Validate Conditions
+                    ConditionOpcode::AggSigParent
+                    | ConditionOpcode::AggSigPuzzle
+                    | ConditionOpcode::AggSigAmount
+                    | ConditionOpcode::AggSigPuzzleAmount
+                    | ConditionOpcode::AggSigParentAmount
+                    | ConditionOpcode::AggSigParentPuzzle
+                    | ConditionOpcode::AggSigUnsafe
+                    | ConditionOpcode::AggSigMe => {
+                        if max_cost < AGG_SIG_COST {
+                            return Err(Error::new(ErrorKind::InvalidInput, "Max Cost Exceeded"));
+                        }
+                        max_cost -= AGG_SIG_COST;
 
-        Ok(true)
+                    }
+                    _ => {}
+                }
+            }
+            output_conditions.extend(conditions_with_args);
+            coins_to_spend.push(spend.coin);
+        }
+        Ok(output_conditions)
     }
 }
