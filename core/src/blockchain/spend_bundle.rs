@@ -212,18 +212,15 @@ impl SpendBundle {
                 if print {
                     log::info!("{condition_with_args}");
                 }
-                let (op_code, _args) = (*condition_with_args).op_code_with_args();
-                if op_code == ConditionOpcode::CreateCoin {
-                    coins_to_create.push(spend.coin);
-                    create_conditions.push(*condition_with_args);
-                }
                 //Check Costs
-                match op_code {
+                match (*condition_with_args).op_code() {
                     ConditionOpcode::CreateCoin => {
                         if max_cost < CREATE_COIN_COST {
                             return Err(Error::new(ErrorKind::InvalidInput, "Max Cost Exceeded"));
                         }
                         max_cost -= CREATE_COIN_COST;
+                        coins_to_create.push(spend.coin);
+                        create_conditions.push(*condition_with_args);
                     }
                     ConditionOpcode::AggSigParent
                     | ConditionOpcode::AggSigPuzzle
