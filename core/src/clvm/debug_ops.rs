@@ -43,7 +43,9 @@ fn test_print_ops() {
     use crate::clvm::assemble::assemble_text;
     use crate::clvm::program::Program;
     use crate::clvm::utils::INFINITE_COST;
-    use simple_logger::SimpleLogger;
+    use dg_logger::DruidGardenLogger;
+    use log::Level;
+    use std::io::ErrorKind;
     // (mod (num)
     //   (defun print (l x) (i (all "$print$" l x) x x))
     //
@@ -53,7 +55,11 @@ fn test_print_ops() {
     //
     //   (print (list "Running" (q . (+ num 1)) " With " num) (inc num))
     // )
-    SimpleLogger::default().init().unwrap();
+    let _logger = DruidGardenLogger::build()
+        .use_colors(true)
+        .current_level(Level::Info)
+        .init()
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let test_program = r#"(a (q 2 4 (c 2 (c 5 ()))) (c (q (a 6 (c 2 (c (c (q . "Running") (c (q 16 78 1) (c (q . " With ") (c 5 ())))) (c (+ 5 (q . 1)) ())))) 3 (all (q . "$print$") 5 11) 11 11) 1))"#;
     let assembled = assemble_text(test_program).unwrap();
     let results = assembled

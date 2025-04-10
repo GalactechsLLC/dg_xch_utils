@@ -23,6 +23,7 @@ blst = { version = "0.3.14", features = ["portable"] }
 clap = { version = "4.5.30", features = ["derive"] }
 dashmap = "6.1.0"
 dialoguer = "0.11.0"
+dg_logger = { path="../logging", version="2.0.3" }
 dg_xch_clients = {path = "../clients", version="2.0.3"}
 dg_xch_core = {path = "../core", version = "2.0.3", default-features = false}
 dg_xch_keys = {path = "../keys", version="2.0.3"}
@@ -35,5 +36,4 @@ num-traits = "0.2.19"
 rand = "0.8.5"
 serde = "1.0.218"
 serde_json = "1.0.139"
-simple_logger = "5.0.0"
 tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

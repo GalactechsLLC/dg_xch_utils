@@ -3,8 +3,13 @@
 //     use dg_xch_core::clvm::program::Program;
 //     use dg_xch_core::clvm::sexp::IntoSExp;
 //     use log::info;
-//     use simple_logger::SimpleLogger;
-//     SimpleLogger::new().env().init().unwrap();
+//     use log::Level;
+//     use dg_logger::DruidGardenLogger;
+//     let _logger = DruidGardenLogger::build()
+//     .use_colors(true)
+//     .current_level(Level::Info)
+//     .init()
+//     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
 //     let program = Program::to(vec![
 //         10.to_sexp(),
 //         20.to_sexp(),

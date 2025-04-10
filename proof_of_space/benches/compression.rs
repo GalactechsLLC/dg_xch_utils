@@ -1,10 +1,12 @@
 use criterion::Criterion;
+use dg_logger::DruidGardenLogger;
 use dg_xch_core::plots::PlotFile;
 use dg_xch_pos::constants::ucdiv_t;
 use dg_xch_pos::plots::decompressor::DecompressorPool;
 use dg_xch_pos::plots::disk_plot::DiskPlot;
 use dg_xch_pos::plots::plot_reader::PlotReader;
-use simple_logger::SimpleLogger;
+use log::Level;
+use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -13,7 +15,11 @@ use tokio::runtime::{Builder, Runtime};
 
 #[allow(clippy::cast_possible_truncation)]
 fn proof_benchmark(c: &mut Criterion, runtime: &Runtime) {
-    SimpleLogger::new().env().init().unwrap_or_default();
+    let _logger = DruidGardenLogger::build()
+        .use_colors(true)
+        .current_level(Level::Info)
+        .init()
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let path = Path::new("/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot");
     let pool = Arc::new(DecompressorPool::new(
         1,
@@ -51,7 +57,11 @@ fn proof_benchmark(c: &mut Criterion, runtime: &Runtime) {
 
 #[allow(clippy::cast_possible_truncation)]
 fn quality_then_proof_benchmark(c: &mut Criterion, runtime: &Runtime) {
-    SimpleLogger::new().env().init().unwrap_or_default();
+    let _logger = DruidGardenLogger::build()
+        .use_colors(true)
+        .current_level(Level::Info)
+        .init()
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let path = Path::new("/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot");
     let pool = Arc::new(DecompressorPool::new(
         1,
@@ -95,7 +105,11 @@ fn quality_then_proof_benchmark(c: &mut Criterion, runtime: &Runtime) {
 
 #[allow(clippy::cast_possible_truncation)]
 fn quality_benchmark(c: &mut Criterion, runtime: &Runtime) {
-    SimpleLogger::new().env().init().unwrap_or_default();
+    let _logger = DruidGardenLogger::build()
+        .use_colors(true)
+        .current_level(Level::Info)
+        .init()
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let path = Path::new("/home/luna/plot-k32-c05-2023-06-09-02-25-11d916cf9c847158f76affb30a38ca36f83da452c37f4b4d10a1a0addcfa932b.plot");
     let pool = Arc::new(DecompressorPool::new(
         1,

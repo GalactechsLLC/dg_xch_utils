@@ -129,14 +129,19 @@ pub async fn get_parent_spend(
 //     use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
 //     use futures_util::future::try_join_all;
 //     use log::{error, info};
-//     use simple_logger::SimpleLogger;
+//     use log::Level;
+//     use dg_logger::DruidGardenLogger;
 //     use std::env;
 //     use std::sync::atomic::{AtomicBool, Ordering};
 //     use std::sync::Arc;
 //     use std::time::Duration;
 //     use uuid::Uuid;
 //
-//     SimpleLogger::new().env().init().unwrap_or_default();
+//     let _logger = DruidGardenLogger::build()
+//     .use_colors(true)
+//     .current_level(Level::Info)
+//     .init()
+//     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
 //     let mut clients = vec![];
 //     let simulate_count = 10;
 //     let host = env::var("FULLNODE_HOST").unwrap_or_else(|_| String::from("localhost"));

@@ -23,7 +23,6 @@ parking_lot = "0.12.3"
 rand = "0.8.5"
 rayon = "1.10.0"
 rustc-hash = "2.1.1"
-simple_logger = "5.0.0"
 time = "0.3.37"
 tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
 windows-sys = { version = "0.59.0", features = ["Win32_Storage_FileSystem"] }

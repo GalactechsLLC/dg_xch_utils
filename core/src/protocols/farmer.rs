@@ -29,6 +29,7 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 #[cfg(feature = "metrics")]
 use uuid::Uuid;
+use crate::blockchain::blockchain_state::BlockchainState;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SPSubSlotSourceData {
@@ -481,6 +482,7 @@ pub struct FarmerSharedState<T> {
     pub missing_plotnft_info: Arc<RwLock<HashMap<Bytes32, Bytes48>>>,
     pub upstream_handshake: Arc<RwLock<Option<Handshake>>>,
     pub plot_counts: Arc<PlotCounts>,
+    pub fullnode_state: Arc<RwLock<Option<BlockchainState>>>,
     pub data: Arc<T>,
     pub signal: Arc<AtomicBool>,
     pub additional_headers: Arc<HashMap<String, String>>,
@@ -510,6 +512,7 @@ impl<T: Default> Default for FarmerSharedState<T> {
             missing_plotnft_info: Arc::new(Default::default()),
             upstream_handshake: Arc::new(Default::default()),
             plot_counts: Arc::new(Default::default()),
+            fullnode_state: Arc::new(Default::default()),
             data: Arc::new(T::default()),
             signal: Arc::new(Default::default()),
             additional_headers: Arc::new(Default::default()),
