@@ -14,6 +14,7 @@ use blst::min_pk::SecretKey;
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::ChiaProtocolVersion;
 
+use crate::blockchain::blockchain_state::BlockchainState;
 use crate::protocols::shared::Handshake;
 #[cfg(feature = "metrics")]
 use prometheus::core::{
@@ -29,7 +30,6 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 #[cfg(feature = "metrics")]
 use uuid::Uuid;
-use crate::blockchain::blockchain_state::BlockchainState;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SPSubSlotSourceData {

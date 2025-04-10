@@ -1,6 +1,7 @@
 #[cfg(feature = "color")]
 use colored::*;
-use log::{warn, Level, Log, Metadata, Record, SetLoggerError};
+use log::{Level, Log, Metadata, Record, SetLoggerError, warn};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
@@ -9,11 +10,9 @@ use std::time::Instant;
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
-use serde::{Deserialize, Serialize};
 
-const TIMESTAMP_FORMAT_LOCAL: &[FormatItem] = format_description!(
-    "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
-);
+const TIMESTAMP_FORMAT_LOCAL: &[FormatItem] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
 const TIMESTAMP_FORMAT_OFFSET: &[FormatItem] = format_description!(
     "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3][offset_hour sign:mandatory]:[offset_minute]"
 );
@@ -157,12 +156,11 @@ impl DruidGardenLogger {
     }
     pub fn subscribe(&self, level: Level) -> Result<Receiver<String>, Error> {
         match self.subscribers.get(&level) {
-            None => {
-                Err(Error::new(ErrorKind::InvalidInput, format!("{} is not a supported log level", level)))
-            }
-            Some(channel) => {
-                Ok(channel.subscribe())
-            }
+            None => Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} is not a supported log level", level),
+            )),
+            Some(channel) => Ok(channel.subscribe()),
         }
     }
 }
@@ -194,35 +192,42 @@ impl Log for DruidGardenLogger {
                 record.module_path().unwrap_or_default()
             } else {
                 record.target()
-            }.to_string(),
+            }
+            .to_string(),
             message: record.args().to_string(),
             timestamp: match self.timestamp_format {
-                TimestampFormat::Local | TimestampFormat::Offset => match OffsetDateTime::now_local() {
-                    Ok(local) => local,
-                    Err(_) => {
-                        if !self.printed_error.load(Ordering::SeqCst) {
-                            self.printed_error.store(true, Ordering::SeqCst);
-                            warn!("Failed to detect Local Offset, Defaulting to UTC")
+                TimestampFormat::Local | TimestampFormat::Offset => {
+                    match OffsetDateTime::now_local() {
+                        Ok(local) => local,
+                        Err(_) => {
+                            if !self.printed_error.load(Ordering::SeqCst) {
+                                self.printed_error.store(true, Ordering::SeqCst);
+                                warn!("Failed to detect Local Offset, Defaulting to UTC")
+                            }
+                            OffsetDateTime::now_utc()
                         }
-                        OffsetDateTime::now_utc()
                     }
-                },
+                }
                 _ => OffsetDateTime::now_utc(),
             },
         };
         if self.enabled(record.metadata()) {
             let timestamp = if self.show_timestamp {
                 match self.timestamp_format {
-                    TimestampFormat::Offset => log_event.timestamp
+                    TimestampFormat::Offset => log_event
+                        .timestamp
                         .format(&TIMESTAMP_FORMAT_OFFSET)
                         .expect("Expected TIMESTAMP_FORMAT_OFFSET to be valid"),
-                    TimestampFormat::Local => log_event.timestamp
+                    TimestampFormat::Local => log_event
+                        .timestamp
                         .format(&TIMESTAMP_FORMAT_LOCAL)
                         .expect("Expected TIMESTAMP_FORMAT_LOCAL to be valid"),
-                    TimestampFormat::UTC => log_event.timestamp
+                    TimestampFormat::UTC => log_event
+                        .timestamp
                         .format(&TIMESTAMP_FORMAT_UTC)
                         .expect("Expected TIMESTAMP_FORMAT_UTC to be valid"),
-                    TimestampFormat::Simple => log_event.timestamp
+                    TimestampFormat::Simple => log_event
+                        .timestamp
                         .format(&TIMESTAMP_FORMAT_SIMPLE)
                         .expect("Expected TIMESTAMP_FORMAT_SIMPLE to be valid"),
                     TimestampFormat::Relative => {
@@ -255,12 +260,12 @@ impl Log for DruidGardenLogger {
             } else {
                 ""
             };
-            let thread = format!("{}", if self.show_thread {
+            let thread = if self.show_thread {
                 let cur = std::thread::current();
                 format!("({}) ", cur.name().unwrap_or(&format!("{:?}", cur.id())))
             } else {
                 String::new()
-            });
+            };
             let message = format!(
                 "{} {}{}[{}] {}",
                 timestamp,
