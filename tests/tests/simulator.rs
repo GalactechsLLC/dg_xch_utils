@@ -5,12 +5,13 @@
 //     use dg_xch_clients::api::full_node::FullnodeAPI;
 //
 //     use log::{info, LevelFilter};
-//     use simple_logger::SimpleLogger;
+//     use dg_logger::DruidGardenLogger;
 //     use std::env;
-//     SimpleLogger::new()
-//         .with_level(LevelFilter::Debug)
-//         .init()
-//         .unwrap();
+//     let _logger = DruidGardenLogger::build()
+//     .use_colors(true)
+//     .current_level(Level::Info)
+//     .init()
+//     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
 //     let hostname = env::var("SIMULATOR_HOSTNAME").unwrap_or("localhost".to_string());
 //     let port = env::var("SIMULATOR_PORT")
 //         .map(|s| s.parse().unwrap())

@@ -14,6 +14,7 @@ use blst::min_pk::SecretKey;
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::ChiaProtocolVersion;
 
+use crate::blockchain::blockchain_state::BlockchainState;
 use crate::protocols::shared::Handshake;
 #[cfg(feature = "metrics")]
 use prometheus::core::{
@@ -481,6 +482,7 @@ pub struct FarmerSharedState<T> {
     pub missing_plotnft_info: Arc<RwLock<HashMap<Bytes32, Bytes48>>>,
     pub upstream_handshake: Arc<RwLock<Option<Handshake>>>,
     pub plot_counts: Arc<PlotCounts>,
+    pub fullnode_state: Arc<RwLock<Option<BlockchainState>>>,
     pub data: Arc<T>,
     pub signal: Arc<AtomicBool>,
     pub additional_headers: Arc<HashMap<String, String>>,
@@ -510,6 +512,7 @@ impl<T: Default> Default for FarmerSharedState<T> {
             missing_plotnft_info: Arc::new(Default::default()),
             upstream_handshake: Arc::new(Default::default()),
             plot_counts: Arc::new(Default::default()),
+            fullnode_state: Arc::new(Default::default()),
             data: Arc::new(T::default()),
             signal: Arc::new(Default::default()),
             additional_headers: Arc::new(Default::default()),

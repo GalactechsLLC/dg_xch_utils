@@ -5,7 +5,7 @@ members = [
     "cli",
     "clients",
     "core", "gui",
-    "keys",
+    "keys", "logging",
     "macros",
     "proof_of_space",
     "puzzles",

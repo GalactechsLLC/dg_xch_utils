@@ -6,6 +6,7 @@ use crate::wallets::plotnft_utils::{get_plotnft_by_launcher_id, scrounge_for_plo
 use blst::min_pk::SecretKey;
 use clap::Parser;
 use cli::{prompt_for_mnemonic, Cli, RootCommands, WalletAction};
+use dg_logger::DruidGardenLogger;
 use dg_xch_clients::api::full_node::{FullnodeAPI, FullnodeExtAPI};
 use dg_xch_clients::api::pool::create_pool_login_url;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
@@ -24,8 +25,7 @@ use dg_xch_puzzles::clvm_puzzles::launcher_id_to_p2_puzzle_hash;
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::{decode, encode};
-use log::{error, info, LevelFilter};
-use simple_logger::SimpleLogger;
+use log::{error, info, Level};
 use std::env;
 use std::io::{Cursor, Error, ErrorKind};
 use std::path::Path;
@@ -42,12 +42,11 @@ pub mod wallets;
 #[allow(clippy::cast_sign_loss)]
 pub async fn run_cli() -> Result<(), Error> {
     let cli = Cli::parse();
-    SimpleLogger::new()
-        .with_level(LevelFilter::Info)
-        .with_colors(true)
-        .env()
+    let _logger = DruidGardenLogger::build()
+        .use_colors(true)
+        .current_level(Level::Info)
         .init()
-        .unwrap_or_default();
+        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
     let host = cli
         .fullnode_host
         .unwrap_or(env::var("FULLNODE_HOST").unwrap_or("localhost".to_string()));

@@ -1,7 +1,7 @@
 use crate::app::DgXchGui;
 use crate::config::Config;
-use log::LevelFilter;
-use simple_logger::SimpleLogger;
+use dg_logger::DruidGardenLogger;
+use log::Level;
 use std::env;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,10 +15,13 @@ mod state;
 
 #[tokio::main]
 async fn main() -> eframe::Result {
-    SimpleLogger::new()
-        .with_level(LevelFilter::Info)
+    let _logger = DruidGardenLogger::build()
+        .use_colors(true)
+        .current_level(Level::Info)
         .init()
-        .unwrap();
+        .map_err(|e| {
+            eframe::Error::AppCreation(format!("Could not initialise logging: {e:?}").into())
+        })?;
     let options = eframe::NativeOptions::default();
     let config_path_str = env::var("DG_CONFIG").unwrap_or_else(|_| "config.yaml".into());
     let config_path = Path::new(&config_path_str);
