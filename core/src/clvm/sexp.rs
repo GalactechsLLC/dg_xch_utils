@@ -75,6 +75,20 @@ impl SExp {
         }
     }
     #[must_use]
+    pub fn as_vec(&self) -> Option<Vec<u8>> {
+        match &self {
+            SExp::Atom(vec) => Some(vec.data.clone()),
+            SExp::Pair(_) => None,
+        }
+    }
+
+    pub fn as_int(&self) -> Result<BigInt, Error> {
+        match self {
+            SExp::Atom(atom) => Ok(BigInt::from_signed_bytes_be(&atom.data)),
+            SExp::Pair(_) => Err(Error::new(ErrorKind::Unsupported, "SExp is Pair not Atom")),
+        }
+    }
+    #[must_use]
     pub fn cons(self, other: SExp) -> SExp {
         SExp::Pair(PairBuf {
             first: Box::new(self),

@@ -220,10 +220,7 @@ impl Program {
 
     #[must_use]
     pub fn as_vec(&self) -> Option<Vec<u8>> {
-        match &self.sexp {
-            SExp::Atom(vec) => Some(vec.data.clone()),
-            SExp::Pair(_) => None,
-        }
+        self.sexp.as_vec()
     }
 
     #[must_use]
