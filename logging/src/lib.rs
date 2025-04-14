@@ -1,15 +1,19 @@
 #[cfg(feature = "color")]
 use colored::*;
-use log::{Level, Log, Metadata, Record, SetLoggerError, warn};
+use log::{Level, Log, Metadata, Record, SetLoggerError, warn, error};
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::VecDeque;
+use std::io::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
+use tokio::select;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::task::JoinHandle;
 
 const TIMESTAMP_FORMAT_LOCAL: &[FormatItem] =
     format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
@@ -41,6 +45,7 @@ pub struct DruidGardenLogger {
     pub start_instant: Instant,
     pub printed_error: AtomicBool,
     pub buffer: Arc<RwLock<VecDeque<LogEvent>>>,
+    pub buffer_thread: Arc<JoinHandle<()>>,
     pub channel: Sender<LogEvent>,
 }
 
@@ -108,6 +113,10 @@ impl DruidGardenLoggerBuilder {
     }
     pub fn build(mut self) -> DruidGardenLogger {
         self.target_levels.sort_by(|a, b| a.0.cmp(&b.0));
+        let sender = Sender::new(1024);
+        let mut buffer_recv = sender.subscribe();
+        let buffer = Arc::new(RwLock::new(VecDeque::new()));
+        let thread_buffer_ref = buffer.clone();
         DruidGardenLogger {
             use_colors: self.use_colors,
             show_thread: self.show_thread,
@@ -119,7 +128,36 @@ impl DruidGardenLoggerBuilder {
             target_levels: self.target_levels,
             start_instant: Instant::now(),
             printed_error: AtomicBool::new(false),
-            buffer: Arc::new(Default::default()),
+            buffer,
+            buffer_thread: Arc::new(tokio::spawn(async move {
+                let mut err_count = 0;
+                loop {
+                    select! {
+                        _ = await_termination() => {
+                            break;
+                        }
+                        msg = buffer_recv.recv() => {
+                            match msg {
+                                Ok(v) => {
+                                    err_count = 0;
+                                    let mut lock = thread_buffer_ref.write().await;
+                                    lock.push_back(v);
+                                    while lock.len() > 1024 {
+                                        lock.pop_front();
+                                    }
+                                }
+                                Err(e) => {
+                                    err_count += 1;
+                                    if err_count > 5 {
+                                        error!("Failed to receive buffer too many times: {:?}", e);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            })),
             channel: Sender::new(1024),
         }
     }
@@ -293,4 +331,38 @@ impl Log for DruidGardenLogger {
     }
 
     fn flush(&self) {}
+}
+
+#[cfg(not(target_os = "windows"))]
+pub async fn await_termination() -> Result<(), Error> {
+    let mut term_signal = signal(SignalKind::terminate())?;
+    let mut int_signal = signal(SignalKind::interrupt())?;
+    let mut quit_signal = signal(SignalKind::quit())?;
+    let mut alarm_signal = signal(SignalKind::alarm())?;
+    let mut hup_signal = signal(SignalKind::hangup())?;
+    select! {
+        _ = term_signal.recv() => (),
+        _ = int_signal.recv() => (),
+        _ = quit_signal.recv() => (),
+        _ = alarm_signal.recv() => (),
+        _ = hup_signal.recv() => ()
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub async fn await_termination() -> Result<(), Error> {
+    let mut ctrl_break_signal = ctrl_break()?;
+    let mut ctrl_c_signal = ctrl_c()?;
+    let mut ctrl_close_signal = ctrl_close()?;
+    let mut ctrl_logoff_signal = ctrl_logoff()?;
+    let mut ctrl_shutdown_signal = ctrl_shutdown()?;
+    select! {
+        _ = ctrl_break_signal.recv() => (),
+        _ = ctrl_c_signal.recv() => (),
+        _ = ctrl_close_signal.recv() => (),
+        _ = ctrl_logoff_signal.recv() => (),
+        _ = ctrl_shutdown_signal.recv() => ()
+    }
+    Ok(())
 }
