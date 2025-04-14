@@ -1,9 +1,9 @@
 #[cfg(feature = "color")]
 use colored::*;
 use log::{Level, Log, Metadata, Record, SetLoggerError, warn};
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
-use std::io::{Error, ErrorKind};
+use serde::de::Error as SerdeError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -40,8 +40,8 @@ pub struct DruidGardenLogger {
     pub target_levels: Vec<(String, Level)>,
     pub start_instant: Instant,
     pub printed_error: AtomicBool,
-    pub buffer: Arc<RwLock<VecDeque<String>>>,
-    pub subscribers: Arc<HashMap<Level, Sender<String>>>,
+    pub buffer: Arc<RwLock<VecDeque<LogEvent>>>,
+    pub channel: Sender<LogEvent>,
 }
 
 pub struct DruidGardenLoggerBuilder {
@@ -120,13 +120,7 @@ impl DruidGardenLoggerBuilder {
             start_instant: Instant::now(),
             printed_error: AtomicBool::new(false),
             buffer: Arc::new(Default::default()),
-            subscribers: Arc::new(HashMap::from([
-                (Level::Trace, Sender::new(1024)),
-                (Level::Debug, Sender::new(1024)),
-                (Level::Error, Sender::new(1024)),
-                (Level::Warn, Sender::new(1024)),
-                (Level::Info, Sender::new(1024)),
-            ])),
+            channel: Sender::new(1024),
         }
     }
     pub fn init(self) -> Result<Arc<DruidGardenLogger>, SetLoggerError> {
@@ -154,20 +148,40 @@ impl DruidGardenLogger {
             logger
         })
     }
-    pub fn subscribe(&self, level: Level) -> Result<Receiver<String>, Error> {
-        match self.subscribers.get(&level) {
-            None => Err(Error::new(
-                ErrorKind::InvalidInput,
-                format!("{} is not a supported log level", level),
-            )),
-            Some(channel) => Ok(channel.subscribe()),
-        }
+    pub fn subscribe(&self) -> Receiver<LogEvent> {
+        self.channel.subscribe()
     }
 }
 
-#[derive(Serialize, Deserialize)]
+fn serialize_level<S>(level: &Level, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&level.to_string().to_lowercase())
+}
+
+fn deserialize_level<'de, D>(deserializer: D) -> Result<Level, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    match s.to_lowercase().as_str() {
+        "error" => Ok(Level::Error),
+        "warn" | "warning" => Ok(Level::Warn),
+        "info" => Ok(Level::Info),
+        "debug" => Ok(Level::Debug),
+        "trace" => Ok(Level::Trace),
+        _ => Err(D::Error::custom(format!("Unknown log level: {}", s))),
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LogEvent {
-    pub level: String,
+    #[serde(
+        serialize_with = "serialize_level",
+        deserialize_with = "deserialize_level"
+    )]
+    pub level: Level,
     pub target: String,
     pub message: String,
     pub timestamp: OffsetDateTime,
@@ -187,7 +201,7 @@ impl Log for DruidGardenLogger {
 
     fn log(&self, record: &Record) {
         let log_event = LogEvent {
-            level: record.level().to_string(),
+            level: record.level(),
             target: if record.target().is_empty() {
                 record.module_path().unwrap_or_default()
             } else {
@@ -266,7 +280,7 @@ impl Log for DruidGardenLogger {
             } else {
                 String::new()
             };
-            let message = format!(
+            println!(
                 "{} {}{}[{}] {}",
                 timestamp,
                 level_prefix,
@@ -274,13 +288,8 @@ impl Log for DruidGardenLogger {
                 target_module,
                 record.args()
             );
-            println!("{}", message);
-            if let Some(sender) = self.subscribers.get(&record.level()) {
-                if let Ok(json) = serde_json::to_string(&log_event) {
-                    let _ = sender.send(json);
-                }
-            }
         }
+        let _ = self.channel.send(log_event);
     }
 
     fn flush(&self) {}
