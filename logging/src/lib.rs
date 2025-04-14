@@ -113,8 +113,8 @@ impl DruidGardenLoggerBuilder {
     }
     pub fn build(mut self) -> DruidGardenLogger {
         self.target_levels.sort_by(|a, b| a.0.cmp(&b.0));
-        let sender = Sender::new(1024);
-        let mut buffer_recv = sender.subscribe();
+        let channel = Sender::new(1024);
+        let mut buffer_recv = channel.subscribe();
         let buffer = Arc::new(RwLock::new(VecDeque::new()));
         let thread_buffer_ref = buffer.clone();
         DruidGardenLogger {
@@ -158,7 +158,7 @@ impl DruidGardenLoggerBuilder {
                     }
                 }
             })),
-            channel: Sender::new(1024),
+            channel,
         }
     }
     pub fn init(self) -> Result<Arc<DruidGardenLogger>, SetLoggerError> {
