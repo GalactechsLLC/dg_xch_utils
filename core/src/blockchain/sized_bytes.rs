@@ -1,4 +1,5 @@
 use crate::clvm::program::Program;
+use crate::clvm::sexp::SExp;
 use crate::formatting::prep_hex_str;
 use crate::traits::SizedBytes;
 use blst::min_pk::{PublicKey, SecretKey, Signature};
@@ -219,6 +220,20 @@ macro_rules! impl_sized_bytes {
                 type Error = Error;
                 fn try_from(value: &Program) -> Result<Self, Self::Error> {
                     let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, format!("Program is not a valid {}",  stringify!($name))))?;
+                    Self::parse(&vec)
+                }
+            }
+            impl TryFrom<SExp> for $name {
+                type Error = Error;
+                fn try_from(value: SExp) -> Result<Self, Self::Error> {
+                    let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, format!("SExp is not a valid {}",  stringify!($name))))?;
+                    Self::parse(&vec)
+                }
+            }
+            impl TryFrom<&SExp> for $name {
+                type Error = Error;
+                fn try_from(value: &SExp) -> Result<Self, Self::Error> {
+                    let vec = value.as_vec().ok_or_else(|| Error::new(ErrorKind::InvalidInput, format!("SExp is not a valid {}",  stringify!($name))))?;
                     Self::parse(&vec)
                 }
             }

@@ -40,6 +40,7 @@ pub type UrlFunction = Arc<dyn Fn(&str, u16, &str) -> String + Send + Sync + 'st
 #[derive(Clone)]
 pub struct FullnodeClient {
     client: Client,
+    pub secure: bool,
     pub host: String,
     pub port: u16,
     pub ssl_path: Option<ClientSSLConfig>,
@@ -57,6 +58,7 @@ impl FullnodeClient {
     ) -> Result<Self, Error> {
         Ok(FullnodeClient {
             client: get_client(&ssl_path, timeout)?,
+            secure: true,
             host: host.to_string(),
             port,
             ssl_path,
@@ -67,6 +69,7 @@ impl FullnodeClient {
     pub fn new_simulator(host: &str, port: u16, timeout: u64) -> Result<Self, Error> {
         Ok(FullnodeClient {
             client: get_http_client(timeout)?,
+            secure: false,
             host: host.to_string(),
             port,
             ssl_path: None,
