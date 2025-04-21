@@ -44,6 +44,9 @@ uuid = {version="1.14.0", features=["v4"]}
 x509-cert = { version = "0.2.5", features = ["std", "pem", "builder"] }
 lazy_static = "1.5.0"
 
+[dev-dependencies]
+dg_logger = { path = "../logging" }
+
 [features]
 mysql = ["sqlx/mysql"]
 postgres = ["sqlx/postgres"]

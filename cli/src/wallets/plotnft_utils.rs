@@ -30,6 +30,7 @@ use dg_xch_puzzles::clvm_puzzles::{
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
 use log::info;
 use num_traits::cast::ToPrimitive;
+use std::collections::HashMap;
 use std::future::Future;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
@@ -263,6 +264,7 @@ impl PlotNFTWallet {
         let mut signed_spend_bundle = sign_coin_spend(
             outgoing_coin_spend,
             |_| async { self.find_owner_key(&plot_nft.pool_state.owner_pubkey, 500) },
+            HashMap::with_capacity(0),
             constants,
         )
         .await?;
@@ -376,7 +378,13 @@ where
     );
     assert_eq!(outgoing_coin_spend.coin.name(), singleton_id);
     assert_ne!(new_inner_puzzle, inner_puzzle);
-    let signed_spend_bundle = sign_coin_spend(outgoing_coin_spend, key_fn, constants).await?;
+    let signed_spend_bundle = sign_coin_spend(
+        outgoing_coin_spend,
+        key_fn,
+        HashMap::with_capacity(0),
+        constants,
+    )
+    .await?;
     assert_eq!(
         signed_spend_bundle.removals()[0].puzzle_hash,
         singleton.puzzle_hash

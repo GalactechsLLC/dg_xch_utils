@@ -59,7 +59,6 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
     additional_data: &[u8],
 ) -> Result<Vec<(Bytes48, Message)>, Error> {
     let mut ret = vec![];
-    let agg_sig_map = agg_sig_additional_data::<S>(Bytes32::parse(additional_data)?);
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigUnsafe) {
         for cwa in v {
             if let ConditionWithArgs::AggSigUnsafe(key, msg) = *cwa {
@@ -85,6 +84,7 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
         }
     }
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigPuzzle) {
+        let agg_sig_map = agg_sig_additional_data::<S>(Bytes32::parse(additional_data)?);
         let additional_data = agg_sig_map
             .get(&ConditionOpcode::AggSigPuzzle)
             .copied()

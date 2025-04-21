@@ -1,15 +1,19 @@
 use blst::min_pk::{AggregateSignature, PublicKey, SecretKey, Signature};
 use dg_xch_core::blockchain::coin_spend::CoinSpend;
+use dg_xch_core::blockchain::condition_with_args::Message;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
+use dg_xch_core::blockchain::unsized_bytes::UnsizedBytes;
 use dg_xch_core::blockchain::utils::pkm_pairs_for_conditions_dict;
 use dg_xch_core::blockchain::wallet_type::WalletType;
 use dg_xch_core::clvm::bls_bindings;
 use dg_xch_core::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
 use dg_xch_core::clvm::condition_utils::conditions_dict_for_solution;
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use log::info;
+use dg_xch_core::traits::SizedBytes;
+use log::{debug, info};
 use num_traits::cast::ToPrimitive;
+use std::collections::HashMap;
 use std::future::Future;
 use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
@@ -26,6 +30,7 @@ pub struct DerivationRecord {
 pub async fn sign_coin_spend<F, Fut>(
     coin_spend: CoinSpend,
     key_fn: F,
+    pre_calculated_signatures: HashMap<(Bytes48, Message), Bytes96>,
     constants: &ConsensusConstants,
 ) -> Result<SpendBundle, Error>
 where
@@ -35,6 +40,7 @@ where
     sign_coin_spends(
         vec![coin_spend],
         key_fn,
+        pre_calculated_signatures,
         &constants.agg_sig_me_additional_data,
         constants.max_block_cost_clvm.to_u64().unwrap(),
     )
@@ -44,6 +50,7 @@ where
 pub async fn sign_coin_spends<F, Fut>(
     coin_spends: Vec<CoinSpend>,
     key_fn: F,
+    pre_calculated_signatures: HashMap<(Bytes48, Message), Bytes96>,
     additional_data: &[u8],
     max_cost: u64,
 ) -> Result<SpendBundle, Error>
@@ -54,7 +61,7 @@ where
     let mut signatures: Vec<Signature> = vec![];
     let mut pk_list: Vec<Bytes48> = vec![];
     let mut msg_list: Vec<Vec<u8>> = vec![];
-    info!("Creating Signatures for Coin Spends");
+    debug!("Creating Signatures for Coin Spends");
     for coin_spend in &coin_spends {
         //Get AGG_SIG conditions
         let conditions_dict = conditions_dict_for_solution::<RandomState>(
@@ -78,15 +85,38 @@ where
                 )
             })?;
             let secret_key = (key_fn)(&pk_bytes).await?;
-            assert_eq!(&secret_key.sk_to_pk(), &pk);
-            let signature = bls_bindings::sign(&secret_key, msg.as_ref());
+            let signature = if secret_key.sk_to_pk() != pk {
+                //Found no Secret Key, Check if the Map Contains our Signature
+                pre_calculated_signatures.get(&(pk_bytes, msg)).ok_or_else(|| {
+                    info!("Failed to find ({pk_bytes}, {msg}) in map \n {pre_calculated_signatures:#?}");
+                    Error::new(
+                        ErrorKind::Other,
+                        format!(
+                            "Failed to find Secret Key for Public Key: {}",
+                            Bytes48::new(pk.to_bytes())
+                        ),
+                    )
+                })?.try_into()?
+            } else {
+                assert_eq!(&secret_key.sk_to_pk(), &pk);
+                bls_bindings::sign(&secret_key, msg.as_ref())
+            };
             assert!(verify_signature(&pk, msg.as_ref(), &signature));
+            if !verify_signature(&pk, msg.as_ref(), &signature) {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    format!(
+                        "Failed to find Validate Signature for Message: {}",
+                        UnsizedBytes::new(msg.as_ref())
+                    ),
+                ));
+            }
             pk_list.push(pk_bytes);
             msg_list.push(msg.as_ref().to_vec());
             signatures.push(signature);
         }
     }
-    info!("Creating Aggregate signature");
+    debug!("Creating Aggregate signature");
     let sig_refs: Vec<&Signature> = signatures.iter().collect();
     let msg_list: Vec<&[u8]> = msg_list.iter().map(Vec::as_slice).collect();
     let aggsig = AggregateSignature::aggregate(&sig_refs, true)

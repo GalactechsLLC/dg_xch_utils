@@ -12,7 +12,7 @@ pub struct UnsizedBytes {
     pub bytes: Vec<u8>,
 }
 impl UnsizedBytes {
-    fn new(bytes: &[u8]) -> Self {
+    pub fn new(bytes: &[u8]) -> Self {
         Self {
             bytes: bytes.to_vec(),
         }

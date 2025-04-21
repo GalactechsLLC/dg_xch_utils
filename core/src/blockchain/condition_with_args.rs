@@ -7,10 +7,11 @@ use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::warn;
 use serde::de::Error as SerialError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt::Display;
+use std::fmt::{Debug, Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::io::{Cursor, Error, ErrorKind};
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Message(usize, [u8; 1024]);
 impl Message {
     pub fn new(msg: Vec<u8>) -> Result<Message, Error> {
@@ -25,6 +26,24 @@ impl Message {
     }
     pub fn data(&self) -> &[u8] {
         &self.1[0..self.0]
+    }
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.data()))
+    }
+}
+
+impl Debug for Message {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.data()))
+    }
+}
+
+impl Hash for Message {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
     }
 }
 

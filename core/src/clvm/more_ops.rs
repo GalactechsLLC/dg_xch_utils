@@ -90,8 +90,8 @@ const PUBKEY_COST_PER_BYTE: u64 = 38;
 const COIN_ID_COST: u64 =
     SHA256_BASE_COST + SHA256_COST_PER_ARG * 3 + SHA256_COST_PER_BYTE * (32 + 32 + 8) - 153;
 
-fn limbs_for_int(v: &BigInt) -> usize {
-    ((v.bits() + 7) / 8) as usize
+fn limbs_for_int(v: &BigInt) -> u64 {
+    v.bits().div_ceil(8)
 }
 
 fn new_atom_and_cost(cost: u64, buf: &[u8]) -> (u64, SExp) {
@@ -255,23 +255,23 @@ pub fn op_multiply<D: Dialect>(
     let mut cost: u64 = MUL_BASE_COST;
     let mut first_iter: bool = true;
     let mut total: BigInt = 1.into();
-    let mut l0: usize = 0;
+    let mut l0 = 0u64;
     for arg in args {
         check_cost(cost, max_cost)?;
         let blob = int_atom(arg, "*")?;
         if first_iter {
-            l0 = blob.len();
+            l0 = blob.len() as u64;
             total = number_from_slice(blob);
             first_iter = false;
             continue;
         }
-        let l1 = blob.len();
+        let l1 = blob.len() as u64;
 
         total *= number_from_slice(blob);
         cost += MUL_COST_PER_OP;
 
-        cost += (l0 + l1) as u64 * MUL_LINEAR_COST_PER_BYTE;
-        cost += (l0 * l1) as u64 / MUL_SQUARE_COST_PER_BYTE_DIVIDER;
+        cost += (l0 + l1) * MUL_LINEAR_COST_PER_BYTE;
+        cost += (l0 * l1) / MUL_SQUARE_COST_PER_BYTE_DIVIDER;
 
         l0 = limbs_for_int(&total);
     }
@@ -466,7 +466,7 @@ pub fn op_ash<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(
     let a0 = args.first()?;
     let b0 = int_atom(a0, "ash")?;
     let i0 = number_from_slice(b0);
-    let l0 = b0.len();
+    let l0 = b0.len() as u64;
     let rest = args.rest()?;
     let a1 = i32_atom(rest.first()?, "ash")?;
     if !(-65535..=65535).contains(&a1) {
@@ -479,7 +479,7 @@ pub fn op_ash<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(
     let v: BigInt = if a1 > 0 { i0 << a1 } else { i0 >> -a1 };
     let l1 = limbs_for_int(&v);
     let r = SExp::try_from(&v)?;
-    let cost = A_SHIFT_BASE_COST + ((l0 + l1) as u64) * A_SHIFT_COST_PER_BYTE;
+    let cost = A_SHIFT_BASE_COST + (l0 + l1) * A_SHIFT_COST_PER_BYTE;
     malloc_cost(cost, r)
 }
 
@@ -488,7 +488,7 @@ pub fn op_lsh<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(
     let a0 = args.first()?;
     let b0 = int_atom(a0, "lsh")?;
     let i0 = BigUint::from_bytes_be(b0);
-    let l0 = b0.len();
+    let l0 = b0.len() as u64;
     let rest = args.rest()?;
     let a1 = i32_atom(rest.first()?, "lsh")?;
     if !(-65535..=65535).contains(&a1) {
@@ -501,7 +501,7 @@ pub fn op_lsh<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(
     let v: BigInt = if a1 > 0 { i0 << a1 } else { i0 >> -a1 };
     let l1 = limbs_for_int(&v);
     let r = SExp::try_from(&v)?;
-    let cost = LSHIFT_BASE_COST + ((l0 + l1) as u64) * LSHIFT_COST_PER_BYTE;
+    let cost = LSHIFT_BASE_COST + (l0 + l1) * LSHIFT_COST_PER_BYTE;
     malloc_cost(cost, r)
 }
 

@@ -687,6 +687,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                         .await
                 }
             },
+            HashMap::with_capacity(0),
             &self.wallet_info().constants.agg_sig_me_additional_data,
             self.wallet_info()
                 .constants

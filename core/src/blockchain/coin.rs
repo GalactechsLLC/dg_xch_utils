@@ -29,7 +29,7 @@ impl Coin {
             let start = if self.amount == 0 {
                 8
             } else {
-                ((self.amount.leading_zeros() + 7) / 8).saturating_sub(1) as usize
+                self.amount.leading_zeros().div_ceil(8).saturating_sub(1) as usize
             };
             hasher.update(&amount_bytes[start..]);
         }

@@ -393,6 +393,7 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
                         .await
                 }
             },
+            HashMap::with_capacity(0),
             &self.wallet_info().constants.agg_sig_me_additional_data,
             self.wallet_info()
                 .constants
