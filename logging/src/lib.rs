@@ -1,6 +1,6 @@
 #[cfg(feature = "color")]
 use colored::*;
-use log::{Level, Log, Metadata, Record, SetLoggerError, warn, error};
+use log::{Level, Log, Metadata, Record, SetLoggerError, error, warn};
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::VecDeque;
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 use tokio::select;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::task::JoinHandle;
