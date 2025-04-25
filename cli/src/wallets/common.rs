@@ -156,7 +156,7 @@ where
             &coin_spend.solution,
             max_cost,
         )?
-            .0;
+        .0;
         //Create signature
         let mut total_messages = 0;
         let mut signed_messages = 0;
@@ -176,7 +176,7 @@ where
             total_messages += 1;
             if let Ok(secret_key) = (key_fn)(&pk_bytes).await {
                 let signature = if secret_key.sk_to_pk() != pk {
-                    if let Some(signature) = pre_calculated_signatures.get(&(pk_bytes, msg)){
+                    if let Some(signature) = pre_calculated_signatures.get(&(pk_bytes, msg)) {
                         Some(signature.try_into()?)
                     } else {
                         None
@@ -238,4 +238,3 @@ where
     };
     Ok(spend_bundle)
 }
-

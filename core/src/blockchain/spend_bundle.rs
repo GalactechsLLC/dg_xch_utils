@@ -104,8 +104,8 @@ impl SpendBundle {
         if !self.aggregated_signature.is_null() {
             sigs.push((&self.aggregated_signature).try_into()?);
         }
-        self.aggregated_signature = if sigs.len() == 1 {
-            sig.to_bytes().into()
+        self.aggregated_signature = if sigs.is_empty() {
+            Bytes96::default()
         } else {
             AggregateSignature::aggregate(&sigs.iter().collect::<Vec<&Signature>>(), true)
                 .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?
