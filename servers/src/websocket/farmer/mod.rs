@@ -9,7 +9,6 @@ use dg_xch_clients::websocket::farmer::FarmerClient;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::clvm::bls_bindings::{sign, verify_signature};
 use dg_xch_core::config::PoolWalletConfig;
-use dg_xch_core::formatting::hex_to_bytes;
 use dg_xch_core::protocols::farmer::{FarmerPoolState, FarmerSharedState};
 use dg_xch_core::protocols::pool::{
     get_current_authentication_token, AuthenticationPayload, GetFarmerRequest, GetFarmerResponse,
@@ -19,7 +18,7 @@ use dg_xch_core::protocols::pool::{
 use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_core::utils::hash_256;
-use dg_xch_keys::decode_puzzle_hash;
+use dg_xch_keys::parse_payout_address;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{error, info};
 use std::collections::HashMap;
@@ -155,19 +154,6 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
     }
 }
 
-fn parse_payout_address(s: String) -> Result<String, Error> {
-    Ok(if s.starts_with("xch") || s.starts_with("txch") {
-        hex::encode(decode_puzzle_hash(&s)?)
-    } else if s.len() == 64 {
-        match hex_to_bytes(&s) {
-            Ok(h) => hex::encode(h),
-            Err(_) => s,
-        }
-    } else {
-        s
-    })
-}
-
 pub async fn get_farmer<
     T: PoolClient + Sized + Sync + Send,
     S: std::hash::BuildHasher + Sync + Send + Clone + 'static,
@@ -236,14 +222,12 @@ pub async fn post_farmer<
         launcher_id: pool_config.launcher_id,
         authentication_token: get_current_authentication_token(authentication_token_timeout),
         authentication_public_key: do_auth(pool_config, owner_sk)?,
-        payout_instructions: parse_payout_address(payout_instructions.to_string()).map_err(
-            |e| PoolError {
-                error_code: PoolErrorCode::InvalidPayoutInstructions as u8,
-                error_message: format!(
-                    "Failed to Parse Payout Instructions: {payout_instructions}, {e:?}"
-                ),
-            },
-        )?,
+        payout_instructions: parse_payout_address(payout_instructions).map_err(|e| PoolError {
+            error_code: PoolErrorCode::InvalidPayoutInstructions as u8,
+            error_message: format!(
+                "Failed to Parse Payout Instructions: {payout_instructions}, {e:?}"
+            ),
+        })?,
         suggested_difficulty,
     };
     let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
@@ -284,7 +268,14 @@ pub async fn put_farmer<
         launcher_id: pool_config.launcher_id,
         authentication_token: get_current_authentication_token(authentication_token_timeout),
         authentication_public_key: Some(authentication_public_key),
-        payout_instructions: parse_payout_address(payout_instructions.to_string()).ok(),
+        payout_instructions: Some(parse_payout_address(payout_instructions).map_err(|e| {
+            PoolError {
+                error_code: PoolErrorCode::InvalidPayoutInstructions as u8,
+                error_message: format!(
+                    "Failed to Parse Payout Instructions: {payout_instructions}, {e:?}"
+                ),
+            }
+        })?),
         suggested_difficulty,
     };
     let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
