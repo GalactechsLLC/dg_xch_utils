@@ -11,3 +11,4 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 [dependencies]
 log = "0.4.26"
 serde = { version = "1.0.218", features = ["derive"] }
+time = "0.3.41"
