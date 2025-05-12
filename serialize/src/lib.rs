@@ -3,6 +3,7 @@ use std::convert::Infallible;
 use std::fmt::{Display, Formatter};
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::str::FromStr;
+use time::OffsetDateTime;
 
 #[derive(
     Default,
@@ -59,6 +60,25 @@ pub trait ChiaSerialize {
     ) -> Result<Self, Error>
     where
         Self: Sized;
+}
+impl ChiaSerialize for OffsetDateTime {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    where
+        Self: Sized,
+    {
+        (self.unix_timestamp() as u64).to_bytes(version)
+    }
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        let timestamp: u64 = u64::from_bytes(bytes, version)?;
+        OffsetDateTime::from_unix_timestamp(timestamp as i64)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))
+    }
 }
 
 impl ChiaSerialize for String {
