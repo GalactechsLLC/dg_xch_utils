@@ -27,6 +27,7 @@ num-integer = "0.1.46"
 num-traits = "0.2.19"
 once_cell = "1.20.3"
 parking_lot = "0.12.3"
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", branch = "pf_admin_updates"}
 prometheus = {version="0.13.4", features=["protobuf"], optional = true}
 rand = "0.8.5"
 regex = "1.11.1"

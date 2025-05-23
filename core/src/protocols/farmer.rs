@@ -24,9 +24,11 @@ use prometheus::core::{
 use prometheus::{Histogram, HistogramOpts, Opts, Registry};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use portfu::pfcore::cache::CircularCache;
+use time::OffsetDateTime;
 use tokio::sync::RwLock;
 #[cfg(feature = "metrics")]
 use uuid::Uuid;
@@ -463,6 +465,60 @@ pub struct PlotCounts {
     pub total_plot_space: Arc<std::sync::atomic::AtomicU64>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct SerialPlotCounts {
+    pub og_plot_count: u64,
+    pub nft_plot_count: u64,
+    pub compresses_plot_count: u64,
+    pub invalid_plot_count: u64,
+    pub total_plot_space: u64,
+}
+impl From<&PlotCounts> for SerialPlotCounts {
+    fn from(counts: &PlotCounts) -> Self {
+        Self {
+            og_plot_count: counts.og_plot_count.load(Ordering::Relaxed),
+            nft_plot_count: counts.nft_plot_count.load(Ordering::Relaxed),
+            compresses_plot_count: counts.compresses_plot_count.load(Ordering::Relaxed),
+            invalid_plot_count: counts.invalid_plot_count.load(Ordering::Relaxed),
+            total_plot_space: counts.total_plot_space.load(Ordering::Relaxed),
+        }
+    }
+}
+
+pub struct PlotPassCounts {
+    pub og_passed: Arc<std::sync::atomic::AtomicU64>,
+    pub og_total: Arc<std::sync::atomic::AtomicU64>,
+    pub pool_total: Arc<std::sync::atomic::AtomicU64>,
+    pub pool_passed: Arc<std::sync::atomic::AtomicU64>,
+    pub compressed_passed: Arc<std::sync::atomic::AtomicU64>,
+    pub compressed_total: Arc<std::sync::atomic::AtomicU64>,
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SerialPlotPassCounts {
+    pub og_passed: u64,
+    pub og_total: u64,
+    pub pool_total: u64,
+    pub pool_passed: u64,
+    pub compressed_passed: u64,
+    pub compressed_total: u64,
+    pub timestamp: OffsetDateTime
+}
+impl From<&PlotPassCounts> for SerialPlotPassCounts {
+    fn from(counts: &PlotPassCounts) -> Self {
+        Self {
+            og_passed: counts.og_passed.load(Ordering::Relaxed),
+            og_total: counts.og_total.load(Ordering::Relaxed),
+            pool_total: counts.pool_total.load(Ordering::Relaxed),
+            pool_passed: counts.pool_passed.load(Ordering::Relaxed),
+            compressed_passed: counts.compressed_passed.load(Ordering::Relaxed),
+            compressed_total: counts.compressed_total.load(Ordering::Relaxed),
+            timestamp: counts.timestamp,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct FarmerSharedState<T> {
     pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
@@ -489,6 +545,7 @@ pub struct FarmerSharedState<T> {
     pub force_pool_update: Arc<AtomicBool>,
     pub last_pool_update: Arc<std::sync::atomic::AtomicU64>,
     pub last_sp_timestamp: Arc<RwLock<Instant>>,
+    pub recent_plot_stats: Arc<RwLock<CircularCache<(Bytes32, Bytes32), SerialPlotPassCounts, 100>>>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
 }
@@ -519,6 +576,7 @@ impl<T: Default> Default for FarmerSharedState<T> {
             force_pool_update: Arc::new(Default::default()),
             last_pool_update: Arc::new(Default::default()),
             last_sp_timestamp: Arc::new(RwLock::new(Instant::now())),
+            recent_plot_stats: Arc::new(Default::default()),
             #[cfg(feature = "metrics")]
             metrics: Arc::new(Default::default()),
         }
