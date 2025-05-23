@@ -519,6 +519,41 @@ impl From<&PlotPassCounts> for SerialPlotPassCounts {
     }
 }
 
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub struct FarmerStats {
+    pub challenge_hash: Bytes32,
+    pub sp_hash: Bytes32,
+    pub running: i64,
+    pub og_plot_count: i64,
+    pub nft_plot_count: i64,
+    pub compresses_plot_count: i64,
+    pub invalid_plot_count: i64,
+    pub total_plot_space: i64,
+    pub full_node_height: i64,
+    pub full_node_difficulty: i64,
+    pub full_node_synced: i64,
+    pub gathered: OffsetDateTime,
+}
+
+impl Default for FarmerStats {
+    fn default() -> Self {
+        Self {
+            challenge_hash: Default::default(),
+            sp_hash: Default::default(),
+            running: 0,
+            og_plot_count: 0,
+            nft_plot_count: 0,
+            compresses_plot_count: 0,
+            invalid_plot_count: 0,
+            total_plot_space: 0,
+            full_node_height: 0,
+            full_node_difficulty: 0,
+            full_node_synced: 0,
+            gathered: OffsetDateTime::now_utc(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct FarmerSharedState<T> {
     pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
@@ -548,6 +583,7 @@ pub struct FarmerSharedState<T> {
     pub recent_plot_stats: Arc<RwLock<CircularCache<(Bytes32, Bytes32), SerialPlotPassCounts, 100>>>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
+    pub recent_stats: Arc<RwLock<HashMap<(Bytes32, Bytes32), FarmerStats>>>,
 }
 impl<T: Default> Default for FarmerSharedState<T> {
     fn default() -> Self {
@@ -579,6 +615,7 @@ impl<T: Default> Default for FarmerSharedState<T> {
             recent_plot_stats: Arc::new(Default::default()),
             #[cfg(feature = "metrics")]
             metrics: Arc::new(Default::default()),
+            recent_stats: Arc::new(Default::default()),
         }
     }
 }
