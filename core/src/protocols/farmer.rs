@@ -16,6 +16,7 @@ use dg_xch_serialize::ChiaProtocolVersion;
 
 use crate::blockchain::blockchain_state::BlockchainState;
 use crate::protocols::shared::Handshake;
+use portfu::pfcore::cache::CircularCache;
 #[cfg(feature = "metrics")]
 use prometheus::core::{
     AtomicU64, GenericCounter, GenericCounterVec, GenericGauge, GenericGaugeVec,
@@ -27,7 +28,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use portfu::pfcore::cache::CircularCache;
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 #[cfg(feature = "metrics")]
@@ -503,7 +503,7 @@ pub struct SerialPlotPassCounts {
     pub pool_passed: u64,
     pub compressed_passed: u64,
     pub compressed_total: u64,
-    pub timestamp: OffsetDateTime
+    pub timestamp: OffsetDateTime,
 }
 impl From<&PlotPassCounts> for SerialPlotPassCounts {
     fn from(counts: &PlotPassCounts) -> Self {
@@ -580,7 +580,8 @@ pub struct FarmerSharedState<T> {
     pub force_pool_update: Arc<AtomicBool>,
     pub last_pool_update: Arc<std::sync::atomic::AtomicU64>,
     pub last_sp_timestamp: Arc<RwLock<Instant>>,
-    pub recent_plot_stats: Arc<RwLock<CircularCache<(Bytes32, Bytes32), SerialPlotPassCounts, 100>>>,
+    pub recent_plot_stats:
+        Arc<RwLock<CircularCache<(Bytes32, Bytes32), SerialPlotPassCounts, 100>>>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
     pub recent_stats: Arc<RwLock<HashMap<(Bytes32, Bytes32), FarmerStats>>>,
