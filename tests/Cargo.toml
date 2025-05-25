@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_tests"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Low Level Support Package for dg_xch_utils"
@@ -10,10 +10,10 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils/serialize"
 
 [dependencies]
 async-trait = "0.1.77"
-dg_xch_core = {path = "../core", version = "2.0.3" }
-dg_xch_clients = {path = "../clients", version="2.0.3"}
-dg_xch_puzzles = {path = "../puzzles", version="2.0.3"}
-dg_xch_serialize = {path = "../serialize", version="2.0.3"}
+dg_xch_core = {path = "../core", version = "2.1.1" }
+dg_xch_clients = {path = "../clients", version="2.1.1"}
+dg_xch_puzzles = {path = "../puzzles", version="2.1.1"}
+dg_xch_serialize = {path = "../serialize", version="2.1.1"}
 hex = "0.4.3"
 lazy_static = "1.4.0"
 num-bigint = "0.4.4"

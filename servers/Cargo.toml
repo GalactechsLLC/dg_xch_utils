@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_servers"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Library for Creating Servers compatible with Chia's RPC and Websocket Protocols"
@@ -11,11 +11,11 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 [dependencies]
 async-trait = "0.1.86"
 blst = { version = "0.3.14", features = ["portable"] }
-dg_xch_core = {path = "../core", version = "2.0.3", default-features = false }
-dg_xch_clients = {path = "../clients", version = "2.0.3" }
-dg_xch_keys = {path = "../keys", version = "2.0.3" }
-dg_xch_pos = {path = "../proof_of_space", version = "2.0.3" }
-dg_xch_serialize = {path = "../serialize", version = "2.0.3" }
+dg_xch_core = {path = "../core", version = "2.1.1", default-features = false }
+dg_xch_clients = {path = "../clients", version = "2.1.1" }
+dg_xch_keys = {path = "../keys", version = "2.1.1" }
+dg_xch_pos = {path = "../proof_of_space", version = "2.1.1" }
+dg_xch_serialize = {path = "../serialize", version = "2.1.1" }
 http-body-util = { version = "0.1.2"}
 hex = "0.4.3"
 http = "1.2.0"
