@@ -68,7 +68,8 @@ impl MessageHandler for HandshakeHandle {
                         },
                         msg.id,
                     )
-                    .to_bytes(protocol_version),
+                    .to_bytes(protocol_version)
+                    .into(),
                 ))
                 .await
                 .unwrap_or_default();
@@ -89,7 +90,8 @@ impl MessageHandler for HandshakeHandle {
                             },
                             None,
                         )
-                        .to_bytes(protocol_version),
+                        .to_bytes(protocol_version)
+                        .into(),
                     ))
                     .await
                     .unwrap_or_default();

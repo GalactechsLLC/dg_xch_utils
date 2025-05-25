@@ -5,7 +5,8 @@ pub mod wallet;
 
 use crate::ClientSSLConfig;
 use async_trait::async_trait;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::shared::{Handshake, NoCertificateVerification, CAPABILITIES};
 use dg_xch_core::protocols::{
     ChiaMessage, ChiaMessageFilter, ChiaMessageHandler, MessageHandler, NodeType, SocketPeer,
@@ -14,12 +15,15 @@ use dg_xch_core::protocols::{
 use dg_xch_core::protocols::{PeerMap, ProtocolMessageTypes, WebsocketMsgStream};
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
-    load_private_key_from_bytes, CHIA_CA_CRT, CHIA_CA_KEY,
+    load_private_key_from_bytes,
 };
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::debug;
 use reqwest::header::{HeaderName, HeaderValue};
-use rustls::{Certificate, ClientConfig, PrivateKey};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::ClientConfig;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
@@ -44,6 +48,7 @@ fn _pkg_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
+#[must_use]
 pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }
@@ -56,6 +61,7 @@ fn test_version() {
 pub struct WsClient {
     pub connection: Arc<RwLock<WebsocketConnection>>,
     pub client_config: Arc<WsClientConfig>,
+    pub handshake: Option<Handshake>,
     handle: JoinHandle<()>,
     run: Arc<AtomicBool>,
 }
@@ -66,84 +72,79 @@ impl WsClient {
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
-        let (certs, key, cert_str) = if let Some(ssl_info) = &client_config.ssl_info {
-            (
+        if let Some(ssl_info) = &client_config.ssl_info {
+            Self::build(
+                client_config.clone(),
+                node_type,
+                message_handlers,
+                run,
                 load_certs(&ssl_info.ssl_crt_path)?,
                 load_private_key(&ssl_info.ssl_key_path)?,
-                fs::read(&ssl_info.ssl_crt_path)?,
+                &fs::read(&ssl_info.ssl_crt_path)?,
             )
+            .await
         } else if let (Some(crt), Some(key)) = (
             env::var("PRIVATE_CA_CRT").ok(),
             env::var("PRIVATE_CA_KEY").ok(),
         ) {
             let (cert_bytes, key_bytes) =
-                generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes()).map_err(|e| {
-                    Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e))
-                })?;
-            (
+                generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes())
+                    .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
+            Self::build(
+                client_config,
+                node_type,
+                message_handlers,
+                run,
                 load_certs_from_bytes(&cert_bytes)?,
                 load_private_key_from_bytes(&key_bytes)?,
-                cert_bytes,
+                &cert_bytes,
             )
+            .await
         } else {
             let (cert_bytes, key_bytes) =
                 generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
-                    .map_err(|e| {
-                        Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e))
-                    })?;
-            (
+                    .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
+            Self::build(
+                client_config,
+                node_type,
+                message_handlers,
+                run,
                 load_certs_from_bytes(&cert_bytes)?,
                 load_private_key_from_bytes(&key_bytes)?,
-                cert_bytes,
+                &cert_bytes,
             )
-        };
-        Self::build(
-            client_config,
-            node_type,
-            message_handlers,
-            run,
-            certs,
-            key,
-            &cert_str,
-        )
-        .await
+            .await
+        }
     }
     pub async fn with_ca(
-        client_config: Arc<crate::websocket::WsClientConfig>,
+        client_config: Arc<WsClientConfig>,
         node_type: NodeType,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
         cert_data: &[u8],
         key_data: &[u8],
     ) -> Result<Self, Error> {
-        let (certs, key, cert_str) = {
-            let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
-                .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
-            (
-                load_certs_from_bytes(&cert_bytes)?,
-                load_private_key_from_bytes(&key_bytes)?,
-                cert_bytes,
-            )
-        };
+        let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
+            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
         Self::build(
             client_config,
             node_type,
             message_handlers,
             run,
-            certs,
-            key,
-            &cert_str,
+            load_certs_from_bytes(&cert_bytes)?,
+            load_private_key_from_bytes(&key_bytes)?,
+            &cert_bytes,
         )
         .await
     }
 
     async fn build(
-        client_config: Arc<crate::websocket::WsClientConfig>,
+        client_config: Arc<WsClientConfig>,
         node_type: NodeType,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
-        certs: Vec<Certificate>,
-        key: PrivateKey,
+        certs: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
         cert_str: &[u8],
     ) -> Result<Self, Error> {
         let mut request = format!("wss://{}:{}/ws", client_config.host, client_config.port)
@@ -151,7 +152,7 @@ impl WsClient {
             .map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidData,
-                    format!("Failed to Parse Request: {}", e),
+                    format!("Failed to Parse Request: {e}"),
                 )
             })?;
         if let Some(m) = &client_config.additional_headers {
@@ -160,13 +161,13 @@ impl WsClient {
                     HeaderName::from_str(k).map_err(|e| {
                         Error::new(
                             ErrorKind::InvalidData,
-                            format!("Failed to Parse Header Name {},\r\n {}", k, e),
+                            format!("Failed to Parse Header Name {k},\r\n {e}"),
                         )
                     })?,
                     HeaderValue::from_str(v).map_err(|e| {
                         Error::new(
                             ErrorKind::InvalidData,
-                            format!("Failed to Parse Header value {},\r\n {}", v, e),
+                            format!("Failed to Parse Header value {k},\r\n {e}"),
                         )
                     })?,
                 );
@@ -177,32 +178,27 @@ impl WsClient {
             HeaderValue::from_str(&encode(&String::from_utf8_lossy(cert_str))).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidData,
-                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {}", e),
+                    format!("Failed to Parse Header value CHIA_CA_CRT,\r\n {e}"),
                 )
             })?,
         );
-        let peer_id = Arc::new(Bytes32::new(&hash_256(&certs[0].0)));
+        let peer_id = Arc::new(Bytes32::new(hash_256(certs[0].as_ref())));
         let (stream, _) = connect_async_tls_with_config(
             request,
             None,
             false,
             Some(Connector::Rustls(Arc::new(
                 ClientConfig::builder()
-                    .with_safe_defaults()
+                    .dangerous()
                     .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
                     .with_client_auth_cert(certs, key)
                     .map_err(|e| {
-                        Error::new(ErrorKind::Other, format!("Error Building Client: {:?}", e))
+                        Error::new(ErrorKind::Other, format!("Error Building Client: {e:?}"))
                     })?,
             ))),
         )
         .await
-        .map_err(|e| {
-            Error::new(
-                ErrorKind::Other,
-                format!("Error Connecting Client: {:?}", e),
-            )
-        })?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("Error Connecting Client: {e:?}")))?;
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (ws_con, mut stream) = WebsocketConnection::new(
             WebsocketMsgStream::Tls(stream),
@@ -221,9 +217,10 @@ impl WsClient {
         );
         let handle_run = run.clone();
         let protocol_version = client_config.protocol_version;
-        let ws_client = WsClient {
+        let mut ws_client = WsClient {
             connection,
             client_config,
+            handshake: None,
             handle: tokio::spawn(async move { stream.run(handle_run).await }),
             run,
         };
@@ -241,19 +238,20 @@ impl WsClient {
     pub async fn join(self) -> Result<(), Error> {
         self.handle
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {:?}", e)))
+            .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {e:?}")))
     }
 
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.handle.is_finished()
     }
 
     async fn perform_handshake(
-        &self,
+        &mut self,
         node_type: NodeType,
         chia_protocol_version: ChiaProtocolVersion,
-    ) -> Result<Handshake, Error> {
-        oneshot::<Handshake>(
+    ) -> Result<(), Error> {
+        let handshake = oneshot::<Handshake>(
             self.connection.clone(),
             ChiaMessage::new(
                 ProtocolMessageTypes::Handshake,
@@ -276,7 +274,9 @@ impl WsClient {
             None,
             Some(15000),
         )
-        .await
+        .await?;
+        self.handshake = Some(handshake);
+        Ok(())
     }
 }
 
@@ -330,13 +330,14 @@ pub async fn oneshot<R: ChiaSerialize>(
         channel: tx,
     };
     let handle = Arc::new(handle);
-    let chia_handle = ChiaMessageHandler {
+    let chia_handle = Arc::new(ChiaMessageHandler {
         filter: Arc::new(ChiaMessageFilter {
             msg_type: resp_type,
             id: msg_id,
+            custom_fn: None,
         }),
         handle: handle.clone(),
-    };
+    });
     connection
         .write()
         .await
@@ -355,11 +356,11 @@ pub async fn oneshot<R: ChiaSerialize>(
         .map_err(|e| {
             Error::new(
                 ErrorKind::InvalidData,
-                format!("Failed to parse send data: {:?}", e),
+                format!("Failed to parse send data: {e:?}"),
             )
         })?;
     select!(
-        _ = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
+        () = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
             connection.write().await.unsubscribe(handle.id).await;
             Err(Error::new(
                 ErrorKind::Other,
@@ -374,7 +375,7 @@ pub async fn oneshot<R: ChiaSerialize>(
                 R::from_bytes(&mut cursor, protocol_version).map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidData,
-                        format!("Failed to parse msg: {:?}", e),
+                        format!("Failed to parse msg: {e:?}"),
                     )
                 })
             } else {

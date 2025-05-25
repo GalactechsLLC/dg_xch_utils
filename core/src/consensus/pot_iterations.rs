@@ -1,9 +1,9 @@
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::blockchain::sized_bytes::Bytes32;
 use crate::consensus::constants::ConsensusConstants;
-use dg_xch_serialize::hash_256;
+use crate::constants::TWO_POW_256;
+use crate::utils::hash_256;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
-use once_cell::sync::Lazy;
 use std::cmp::max;
 use std::io::{Error, ErrorKind};
 use std::ops::Mul;
@@ -12,11 +12,11 @@ pub fn is_overflow_block(
     constants: &ConsensusConstants,
     signage_point_index: u8,
 ) -> Result<bool, Error> {
-    if signage_point_index as u32 >= constants.num_sps_sub_slot {
+    if u32::from(signage_point_index) >= constants.num_sps_sub_slot {
         Err(Error::new(ErrorKind::InvalidData, "SP index too high"))
     } else {
-        Ok(signage_point_index as u64
-            >= constants.num_sps_sub_slot as u64 - constants.num_sp_intervals_extra)
+        Ok(u64::from(signage_point_index)
+            >= u64::from(constants.num_sps_sub_slot) - constants.num_sp_intervals_extra)
     }
 }
 
@@ -24,13 +24,13 @@ pub fn calculate_sp_interval_iters(
     constants: &ConsensusConstants,
     sub_slot_iters: u64,
 ) -> Result<u64, Error> {
-    if sub_slot_iters % constants.num_sps_sub_slot as u64 != 0 {
+    if sub_slot_iters % u64::from(constants.num_sps_sub_slot) != 0 {
         Err(Error::new(
             ErrorKind::InvalidData,
-            format!("Invalid SubSlot Iterations: {}", sub_slot_iters),
+            format!("Invalid SubSlot Iterations: {sub_slot_iters}"),
         ))
     } else {
-        Ok(sub_slot_iters / constants.num_sps_sub_slot as u64)
+        Ok(sub_slot_iters / u64::from(constants.num_sps_sub_slot))
     }
 }
 
@@ -39,10 +39,13 @@ pub fn calculate_sp_iters(
     sub_slot_iters: u64,
     signage_point_index: u8,
 ) -> Result<u64, Error> {
-    if signage_point_index as u32 >= constants.num_sps_sub_slot {
+    if u32::from(signage_point_index) >= constants.num_sps_sub_slot {
         Err(Error::new(ErrorKind::InvalidData, "SP index too high"))
     } else {
-        Ok(calculate_sp_interval_iters(constants, sub_slot_iters)? * signage_point_index as u64)
+        Ok(
+            calculate_sp_interval_iters(constants, sub_slot_iters)?
+                * u64::from(signage_point_index),
+        )
     }
 }
 
@@ -69,26 +72,22 @@ pub fn calculate_ip_iters(
     }
 }
 
-pub const POOL_SUB_SLOT_ITERS: u64 = 37600000000;
-// This number should be held constant and be consistent for every pool in the network. DO NOT CHANGE
-pub const ITERS_LIMIT: u64 = POOL_SUB_SLOT_ITERS / 64;
-
-static TWO_POW_256: Lazy<BigUint> = Lazy::new(|| BigUint::from(2u64).pow(256));
-
+#[must_use]
 pub fn expected_plot_size(k: u8) -> u64 {
-    ((2 * k as u64) + 1) * 2u64.pow(k as u32 - 1)
+    ((2 * u64::from(k)) + 1) * 2u64.pow(u32::from(k) - 1)
 }
 
+#[must_use]
 pub fn calculate_iterations_quality(
     difficulty_constant_factor: u128,
-    quality_string: &Bytes32,
+    quality_string: Bytes32,
     size: u8,
     difficulty: u64,
-    cc_sp_output_hash: &Bytes32,
+    cc_sp_output_hash: Bytes32,
 ) -> u64 {
     let mut to_hash: Vec<u8> = Vec::new();
-    to_hash.extend(quality_string.as_slice());
-    to_hash.extend(cc_sp_output_hash.as_slice());
+    to_hash.extend(quality_string);
+    to_hash.extend(cc_sp_output_hash);
     let hashed = hash_256(to_hash);
     let quality_int = BigUint::from_bytes_be(hashed.as_slice());
     let difficulty_int = BigUint::from(difficulty);

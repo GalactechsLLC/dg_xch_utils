@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use dg_xch_core::blockchain::proof_of_space::calculate_prefix_bits;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use dg_xch_core::consensus::pot_iterations::POOL_SUB_SLOT_ITERS;
+use dg_xch_core::constants::POOL_SUB_SLOT_ITERS;
 #[cfg(feature = "metrics")]
 use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
@@ -34,6 +34,7 @@ pub struct NewSignagePointHandle {
 }
 #[async_trait]
 impl MessageHandler for NewSignagePointHandle {
+    #[allow(clippy::too_many_lines)]
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
@@ -61,7 +62,7 @@ impl MessageHandler for NewSignagePointHandle {
                         difficulty,
                         sub_slot_iters: POOL_SUB_SLOT_ITERS,
                         pool_contract_puzzle_hash: *p2_singleton_puzzle_hash,
-                    })
+                    });
                 } else {
                     warn!("No pool specific difficulty has been set for {p2_singleton_puzzle_hash}, check communication with the pool, skipping this signage point, pool: {}", &config.pool_url);
                     continue;
@@ -103,7 +104,8 @@ impl MessageHandler for NewSignagePointHandle {
                                 &harvester_point,
                                 None,
                             )
-                            .to_bytes(protocol_version),
+                            .to_bytes(protocol_version)
+                            .into(),
                         )
                         .clone(),
                     )
@@ -126,17 +128,14 @@ impl MessageHandler for NewSignagePointHandle {
                 s.points_found_24h
                     .retain(|(i, _)| now.duration_since(*i).as_secs() <= 60 * 60 * 24);
                 if let Some(r) = self.metrics.read().await.as_ref() {
-                    if let Some(c) = &r.points_acknowledged_24h {
-                        c.with_label_values(&[&v.to_string()])
-                            .set(s.points_acknowledged_24h.iter().map(|(_, v)| *v).sum());
-                    }
-                    if let Some(c) = &r.points_found_24h {
-                        c.with_label_values(&[&v.to_string()])
-                            .set(s.points_found_24h.iter().map(|(_, v)| *v).sum());
-                    }
-                    if let Some(c) = &r.last_signage_point_index {
-                        c.set(sp.signage_point_index as u64);
-                    }
+                    r.points_acknowledged_24h
+                        .with_label_values(&[&v.to_string()])
+                        .set(s.points_acknowledged_24h.iter().map(|(_, v)| *v).sum());
+                    r.points_found_24h
+                        .with_label_values(&[&v.to_string()])
+                        .set(s.points_found_24h.iter().map(|(_, v)| *v).sum());
+                    r.last_signage_point_index
+                        .set(sp.signage_point_index as u64);
                 }
             }
         }

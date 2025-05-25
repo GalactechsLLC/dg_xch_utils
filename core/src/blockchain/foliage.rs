@@ -3,7 +3,7 @@ use crate::blockchain::sized_bytes::{Bytes32, Bytes96};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Foliage {
     pub prev_block_hash: Bytes32,
     pub reward_block_hash: Bytes32,

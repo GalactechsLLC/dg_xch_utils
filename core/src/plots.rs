@@ -1,7 +1,9 @@
 use crate::blockchain::coin_record::CoinRecord;
-use crate::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
+use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::clvm::program::Program;
-use crate::pool::{PoolState, DELAY_PUZZLEHASH_IDENTIFIER, DELAY_TIME_IDENTIFIER};
+use crate::constants::{DELAY_PUZZLEHASH_IDENTIFIER, DELAY_TIME_IDENTIFIER};
+use crate::pool::PoolState;
+use crate::traits::SizedBytes;
 use hex::encode;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -26,10 +28,10 @@ pub enum PlotTable {
     C3 = 9,
 }
 impl PlotTable {
+    #[must_use]
     pub fn lower(&self) -> &Self {
         match self {
-            PlotTable::Table1 => &PlotTable::Table1,
-            PlotTable::Table2 => &PlotTable::Table1,
+            PlotTable::Table1 | PlotTable::Table2 => &PlotTable::Table1,
             PlotTable::Table3 => &PlotTable::Table2,
             PlotTable::Table4 => &PlotTable::Table3,
             PlotTable::Table5 => &PlotTable::Table4,
@@ -43,14 +45,14 @@ impl PlotTable {
 }
 
 pub trait PlotFile<'a, F: AsyncSeek + AsyncRead> {
-    fn table_address(&'a self, plot_table: &PlotTable) -> u64 {
+    fn table_address(&'a self, plot_table: PlotTable) -> u64 {
         match self.header() {
-            PlotHeader::V1(h) => h.table_begin_pointers[*plot_table as usize],
-            PlotHeader::V2(h) => h.table_begin_pointers[*plot_table as usize],
+            PlotHeader::V1(h) => h.table_begin_pointers[plot_table as usize],
+            PlotHeader::V2(h) => h.table_begin_pointers[plot_table as usize],
             PlotHeader::GHv2_5(_) => 0,
         }
     }
-    fn table_size(&'a self, plot_table: &PlotTable) -> u64 {
+    fn table_size(&'a self, plot_table: PlotTable) -> u64 {
         let table_pointers = match self.header() {
             PlotHeader::V1(h) => &h.table_begin_pointers,
             PlotHeader::V2(h) => &h.table_begin_pointers,
@@ -58,8 +60,8 @@ pub trait PlotFile<'a, F: AsyncSeek + AsyncRead> {
                 return 0;
             }
         };
-        let address = table_pointers[*plot_table as usize];
-        if let Some(next) = table_pointers.get(*plot_table as usize + 1) {
+        let address = table_pointers[plot_table as usize];
+        if let Some(next) = table_pointers.get(plot_table as usize + 1) {
             if *next > address {
                 return next - address;
             }
@@ -99,16 +101,16 @@ impl TryFrom<&[u8]> for PlotMemo {
         if v.len() == 112 {
             Ok(PlotMemo {
                 pool_public_key: None,
-                pool_contract_puzzle_hash: Some(Bytes32::new(&v[0..32])),
-                farmer_public_key: Bytes48::new(&v[32..80]),
-                local_master_secret_key: Bytes32::new(&v[80..112]),
+                pool_contract_puzzle_hash: Some(Bytes32::parse(&v[0..32])?),
+                farmer_public_key: Bytes48::parse(&v[32..80])?,
+                local_master_secret_key: Bytes32::parse(&v[80..112])?,
             })
         } else if v.len() == 128 {
             Ok(PlotMemo {
-                pool_public_key: Some(Bytes48::new(&v[0..48])),
+                pool_public_key: Some(Bytes48::parse(&v[0..48])?),
                 pool_contract_puzzle_hash: None,
-                farmer_public_key: Bytes48::new(&v[48..96]),
-                local_master_secret_key: Bytes32::new(&v[96..128]),
+                farmer_public_key: Bytes48::parse(&v[48..96])?,
+                local_master_secret_key: Bytes32::parse(&v[96..128])?,
             })
         } else {
             Err(Error::new(
@@ -151,6 +153,7 @@ pub enum PlotHeader {
     GHv2_5(PlotHeaderGHv2_5),
 }
 impl PlotHeader {
+    #[must_use]
     pub fn magic(&self) -> Vec<u8> {
         match self {
             PlotHeader::V1(h) => h.magic.to_vec(),
@@ -158,6 +161,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.magic.to_vec(),
         }
     }
+    #[must_use]
     pub fn id(&self) -> Bytes32 {
         match self {
             PlotHeader::V1(h) => h.id,
@@ -165,6 +169,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.id,
         }
     }
+    #[must_use]
     pub fn k(&self) -> u8 {
         match self {
             PlotHeader::V1(h) => h.k,
@@ -172,6 +177,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.k,
         }
     }
+    #[must_use]
     pub fn memo_len(&self) -> u16 {
         match self {
             PlotHeader::V1(h) => h.memo_len,
@@ -179,6 +185,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.memo_len,
         }
     }
+    #[must_use]
     pub fn memo(&self) -> &PlotMemo {
         match self {
             PlotHeader::V1(h) => &h.memo,
@@ -186,6 +193,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => &h.memo,
         }
     }
+    #[must_use]
     pub fn format_desc_len(&self) -> u16 {
         match self {
             PlotHeader::V1(h) => h.format_desc_len,
@@ -193,6 +201,7 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => h.format_desc_len,
         }
     }
+    #[must_use]
     pub fn format_desc(&self) -> &[u8] {
         match self {
             PlotHeader::V1(h) => &h.format_desc,
@@ -200,13 +209,14 @@ impl PlotHeader {
             PlotHeader::GHv2_5(h) => &h.format_desc,
         }
     }
+    #[must_use]
     pub fn plot_flags(&self) -> u32 {
         match self {
-            PlotHeader::V1(_) => 0,
+            PlotHeader::V1(_) | PlotHeader::GHv2_5(_) => 0,
             PlotHeader::V2(h) => h.plot_flags,
-            PlotHeader::GHv2_5(_) => 0,
         }
     }
+    #[must_use]
     pub fn compression_level(&self) -> u8 {
         match self {
             PlotHeader::V1(_) => 0,
@@ -228,6 +238,7 @@ pub struct PlotHeaderV1 {
     pub table_begin_pointers: [u64; 10],
 }
 impl PlotHeaderV1 {
+    #[must_use]
     pub fn new() -> Self {
         PlotHeaderV1 {
             magic: [0; 19],
@@ -267,6 +278,7 @@ pub struct PlotHeaderV2 {
     pub table_sizes: [u64; 10],
 }
 impl PlotHeaderV2 {
+    #[must_use]
     pub fn new() -> Self {
         PlotHeaderV2 {
             magic: [0; 4],
@@ -305,6 +317,7 @@ pub struct PlotHeaderGHv2_5 {
     pub compression_level: u8,
 }
 impl PlotHeaderGHv2_5 {
+    #[must_use]
     pub fn new() -> Self {
         PlotHeaderGHv2_5 {
             magic: [0; 4],
@@ -344,8 +357,8 @@ pub struct PlotNftExtraData {
     pub delay_puzzle_hash: Bytes32,
 }
 impl PlotNftExtraData {
-    pub fn from_program(program: Program) -> Result<Self, Error> {
-        let pool_state = PoolState::from_extra_data_program(&program)?;
+    pub fn from_program(program: &Program) -> Result<Self, Error> {
+        let pool_state = PoolState::from_extra_data_program(program)?;
         let extra_data_program_list = program.as_list();
         let delay_time_programs: Vec<Program> = extra_data_program_list
             .iter()
@@ -384,9 +397,9 @@ impl PlotNftExtraData {
         Ok(PlotNftExtraData {
             pool_state,
             delay_time: delay_time.to_i32().unwrap_or_default(),
-            delay_puzzle_hash: Bytes32::new(
+            delay_puzzle_hash: Bytes32::parse(
                 &extra_data_programs[0].rest()?.as_vec().unwrap_or_default(),
-            ),
+            )?,
         })
     }
 }

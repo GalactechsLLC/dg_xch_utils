@@ -25,21 +25,28 @@ pub const FSE_MIN_TABLELOG: u32 = 5;
 // const fn fse_blockbound(size: usize) -> usize {size + (size>>7) + 4 + size_of::<usize>()}
 // const fn fse_compressbound(size: usize) -> usize {FSE_NCOUNTBOUND + fse_blockbound(size)}
 //
+#[must_use]
 pub const fn fse_ctable_size_u32(max_table_log: u32, max_symbol_value: u32) -> u32 {
     1 + (1 << ((max_table_log) - 1)) + (((max_symbol_value) + 1) * 2)
 }
+#[must_use]
 pub const fn fse_dtable_size_u32(max_table_log: u32) -> u32 {
     1 + (1 << max_table_log)
 }
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
 pub const fn fse_ctable_size(max_table_log: u32, max_symbol_value: u32) -> u32 {
     fse_ctable_size_u32(max_table_log, max_symbol_value) * size_of::<CTable>() as u32
 }
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
 pub const fn fse_dtable_size(max_table_log: u32) -> u32 {
     fse_dtable_size_u32(max_table_log) * size_of::<DTable>() as u32
 }
 //
 // const fn fse_wksp_size_u32(max_table_log: u32, max_symbol_value: u32) -> u32 {fse_ctable_size_u32(max_table_log, max_symbol_value) + if max_table_log > 12 { 1 << (max_table_log - 2) } else { 1024 }}
 
+#[must_use]
 pub const fn fse_tablestep(table_size: u32) -> u32 {
     (table_size >> 1) + (table_size >> 3) + 3
 }
@@ -52,6 +59,10 @@ pub const fn fse_tablestep(table_size: u32) -> u32 {
 /*-**************************************************************
 *  FSE NCount encoding-decoding
 ****************************************************************/
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cast_sign_loss)]
+#[allow(clippy::cast_possible_wrap)]
 pub fn read_ncount(
     normalized_counter: &mut [i16],
     max_symbol_value: &mut u32,
@@ -78,10 +89,7 @@ pub fn read_ncount(
         src[index..index + size_of::<u32>()]
             .try_into()
             .map_err(|e| {
-                Error::new(
-                    ErrorKind::InvalidInput,
-                    format!("Should Not Happen: {:?}", e),
-                )
+                Error::new(ErrorKind::InvalidInput, format!("Should Not Happen: {e:?}"))
             })?,
     );
     let mut nb_bits: i32 = ((bit_stream & 0xF) + FSE_MIN_TABLELOG) as i32; /* extract tableLog */
@@ -109,7 +117,7 @@ pub fn read_ncount(
                             .map_err(|e| {
                                 Error::new(
                                     ErrorKind::InvalidInput,
-                                    format!("Should Not Happen: {:?}", e),
+                                    format!("Should Not Happen: {e:?}"),
                                 )
                             })?,
                     ) >> bit_count;
@@ -142,10 +150,7 @@ pub fn read_ncount(
                 bit_stream =
                     u32::from_le_bytes(src[index..index + size_of::<u32>()].try_into().map_err(
                         |e| {
-                            Error::new(
-                                ErrorKind::InvalidInput,
-                                format!("Should Not Happen: {:?}", e),
-                            )
+                            Error::new(ErrorKind::InvalidInput, format!("Should Not Happen: {e:?}"))
                         },
                     )?) >> bit_count;
             } else {
@@ -181,12 +186,7 @@ pub fn read_ncount(
             index = src.len() - 4;
         }
         bit_stream = u32::from_le_bytes(src[index..index + size_of::<u32>()].try_into().map_err(
-            |e| {
-                Error::new(
-                    ErrorKind::InvalidInput,
-                    format!("Should Not Happen: {:?}", e),
-                )
-            },
+            |e| Error::new(ErrorKind::InvalidInput, format!("Should Not Happen: {e:?}")),
         )?) >> (bit_count & 31);
     }
     if remaining != 1 {

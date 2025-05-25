@@ -6,7 +6,7 @@ use crate::websocket::{WebsocketServer, WebsocketServerConfig};
 use blst::min_pk::SecretKey;
 use dg_xch_clients::api::pool::PoolClient;
 use dg_xch_clients::websocket::farmer::FarmerClient;
-use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, Bytes32, Bytes48};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::clvm::bls_bindings::{sign, verify_signature};
 use dg_xch_core::config::PoolWalletConfig;
 use dg_xch_core::protocols::farmer::{FarmerPoolState, FarmerSharedState};
@@ -16,8 +16,10 @@ use dg_xch_core::protocols::pool::{
     PutFarmerPayload, PutFarmerRequest, PutFarmerResponse,
 };
 use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
-use dg_xch_keys::decode_puzzle_hash;
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
+use dg_xch_keys::parse_payout_address;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{error, info};
 use std::collections::HashMap;
 use std::io::Error;
@@ -57,7 +59,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
         let handles = Arc::new(RwLock::new(Self::handles(
             config.clone(),
             pool_client.clone(),
-            shared_state.clone(),
+            shared_state.as_ref(),
             full_node_client,
             additional_headers,
         )));
@@ -78,7 +80,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
     fn handles(
         config: Arc<FarmerServerConfig>,
         pool_client: Arc<T>,
-        shared_state: Arc<FarmerSharedState<S>>,
+        shared_state: &FarmerSharedState<S>,
         full_node_client: Arc<RwLock<Option<FarmerClient<S>>>>,
         additional_headers: Arc<HashMap<String, String>>,
     ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
@@ -89,6 +91,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                     Arc::new(ChiaMessageFilter {
                         msg_type: Some(ProtocolMessageTypes::Handshake),
                         id: None,
+                        custom_fn: None,
                     }),
                     Arc::new(HandshakeHandle {
                         config: config.clone(),
@@ -103,9 +106,10 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                     Arc::new(ChiaMessageFilter {
                         msg_type: Some(ProtocolMessageTypes::NewProofOfSpace),
                         id: None,
+                        custom_fn: None,
                     }),
                     Arc::new(NewProofOfSpaceHandle {
-                        pool_client: pool_client.clone(),
+                        pool_client,
                         signage_points: shared_state.signage_points.clone(),
                         quality_to_identifiers: shared_state.quality_to_identifiers.clone(),
                         proofs_of_space: shared_state.proofs_of_space.clone(),
@@ -116,7 +120,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                             .clone(),
                         pool_state: shared_state.pool_states.clone(),
                         config: config.clone(),
-                        headers: additional_headers.clone(),
+                        headers: additional_headers,
                         #[cfg(feature = "metrics")]
                         metrics: shared_state.metrics.clone(),
                     }),
@@ -128,19 +132,15 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
                     Arc::new(ChiaMessageFilter {
                         msg_type: Some(ProtocolMessageTypes::RespondSignatures),
                         id: None,
+                        custom_fn: None,
                     }),
                     Arc::new(RespondSignaturesHandle {
                         signage_points: shared_state.signage_points.clone(),
-                        quality_to_identifiers: shared_state.quality_to_identifiers.clone(),
                         proofs_of_space: shared_state.proofs_of_space.clone(),
-                        cache_time: shared_state.cache_time.clone(),
                         pool_public_keys: shared_state.pool_public_keys.clone(),
                         farmer_private_keys: shared_state.farmer_private_keys.clone(),
-                        owner_secret_keys: shared_state.owner_secret_keys.clone(),
-                        pool_state: shared_state.pool_states.clone(),
-                        full_node_client: full_node_client.clone(),
+                        full_node_client,
                         config,
-                        headers: additional_headers.clone(),
                         #[cfg(feature = "metrics")]
                         metrics: shared_state.metrics.clone(),
                     }),
@@ -154,27 +154,17 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
     }
 }
 
-fn parse_payout_address(s: String) -> Result<String, Error> {
-    Ok(if s.starts_with("xch") || s.starts_with("txch") {
-        hex::encode(decode_puzzle_hash(&s)?)
-    } else if s.len() == 64 {
-        match hex_to_bytes(&s) {
-            Ok(h) => hex::encode(h),
-            Err(_) => s,
-        }
-    } else {
-        s
-    })
-}
-
-pub async fn get_farmer<T: PoolClient + Sized + Sync + Send>(
+pub async fn get_farmer<
+    T: PoolClient + Sized + Sync + Send,
+    S: std::hash::BuildHasher + Sync + Send + Clone + 'static,
+>(
     launcher_id: Bytes32,
     target_puzzle_hash: Bytes32,
     pool_url: &str,
     authentication_token_timeout: u8,
     authentication_sk: &SecretKey,
     client: Arc<T>,
-    additional_headers: Arc<HashMap<String, String>>,
+    additional_headers: Arc<HashMap<String, String, S>>,
 ) -> Result<GetFarmerResponse, PoolError> {
     let authentication_token = get_current_authentication_token(authentication_token_timeout);
     let msg = AuthenticationPayload {
@@ -201,16 +191,13 @@ pub async fn get_farmer<T: PoolClient + Sized + Sync + Send>(
                 authentication_token,
                 signature: signature.to_bytes().into(),
             },
-            &Some(additional_headers.as_ref().clone()),
+            &Some::<HashMap<String, String, S>>((*additional_headers).clone()),
         )
         .await
 }
 
-async fn do_auth(
-    pool_config: &PoolWalletConfig,
-    owner_sk: &SecretKey,
-) -> Result<Bytes48, PoolError> {
-    if owner_sk.sk_to_pk().to_bytes() != *pool_config.owner_public_key.to_sized_bytes() {
+fn do_auth(pool_config: &PoolWalletConfig, owner_sk: &SecretKey) -> Result<Bytes48, PoolError> {
+    if owner_sk.sk_to_pk().to_bytes() != pool_config.owner_public_key.bytes() {
         return Err(PoolError {
             error_code: PoolErrorCode::ServerException as u8,
             error_message: "Owner Keys Mismatch".to_string(),
@@ -219,28 +206,28 @@ async fn do_auth(
     Ok(owner_sk.sk_to_pk().to_bytes().into())
 }
 
-pub async fn post_farmer<T: PoolClient + Sized + Sync + Send>(
+pub async fn post_farmer<
+    T: PoolClient + Sized + Sync + Send,
+    S: std::hash::BuildHasher + Sync + Send + Clone + 'static,
+>(
     pool_config: &PoolWalletConfig,
     payout_instructions: &str,
     authentication_token_timeout: u8,
     owner_sk: &SecretKey,
     suggested_difficulty: Option<u64>,
     client: Arc<T>,
-    additional_headers: Arc<HashMap<String, String>>,
+    additional_headers: Arc<HashMap<String, String, S>>,
 ) -> Result<PostFarmerResponse, PoolError> {
     let payload = PostFarmerPayload {
         launcher_id: pool_config.launcher_id,
         authentication_token: get_current_authentication_token(authentication_token_timeout),
-        authentication_public_key: do_auth(pool_config, owner_sk).await?,
-        payout_instructions: parse_payout_address(payout_instructions.to_string()).map_err(
-            |e| PoolError {
-                error_code: PoolErrorCode::InvalidPayoutInstructions as u8,
-                error_message: format!(
-                    "Failed to Parse Payout Instructions: {}, {:?}",
-                    payout_instructions, e
-                ),
-            },
-        )?,
+        authentication_public_key: do_auth(pool_config, owner_sk)?,
+        payout_instructions: parse_payout_address(payout_instructions).map_err(|e| PoolError {
+            error_code: PoolErrorCode::InvalidPayoutInstructions as u8,
+            error_message: format!(
+                "Failed to Parse Payout Instructions: {payout_instructions}, {e:?}"
+            ),
+        })?,
         suggested_difficulty,
     };
     let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
@@ -264,21 +251,31 @@ pub async fn post_farmer<T: PoolClient + Sized + Sync + Send>(
         .await
 }
 
-pub async fn put_farmer<T: PoolClient + Sized + Sync + Send>(
+pub async fn put_farmer<
+    T: PoolClient + Sized + Sync + Send,
+    S: std::hash::BuildHasher + Sync + Send + Clone + 'static,
+>(
     pool_config: &PoolWalletConfig,
     payout_instructions: &str,
     authentication_token_timeout: u8,
     owner_sk: &SecretKey,
     suggested_difficulty: Option<u64>,
     client: Arc<T>,
-    additional_headers: Arc<HashMap<String, String>>,
+    additional_headers: Arc<HashMap<String, String, S>>,
 ) -> Result<PutFarmerResponse, PoolError> {
-    let authentication_public_key = do_auth(pool_config, owner_sk).await?;
+    let authentication_public_key = do_auth(pool_config, owner_sk)?;
     let payload = PutFarmerPayload {
         launcher_id: pool_config.launcher_id,
         authentication_token: get_current_authentication_token(authentication_token_timeout),
         authentication_public_key: Some(authentication_public_key),
-        payout_instructions: parse_payout_address(payout_instructions.to_string()).ok(),
+        payout_instructions: Some(parse_payout_address(payout_instructions).map_err(|e| {
+            PoolError {
+                error_code: PoolErrorCode::InvalidPayoutInstructions as u8,
+                error_message: format!(
+                    "Failed to Parse Payout Instructions: {payout_instructions}, {e:?}"
+                ),
+            }
+        })?),
         suggested_difficulty,
     };
     let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
@@ -303,13 +300,16 @@ pub async fn put_farmer<T: PoolClient + Sized + Sync + Send>(
         .await
 }
 
-pub async fn update_pool_farmer_info<T: PoolClient + Sized + Sync + Send>(
-    pool_states: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
+pub async fn update_pool_farmer_info<
+    T: PoolClient + Sized + Sync + Send,
+    S: std::hash::BuildHasher + Sync + Send + Clone + 'static,
+>(
+    pool_states: Arc<RwLock<HashMap<Bytes32, FarmerPoolState, S>>>,
     p2_singleton_puzzle_hash: &Bytes32,
     authentication_token_timeout: u8,
     authentication_sk: &SecretKey,
     client: Arc<T>,
-    additional_headers: Arc<HashMap<String, String>>,
+    additional_headers: Arc<HashMap<String, String, S>>,
 ) -> Result<GetFarmerResponse, PoolError> {
     let (pool_url, launcher_id, target_puzzle_hash) = if let Some(Some(config)) = pool_states
         .read()

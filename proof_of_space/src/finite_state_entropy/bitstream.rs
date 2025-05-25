@@ -30,9 +30,38 @@ pub const fn highbit_32(u: u32) -> u32 {
 }
 
 const BIT_MASK: [u32; 32] = [
-    0, 1, 3, 7, 0xF, 0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF,
-    0xFFFF, 0x1FFFF, 0x3FFFF, 0x7FFFF, 0xFFFFF, 0x1FFFFF, 0x3FFFFF, 0x7FFFFF, 0xFFFFFF, 0x1FFFFFF,
-    0x3FFFFFF, 0x7FFFFFF, 0xFFFFFFF, 0x1FFFFFFF, 0x3FFFFFFF, 0x7FFFFFFF,
+    0,
+    1,
+    3,
+    7,
+    0xF,
+    0x1F,
+    0x3F,
+    0x7F,
+    0xFF,
+    0x1FF,
+    0x3FF,
+    0x7FF,
+    0xFFF,
+    0x1FFF,
+    0x3FFF,
+    0x7FFF,
+    0xFFFF,
+    0x1FFFF,
+    0x3FFFF,
+    0x7FFFF,
+    0xFFFFF,
+    0x001F_FFFF,
+    0x003F_FFFF,
+    0x007F_FFFF,
+    0x00FF_FFFF,
+    0x001F_FFFFF,
+    0x03FF_FFFF,
+    0x07FF_FFFF,
+    0x0FFF_FFFF,
+    0x1FFF_FFFF,
+    0x3FFF_FFFF,
+    0x7FFF_FFFF,
 ]; /* up to 31 bits */
 
 pub struct BitDstream<'a> {
@@ -43,6 +72,7 @@ pub struct BitDstream<'a> {
     bits_consumed: u32,
 }
 impl<'a> BitDstream<'a> {
+    #[allow(clippy::cast_possible_truncation)]
     pub fn new(src: &'a [u8], src_size: usize) -> Result<Self, Error> {
         if src_size < 1 {
             return Err(Error::new(ErrorKind::InvalidInput, "src_size wrong"));
@@ -57,7 +87,7 @@ impl<'a> BitDstream<'a> {
             bit_container = Self::safe_create_usize(&src[index..index + size_of::<usize>()]);
             let last_byte = src[src_size - 1];
             bits_consumed = if last_byte > 0 {
-                8 - highbit_32(last_byte as u32)
+                8 - highbit_32(u32::from(last_byte))
             } else {
                 0
             };
@@ -105,7 +135,7 @@ impl<'a> BitDstream<'a> {
             }
             let last_byte = src[src_size - 1];
             bits_consumed = if last_byte > 0 {
-                8 - highbit_32(last_byte as u32)
+                8 - highbit_32(u32::from(last_byte))
             } else {
                 0
             };
@@ -122,6 +152,7 @@ impl<'a> BitDstream<'a> {
             bits_consumed,
         })
     }
+    #[allow(clippy::cast_possible_truncation)]
     pub fn reload(&mut self) -> BitDstreamStatus {
         if self.bits_consumed > usize::BITS {
             /* overflow detected, like end of stream */

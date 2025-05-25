@@ -3,6 +3,7 @@ use crate::websocket::harvester::new_signage_point_harvester::NewSignagePointHar
 use crate::websocket::harvester::request_signatures::RequestSignaturesHandle;
 use crate::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::consensus::constants::{ConsensusConstants, CONSENSUS_CONSTANTS_MAP, MAINNET};
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::harvester::HarvesterState;
 use dg_xch_core::protocols::{
     ChiaMessageFilter, ChiaMessageHandler, NodeType, ProtocolMessageTypes,
@@ -38,7 +39,15 @@ impl HarvesterClient {
             plots_ready,
             harvester_state,
         )));
-        let client = WsClient::new(client_config, NodeType::Harvester, handles, run).await?;
+        let client = WsClient::with_ca(
+            client_config,
+            NodeType::Harvester,
+            handles,
+            run,
+            CHIA_CA_CRT.as_bytes(),
+            CHIA_CA_KEY.as_bytes(),
+        )
+        .await?;
         Ok(HarvesterClient { client })
     }
 
@@ -46,6 +55,7 @@ impl HarvesterClient {
         self.client.join().await
     }
 
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.client.handle.is_finished()
     }
@@ -64,6 +74,7 @@ fn handles<T: PlotManagerAsync + Send + Sync + 'static>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::HarvesterHandshake),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(HarvesterHandshakeHandle {
                     plot_manager: plot_manager.clone(),
@@ -77,6 +88,7 @@ fn handles<T: PlotManagerAsync + Send + Sync + 'static>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::NewSignagePointHarvester),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(NewSignagePointHarvesterHandle {
                     constants,
@@ -91,6 +103,7 @@ fn handles<T: PlotManagerAsync + Send + Sync + 'static>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::RequestSignatures),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(RequestSignaturesHandle { plot_manager }),
             )),

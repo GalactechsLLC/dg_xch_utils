@@ -5,12 +5,13 @@ use blst::BLST_ERROR;
 use dg_xch_clients::api::pool::PoolClient;
 use dg_xch_clients::websocket::oneshot;
 use dg_xch_core::blockchain::proof_of_space::{generate_plot_public_key, generate_taproot_sk};
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, SizedBytes};
-use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend, AUG_SCHEME_DST};
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
+use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend};
 use dg_xch_core::consensus::constants::{ConsensusConstants, CONSENSUS_CONSTANTS_MAP};
 use dg_xch_core::consensus::pot_iterations::{
     calculate_iterations_quality, calculate_sp_interval_iters,
 };
+use dg_xch_core::constants::AUG_SCHEME_DST;
 #[cfg(feature = "metrics")]
 use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
@@ -24,9 +25,11 @@ use dg_xch_core::protocols::pool::{
     get_current_authentication_token, PoolErrorCode, PostPartialPayload, PostPartialRequest,
 };
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
 use dg_xch_pos::verify_and_get_quality_string;
+use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion};
 use hyper_tungstenite::tungstenite::Message;
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
@@ -74,16 +77,16 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                     if let Some(qs) = verify_and_get_quality_string(
                         &new_pos.proof,
                         &constants,
-                        &new_pos.challenge_hash,
-                        &new_pos.sp_hash,
+                        new_pos.challenge_hash,
+                        new_pos.sp_hash,
                         sp.peak_height,
                     ) {
                         let required_iters = calculate_iterations_quality(
                             constants.difficulty_constant_factor,
-                            &qs,
+                            qs,
                             new_pos.proof.size,
                             sp.difficulty,
-                            &new_pos.sp_hash,
+                            new_pos.sp_hash,
                         );
                         if required_iters
                             < calculate_sp_interval_iters(&constants, sp.sub_slot_iters)?
@@ -96,18 +99,18 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                                 peer_id.clone(),
                                 peers.clone(),
                             )
-                            .await?
+                            .await?;
                         }
                         if new_pos.proof.pool_contract_puzzle_hash.is_some() {
                             self.handle_partial(
-                                &qs,
+                                qs,
                                 &new_pos,
                                 &constants,
                                 protocol_version,
                                 peer_id.clone(),
                                 peers.clone(),
                             )
-                            .await?
+                            .await?;
                         } else {
                             debug!("Not a pooling proof of space");
                         }
@@ -129,6 +132,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
 }
 
 impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
+    #[allow(clippy::too_many_lines)]
     async fn _handle_proof(
         &self,
         sp: &NewSignagePoint,
@@ -234,16 +238,18 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                         &request,
                         None,
                     )
-                    .to_bytes(protocol_version),
+                    .to_bytes(protocol_version)
+                    .into(),
                 ))
                 .await;
         }
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn handle_partial(
         &self,
-        qs: &Bytes32,
+        qs: Bytes32,
         new_pos: &NewProofOfSpace,
         constants: &ConsensusConstants,
         protocol_version: ChiaProtocolVersion,
@@ -293,7 +299,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                     qs,
                     new_pos.proof.size,
                     pool_dif,
-                    &new_pos.sp_hash,
+                    new_pos.sp_hash,
                 ),
                 pool_dif,
             )
@@ -309,15 +315,13 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
             );
             return Ok(());
         }
-        let auth_token_timeout = if let Some(Some(auth_token_timeout)) = self
+        let Some(Some(auth_token_timeout)) = self
             .pool_state
             .read()
             .await
             .get(p2_singleton_puzzle_hash)
             .map(|v| v.authentication_token_timeout)
-        {
-            auth_token_timeout
-        } else {
+        else {
             warn!("No pool specific authentication_token_timeout has been set for {p2_singleton_puzzle_hash}, check communication with the pool.");
             return Ok(());
         };
@@ -347,7 +351,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
             plot_identifier: new_pos.plot_identifier.clone(),
             challenge_hash: new_pos.challenge_hash,
             sp_hash: new_pos.sp_hash,
-            messages: vec![Bytes32::new(&to_sign)],
+            messages: vec![Bytes32::new(to_sign)],
             message_data: sp_src_data,
             rc_block_unfinished: None,
         };
@@ -368,8 +372,8 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
             )
             .await?;
             let response_msg_sig = if let Some(f) = respond_sigs.message_signatures.first() {
-                Signature::from_bytes(f.1.to_sized_bytes())
-                    .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?
+                Signature::from_bytes(f.1.as_ref())
+                    .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?
             } else {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -377,13 +381,13 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                 ));
             };
             let mut plot_sig = None;
-            let local_pk = PublicKey::from_bytes(respond_sigs.local_pk.to_sized_bytes())
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+            let local_pk = PublicKey::from_bytes(respond_sigs.local_pk.as_ref())
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
             for sk in self.farmer_private_keys.values() {
                 let pk = sk.sk_to_pk();
-                if pk.to_bytes() == *respond_sigs.farmer_pk.to_sized_bytes() {
+                if pk.to_bytes() == respond_sigs.farmer_pk.bytes() {
                     let agg_pk = generate_plot_public_key(&local_pk, &pk, true)?;
-                    if agg_pk.to_bytes() != *new_pos.proof.plot_public_key.to_sized_bytes() {
+                    if agg_pk.to_bytes() != new_pos.proof.plot_public_key.bytes() {
                         return Err(Error::new(ErrorKind::InvalidInput, "Key Mismatch"));
                     }
                     let sig_farmer = sign_prepend(sk, &to_sign, &agg_pk);
@@ -394,7 +398,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                         &[&sig_farmer, &response_msg_sig, &taproot_sig],
                         true,
                     )
-                    .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+                    .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
                     if p_sig.to_signature().verify(
                         true,
                         to_sign.as_ref(),
@@ -430,14 +434,14 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                 if let Some(plot_sig) = plot_sig {
                     let agg_sig =
                         AggregateSignature::aggregate(&[&plot_sig.to_signature(), &auth_sig], true)
-                            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+                            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
                     let post_request = PostPartialRequest {
                         payload,
                         aggregate_signature: agg_sig.to_signature().to_bytes().into(),
                     };
                     debug!(
                         "Submitting partial for {} to {}",
-                        post_request.payload.launcher_id.to_string(),
+                        post_request.payload.launcher_id,
                         pool_url.as_str()
                     );
                     if let Some(v) = self
@@ -532,7 +536,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                                 .await
                                 .get_mut(p2_singleton_puzzle_hash)
                             {
-                                v.pool_errors_24h.push((Instant::now(), format!("{:?}", e)));
+                                v.pool_errors_24h.push((Instant::now(), format!("{e:?}")));
                             }
                             if e.error_code == PoolErrorCode::ProofNotGoodEnough as u8 {
                                 error!("Partial not good enough, forcing pool farmer update to get our current difficulty.");

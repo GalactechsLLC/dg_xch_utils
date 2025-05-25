@@ -1,0 +1,18 @@
+[package]
+name = "dg_xch_simulator"
+version = "2.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+name = "dg_xch_simulator_lib"
+
+[[bin]]
+path = "src/main.rs"
+name = "dg_xch_simulator"
+
+[dependencies]
+dg_logger = { path="../logging", version="2.0.3" }
+log = "0.4.26"
+portfu = { git = "https://github.com/GalactechsLLC/portfu", branch = "pf_admin_updates" }
+tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

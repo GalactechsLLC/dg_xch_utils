@@ -1,23 +1,22 @@
-use crate::api::wallet::WalletAPI;
-use async_trait::async_trait;
-use dg_xch_core::blockchain::announcement::Announcement;
-use dg_xch_core::blockchain::coin::Coin;
-use dg_xch_core::blockchain::pending_payment::PendingPayment;
-use dg_xch_core::blockchain::transaction_record::TransactionRecord;
-use dg_xch_core::blockchain::wallet_balance::WalletBalance;
-use dg_xch_core::blockchain::wallet_info::WalletInfo;
-use dg_xch_core::blockchain::wallet_sync::WalletSync;
-use reqwest::Client;
-use serde_json::{json, Map};
-use std::collections::HashMap;
-use std::io::Error;
-
 use crate::api::responses::{
     LoginResp, SignedTransactionRecordResp, TransactionRecordResp, WalletBalanceResp,
     WalletInfoResp, WalletSyncResp,
 };
-use crate::rpc::{get_client, get_url, post};
+use crate::api::wallet::WalletAPI;
+use crate::rpc::{get_client, get_url, post, ChiaRpcError};
 use crate::ClientSSLConfig;
+use async_trait::async_trait;
+use dg_xch_core::blockchain::announcement::Announcement;
+use dg_xch_core::blockchain::coin::Coin;
+use dg_xch_core::blockchain::transaction_record::TransactionRecord;
+use dg_xch_core::blockchain::wallet_balance::WalletBalance;
+use dg_xch_core::blockchain::wallet_info::WalletInfo;
+use dg_xch_core::blockchain::wallet_sync::WalletSync;
+use dg_xch_core::blockchain::wallet_type::AmountWithPuzzleHash;
+use reqwest::Client;
+use serde_json::{json, Map};
+use std::collections::HashMap;
+use std::hash::RandomState;
 
 pub struct WalletClient {
     client: Client,
@@ -26,11 +25,12 @@ pub struct WalletClient {
     additional_headers: Option<HashMap<String, String>>,
 }
 impl WalletClient {
+    #[must_use]
     pub fn new(
         host: &str,
         port: u16,
         timeout: u64,
-        ssl_path: Option<ClientSSLConfig>,
+        ssl_path: &Option<ClientSSLConfig>,
         additional_headers: Option<HashMap<String, String>>,
     ) -> Self {
         WalletClient {
@@ -43,10 +43,10 @@ impl WalletClient {
 }
 #[async_trait]
 impl WalletAPI for WalletClient {
-    async fn log_in(&self, wallet_fingerprint: u32) -> Result<u32, Error> {
+    async fn log_in(&self, wallet_fingerprint: u32) -> Result<u32, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("wallet_fingerprint".to_string(), json!(wallet_fingerprint));
-        Ok(post::<LoginResp>(
+        Ok(post::<LoginResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "log_in"),
             &request_body,
@@ -55,10 +55,10 @@ impl WalletAPI for WalletClient {
         .await?
         .fingerprint)
     }
-    async fn log_in_and_skip(&self, wallet_fingerprint: u32) -> Result<u32, Error> {
+    async fn log_in_and_skip(&self, wallet_fingerprint: u32) -> Result<u32, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("wallet_fingerprint".to_string(), json!(wallet_fingerprint));
-        Ok(post::<LoginResp>(
+        Ok(post::<LoginResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "log_in_and_skip"),
             &request_body,
@@ -67,8 +67,8 @@ impl WalletAPI for WalletClient {
         .await?
         .fingerprint)
     }
-    async fn get_wallets(&self) -> Result<Vec<WalletInfo>, Error> {
-        Ok(post::<WalletInfoResp>(
+    async fn get_wallets(&self) -> Result<Vec<WalletInfo>, ChiaRpcError> {
+        Ok(post::<WalletInfoResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_wallets"),
             &Map::new(),
@@ -77,10 +77,10 @@ impl WalletAPI for WalletClient {
         .await?
         .wallets)
     }
-    async fn get_wallet_balance(&self, wallet_id: u32) -> Result<Vec<WalletBalance>, Error> {
+    async fn get_wallet_balance(&self, wallet_id: u32) -> Result<Vec<WalletBalance>, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("wallet_id".to_string(), json!(wallet_id));
-        Ok(post::<WalletBalanceResp>(
+        Ok(post::<WalletBalanceResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_wallet_balance"),
             &request_body,
@@ -89,8 +89,8 @@ impl WalletAPI for WalletClient {
         .await?
         .wallets)
     }
-    async fn get_sync_status(&self) -> Result<WalletSync, Error> {
-        let resp = post::<WalletSyncResp>(
+    async fn get_sync_status(&self) -> Result<WalletSync, ChiaRpcError> {
+        let resp = post::<WalletSyncResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_sync_status"),
             &Map::new(),
@@ -109,13 +109,13 @@ impl WalletAPI for WalletClient {
         amount: u64,
         address: String,
         fee: u64,
-    ) -> Result<TransactionRecord, Error> {
+    ) -> Result<TransactionRecord, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("wallet_id".to_string(), json!(wallet_id));
         request_body.insert("amount".to_string(), json!(amount));
         request_body.insert("address".to_string(), json!(address));
         request_body.insert("fee".to_string(), json!(fee));
-        Ok(post::<TransactionRecordResp>(
+        Ok(post::<TransactionRecordResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "SendTransaction"),
             &request_body,
@@ -127,14 +127,14 @@ impl WalletAPI for WalletClient {
     async fn send_transaction_multi(
         &self,
         wallet_id: u32,
-        additions: Vec<PendingPayment>,
+        additions: Vec<AmountWithPuzzleHash>,
         fee: u64,
-    ) -> Result<TransactionRecord, Error> {
+    ) -> Result<TransactionRecord, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("wallet_id".to_string(), json!(wallet_id));
         request_body.insert("additions".to_string(), json!(additions));
         request_body.insert("fee".to_string(), json!(fee));
-        Ok(post::<TransactionRecordResp>(
+        Ok(post::<TransactionRecordResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "send_transaction_multi"),
             &request_body,
@@ -147,11 +147,11 @@ impl WalletAPI for WalletClient {
         &self,
         wallet_id: u32,
         transaction_id: String,
-    ) -> Result<TransactionRecord, Error> {
+    ) -> Result<TransactionRecord, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("wallet_id".to_string(), json!(wallet_id));
         request_body.insert("transaction_id".to_string(), json!(transaction_id));
-        Ok(post::<TransactionRecordResp>(
+        Ok(post::<TransactionRecordResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "get_transaction"),
             &request_body,
@@ -168,7 +168,7 @@ impl WalletAPI for WalletClient {
         coin_announcements: Vec<Announcement>,
         puzzle_announcements: Vec<Announcement>,
         fee: u64,
-    ) -> Result<TransactionRecord, Error> {
+    ) -> Result<TransactionRecord, ChiaRpcError> {
         let mut request_body = Map::new();
         request_body.insert("wallet_id".to_string(), json!(wallet_id));
         request_body.insert("additions".to_string(), json!(additions));
@@ -179,7 +179,7 @@ impl WalletAPI for WalletClient {
             json!(puzzle_announcements),
         );
         request_body.insert("fee".to_string(), json!(fee));
-        Ok(post::<SignedTransactionRecordResp>(
+        Ok(post::<SignedTransactionRecordResp, RandomState>(
             &self.client,
             &get_url(self.host.as_str(), self.port, "create_signed_transaction"),
             &request_body,

@@ -1,9 +1,8 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::npc_result::NPCResult;
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::spend_bundle::SpendBundle;
-use crate::clvm::utils::additions_for_npc;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -17,7 +16,7 @@ pub struct BundleCoinSpend {
     pub cost: Option<u64>,
 }
 
-#[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone, Default)]
 pub struct MempoolItem {
     pub spend_bundle: SpendBundle,
     pub fee: u64,
@@ -40,12 +39,16 @@ pub struct MempoolItem {
     pub removals: Vec<Coin>,
 }
 impl MempoolItem {
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn fee_per_cost(&self) -> f64 {
         (self.fee / self.cost()) as f64
     }
+    #[must_use]
     pub fn name(&self) -> Bytes32 {
         self.spend_bundle_name
     }
+    #[must_use]
     pub fn cost(&self) -> u64 {
         self.npc_result
             .conds
@@ -53,10 +56,12 @@ impl MempoolItem {
             .map(|c| c.cost)
             .unwrap_or_default()
     }
+    #[must_use]
     pub fn additions(self) -> Vec<Coin> {
-        additions_for_npc(self.npc_result)
+        self.npc_result.additions()
     }
 
+    #[must_use]
     pub fn removals(self) -> Vec<Coin> {
         self.spend_bundle.removals()
     }
@@ -75,6 +80,6 @@ impl Ord for MempoolItem {
 }
 impl Hash for MempoolItem {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write(self.spend_bundle_name.as_slice())
+        state.write(self.spend_bundle_name.as_ref());
     }
 }

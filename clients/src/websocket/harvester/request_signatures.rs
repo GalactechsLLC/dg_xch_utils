@@ -10,6 +10,7 @@ use dg_xch_pos::{PathInfo, PlotManagerAsync};
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use log::{debug, error};
 use std::io::{Cursor, Error, ErrorKind};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message;
@@ -36,25 +37,25 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
         let request_signatures = RequestSignatures::from_bytes(&mut cursor, protocol_version)?;
         let file_name = request_signatures.plot_identifier.split_at(64).1;
         let memo = match self.plot_manager.read().await.plots().get(&PathInfo {
-            path: Default::default(),
+            path: PathBuf::default(),
             file_name: file_name.to_string(),
         }) {
             None => {
-                debug!("Failed to find plot info for plot: {}", file_name);
+                debug!("Failed to find plot info for plot: {file_name}");
                 return Err(Error::new(
                     ErrorKind::NotFound,
-                    format!("Failed to find plot info for plot: {}", file_name),
+                    format!("Failed to find plot info for plot: {file_name}"),
                 ));
             }
             Some(info) => *info.reader.header().memo(),
         };
         let local_master_secret = SecretKey::from_bytes(memo.local_master_secret_key.as_ref())
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
         let local_sk = master_sk_to_local_sk(&local_master_secret)?;
         let agg_pk = generate_plot_public_key(
             &local_sk.sk_to_pk(),
             &PublicKey::from_bytes(memo.farmer_public_key.as_ref())
-                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?,
+                .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?,
             memo.pool_contract_puzzle_hash.is_some(),
         )?;
         let mut message_signatures = vec![];
@@ -83,7 +84,8 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
                         },
                         msg.id,
                     )
-                    .to_bytes(protocol_version),
+                    .to_bytes(protocol_version)
+                    .into(),
                 ))
                 .await;
         } else {

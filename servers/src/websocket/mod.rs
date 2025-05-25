@@ -1,15 +1,18 @@
 pub mod farmer;
 pub mod harvester;
 
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::{
     ChiaMessageHandler, NodeType, PeerMap, SocketPeer, WebsocketConnection, WebsocketMsgStream,
 };
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
-    load_private_key_from_bytes, AllowAny, SslInfo, CHIA_CA_CRT, CHIA_CA_KEY,
+    load_private_key_from_bytes, AllowAny, SslInfo,
 };
-use dg_xch_serialize::{hash_256, ChiaProtocolVersion};
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
+use dg_xch_serialize::ChiaProtocolVersion;
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1::Builder;
@@ -20,7 +23,8 @@ use hyper_util::rt::TokioIo;
 use log::{debug, error};
 #[cfg(feature = "metrics")]
 use prometheus::core::{AtomicU64, GenericGauge};
-use rustls::{Certificate, PrivateKey, RootCertStore, ServerConfig};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{RootCertStore, ServerConfig};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -87,7 +91,7 @@ impl WebsocketServer {
             )
         };
         let server_config = Self::init(certs, key, root_certs)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {e:?}")))?;
         let socket_address = Self::init_socket(config)?;
         Ok(WebsocketServer {
             socket_address,
@@ -114,7 +118,7 @@ impl WebsocketServer {
             load_certs_from_bytes(cert_data.as_bytes())?,
         );
         let server_config = Self::init(certs, key, root_certs)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {e:?}")))?;
         let socket_address = Self::init_socket(config)?;
         Ok(WebsocketServer {
             socket_address,
@@ -151,7 +155,7 @@ impl WebsocketServer {
                                     let mut peer_id = None;
                                     if let Some(certs) = stream.get_ref().1.peer_certificates() {
                                         if !certs.is_empty() {
-                                            peer_id = Some(Bytes32::new(&hash_256(&certs[0].0)));
+                                            peer_id = Some(Bytes32::new(hash_256(&certs[0])));
                                         }
                                     }
                                     let peer_id = Arc::new(peer_id);
@@ -164,59 +168,62 @@ impl WebsocketServer {
                                             message_handlers: message_handlers.clone(),
                                             run: run.clone(),
                                         };
-                                        connection_handler(
-                                            data,
-                                             #[cfg(feature = "metrics")]
-                                            metrics.clone()
-                                        )
+                                        #[cfg(feature = "metrics")]
+                                        let metrics = metrics.clone();
+                                        async move {
+                                            connection_handler(
+                                                data,
+                                                 #[cfg(feature = "metrics")]
+                                                metrics.clone()
+                                            )
+                                        }
                                     });
                                     let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
                                     tokio::spawn( async move {
-                                        if let Err(err) = connection.await {
-                                            error!("Error serving connection: {:?}", err);
+                                        if let Err(e) = connection.await {
+                                            error!("Error serving connection: {e:?}");
                                         }
                                         Ok::<(), Error>(())
                                     });
                                 }
                                 Err(e) => {
-                                    error!("Error accepting connection: {:?}", e);
+                                    error!("Error accepting connection: {e:?}");
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("Error accepting connection: {:?}", e);
+                            error!("Error accepting connection: {e:?}");
                         }
                     }
                 },
-                _ = tokio::time::sleep(Duration::from_millis(10)) => {}
-            )
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            );
         }
         Ok(())
     }
 
     pub fn init(
-        certs: Vec<Certificate>,
-        key: PrivateKey,
-        root_certs: Vec<Certificate>,
+        certs: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+        root_certs: Vec<CertificateDer<'static>>,
     ) -> Result<Arc<ServerConfig>, Error> {
         let mut root_cert_store = RootCertStore::empty();
         for cert in root_certs {
-            root_cert_store.add(&cert).map_err(|e| {
+            root_cert_store.add(cert).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Invalid Root Cert for Server: {:?}", e),
+                    format!("Invalid Root Cert for Server: {e:?}"),
                 )
             })?;
         }
         Ok(Arc::new(
             ServerConfig::builder()
-                .with_safe_defaults()
-                .with_client_cert_verifier(AllowAny::new(root_cert_store))
+                .with_client_cert_verifier(AllowAny::new())
                 .with_single_cert(certs, key)
                 .map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidInput,
-                        format!("Invalid Cert for Server: {:?}", e),
+                        format!("Invalid Cert for Server: {e:?}"),
                     )
                 })?,
         ))
@@ -232,7 +239,7 @@ impl WebsocketServer {
             .map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Failed to parse Host: {:?}", e),
+                    format!("Failed to parse Host: {e:?}"),
                 )
             })?,
             config.port,
@@ -249,7 +256,7 @@ struct ConnectionData {
     pub run: Arc<AtomicBool>,
 }
 
-async fn connection_handler(
+fn connection_handler(
     mut data: ConnectionData,
     #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
 ) -> Result<Response<Full<Bytes>>, tungstenite::error::Error> {
@@ -263,9 +270,9 @@ async fn connection_handler(
                 .or_else(|| {
                     if let Some(key) = data.req.headers().get("ssl-client-cert") {
                         debug!("Using ssl-client header");
-                        Some(Bytes32::new(&hash_256(key.as_bytes())))
+                        Some(Bytes32::new(hash_256(key.as_bytes())))
                     } else if let Some(key) = data.req.headers().get("chia-client-cert") {
-                        Some(Bytes32::new(&hash_256(key.as_bytes())))
+                        Some(Bytes32::new(hash_256(key.as_bytes())))
                     } else {
                         error!("Invalid Peer - No Cert or Header");
                         None
@@ -294,7 +301,7 @@ async fn connection_handler(
             )
             .await
             {
-                error!("Error in websocket connection: {}", e);
+                error!("Error in websocket connection: {e}");
             }
             #[cfg(feature = "metrics")]
             if let Some(metrics) = metrics.as_ref() {
@@ -337,6 +344,6 @@ async fn handle_connection(
         debug!("Sending Close to Peer");
         let _ = removed.websocket.write().await.close(None).await;
     }
-    let _ = stream.run(run).await;
+    stream.run(run).await;
     Ok(())
 }

@@ -1,14 +1,10 @@
 use crate::blockchain::proof_of_space::ProofOfSpace;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 
+use crate::constants::{FARMING_TO_POOL, LEAVING_POOL, SELF_POOLING};
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-
-pub const POOL_PROTOCOL_VERSION: u8 = 1;
-pub const SELF_POOLING: u8 = 1;
-pub const LEAVING_POOL: u8 = 2;
-pub const FARMING_TO_POOL: u8 = 3;
 
 #[derive(ChiaSerial, Copy, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum PoolSingletonState {
@@ -65,7 +61,6 @@ impl From<u8> for PoolErrorCode {
             13 => PoolErrorCode::InvalidPayoutInstructions,
             14 => PoolErrorCode::InvalidSingleton,
             15 => PoolErrorCode::DelayTimeTooShort,
-            16 => PoolErrorCode::RequestFailed,
             _ => PoolErrorCode::RequestFailed,
         }
     }
@@ -180,11 +175,14 @@ pub struct ErrorResponse {
     pub error_message: Option<String>, //Min Version 0.0.34
 }
 
+#[allow(clippy::cast_sign_loss)]
+#[must_use]
 pub fn get_current_authentication_token(timeout: u8) -> u64 {
     let now: u64 = OffsetDateTime::now_utc().unix_timestamp() as u64;
-    now / 60 / timeout as u64
+    now / 60 / u64::from(timeout)
 }
 
+#[must_use]
 pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
     let cur_token = get_current_authentication_token(timeout);
     let dif = if token > cur_token {
@@ -192,5 +190,5 @@ pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
     } else {
         cur_token - token
     };
-    dif <= timeout as u64
+    dif <= u64::from(timeout)
 }

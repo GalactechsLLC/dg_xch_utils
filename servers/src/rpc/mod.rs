@@ -1,7 +1,8 @@
 use async_trait::async_trait;
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs, load_certs_from_bytes, load_private_key,
-    load_private_key_from_bytes, AllowAny, SslInfo, CHIA_CA_CRT, CHIA_CA_KEY,
+    load_private_key_from_bytes, AllowAny, SslInfo,
 };
 use http::request::Parts;
 use http::{Method, StatusCode};
@@ -55,9 +56,9 @@ pub struct RpcRequest {
 impl RpcRequest {
     pub fn get_best_guess_public_ip(&self, address: &SocketAddr) -> String {
         if let Some(real_ip) = self.headers().get("x-real-ip") {
-            format!("{:?}", real_ip)
+            format!("{real_ip:?}")
         } else if let Some(forwards) = self.headers().get("x-forwarded-for") {
-            format!("{:?}", forwards)
+            format!("{forwards:?}")
         } else {
             address.to_string()
         }
@@ -242,7 +243,7 @@ impl RpcServer {
         #[cfg(feature = "metrics")] metrics: Arc<RpcMetrics>,
     ) -> Result<Self, Error> {
         let server_config = Self::init(config)
-            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {:?}", e)))?;
+            .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("Invalid Cert: {e:?}")))?;
         let socket_address = Self::init_socket(config)?;
         Ok(RpcServer {
             socket_address,
@@ -290,8 +291,8 @@ impl RpcServer {
                         }
                     }
                 },
-                _ = tokio::time::sleep(Duration::from_millis(10)) => {}
-            )
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            );
         }
         Ok(())
     }
@@ -334,22 +335,21 @@ impl RpcServer {
         };
         let mut root_cert_store = RootCertStore::empty();
         for cert in root_certs {
-            root_cert_store.add(&cert).map_err(|e| {
+            root_cert_store.add(cert).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Invalid Root Cert for Server: {:?}", e),
+                    format!("Invalid Root Cert for Server: {e:?}"),
                 )
             })?;
         }
         Ok(Arc::new(
             ServerConfig::builder()
-                .with_safe_defaults()
-                .with_client_cert_verifier(AllowAny::new(root_cert_store))
+                .with_client_cert_verifier(AllowAny::new())
                 .with_single_cert(certs, key)
                 .map_err(|e| {
                     Error::new(
                         ErrorKind::InvalidInput,
-                        format!("Invalid Cert for Server: {:?}", e),
+                        format!("Invalid Cert for Server: {e:?}"),
                     )
                 })?,
         ))
@@ -365,7 +365,7 @@ impl RpcServer {
             .map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Failed to parse Host: {:?}", e),
+                    format!("Failed to parse Host: {e:?}"),
                 )
             })?,
             config.port,
@@ -382,7 +382,7 @@ async fn connection_handler(
     let start = Instant::now();
     let mut req: RpcRequest = RpcRequest {
         request_type: RequestType::Stream(req),
-        response_headers: Default::default(),
+        response_headers: HeaderMap::default(),
     };
     let middleware_arc = server.middleware.clone();
     for middleware in middleware_arc.as_slice() {
@@ -552,6 +552,8 @@ pub fn common_metrics(
 }
 
 #[inline]
+#[allow(clippy::cast_precision_loss)]
+#[must_use]
 pub fn duration_to_seconds(d: Duration) -> f64 {
     let nanos = f64::from(d.subsec_nanos()) / 1e9;
     d.as_secs() as f64 + nanos

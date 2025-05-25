@@ -1,5 +1,6 @@
 use crate::clvm::sexp::AtomBuf;
-use crate::clvm::sexp::{SExp, NULL};
+use crate::clvm::sexp::SExp;
+use crate::constants::NULL_SEXP;
 use bytes::Buf;
 use std::io::Read;
 use std::io::{Cursor, Write};
@@ -7,14 +8,18 @@ use std::io::{Error, ErrorKind};
 
 const MAX_SINGLE_BYTE: u8 = 0x7f;
 const CONS_BOX_MARKER: u8 = 0xff;
-const MAX_DECODE_SIZE: u64 = 0x400000000;
+const MAX_DECODE_SIZE: u64 = 0x0004_0000_0000;
 
 enum ParserOp {
     Exp,
     Cons,
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
+    if bytes.as_ref().is_empty() {
+        return Ok(NULL_SEXP.clone());
+    }
     let mut stream = Cursor::new(bytes);
     let mut byte_buf = [0; 1];
     let mut op_buf = vec![ParserOp::Exp];
@@ -28,7 +33,7 @@ pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
                     op_buf.push(ParserOp::Exp);
                     op_buf.push(ParserOp::Exp);
                 } else if byte_buf[0] == 0x80 {
-                    val_buf.push(NULL.clone());
+                    val_buf.push(NULL_SEXP.clone());
                 } else if byte_buf[0] <= MAX_SINGLE_BYTE {
                     val_buf.push(SExp::Atom(AtomBuf::new(byte_buf.to_vec())));
                 } else {
@@ -84,6 +89,7 @@ pub fn sexp_to_bytes(sexp: &SExp) -> std::io::Result<Vec<u8>> {
     Ok(buffer.into_inner())
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn encode_size(f: &mut dyn Write, size: u64) -> Result<(), Error> {
     if size < 0x40 {
         f.write_all(&[(0x80 | size) as u8])?;
@@ -139,7 +145,7 @@ fn decode_size(stream: &mut dyn Read, initial_b: u8) -> Result<u64, Error> {
     }
     for b in &size_blob {
         v <<= 8;
-        v += *b as u64;
+        v += u64::from(*b);
     }
     if v >= MAX_DECODE_SIZE {
         return Err(Error::new(ErrorKind::InvalidInput, "bad encoding"));

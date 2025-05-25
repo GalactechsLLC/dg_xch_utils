@@ -1,3 +1,4 @@
+use crate::constants::{ALL_PRIVATE_NODE_NAMES, ALL_PUBLIC_NODE_NAMES, CHIA_CA_CRT, CHIA_CA_KEY};
 use der::asn1::{Ia5String, UtcTime};
 use der::pem::LineEnding;
 use der::{DateTime, EncodePem};
@@ -6,8 +7,13 @@ use rand::Rng;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
-use rustls::server::{ClientCertVerified, ClientCertVerifier, ParsedCertificate};
-use rustls::{DistinguishedName, PrivateKey, RootCertStore};
+use rustls::client::danger::HandshakeSignatureValid;
+use rustls::internal::msgs::handshake::DistinguishedName;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+use rustls::server::ParsedCertificate;
+use rustls::DigitallySignedStruct;
+use rustls::SignatureScheme;
 use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -30,139 +36,128 @@ use x509_cert::spki::SubjectPublicKeyInfo;
 use x509_cert::time::{Time, Validity};
 use x509_cert::Certificate;
 
-pub struct AllowAny {
-    _roots: RootCertStore,
-}
+#[derive(Debug)]
+pub struct AllowAny {}
 impl AllowAny {
-    pub fn new(_roots: RootCertStore) -> Arc<Self> {
-        Arc::new(Self { _roots })
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {})
     }
 }
 
 impl ClientCertVerifier for AllowAny {
-    fn client_auth_root_subjects(&self) -> &[DistinguishedName] {
-        &[]
-    }
     fn client_auth_mandatory(&self) -> bool {
         false
     }
+
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        &[]
+    }
+
     fn verify_client_cert(
         &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _now: SystemTime,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
         Ok(ClientCertVerified::assertion())
     }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::ECDSA_NISTP521_SHA512,
+            SignatureScheme::ED25519,
+        ]
+    }
 }
-pub const CHIA_CA_CRT: &str = r"-----BEGIN CERTIFICATE-----
-MIIDKTCCAhGgAwIBAgIUXIpxI5MoZQ65/vhc7DK/d5ymoMUwDQYJKoZIhvcNAQEL
-BQAwRDENMAsGA1UECgwEQ2hpYTEQMA4GA1UEAwwHQ2hpYSBDQTEhMB8GA1UECwwY
-T3JnYW5pYyBGYXJtaW5nIERpdmlzaW9uMB4XDTIxMDEyMzA4NTEwNloXDTMxMDEy
-MTA4NTEwNlowRDENMAsGA1UECgwEQ2hpYTEQMA4GA1UEAwwHQ2hpYSBDQTEhMB8G
-A1UECwwYT3JnYW5pYyBGYXJtaW5nIERpdmlzaW9uMIIBIjANBgkqhkiG9w0BAQEF
-AAOCAQ8AMIIBCgKCAQEAzz/L219Zjb5CIKnUkpd2julGC+j3E97KUiuOalCH9wdq
-gpJi9nBqLccwPCSFXFew6CNBIBM+CW2jT3UVwgzjdXJ7pgtu8gWj0NQ6NqSLiXV2
-WbpZovfrVh3x7Z4bjPgI3ouWjyehUfmK1GPIld4BfUSQtPlUJ53+XT32GRizUy+b
-0CcJ84jp1XvyZAMajYnclFRNNJSw9WXtTlMUu+Z1M4K7c4ZPwEqgEnCgRc0TCaXj
-180vo7mCHJQoDiNSCRATwfH+kWxOOK/nePkq2t4mPSFaX8xAS4yILISIOWYn7sNg
-dy9D6gGNFo2SZ0FR3x9hjUjYEV3cPqg3BmNE3DDynQIDAQABoxMwETAPBgNVHRMB
-Af8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAEugnFQjzHhS0eeCqUwOHmP3ww
-/rXPkKF+bJ6uiQgXZl+B5W3m3zaKimJeyatmuN+5ST1gUET+boMhbA/7grXAsRsk
-SFTHG0T9CWfPiuimVmGCzoxLGpWDMJcHZncpQZ72dcy3h7mjWS+U59uyRVHeiprE
-hvSyoNSYmfvh7vplRKS1wYeA119LL5fRXvOQNW6pSsts17auu38HWQGagSIAd1UP
-5zEvDS1HgvaU1E09hlHzlpdSdNkAx7si0DMzxKHUg9oXeRZedt6kcfyEmryd52Mj
-1r1R9mf4iMIUv1zc2sHVc1omxnCw9+7U4GMWLtL5OgyJyfNyoxk3tC+D3KNU
------END CERTIFICATE-----";
 
-pub const CHIA_CA_KEY: &str = r"-----BEGIN RSA PRIVATE KEY-----
-MIIEowIBAAKCAQEAzz/L219Zjb5CIKnUkpd2julGC+j3E97KUiuOalCH9wdqgpJi
-9nBqLccwPCSFXFew6CNBIBM+CW2jT3UVwgzjdXJ7pgtu8gWj0NQ6NqSLiXV2WbpZ
-ovfrVh3x7Z4bjPgI3ouWjyehUfmK1GPIld4BfUSQtPlUJ53+XT32GRizUy+b0CcJ
-84jp1XvyZAMajYnclFRNNJSw9WXtTlMUu+Z1M4K7c4ZPwEqgEnCgRc0TCaXj180v
-o7mCHJQoDiNSCRATwfH+kWxOOK/nePkq2t4mPSFaX8xAS4yILISIOWYn7sNgdy9D
-6gGNFo2SZ0FR3x9hjUjYEV3cPqg3BmNE3DDynQIDAQABAoIBAGupS4BJdx8gEAAh
-2VDRqAAzhHTZb8j9uoKXJ+NotEkKrDTqUMiOu0nOqOsFWdYPo9HjxoggFuEU+Hpl
-a4kj4uF3OG6Yj+jgLypjpV4PeoFM6M9R9BCp07In2i7DLLK9gvYA85SoVLBd/tW4
-hFH+Qy3M+ZNZ1nLCK4pKjtaYs0dpi5zLoVvpEcEem2O+aRpUPCZqkNwU0umATCfg
-ZGfFzgXI/XPJr8Uy+LVZOFp3PXXHfnZZD9T5AjO/ViBeqbMFuWQ8BpVOqapNPKj8
-xDY3ovw3uiAYPC7eLib3u/WoFelMc2OMX0QljLp5Y+FScFHAMxoco3AQdWSYvSQw
-b5xZmg0CgYEA6zKASfrw3EtPthkLR5NBmesI4RbbY6iFVhS5loLbzTtStvsus8EI
-6RQgLgAFF14H21YSHxb6dB1Mbo45BN83gmDpUvKPREslqD3YPMKFo5GXMmv+JhNo
-5Y9fhiOEnxzLJGtBB1HeGmg5NXp9mr2Ch9u8w/slfuCHckbA9AYvdxMCgYEA4ZR5
-zg73+UA1a6Pm93bLYZGj+hf7OaB/6Hiw9YxCBgDfWM9dJ48iz382nojT5ui0rClV
-5YAo8UCLh01Np9AbBZHuBdYm9IziuKNzTeK31UW+Tvbz+dEx7+PlYQffNOhcIgd+
-9SXjoZorQksImKdMGZld1lEReHuBawq92JQvtY8CgYEAtNwUws7xQLW5CjKf9d5K
-5+1Q2qYU9sG0JsmxHQhrtZoUtRjahOe/zlvnkvf48ksgh43cSYQF/Bw7lhhPyGtN
-6DhVs69KdB3FS2ajTbXXxjxCpEdfHDB4zW4+6ouNhD1ECTFgxBw0SuIye+lBhSiN
-o6NZuOr7nmFSRpIZ9ox7G3kCgYA4pvxMNtAqJekEpn4cChab42LGLX2nhFp7PMxc
-bqQqM8/j0vg3Nihs6isCd6SYKjstvZfX8m7V3/rquQxWp9oRdQvNJXJVGojaDBqq
-JdU7V6+qzzSIufQLpjV2P+7br7trxGwrDx/y9vAETynShLmE+FJrv6Jems3u3xy8
-psKwmwKBgG5uLzCyMvMB2KwI+f3np2LYVGG0Pl1jq6yNXSaBosAiF0y+IgUjtWY5
-EejO8oPWcb9AbqgPtrWaiJi17KiKv4Oyba5+y36IEtyjolWt0AB6F3oDK0X+Etw8
-j/xlvBNuzDL6gRJHQg1+d4dO8Lz54NDUbKW8jGl+N/7afGVpGmX9
------END RSA PRIVATE KEY-----";
-
-const ALL_PRIVATE_NODE_NAMES: [&str; 8] = [
-    "full_node",
-    "wallet",
-    "farmer",
-    "harvester",
-    "timelord",
-    "crawler",
-    "data_layer",
-    "daemon",
-];
-
-const ALL_PUBLIC_NODE_NAMES: [&str; 6] = [
-    "full_node",
-    "wallet",
-    "farmer",
-    "introducer",
-    "timelord",
-    "data_layer",
-];
-
-pub fn load_certs(filename: &str) -> Result<Vec<rustls::Certificate>, Error> {
+pub fn load_certs(filename: &str) -> Result<Vec<CertificateDer<'static>>, Error> {
     let cert_file = File::open(filename)?;
     let mut reader = BufReader::new(cert_file);
-    let certs = certs(&mut reader)?;
-    Ok(certs.into_iter().map(rustls::Certificate).collect())
+    let mut output = vec![];
+    for cert in certs(&mut reader) {
+        match cert {
+            Ok(cert) => output.push(cert.to_owned()),
+            Err(err) => return Err(Error::new(ErrorKind::Other, err)),
+        }
+    }
+    Ok(output)
 }
 
-pub fn load_certs_from_bytes(bytes: &[u8]) -> Result<Vec<rustls::Certificate>, Error> {
+pub fn load_certs_from_bytes(bytes: &[u8]) -> Result<Vec<CertificateDer<'static>>, Error> {
     let mut reader = BufReader::new(bytes);
-    let certs = certs(&mut reader)?;
-    Ok(certs.into_iter().map(rustls::Certificate).collect())
+    let mut output = vec![];
+    for cert in certs(&mut reader) {
+        match cert {
+            Ok(cert) => output.push(cert.to_owned()),
+            Err(err) => return Err(Error::new(ErrorKind::Other, err)),
+        }
+    }
+    Ok(output)
 }
 
-pub fn load_private_key(filename: &str) -> Result<PrivateKey, Error> {
+pub fn load_private_key(filename: &str) -> Result<PrivateKeyDer<'static>, Error> {
     let keyfile = File::open(filename)?;
     let mut reader = BufReader::new(keyfile);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
-            Ok(Item::RSAKey(key)) | Ok(Item::PKCS8Key(key)) | Ok(Item::ECKey(key)) => {
-                return Ok(PrivateKey(key));
+            Ok(Item::Pkcs1Key(key)) => {
+                return Ok(PrivateKeyDer::from(key));
+            }
+            Ok(Item::Pkcs8Key(key)) => {
+                return Ok(PrivateKeyDer::from(key));
+            }
+            Ok(Item::Sec1Key(key)) => {
+                return Ok(PrivateKeyDer::from(key));
             }
             Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
             _ => {
-                error!("Unknown Item while loading private key")
+                error!("Unknown Item while loading private key");
             }
         }
     }
     Err(Error::new(ErrorKind::NotFound, "Private Key Not Found"))
 }
 
-pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKey, Error> {
+pub fn load_private_key_from_bytes(bytes: &[u8]) -> Result<PrivateKeyDer<'static>, Error> {
     let mut reader = BufReader::new(bytes);
     for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
         match item {
-            Ok(Item::RSAKey(key)) | Ok(Item::PKCS8Key(key)) | Ok(Item::ECKey(key)) => {
-                return Ok(PrivateKey(key));
+            Ok(Item::Pkcs1Key(key)) => {
+                return Ok(PrivateKeyDer::from(key.clone_key()));
+            }
+            Ok(Item::Pkcs8Key(key)) => {
+                return Ok(PrivateKeyDer::from(key.clone_key()));
+            }
+            Ok(Item::Sec1Key(key)) => {
+                return Ok(PrivateKeyDer::from(key.clone_key()));
             }
             Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
             _ => {
-                error!("Unknown Item while loading private key")
+                error!("Unknown Item while loading private key");
             }
         }
     }
@@ -284,13 +279,13 @@ pub fn generate_ca_signed_cert_data(
 
 pub fn make_ca_cert(cert_path: &Path, key_path: &Path) -> Result<(Vec<u8>, Vec<u8>), Error> {
     let (cert_data, key_data) = make_ca_cert_data()
-        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
     write_ssl_cert_and_key(cert_path, &cert_data, key_path, &key_data, true)?;
     Ok((cert_data, key_data))
 }
 
 fn make_ca_cert_data() -> Result<(Vec<u8>, Vec<u8>), Error> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rngs::OsRng;
     let root_key = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate a key");
     let pub_key = root_key.to_public_key();
     let signing_key: SigningKey<Sha256> = SigningKey::new(root_key.clone());
@@ -357,7 +352,7 @@ pub fn create_all_ssl_memory() -> Result<MemorySSL, Error> {
     let mut public_map = HashMap::new();
     let mut private_map = HashMap::new();
     let (ca_cert_data, ca_key_data) = make_ca_cert_data()
-        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
     info!("Generating Private Certs");
     let private_certs =
         generate_ssl_for_nodes_in_memory(&ca_cert_data, &ca_key_data, &ALL_PRIVATE_NODE_NAMES)?;
@@ -434,11 +429,10 @@ pub fn create_all_ssl(ssl_dir: &Path, overwrite: bool) -> Result<(), Error> {
     )
 }
 
+#[must_use]
 pub fn validate_all_ssl(ssl_dir: &Path) -> bool {
     let ca_dir = ssl_dir.join(Path::new("ca"));
-    if !ca_dir.exists() {
-        false
-    } else {
+    if ca_dir.exists() {
         let private_ca_key_path = ca_dir.join("private_ca.key");
         let private_ca_crt_path = ca_dir.join("private_ca.crt");
         let chia_ca_crt_path = ca_dir.join("chia_ca.crt");
@@ -453,6 +447,8 @@ pub fn validate_all_ssl(ssl_dir: &Path) -> bool {
             validate_node_paths(ssl_dir, "private", &ALL_PRIVATE_NODE_NAMES)
                 && validate_node_paths(ssl_dir, "public", &ALL_PUBLIC_NODE_NAMES)
         }
+    } else {
+        false
     }
 }
 
@@ -461,16 +457,15 @@ fn validate_node_paths(ssl_dir: &Path, prefix: &str, nodes: &[&str]) -> bool {
         let node_dir = ssl_dir.join(Path::new(*node_name));
         if !node_dir.exists() {
             return false;
-        } else {
-            let crt_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.crt")));
-            let key_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.key")));
-            if key_path.exists() && crt_path.exists() {
-                if !validate_cert(&crt_path) || !validate_key(&key_path) {
-                    return false;
-                }
-            } else {
+        }
+        let crt_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.crt")));
+        let key_path = node_dir.join(Path::new(&format!("{prefix}_{node_name}.key")));
+        if key_path.exists() && crt_path.exists() {
+            if !validate_cert(&crt_path) || !validate_key(&key_path) {
                 return false;
             }
+        } else {
+            return false;
         }
     }
     true
@@ -480,21 +475,21 @@ fn validate_cert(path: &Path) -> bool {
     match File::open(path) {
         Ok(cert_file) => {
             let mut reader = BufReader::new(cert_file);
-            match certs(&mut reader) {
-                Ok(certs) => {
-                    for cert in certs.into_iter().map(rustls::Certificate) {
+            for cert in certs(&mut reader) {
+                match cert {
+                    Ok(cert) => {
                         if let Err(e) = ParsedCertificate::try_from(&cert) {
                             error!("Error Parsing Cert: {e:?}");
                             return false;
                         }
                     }
-                    true
-                }
-                Err(e) => {
-                    error!("Failed to read Cert File: {path:?}, {:?}", e);
-                    false
+                    Err(e) => {
+                        error!("Failed to read Cert File: {path:?}, {:?}", e);
+                        return false;
+                    }
                 }
             }
+            true
         }
         Err(e) => {
             error!("Failed to read Cert File: {path:?}, {:?}", e);
@@ -509,25 +504,25 @@ fn validate_key(path: &Path) -> bool {
             let mut reader = BufReader::new(cert_file);
             for item in std::iter::from_fn(|| read_one(&mut reader).transpose()) {
                 match item {
-                    Ok(Item::RSAKey(key)) => {
-                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs1_der(&key) {
+                    Ok(Item::Pkcs1Key(key)) => {
+                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs1_der(key.secret_pkcs1_der()) {
                             error!("Error Validating Private Key: {path:?}, {e:?}");
                             return false;
                         }
                     }
-                    Ok(Item::PKCS8Key(key)) => {
-                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs8_der(&key) {
+                    Ok(Item::Pkcs8Key(key)) => {
+                        if let Err(e) = rsa::RsaPrivateKey::from_pkcs8_der(key.secret_pkcs8_der()) {
                             error!("Error Validating Private Key: {path:?}, {e:?}");
                             return false;
                         }
                     }
-                    Ok(Item::ECKey(_)) => {
+                    Ok(Item::Sec1Key(_)) => {
                         error!("ECKey is not supported");
                         return false;
                     }
                     Ok(Item::X509Certificate(_)) => error!("Found Certificate, not Private Key"),
                     _ => {
-                        error!("Unknown Item while loading private key")
+                        error!("Unknown Item while loading private key");
                     }
                 }
             }
@@ -571,13 +566,7 @@ pub fn generate_ssl_for_nodes_in_memory(
     let mut map = HashMap::new();
     for node_name in nodes {
         let (cert, key) = generate_ca_signed_cert_data(crt, key)?;
-        map.insert(
-            node_name.to_string(),
-            MemoryNodeSSL {
-                cert: cert.to_vec(),
-                key: key.to_vec(),
-            },
-        );
+        map.insert((*node_name).to_string(), MemoryNodeSSL { cert, key });
     }
     Ok(map)
 }
@@ -597,17 +586,4 @@ pub struct SslInfo {
     pub root_path: String,
     pub certs: SslCertInfo,
     pub ca: SslCertInfo,
-}
-
-#[test]
-pub fn test_ssl() {
-    use simple_logger::SimpleLogger;
-    SimpleLogger::new().init().unwrap();
-    let path = Path::new("/home/luna/ssl_test/");
-    create_all_ssl(path, false).unwrap();
-    if validate_all_ssl(path) {
-        info!("Validated SSL");
-    } else {
-        info!("Failed to Validated SSL");
-    }
 }

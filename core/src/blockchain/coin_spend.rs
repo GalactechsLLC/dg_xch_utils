@@ -1,9 +1,10 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::{ConditionCost, ConditionOpcode};
-use crate::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::utils::{additions_for_solution, fee_for_solution};
 use crate::clvm::program::{Program, SerializedProgram};
 use crate::clvm::utils::INFINITE_COST;
+use crate::traits::SizedBytes;
 use dg_xch_macros::ChiaSerial;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -26,26 +27,23 @@ impl CoinSpend {
             INFINITE_COST,
         )
     }
+    #[must_use]
     pub fn reserved_fee(self) -> BigInt {
         fee_for_solution(&self.puzzle_reveal, &self.solution, INFINITE_COST)
     }
-}
-pub fn compute_additions_with_cost(
-    cs: &CoinSpend,
-    max_cost: u64,
-) -> Result<(Vec<Coin>, u64), Error> {
-    let parent_coin_info = cs.coin.name();
-    let mut ret: Vec<Coin> = vec![];
-    let (mut cost, r) = cs
-        .puzzle_reveal
-        .run_with_cost(max_cost, &cs.solution.to_program())?;
-    for cond in Program::to(r).as_list() {
-        if cost > max_cost {
-            return Err(Error::new(
-                ErrorKind::Other,
-                "BLOCK_COST_EXCEEDS_MAX compute_additions() for CoinSpend",
-            ));
-        } else {
+    pub fn compute_additions_with_cost(&self, max_cost: u64) -> Result<(Vec<Coin>, u64), Error> {
+        let parent_coin_info = self.coin.name();
+        let mut ret: Vec<Coin> = vec![];
+        let (mut cost, r) = self
+            .puzzle_reveal
+            .run_with_cost(max_cost, &self.solution.to_program())?;
+        for cond in Program::to(r).as_list() {
+            if cost > max_cost {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "BLOCK_COST_EXCEEDS_MAX compute_additions() for CoinSpend",
+                ));
+            }
             let atoms = cond.as_list();
             if atoms.is_empty() {
                 return Err(Error::new(ErrorKind::Other, "Atoms List is Empty"));
@@ -65,7 +63,7 @@ pub fn compute_additions_with_cost(
                     "Invalid Number ot Atoms in Program",
                 ));
             }
-            let puzzle_hash = Bytes32::new(&atoms[1].as_vec().unwrap_or_default());
+            let puzzle_hash = Bytes32::parse(&atoms[1].as_vec().unwrap_or_default())?;
             let amount = atoms[2].as_int()?;
             ret.push(Coin {
                 parent_coin_info,
@@ -75,6 +73,6 @@ pub fn compute_additions_with_cost(
                     .expect("Expected a positive amount when computing additions"),
             });
         }
+        Ok((ret, cost))
     }
-    Ok((ret, cost))
 }

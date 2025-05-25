@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_serialize"
-version = "2.0.3"
+version = "2.1.0"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Low Level Support Package for dg_xch_utils"
@@ -9,7 +9,6 @@ homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
 repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
-bytes = "1.5.0"
-log = "0.4.20"
-serde = { version = "1.0.197", features = ["derive"] }
-sha2 = "0.10.8"
+log = "0.4.26"
+serde = { version = "1.0.218", features = ["derive"] }
+time = "0.3.41"

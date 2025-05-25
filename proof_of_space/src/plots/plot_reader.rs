@@ -15,9 +15,10 @@ use crate::plots::PROOF_X_COUNT;
 use crate::utils::bit_reader::BitReader;
 use crate::utils::{bytes_to_u64, open_read_only, open_read_only_async, slice_u128from_bytes};
 use crate::verifier::get_f7_from_proof_and_reorder;
-use dg_xch_core::blockchain::sized_bytes::{Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::plots::{PlotFile, PlotHeader, PlotHeaderV1, PlotHeaderV2, PlotMemo, PlotTable};
-use dg_xch_serialize::hash_256;
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
 use hex::encode;
 use log::{debug, error, warn};
 use rustc_hash::FxHashSet;
@@ -63,6 +64,7 @@ impl<
         T: for<'a> PlotFile<'a, F> + Display,
     > PlotReader<F, T>
 {
+    #[allow(clippy::cast_possible_truncation)]
     pub async fn new(
         t: T,
         proof_decompressor: Option<Arc<DecompressorPool>>,
@@ -75,7 +77,7 @@ impl<
                     NonZeroUsize::new(8).expect("Safe Value Expected for Non Zero Usize")
                 })
                 .get() as u8,
-            &t.plot_id().bytes,
+            &t.plot_id().bytes(),
         ));
         let mut reader = Self {
             proof_decompressor,
@@ -110,12 +112,12 @@ impl<
     }
 
     pub fn get_max_f7entry_count(&self) -> u64 {
-        self.get_c3_park_count() * K_CHECKPOINT1INTERVAL as u64
+        self.get_c3_park_count() * u64::from(K_CHECKPOINT1INTERVAL)
     }
 
     pub fn get_lowest_stored_table(&self) -> PlotTable {
         match self.header() {
-            PlotHeader::V1(_) => PlotTable::Table1,
+            PlotHeader::V1(_) | PlotHeader::GHv2_5(_) => PlotTable::Table1,
             PlotHeader::V2(h) => {
                 if h.compression_level == 0 {
                     PlotTable::Table1
@@ -125,43 +127,41 @@ impl<
                     PlotTable::Table2
                 }
             }
-            PlotHeader::GHv2_5(_) => PlotTable::Table1,
         }
     }
 
-    pub fn is_compressed_table(&self, table: &PlotTable) -> bool {
+    pub fn is_compressed_table(&self, table: PlotTable) -> bool {
         match self.header() {
-            PlotHeader::V1(_) => false,
+            PlotHeader::V1(_) | PlotHeader::GHv2_5(_) => false,
             PlotHeader::V2(h) => {
                 if h.compression_level == 0 {
                     false
                 } else {
-                    *table == self.get_lowest_stored_table()
+                    table == self.get_lowest_stored_table()
                 }
             }
-            PlotHeader::GHv2_5(_) => false,
         }
     }
 
-    pub fn get_park_size_for_table(&self, table: &PlotTable) -> u64 {
+    pub fn get_park_size_for_table(&self, table: PlotTable) -> u64 {
         if self.is_compressed_table(table) {
             get_compression_info_for_level(self.plot_file().compression_level()).table_park_size
                 as u64
-        } else if (*table as u8) < self.get_lowest_stored_table() as u8 {
+        } else if (table as u8) < self.get_lowest_stored_table() as u8 {
             0
         } else {
-            EntrySizes::calculate_park_size(table, self.plot_file().k() as u32) as u64
+            u64::from(EntrySizes::calculate_park_size(
+                table,
+                u32::from(self.plot_file().k()),
+            ))
         }
     }
 
-    pub fn get_table_park_count(&self, table: &PlotTable) -> usize {
-        match *table {
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn get_table_park_count(&self, table: PlotTable) -> usize {
+        match table {
+            PlotTable::C1 | PlotTable::C2 => 0,
             PlotTable::C3 => self.get_c3_park_count() as usize,
-            PlotTable::Table7 => {
-                ucdiv64(self.get_max_f7entry_count(), K_ENTRIES_PER_PARK as u64) as usize
-            }
-            PlotTable::C1 => 0,
-            PlotTable::C2 => 0,
             PlotTable::Table1
             | PlotTable::Table2
             | PlotTable::Table3
@@ -169,27 +169,31 @@ impl<
             | PlotTable::Table5
             | PlotTable::Table6 => {
                 self.file.table_size(table) as usize
-                    / EntrySizes::calculate_park_size(table, self.file.k() as u32) as usize
+                    / EntrySizes::calculate_park_size(table, u32::from(self.file.k())) as usize
+            }
+            PlotTable::Table7 => {
+                ucdiv64(self.get_max_f7entry_count(), u64::from(K_ENTRIES_PER_PARK)) as usize
             }
         }
     }
 
     pub fn get_maximum_c1_entries(&self) -> u64 {
-        let c1table_size = self.file.table_size(&PlotTable::C1);
-        let f7size = ucdiv64(self.file.k() as u64, 8);
+        let c1table_size = self.file.table_size(PlotTable::C1);
+        let f7size = ucdiv64(u64::from(self.file.k()), 8);
         let c3park_count = max(c1table_size / f7size, 1);
         // -1 because an extra 0 entry is added at the end
         c3park_count - 1
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     pub async fn get_actual_c1_entry_count(&self) -> Result<u64, Error> {
         let max_c1entries = self.get_max_f7entry_count();
         if max_c1entries < 1 {
             return Ok(0);
         }
-        let f7size_bytes = ucdiv64(self.file.k() as u64, 8);
-        let c1address = self.file.table_address(&PlotTable::C1);
-        let c1table_size = self.file.table_size(&PlotTable::C1);
+        let f7size_bytes = ucdiv64(u64::from(self.file.k()), 8);
+        let c1address = self.file.table_address(PlotTable::C1);
+        let c1table_size = self.file.table_size(PlotTable::C1);
         let mut c1read_address = c1address + c1table_size - f7size_bytes;
         // Read entries from the end of the table until the start, until we find an entry that is
         // not zero/higher than the previous one
@@ -224,13 +228,14 @@ impl<
         }
         Ok((c1read_address - c1address) / f7size_bytes)
     }
+    #[allow(clippy::cast_possible_truncation)]
     pub async fn read_c3park(&self, park_index: u64) -> Result<Vec<u64>, Error> {
-        let f7size_bytes: u64 = ucdiv64(self.file.k() as u64, 8);
-        let c3park_size: u64 = EntrySizes::calculate_c3size(self.file.k() as u32) as u64;
-        let c1address: u64 = self.file.table_address(&PlotTable::C1);
-        let c3address: u64 = self.file.table_address(&PlotTable::C3);
-        let c1table_size: u64 = self.file.table_size(&PlotTable::C1);
-        let c3table_size: u64 = self.file.table_size(&PlotTable::C3);
+        let f7size_bytes: u64 = ucdiv64(u64::from(self.file.k()), 8);
+        let c3park_size: u64 = u64::from(EntrySizes::calculate_c3size(u32::from(self.file.k())));
+        let c1address: u64 = self.file.table_address(PlotTable::C1);
+        let c3address: u64 = self.file.table_address(PlotTable::C3);
+        let c1table_size: u64 = self.file.table_size(PlotTable::C1);
+        let c3table_size: u64 = self.file.table_size(PlotTable::C3);
         let c1entry_address: u64 = c1address + park_index * f7size_bytes;
         let park_address: u64 = c3address + park_index * c3park_size;
         // Ensure the C1 address is within the C1 table bounds.
@@ -239,7 +244,7 @@ impl<
         {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("Invalid c1 address: {}", c1entry_address),
+                format!("Invalid c1 address: {c1entry_address}"),
             ));
         }
 
@@ -271,7 +276,7 @@ impl<
             if compressed_size > c3park_size as u16 {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Invalid size for c3 deltas: {}", compressed_size),
+                    format!("Invalid size for c3 deltas: {compressed_size}"),
                 ));
             }
             let mut park_buffer = vec![0; c3park_size as usize - size_of::<u16>()];
@@ -288,7 +293,7 @@ impl<
         f7buffer[0] = c1;
         // Unpack deltas into absolute values
         for (delta, f7) in deltas.iter().zip(f7buffer[1..].iter_mut()).take(count) {
-            let val = previous + (*delta as u64);
+            let val = previous + u64::from(*delta);
             *f7 = val;
             previous = val;
         }
@@ -299,11 +304,14 @@ impl<
         self.read_p7park(park_index).await
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     pub async fn read_p7park(&self, park_index: usize) -> Result<(), Error> {
         let entry_size = 1 + self.plot_file().k() as usize;
-        let table_address = self.file.table_address(&PlotTable::Table7);
-        let max_table_size = self.file.table_size(&PlotTable::Table7);
-        let park_size = EntrySizes::calculate_park7_size(self.plot_file().k() as u32) as u64;
+        let table_address = self.file.table_address(PlotTable::Table7);
+        let max_table_size = self.file.table_size(PlotTable::Table7);
+        let park_size = u64::from(EntrySizes::calculate_park7_size(u32::from(
+            self.plot_file().k(),
+        )));
         let max_parks = max_table_size / park_size;
         if park_index >= max_parks as usize {
             return Err(Error::new(
@@ -333,10 +341,8 @@ impl<
         Ok(())
     }
 
-    pub async fn get_full_proof_for_f7index(&self, _f7index: u64, _full_proof: &[u8]) -> u64 {
-        todo!()
-    }
-
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::too_many_lines)]
     pub async fn fetch_proof(&self, index: u64) -> Result<Vec<u64>, Error> {
         let mut first = vec![0u64; PROOF_X_COUNT];
         let mut second = vec![0u64; PROOF_X_COUNT];
@@ -385,7 +391,7 @@ impl<
             let (mut i, mut dst) = (0, 0);
             while i < lookup_count {
                 let idx = lp_idx_src[i];
-                let lp = self.read_line_point(&table, idx).await?;
+                let lp = self.read_line_point(table, idx).await?;
                 let (x, y) = if self.file.k() <= 32 && table != PlotTable::Table6 {
                     line_point_to_square64(lp as u64)
                 } else {
@@ -427,7 +433,7 @@ impl<
                     }
                     Err(e) => Err(Error::new(
                         ErrorKind::TimedOut,
-                        format!("Failed to get Decompressor in Time: {:?}", e),
+                        format!("Failed to get Decompressor in Time: {e:?}"),
                     )),
                 }
             } else {
@@ -458,8 +464,9 @@ impl<
         todo!()
     }
 
-    pub async fn read_line_point(&self, table: &PlotTable, index: u64) -> Result<u128, Error> {
-        let park_index = index / K_ENTRIES_PER_PARK as u64;
+    #[allow(clippy::cast_possible_truncation)]
+    pub async fn read_line_point(&self, table: PlotTable, index: u64) -> Result<u128, Error> {
+        let park_index = index / u64::from(K_ENTRIES_PER_PARK);
         let components = self.read_lp_park_components(table, park_index).await?;
         let lp_local_idx = index as usize - park_index as usize * K_ENTRIES_PER_PARK as usize;
         if lp_local_idx > 0 {
@@ -484,7 +491,7 @@ impl<
                     << (start_bit % 8))
                     >> (64 - stub_size);
                 start_bit += stub_size as usize;
-                sum_deltas += *delta as u64;
+                sum_deltas += u64::from(*delta);
             }
             let delta = ((sum_deltas as u128) << stub_size) + sum_stubs as u128;
             Ok(components.base_line_point + delta)
@@ -497,6 +504,8 @@ impl<
         todo!()
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::too_many_lines)]
     pub async fn fetch_quality_xs_for_p7entry(
         &self,
         index: u64,
@@ -534,27 +543,26 @@ impl<
             )
         };
         for table in tables {
-            let lp = self.read_line_point(&table, lp_index).await?;
+            let lp = self.read_line_point(table, lp_index).await?;
             let (x, y) = if self.file.k() <= 32 {
                 line_point_to_square64(lp as u64)
             } else {
                 line_point_to_square(lp)
             };
-            let is_table_bit_set = (last5bits >> (table as usize - 1)) & 1 == 1;
-            if !is_table_bit_set {
-                lp_index = y;
-                alt_index = x;
-            } else {
+            if (last5bits >> (table as usize - 1)) & 1 == 1 {
                 lp_index = x;
                 alt_index = y;
+            } else {
+                lp_index = y;
+                alt_index = x;
             }
         }
         if compression_level > 0 {
             let need_both_leaves = compression_level >= 6;
-            let x_lp0 = self.read_line_point(&end_table, lp_index).await?;
+            let x_lp0 = self.read_line_point(end_table, lp_index).await?;
             let mut x_lp1: LinePoint = LinePoint { hi: 0, lo: 0 };
             if need_both_leaves {
-                let tmp = self.read_line_point(&end_table, alt_index).await?;
+                let tmp = self.read_line_point(end_table, alt_index).await?;
                 x_lp1 = LinePoint {
                     hi: (tmp >> 64) as u64,
                     lo: (tmp) as u64,
@@ -597,7 +605,7 @@ impl<
                     }
                     Err(e) => Err(Error::new(
                         ErrorKind::TimedOut,
-                        format!("Failed to get Decompressor in Time: {:?}", e),
+                        format!("Failed to get Decompressor in Time: {e:?}"),
                     )),
                 }
             } else {
@@ -606,7 +614,7 @@ impl<
                 d.get_fetch_qualties_x_pair(self.file.k(), req)
             }
         } else {
-            let lp = self.read_line_point(&end_table, lp_index).await?;
+            let lp = self.read_line_point(end_table, lp_index).await?;
             Ok(if self.file.k() <= 32 {
                 line_point_to_square64(lp as u64)
             } else {
@@ -629,7 +637,7 @@ impl<
         bits.append_value(x2, self.file.k() as usize);
         bits.append_value(x1, self.file.k() as usize);
         hash_input.extend(bits.to_bytes());
-        Ok(Bytes32::new(&hash_256(hash_input)))
+        Ok(Bytes32::new(hash_256(hash_input)))
     }
 
     pub async fn fetch_qualities_for_challenge(
@@ -680,7 +688,7 @@ impl<
         meta.clear();
         let k = self.plot_file().k();
         let bytes = self.plot_file().plot_id();
-        reorder_proof(k, bytes.to_sized_bytes(), proof, &mut fx, &mut meta)
+        reorder_proof(k, &bytes.bytes(), proof, &mut fx, &mut meta)
     }
 
     pub async fn fetch_proofs_for_challenge(
@@ -693,7 +701,7 @@ impl<
         if match_count == 0 {
             Err(Error::new(
                 ErrorKind::NotFound,
-                format!("Could not find f7 {} in plot.", f7),
+                format!("Could not find f7 {f7} in plot."),
             ))
         } else {
             let mut proofs = FxHashSet::default();
@@ -722,10 +730,11 @@ impl<
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     pub async fn get_p7indices_for_f7(&self, f7: u64) -> Result<(usize, usize), Error> {
         let mut c2index: u32 = 0;
         let mut broke = false;
-        for c2 in self.c2_entries.iter() {
+        for c2 in &self.c2_entries {
             if *c2 > f7 {
                 c2index = c2index.saturating_sub(1);
                 broke = true;
@@ -736,16 +745,16 @@ impl<
         if !broke {
             c2index -= 1;
         }
-        let c1start_index = (c2index as u64) * K_CHECKPOINT2INTERVAL as u64;
+        let c1start_index = u64::from(c2index) * u64::from(K_CHECKPOINT2INTERVAL);
         let k = self.file.k() as usize;
         let f7size_bytes = ucdiv_t(k, 8);
         let f7bit_count = f7size_bytes * 8;
-        let c1table_address = self.file.table_address(&PlotTable::C1);
-        let c1table_size = self.file.table_size(&PlotTable::C1);
+        let c1table_address = self.file.table_address(PlotTable::C1);
+        let c1table_size = self.file.table_size(PlotTable::C1);
         let c1table_end = c1table_address + c1table_size;
         let c1entry_address = c1table_address + c1start_index * f7size_bytes as u64;
         let c1end_address = min(
-            c1entry_address + (K_CHECKPOINT1INTERVAL as u64 * f7size_bytes as u64),
+            c1entry_address + (u64::from(K_CHECKPOINT1INTERVAL) * f7size_bytes as u64),
             c1table_end,
         );
         if c1entry_address > c1end_address {
@@ -791,12 +800,11 @@ impl<
             let second_c3_buffer = self.read_c3park(c3park + 1).await?;
             if second_c3_buffer.is_empty() {
                 return Ok((0, 0));
-            } else {
-                first_c3_buffer.extend(second_c3_buffer);
             }
+            first_c3_buffer.extend(second_c3_buffer);
         }
         // Grab as many matches as we can
-        let c3start_index = c3park * K_CHECKPOINT1INTERVAL as u64;
+        let c3start_index = c3park * u64::from(K_CHECKPOINT1INTERVAL);
         let out_index;
         // let iterator =
         for i in 0..first_c3_buffer.len() {
@@ -825,27 +833,29 @@ impl<
     pub fn compression_level(&self) -> u8 {
         self.file.compression_level()
     }
-    pub fn calculate_max_deltas_size(&self, table: &PlotTable) -> u32 {
-        if !self.is_compressed_table(table) {
-            EntrySizes::calculate_max_deltas_size(table)
-        } else {
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn calculate_max_deltas_size(&self, table: PlotTable) -> u32 {
+        if self.is_compressed_table(table) {
             let info = get_compression_info_for_level(self.file.compression_level());
-            let lp_size = ucdiv((self.file.k() * 2) as u32, 8);
+            let lp_size = ucdiv(u32::from(self.file.k() * 2), 8);
             let stub_byte_size = self.calculate_lp_stubs_size(table);
             info.table_park_size as u32 - (lp_size + stub_byte_size)
-        }
-    }
-    pub fn calculate_lp_stubs_bits_size(&self, table: &PlotTable) -> u32 {
-        if (*table as u8) < self.get_lowest_stored_table() as u8 {
-            panic!("Getting stub bit size for invalid table.");
-        }
-        if !self.is_compressed_table(table) {
-            (self.file.k() - K_STUB_MINUS_BITS) as u32
         } else {
-            get_compression_info_for_level(self.file.compression_level()).stub_size_bits
+            EntrySizes::calculate_max_deltas_size(table)
         }
     }
-    pub fn calculate_lp_stubs_size(&self, table: &PlotTable) -> u32 {
+    pub fn calculate_lp_stubs_bits_size(&self, table: PlotTable) -> u32 {
+        assert!(
+            (table as u8) >= self.get_lowest_stored_table() as u8,
+            "Getting stub bit size for invalid table."
+        );
+        if self.is_compressed_table(table) {
+            get_compression_info_for_level(self.file.compression_level()).stub_size_bits
+        } else {
+            u32::from(self.file.k() - K_STUB_MINUS_BITS)
+        }
+    }
+    pub fn calculate_lp_stubs_size(&self, table: PlotTable) -> u32 {
         ucdiv(
             (K_ENTRIES_PER_PARK - 1) * self.calculate_lp_stubs_bits_size(table),
             8,
@@ -853,11 +863,11 @@ impl<
     }
     async fn read_lp_park_components(
         &self,
-        table: &PlotTable,
+        table: PlotTable,
         park_index: u64,
     ) -> Result<LinePointParkComponents, Error> {
         let park_size = self.get_park_size_for_table(table);
-        let k = self.plot_file().k() as u32;
+        let k = u32::from(self.plot_file().k());
         let table_max_size = self.plot_file().table_size(table);
         let table_address = self.plot_file().table_address(table);
         let max_parks = table_max_size / park_size;
@@ -889,10 +899,10 @@ impl<
         let mut encoded_deltas_buf: [u8; 2] = [0u8; 2];
         file_lock.read_exact(&mut encoded_deltas_buf).await?;
         let mut encoded_deltas_size = u16::from_le_bytes(encoded_deltas_buf);
-        if !(encoded_deltas_size & 0x8000) > 0 && encoded_deltas_size as u32 > max_deltas_size {
+        if !(encoded_deltas_size & 0x8000) > 0 && u32::from(encoded_deltas_size) > max_deltas_size {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("Invalid size for deltas: {}", encoded_deltas_size),
+                format!("Invalid size for deltas: {encoded_deltas_size}"),
             ));
         }
         let mut deltas;
@@ -919,27 +929,28 @@ impl<
             deltas = dst;
         }
         Ok(LinePointParkComponents {
-            stubs,
             base_line_point,
+            stubs,
             deltas,
         })
     }
-    fn get_dtable_for_table(&self, table: &PlotTable) -> Result<Arc<DTable>, Error> {
-        if !self.is_compressed_table(table) {
-            let r = K_RVALUES[*table as usize];
-            encoding::get_d_table(r)
-        } else {
+    fn get_dtable_for_table(&self, table: PlotTable) -> Result<Arc<DTable>, Error> {
+        if self.is_compressed_table(table) {
             create_compression_dtable(self.file.compression_level())
+        } else {
+            let r = K_RVALUES[table as usize];
+            encoding::get_d_table(r)
         }
     }
+    #[allow(clippy::cast_possible_truncation)]
     async fn load_c2entries(&mut self) -> Result<(), Error> {
-        let c2size = self.file.table_size(&PlotTable::C2) as usize;
+        let c2size = self.file.table_size(PlotTable::C2) as usize;
         if c2size != 0 {
             let k = self.file.k() as usize;
             let f7byte_size = ucdiv_t(k, 8);
             let c2max_entries = c2size / f7byte_size;
             if c2max_entries > 0 {
-                let address = self.file.table_address(&PlotTable::C2);
+                let address = self.file.table_address(PlotTable::C2);
                 let file = self.file.file();
                 let mut file_lock = file.lock().await;
                 file_lock.seek(SeekFrom::Start(address)).await?;
@@ -977,7 +988,7 @@ pub fn reorder_proof(
     fx: &mut [u64],
     meta: &mut Vec<BitReader>,
 ) -> Result<Vec<u64>, Error> {
-    Ok(get_f7_from_proof_and_reorder(k as u32, plot_id, proof, fx, meta)?.1)
+    Ok(get_f7_from_proof_and_reorder(u32::from(k), plot_id, proof, fx, meta)?.1)
 }
 
 pub fn read_plot_header(file: &mut std::fs::File) -> Result<PlotHeader, Error> {
@@ -1004,7 +1015,7 @@ fn parse_v1(full_buffer: &[u8]) -> Result<PlotHeaderV1, Error> {
         ..Default::default()
     };
     start += 19;
-    plot_header.id = Bytes32::new(&full_buffer[start..start + 32]);
+    plot_header.id = Bytes32::parse(&full_buffer[start..start + 32])?;
     start += 32;
     plot_header.k = full_buffer[start];
     start += 1;
@@ -1035,7 +1046,7 @@ fn parse_v2(full_buffer: &[u8]) -> Result<PlotHeaderV2, Error> {
     start += 4;
     plot_header.version = u32::from_le_bytes(full_buffer[start..start + 4].try_into().unwrap());
     start += 4;
-    plot_header.id = Bytes32::new(&full_buffer[start..start + 32]);
+    plot_header.id = Bytes32::parse(&full_buffer[start..start + 32])?;
     start += 32;
     plot_header.k = full_buffer[start];
     start += 1;
@@ -1100,12 +1111,7 @@ pub fn read_plot_file_header(p: impl AsRef<Path>) -> Result<(PathBuf, PlotHeader
 type AllPlotHeaders = (Vec<(PathBuf, PlotHeader)>, Vec<PathBuf>);
 
 pub fn read_all_plot_headers(p: impl AsRef<Path>) -> Result<AllPlotHeaders, Error> {
-    if !p.as_ref().is_dir() {
-        Err(Error::new(
-            ErrorKind::InvalidInput,
-            "Path must be a directory",
-        ))
-    } else {
+    if p.as_ref().is_dir() {
         let dir = std::fs::read_dir(p)?;
         let mut valid_rtn = vec![];
         let mut failed_rtn = vec![];
@@ -1120,7 +1126,7 @@ pub fn read_all_plot_headers(p: impl AsRef<Path>) -> Result<AllPlotHeaders, Erro
                             }
                             Err(e) => {
                                 error!("Failed to open plot: {:?}", e);
-                                failed_rtn.push(path.to_path_buf());
+                                failed_rtn.push(path.clone());
                             }
                         }
                     }
@@ -1131,6 +1137,11 @@ pub fn read_all_plot_headers(p: impl AsRef<Path>) -> Result<AllPlotHeaders, Erro
             }
         }
         Ok((valid_rtn, failed_rtn))
+    } else {
+        Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Path must be a directory",
+        ))
     }
 }
 
@@ -1138,12 +1149,7 @@ pub async fn read_all_plot_headers_async(
     p: impl AsRef<Path>,
     existing_paths: &[&Path],
 ) -> Result<AllPlotHeaders, Error> {
-    if !p.as_ref().is_dir() {
-        Err(Error::new(
-            ErrorKind::InvalidInput,
-            "Path must be a directory",
-        ))
-    } else {
+    if p.as_ref().is_dir() {
         let mut dir = tokio::fs::read_dir(p).await?;
         let mut valid_rtn = vec![];
         let mut failed_rtn = vec![];
@@ -1161,7 +1167,7 @@ pub async fn read_all_plot_headers_async(
                             }
                             Err(e) => {
                                 error!("Failed to open plot: {:?}", e);
-                                failed_rtn.push(path.to_path_buf());
+                                failed_rtn.push(path.clone());
                             }
                         }
                     }
@@ -1175,5 +1181,10 @@ pub async fn read_all_plot_headers_async(
             }
         }
         Ok((valid_rtn, failed_rtn))
+    } else {
+        Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Path must be a directory",
+        ))
     }
 }

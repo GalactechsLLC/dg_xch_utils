@@ -14,15 +14,24 @@ use blst::min_pk::SecretKey;
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::ChiaProtocolVersion;
 
+use crate::blockchain::blockchain_state::BlockchainState;
+use crate::protocols::shared::Handshake;
+use portfu::pfcore::cache::CircularCache;
 #[cfg(feature = "metrics")]
-use prometheus::core::{AtomicU64, GenericGauge, GenericGaugeVec};
+use prometheus::core::{
+    AtomicU64, GenericCounter, GenericCounterVec, GenericGauge, GenericGaugeVec,
+};
 #[cfg(feature = "metrics")]
-use prometheus::{Opts, Registry};
+use prometheus::{Histogram, HistogramOpts, Opts, Registry};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use time::OffsetDateTime;
 use tokio::sync::RwLock;
+#[cfg(feature = "metrics")]
+use uuid::Uuid;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SPSubSlotSourceData {
@@ -388,6 +397,7 @@ pub enum FarmerRunningState {
     Migrating,
 }
 
+#[derive(Copy, Clone)]
 pub struct MostRecentSignagePoint {
     pub hash: Bytes32,
     pub index: u8,
@@ -396,14 +406,155 @@ pub struct MostRecentSignagePoint {
 impl Default for MostRecentSignagePoint {
     fn default() -> Self {
         MostRecentSignagePoint {
-            hash: Default::default(),
+            hash: Bytes32::default(),
             index: 0,
             timestamp: Instant::now(),
         }
     }
 }
 
-#[derive(Default, Clone)]
+#[cfg(feature = "metrics")]
+const PLOT_LOAD_LATENCY_BUCKETS: [f64; 11] = [
+    0.01,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
+    f64::INFINITY,
+];
+#[cfg(feature = "metrics")]
+const LATENCY_BUCKETS: [f64; 11] = [
+    0.01,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
+    f64::INFINITY,
+];
+#[cfg(feature = "metrics")]
+const SP_INTERVAL_BUCKETS: [f64; 11] = [
+    0f64,
+    4f64,
+    8f64,
+    12f64,
+    16f64,
+    20f64,
+    25f64,
+    30f64,
+    45f64,
+    60f64,
+    f64::INFINITY,
+];
+
+#[derive(Clone, Default)]
+pub struct PlotCounts {
+    pub og_plot_count: Arc<std::sync::atomic::AtomicU64>,
+    pub nft_plot_count: Arc<std::sync::atomic::AtomicU64>,
+    pub compresses_plot_count: Arc<std::sync::atomic::AtomicU64>,
+    pub invalid_plot_count: Arc<std::sync::atomic::AtomicU64>,
+    pub total_plot_space: Arc<std::sync::atomic::AtomicU64>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SerialPlotCounts {
+    pub og_plot_count: u64,
+    pub nft_plot_count: u64,
+    pub compresses_plot_count: u64,
+    pub invalid_plot_count: u64,
+    pub total_plot_space: u64,
+}
+impl From<&PlotCounts> for SerialPlotCounts {
+    fn from(counts: &PlotCounts) -> Self {
+        Self {
+            og_plot_count: counts.og_plot_count.load(Ordering::Relaxed),
+            nft_plot_count: counts.nft_plot_count.load(Ordering::Relaxed),
+            compresses_plot_count: counts.compresses_plot_count.load(Ordering::Relaxed),
+            invalid_plot_count: counts.invalid_plot_count.load(Ordering::Relaxed),
+            total_plot_space: counts.total_plot_space.load(Ordering::Relaxed),
+        }
+    }
+}
+
+pub struct PlotPassCounts {
+    pub og_passed: Arc<std::sync::atomic::AtomicU64>,
+    pub og_total: Arc<std::sync::atomic::AtomicU64>,
+    pub pool_total: Arc<std::sync::atomic::AtomicU64>,
+    pub pool_passed: Arc<std::sync::atomic::AtomicU64>,
+    pub compressed_passed: Arc<std::sync::atomic::AtomicU64>,
+    pub compressed_total: Arc<std::sync::atomic::AtomicU64>,
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SerialPlotPassCounts {
+    pub og_passed: u64,
+    pub og_total: u64,
+    pub pool_total: u64,
+    pub pool_passed: u64,
+    pub compressed_passed: u64,
+    pub compressed_total: u64,
+    pub timestamp: OffsetDateTime,
+}
+impl From<&PlotPassCounts> for SerialPlotPassCounts {
+    fn from(counts: &PlotPassCounts) -> Self {
+        Self {
+            og_passed: counts.og_passed.load(Ordering::Relaxed),
+            og_total: counts.og_total.load(Ordering::Relaxed),
+            pool_total: counts.pool_total.load(Ordering::Relaxed),
+            pool_passed: counts.pool_passed.load(Ordering::Relaxed),
+            compressed_passed: counts.compressed_passed.load(Ordering::Relaxed),
+            compressed_total: counts.compressed_total.load(Ordering::Relaxed),
+            timestamp: counts.timestamp,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub struct FarmerStats {
+    pub challenge_hash: Bytes32,
+    pub sp_hash: Bytes32,
+    pub running: i64,
+    pub og_plot_count: i64,
+    pub nft_plot_count: i64,
+    pub compresses_plot_count: i64,
+    pub invalid_plot_count: i64,
+    pub total_plot_space: i64,
+    pub full_node_height: i64,
+    pub full_node_difficulty: i64,
+    pub full_node_synced: i64,
+    pub gathered: OffsetDateTime,
+}
+
+impl Default for FarmerStats {
+    fn default() -> Self {
+        Self {
+            challenge_hash: Default::default(),
+            sp_hash: Default::default(),
+            running: 0,
+            og_plot_count: 0,
+            nft_plot_count: 0,
+            compresses_plot_count: 0,
+            invalid_plot_count: 0,
+            total_plot_space: 0,
+            full_node_height: 0,
+            full_node_difficulty: 0,
+            full_node_synced: 0,
+            gathered: OffsetDateTime::now_utc(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct FarmerSharedState<T> {
     pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
     pub quality_to_identifiers: Arc<RwLock<HashMap<Bytes32, FarmerIdentifier>>>,
@@ -418,81 +569,305 @@ pub struct FarmerSharedState<T> {
     pub most_recent_sp: Arc<RwLock<MostRecentSignagePoint>>,
     pub recent_errors: Arc<RwLock<RecentErrors<String>>>,
     pub running_state: Arc<RwLock<FarmerRunningState>>,
+    pub missing_keys: Arc<RwLock<HashSet<Bytes48>>>,
+    pub missing_plotnft_info: Arc<RwLock<HashMap<Bytes32, Bytes48>>>,
+    pub upstream_handshake: Arc<RwLock<Option<Handshake>>>,
+    pub plot_counts: Arc<PlotCounts>,
+    pub fullnode_state: Arc<RwLock<Option<BlockchainState>>>,
     pub data: Arc<T>,
+    pub signal: Arc<AtomicBool>,
+    pub additional_headers: Arc<HashMap<String, String>>,
+    pub force_pool_update: Arc<AtomicBool>,
+    pub last_pool_update: Arc<std::sync::atomic::AtomicU64>,
+    pub last_sp_timestamp: Arc<RwLock<Instant>>,
+    pub recent_plot_stats:
+        Arc<RwLock<CircularCache<(Bytes32, Bytes32), SerialPlotPassCounts, 100>>>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
+    pub recent_stats: Arc<RwLock<HashMap<(Bytes32, Bytes32), FarmerStats>>>,
+}
+impl<T: Default> Default for FarmerSharedState<T> {
+    fn default() -> Self {
+        Self {
+            signage_points: Arc::new(Default::default()),
+            quality_to_identifiers: Arc::new(Default::default()),
+            proofs_of_space: Arc::new(Default::default()),
+            cache_time: Arc::new(Default::default()),
+            pool_states: Arc::new(Default::default()),
+            farmer_private_keys: Arc::new(Default::default()),
+            owner_secret_keys: Arc::new(Default::default()),
+            owner_public_keys_to_auth_secret_keys: Arc::new(Default::default()),
+            pool_public_keys: Arc::new(Default::default()),
+            harvester_peers: Arc::new(Default::default()),
+            most_recent_sp: Arc::new(Default::default()),
+            recent_errors: Arc::new(Default::default()),
+            running_state: Arc::new(Default::default()),
+            missing_keys: Arc::new(Default::default()),
+            missing_plotnft_info: Arc::new(Default::default()),
+            upstream_handshake: Arc::new(Default::default()),
+            plot_counts: Arc::new(Default::default()),
+            fullnode_state: Arc::new(Default::default()),
+            data: Arc::new(T::default()),
+            signal: Arc::new(Default::default()),
+            additional_headers: Arc::new(Default::default()),
+            force_pool_update: Arc::new(Default::default()),
+            last_pool_update: Arc::new(Default::default()),
+            last_sp_timestamp: Arc::new(RwLock::new(Instant::now())),
+            recent_plot_stats: Arc::new(Default::default()),
+            #[cfg(feature = "metrics")]
+            metrics: Arc::new(Default::default()),
+            recent_stats: Arc::new(Default::default()),
+        }
+    }
 }
 
 #[cfg(feature = "metrics")]
 #[derive(Debug, Clone)]
 pub struct FarmerMetrics {
+    pub id: Uuid,
+    pub registry: Arc<RwLock<Registry>>,
     pub start_time: Arc<Instant>,
-    pub uptime: Option<GenericGauge<AtomicU64>>,
-    pub points_acknowledged_24h: Option<GenericGaugeVec<AtomicU64>>,
-    pub points_found_24h: Option<GenericGaugeVec<AtomicU64>>,
-    pub current_difficulty: Option<GenericGaugeVec<AtomicU64>>,
-    pub proofs_declared: Option<GenericGauge<AtomicU64>>,
-    pub last_signage_point_index: Option<GenericGauge<AtomicU64>>,
+    pub uptime: Arc<GenericGauge<AtomicU64>>,
+    pub last_signage_point_index: Arc<GenericGauge<AtomicU64>>,
+    pub current_difficulty: Arc<GenericGaugeVec<AtomicU64>>,
+    pub qualities_latency: Arc<Histogram>,
+    pub proof_latency: Arc<Histogram>,
+    pub signage_point_interval: Arc<Histogram>,
+    pub signage_point_processing_latency: Arc<Histogram>,
+    pub plot_load_latency: Arc<Histogram>,
+    pub blockchain_synced: Arc<GenericGauge<AtomicU64>>,
+    pub blockchain_height: Arc<GenericGauge<AtomicU64>>,
+    pub blockchain_netspace: Arc<GenericGauge<AtomicU64>>,
+    pub total_proofs_found: Arc<GenericCounter<AtomicU64>>,
+    pub last_proofs_found: Arc<GenericGauge<AtomicU64>>,
+    pub proofs_declared: Arc<GenericGauge<AtomicU64>>,
+    pub total_partials_found: Arc<GenericCounter<AtomicU64>>,
+    pub last_partials_found: Arc<GenericGauge<AtomicU64>>,
+    pub total_passed_filter: Arc<GenericCounter<AtomicU64>>,
+    pub last_passed_filter: Arc<GenericGauge<AtomicU64>>,
+    pub partials_submitted: Arc<GenericCounterVec<AtomicU64>>,
+    pub plot_file_size: Arc<GenericGaugeVec<AtomicU64>>,
+    pub plot_counts: Arc<GenericGaugeVec<AtomicU64>>,
+    pub points_acknowledged_24h: Arc<GenericGaugeVec<AtomicU64>>,
+    pub points_found_24h: Arc<GenericGaugeVec<AtomicU64>>,
 }
 #[cfg(feature = "metrics")]
 impl FarmerMetrics {
-    pub fn new(registry: &Registry) -> Self {
-        let uptime = GenericGauge::new("farmer_uptime", "Uptime of Farmer").map_or(
-            None,
-            |g: GenericGauge<AtomicU64>| {
-                registry.register(Box::new(g.clone())).unwrap_or(());
-                Some(g)
-            },
-        );
-        let points_acknowledged_24h_opts = Opts::new(
-            "points_acknowledged_24h",
-            "Total points acknowledged by pool for all plot nfts",
-        );
-        let points_acknowledged_24h = GenericGaugeVec::new(
-            points_acknowledged_24h_opts,
-            &["launcher_id"],
-        )
-        .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
-            registry.register(Box::new(g.clone())).unwrap_or(());
-            Some(g)
-        });
-        let points_found_24h_opts =
-            Opts::new("points_found_24h", "Total points fount for all plot nfts");
-        let points_found_24h = GenericGaugeVec::new(points_found_24h_opts, &["launcher_id"])
-            .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
-                registry.register(Box::new(g.clone())).unwrap_or(());
-                Some(g)
-            });
-        let current_difficulty_opts = Opts::new("current_difficulty", "Current Difficulty");
-        let current_difficulty = GenericGaugeVec::new(current_difficulty_opts, &["launcher_id"])
-            .map_or(None, |g: GenericGaugeVec<AtomicU64>| {
-                registry.register(Box::new(g.clone())).unwrap_or(());
-                Some(g)
-            });
-        let proofs_declared = GenericGauge::new(
-            "proofs_declared",
-            "Proofs of Space declared by this farmer",
-        )
-        .map_or(None, |g: GenericGauge<AtomicU64>| {
-            registry.register(Box::new(g.clone())).unwrap_or(());
-            Some(g)
-        });
-        let last_signage_point_index = GenericGauge::new(
-            "last_signage_point_index",
-            "Index of Last Signage Point",
-        )
-        .map_or(None, |g: GenericGauge<AtomicU64>| {
-            registry.register(Box::new(g.clone())).unwrap_or(());
-            Some(g)
-        });
-        FarmerMetrics {
+    pub fn new(registry: Registry, id: Uuid) -> Self {
+        Self {
+            id,
             start_time: Arc::new(Instant::now()),
-            uptime,
-            points_acknowledged_24h,
-            points_found_24h,
-            current_difficulty,
-            proofs_declared,
-            last_signage_point_index,
+            uptime: Arc::new(
+                GenericGauge::new("uptime", "Is Upstream Node Synced")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            current_difficulty: Arc::new(
+                GenericGaugeVec::new(
+                    Opts::new("current_difficulty", "Current Difficulty"),
+                    &["launcher_id"],
+                )
+                .inspect(|g: &GenericGaugeVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                })
+                .expect("Expected To Create Static Metrics"),
+            ),
+            proofs_declared: Arc::new(
+                GenericGauge::new("proofs_declared", "Proofs of Space declared by this farmer")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            last_signage_point_index: Arc::new(
+                GenericGauge::new("last_signage_point_index", "Index of Last Signage Point")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            points_acknowledged_24h: Arc::new(
+                GenericGaugeVec::new(
+                    Opts::new(
+                        "points_acknowledged",
+                        "Total points acknowledged by pool for all plot nfts in last 24 Hours",
+                    ),
+                    &["launcher_id"],
+                )
+                .inspect(|g: &GenericGaugeVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                })
+                .expect("Expected To Create Static Metrics"),
+            ),
+            points_found_24h: Arc::new(
+                GenericGaugeVec::new(
+                    Opts::new(
+                        "points_found",
+                        "Total points found for all plot nfts in last 24 Hours",
+                    ),
+                    &["launcher_id"],
+                )
+                .inspect(|g: &GenericGaugeVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                })
+                .expect("Expected To Create Static Metrics"),
+            ),
+            blockchain_synced: Arc::new(
+                GenericGauge::new("blockchain_synced", "Is Upstream Node Synced")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            blockchain_height: Arc::new(
+                GenericGauge::new("blockchain_height", "Blockchain Height")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            blockchain_netspace: Arc::new(
+                GenericGauge::new("blockchain_netspace", "Current Netspace")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            qualities_latency: Arc::new({
+                let opts = HistogramOpts::new(
+                    "qualities_latency",
+                    "Time in seconds to load plot data from Disk",
+                )
+                .buckets(LATENCY_BUCKETS.to_vec());
+                Histogram::with_opts(opts)
+                    .inspect(|h: &Histogram| {
+                        registry.register(Box::new(h.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics")
+            }),
+            proof_latency: Arc::new({
+                let opts = HistogramOpts::new(
+                    "proof_latency",
+                    "Time in seconds to compute a proof/partial",
+                )
+                .buckets(LATENCY_BUCKETS.to_vec());
+                Histogram::with_opts(opts)
+                    .inspect(|h: &Histogram| {
+                        registry.register(Box::new(h.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics")
+            }),
+            signage_point_interval: Arc::new({
+                let opts = HistogramOpts::new(
+                    "signage_point_interval",
+                    "Time in seconds in between signage points",
+                )
+                .buckets(SP_INTERVAL_BUCKETS.to_vec());
+                Histogram::with_opts(opts)
+                    .inspect(|h: &Histogram| {
+                        registry.register(Box::new(h.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics")
+            }),
+            signage_point_processing_latency: Arc::new({
+                let opts = HistogramOpts::new(
+                    "signage_point_processing_latency",
+                    "Time in seconds to process signage points",
+                )
+                .buckets(LATENCY_BUCKETS.to_vec());
+                Histogram::with_opts(opts)
+                    .inspect(|h: &Histogram| {
+                        registry.register(Box::new(h.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics")
+            }),
+            plot_load_latency: Arc::new({
+                let opts = HistogramOpts::new(
+                    "plot_load_latency",
+                    "Time in seconds to compute a plot file",
+                )
+                .buckets(PLOT_LOAD_LATENCY_BUCKETS.to_vec());
+                Histogram::with_opts(opts)
+                    .inspect(|h: &Histogram| {
+                        registry.register(Box::new(h.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics")
+            }),
+            partials_submitted: Arc::new(
+                GenericCounterVec::new(
+                    Opts::new("partials_submitted", "Total Partials Submitted"),
+                    &["launcher_id"],
+                )
+                .inspect(|g: &GenericCounterVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                })
+                .expect("Expected To Create Static Metrics"),
+            ),
+            total_proofs_found: Arc::new(
+                GenericCounter::new("total_proofs_found", "Total Proofs Found")
+                    .inspect(|g: &GenericCounter<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            last_proofs_found: Arc::new(
+                GenericGauge::new("last_proofs_found", "Last Value of Proofs Found")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            total_partials_found: Arc::new(
+                GenericCounter::new("total_partials_found", "Total Partials Found")
+                    .inspect(|g: &GenericCounter<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            last_partials_found: Arc::new(
+                GenericGauge::new("last_partials_found", "Last Value of Partials Found")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            total_passed_filter: Arc::new(
+                GenericCounter::new("total_passed_filter", "Total Plots Passed Filter")
+                    .inspect(|g: &GenericCounter<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            last_passed_filter: Arc::new(
+                GenericGauge::new("last_passed_filter", "Last Value of Plots Passed Filter")
+                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                        registry.register(Box::new(g.clone())).unwrap_or(());
+                    })
+                    .expect("Expected To Create Static Metrics"),
+            ),
+            plot_file_size: Arc::new(
+                GenericGaugeVec::new(
+                    Opts::new("plot_file_size", "Plots Loaded on Server"),
+                    &["c_level", "k_size", "type"],
+                )
+                .inspect(|g: &GenericGaugeVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                })
+                .expect("Expected To Create Static Metrics"),
+            ),
+            plot_counts: Arc::new(
+                GenericGaugeVec::new(
+                    Opts::new("plot_counts", "Plots Loaded on Server"),
+                    &["c_level", "k_size", "type"],
+                )
+                .inspect(|g: &GenericGaugeVec<AtomicU64>| {
+                    registry.register(Box::new(g.clone())).unwrap_or(());
+                })
+                .expect("Expected To Create Static Metrics"),
+            ),
+            registry: Arc::new(RwLock::new(registry)),
         }
     }
 }

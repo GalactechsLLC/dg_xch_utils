@@ -1,11 +1,13 @@
-use bech32::{FromBase32, ToBase32, Variant};
+use bech32::{Bech32m, Hrp};
 use bip39::Mnemonic;
 use blst::min_pk::{PublicKey, SecretKey};
 use blst::{blst_bendian_from_scalar, blst_scalar, blst_scalar_from_be_bytes, blst_sk_add_n_check};
-use dg_xch_core::blockchain::sized_bytes::{hex_to_bytes, prep_hex_str, Bytes32, SizedBytes};
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::formatting::prep_hex_str;
+use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::utils::hash_256;
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk;
 use hkdf::Hkdf;
-use sha2::Digest;
 use sha2::Sha256;
 use std::io::{Error, ErrorKind};
 use std::mem::size_of;
@@ -18,6 +20,7 @@ fn _pkg_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
+#[must_use]
 pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }
@@ -46,23 +49,16 @@ pub fn hmac_extract_expand(
     let hk = Hkdf::<Sha256>::new(Some(salt), key);
     let mut out: Vec<u8> = (0..length).map(|_| 0).collect();
     match hk.expand(info, &mut out) {
-        Ok(_) => Ok(out),
+        Ok(()) => Ok(out),
         Err(e) => Err(Error::new(ErrorKind::InvalidInput, e.to_string())),
     }
-}
-
-fn hash_256(to_hash: &[u8]) -> Vec<u8> {
-    let mut sha = Sha256::new();
-    sha.update(to_hash);
-    let res = sha.finalize();
-    res.to_vec()
 }
 
 fn ikm_to_lamport_sk(ikm: &[u8], salt: &[u8]) -> Result<Vec<u8>, Error> {
     hmac_extract_expand(32 * 255, ikm, salt, &[])
 }
 
-fn parent_sk_to_lamport_pk(parent_sk: &SecretKey, index: u32) -> Result<Vec<u8>, Error> {
+fn parent_sk_to_lamport_pk(parent_sk: &SecretKey, index: u32) -> Result<Bytes32, Error> {
     let salt = index.to_be_bytes();
     let ikm = parent_sk.to_bytes();
     let not_ikm: Vec<u8> = ikm.into_iter().map(|e| e ^ 0xFF).collect();
@@ -70,18 +66,18 @@ fn parent_sk_to_lamport_pk(parent_sk: &SecretKey, index: u32) -> Result<Vec<u8>,
     let lamport1 = ikm_to_lamport_sk(&not_ikm, &salt)?;
     let mut lamport_pk = vec![];
     for i in 0..255 {
-        lamport_pk.append(&mut hash_256(&lamport0[i * 32..(i + 1) * 32]));
+        lamport_pk.extend(hash_256(&lamport0[i * 32..(i + 1) * 32]));
     }
     for i in 0..255 {
-        lamport_pk.append(&mut hash_256(&lamport1[i * 32..(i + 1) * 32]));
+        lamport_pk.extend(hash_256(&lamport1[i * 32..(i + 1) * 32]));
     }
-    Ok(hash_256(&lamport_pk))
+    Ok(Bytes32::new(hash_256(&lamport_pk)))
 }
 
 fn derive_child_sk(key: &SecretKey, index: u32) -> Result<SecretKey, Error> {
     let lamport_pk = parent_sk_to_lamport_pk(key, index)?;
-    SecretKey::key_gen_v3(&lamport_pk, &[])
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+    SecretKey::key_gen_v3(&lamport_pk.bytes(), &[])
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
 fn derive_child_sk_unhardened(key: &SecretKey, index: u32) -> Result<SecretKey, Error> {
@@ -101,7 +97,7 @@ fn derive_child_sk_unhardened(key: &SecretKey, index: u32) -> Result<SecretKey, 
         blst_bendian_from_scalar(out.as_mut_ptr(), &o);
         out
     };
-    SecretKey::from_bytes(&agg).map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+    SecretKey::from_bytes(&agg).map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
 pub fn derive_path(key: &SecretKey, paths: Vec<u32>) -> Result<SecretKey, Error> {
@@ -202,63 +198,64 @@ pub fn master_sk_to_pooling_authentication_sk(
 
 pub fn key_from_mnemonic_str(mnemonic: &str) -> Result<SecretKey, Error> {
     let mnemonic = Mnemonic::from_str(mnemonic)
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
     let seed = mnemonic.to_seed("");
     SecretKey::key_gen_v3(&seed, &[])
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
 pub fn key_from_mnemonic(mnemonic: &Mnemonic) -> Result<SecretKey, Error> {
     let seed = mnemonic.to_seed("");
     SecretKey::key_gen_v3(&seed, &[])
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
+#[must_use]
 pub fn fingerprint(key: &PublicKey) -> u32 {
     let mut int_buf = [0; size_of::<u32>()];
-    int_buf.copy_from_slice(&hash_256(&key.to_bytes())[0..size_of::<u32>()]);
+    int_buf.copy_from_slice(&hash_256(key.to_bytes())[0..size_of::<u32>()]);
     u32::from_be_bytes(int_buf)
 }
 
 pub fn encode_puzzle_hash(puzzle_hash: &Bytes32, prefix: &str) -> Result<String, Error> {
-    bech32::encode(prefix, puzzle_hash.as_slice().to_base32(), Variant::Bech32m)
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{:?}", e)))
+    bech32::encode::<Bech32m>(Hrp::parse_unchecked(prefix), &puzzle_hash.bytes())
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
 pub fn decode_puzzle_hash(address: &str) -> Result<Bytes32, Error> {
-    let (_, data, _) = bech32::decode(address).map_err(|e| {
+    let (_, data) = bech32::decode(address).map_err(|e| {
         Error::new(
             ErrorKind::InvalidInput,
-            format!("Error Decoding address: ({address}): {:?}", e),
+            format!("Error Decoding address: ({address}): {e:?}"),
         )
     })?;
-    Ok(Bytes32::new(&Vec::<u8>::from_base32(&data).map_err(
-        |e| {
-            Error::new(
-                ErrorKind::InvalidInput,
-                format!("Error Decoding address: ({address}): {:?}", e),
-            )
-        },
-    )?))
+    Bytes32::parse(&data).map_err(|e| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            format!("Error Decoding address: ({address}): {e:?}"),
+        )
+    })
 }
 pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, Error> {
     let wallet_sk = master_sk_to_wallet_sk(key, index)?;
-    let address_hex = puzzle_hash_for_pk(&wallet_sk.sk_to_pk().to_bytes().into())?;
+    let address_hex = puzzle_hash_for_pk(wallet_sk.sk_to_pk().to_bytes().into())?;
     encode_puzzle_hash(&address_hex, prefix)
 }
 
 pub fn parse_payout_address(s: &str) -> Result<String, Error> {
     if s.starts_with("xch") || s.starts_with("txch") {
-        decode_puzzle_hash(s).map(|b| prep_hex_str(&b.to_string()))
-    } else if prep_hex_str(s).len() == 64 {
-        match hex_to_bytes(s) {
-            //Should be a pointless conversion, validates the string is hex
-            Ok(h) => Ok(hex::encode(h)),
-            Err(e) => Err(Error::new(
+        return decode_puzzle_hash(s).map(|b| prep_hex_str(b.to_string()));
+    }
+    let clean_hex = prep_hex_str(s);
+    if clean_hex.len() == 64 {
+        //Should be a pointless conversion, validates the string is hex
+        let decoded = hex::decode(&clean_hex).map_err(|e| {
+            Error::new(
                 ErrorKind::InvalidInput,
                 format!("Error Parsing Payout Address({s}): {e:?}"),
-            )),
-        }
+            )
+        })?;
+        Ok(hex::encode(decoded))
     } else {
         Err(Error::new(
             ErrorKind::InvalidInput,

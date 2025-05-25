@@ -31,7 +31,7 @@ impl HarvesterServer {
         Ok(Self {
             server: WebsocketServer::new(
                 &config.websocket,
-                Default::default(),
+                Arc::default(),
                 handles,
                 #[cfg(feature = "metrics")]
                 metrics,
@@ -47,10 +47,9 @@ impl HarvesterServer {
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::Handshake),
                     id: None,
+                    custom_fn: None,
                 }),
-                Arc::new(HandshakeHandle {
-                    config: config.clone(),
-                }),
+                Arc::new(HandshakeHandle { config }),
             )),
         )])
     }

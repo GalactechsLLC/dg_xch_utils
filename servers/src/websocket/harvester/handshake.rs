@@ -51,7 +51,8 @@ impl MessageHandler for HandshakeHandle {
                         },
                         msg.id,
                     )
-                    .to_bytes(protocol_version),
+                    .to_bytes(protocol_version)
+                    .into(),
                 ))
                 .await
         } else {

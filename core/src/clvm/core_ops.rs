@@ -1,5 +1,7 @@
-use crate::clvm::sexp::{SExp, NULL, ONE};
+use crate::clvm::dialect::Dialect;
+use crate::clvm::sexp::SExp;
 use crate::clvm::utils::{atom, check_arg_count};
+use crate::constants::{NULL_SEXP, ONE_SEXP};
 use std::io::{Error, ErrorKind};
 
 const FIRST_COST: u64 = 30;
@@ -13,58 +15,92 @@ const LISTP_COST: u64 = 19;
 const EQ_BASE_COST: u64 = 117;
 const EQ_COST_PER_BYTE: u64 = 1;
 
-pub fn op_if(args: SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 3, "i")?;
+pub fn op_if<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
+    check_arg_count(args, 3, "i")?;
     let (cond, mut chosen_node) = args.split()?;
     if cond.nullp() {
         chosen_node = chosen_node.split()?.1;
     }
-    Ok((IF_COST, chosen_node.split()?.0))
+    Ok((IF_COST, chosen_node.split()?.0.clone()))
 }
 
-pub fn op_cons(args: SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 2, "c")?;
+pub fn op_cons<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
+    check_arg_count(args, 2, "c")?;
     let (first, rest) = args.split()?;
     Ok((CONS_COST, SExp::Pair((first, rest.split()?.0).into())))
 }
 
-pub fn op_first(args: SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 1, "f")?;
-    Ok((FIRST_COST, args.split()?.0.split()?.0))
+pub fn op_first<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
+    check_arg_count(args, 1, "f")?;
+    Ok((FIRST_COST, args.split()?.0.split()?.0.clone()))
 }
 
-pub fn op_rest(args: SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 1, "r")?;
-    Ok((REST_COST, args.split()?.0.split()?.1))
+pub fn op_rest<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
+    check_arg_count(args, 1, "r")?;
+    Ok((REST_COST, args.split()?.0.split()?.1.clone()))
 }
 
-pub fn op_listp(args: SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 1, "l")?;
+pub fn op_listp<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
+    check_arg_count(args, 1, "l")?;
     match args.first()?.pair() {
-        Ok(_) => Ok((LISTP_COST, ONE.clone())),
-        _ => Ok((LISTP_COST, NULL.clone())),
+        Ok(_) => Ok((LISTP_COST, ONE_SEXP.clone())),
+        _ => Ok((LISTP_COST, NULL_SEXP.clone())),
     }
 }
 
-pub fn op_raise(args: SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    let pair = args.pair()?;
-    if pair.rest.nullp() {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            format!("clvm raise: {:?}", pair.first.atom()?),
-        ))
-    } else {
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            format!("clvm raise: {:?}", &pair.rest),
-        ))
+pub fn op_raise<D: Dialect>(
+    args: &SExp,
+    _max_cost: u64,
+    _dialect: &D,
+) -> Result<(u64, SExp), Error> {
+    match args {
+        SExp::Atom(atom) => Err(Error::new(
+            ErrorKind::Other,
+            format!("clvm raise: {:?}", atom),
+        )),
+        SExp::Pair(pair) => {
+            if pair.rest.nullp() {
+                Err(Error::new(
+                    ErrorKind::Other,
+                    format!("clvm raise: {:?}", pair.first.atom()?),
+                ))
+            } else {
+                Err(Error::new(
+                    ErrorKind::Other,
+                    format!("clvm raise: {:?}", &pair.rest),
+                ))
+            }
+        }
     }
 }
 
-pub fn op_eq(args: SExp, _max_cost: u64) -> Result<(u64, SExp), Error> {
-    check_arg_count(&args, 2, "=")?;
+pub fn op_eq<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
+    check_arg_count(args, 2, "=")?;
     let s0 = atom(args.first()?, "=")?;
     let s1 = atom(args.rest()?.first()?, "=")?;
     let cost = EQ_BASE_COST + (s0.len() as u64 + s1.len() as u64) * EQ_COST_PER_BYTE;
-    Ok((cost, if s0 == s1 { ONE.clone() } else { NULL.clone() }))
+    Ok((
+        cost,
+        if s0 == s1 {
+            ONE_SEXP.clone()
+        } else {
+            NULL_SEXP.clone()
+        },
+    ))
 }

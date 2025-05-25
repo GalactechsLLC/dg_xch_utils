@@ -24,12 +24,15 @@ pub struct CompressionTableCache {
     d_tables: FxHashMap<u8, Arc<DTable>>,
 }
 impl CompressionTableCache {
+    #[must_use]
     pub fn new() -> Self {
-        Default::default()
+        CompressionTableCache::default()
     }
+    #[must_use]
     pub fn ct_exists(&self, c_level: u8) -> bool {
         self.c_tables.contains_key(&c_level)
     }
+    #[must_use]
     pub fn dt_exists(&self, c_level: u8) -> bool {
         self.d_tables.contains_key(&c_level)
     }
@@ -39,9 +42,11 @@ impl CompressionTableCache {
     pub fn dt_assign(&mut self, c_level: u8, dt: DTable) {
         self.d_tables.insert(c_level, Arc::new(dt));
     }
+    #[must_use]
     pub fn ct_get(&self, c_level: u8) -> Option<Arc<CTable>> {
         self.c_tables.get(&c_level).cloned()
     }
+    #[must_use]
     pub fn dt_get(&self, c_level: u8) -> Option<Arc<DTable>> {
         self.d_tables.get(&c_level).cloned()
     }
@@ -117,6 +122,7 @@ pub static COMPRESSION_LEVEL_INFO: [CompressionInfo; 9] = [
     },
 ];
 
+#[must_use]
 pub fn get_compression_info_for_level(compression_level: u8) -> &'static CompressionInfo {
     assert!(compression_level > 0);
     assert!(compression_level < 10);
@@ -171,6 +177,7 @@ pub fn create_compression_dtable_for_clevel(c_level: u8) -> Result<Arc<DTable>, 
     encoding::get_d_table(get_compression_info_for_level(c_level).ans_rvalue)
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn gen_compression_table(r_value: f64, out_size: &mut usize) -> Result<CTable, Error> {
     let normalized_count = create_normalized_count(r_value)?;
     let max_symbol_value = normalized_count.len() - 1;
@@ -181,10 +188,16 @@ fn gen_compression_table(r_value: f64, out_size: &mut usize) -> Result<CTable, E
     todo!()
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
 pub fn get_entries_per_bucket_for_compression_level(k: u8, c_level: u8) -> u64 {
     1u64 << (k - (17 - c_level))
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_sign_loss)]
+#[must_use]
 pub fn get_max_table_pairs_for_compression_level(k: u8, c_level: u8) -> usize {
     let factor = if c_level >= 9 {
         MAX_MATCHES_MULTIPLIER_2T_DROP

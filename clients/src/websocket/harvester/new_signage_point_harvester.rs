@@ -40,6 +40,7 @@ pub struct NewSignagePointHarvesterHandle<T: PlotManagerAsync> {
 }
 #[async_trait]
 impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarvesterHandle<T> {
+    #[allow(clippy::too_many_lines)]
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
@@ -84,9 +85,9 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                 }
                 if passes_plot_filter(
                     data_arc.filter_prefix_bits,
-                    &plot_id,
-                    &data_arc.challenge_hash,
-                    &data_arc.sp_hash,
+                    plot_id,
+                    data_arc.challenge_hash,
+                    data_arc.sp_hash,
                 ) {
                     if plot_info.pool_public_key.is_some() {
                         plot_counts.og_passed.fetch_add(1, Ordering::Relaxed);
@@ -96,9 +97,9 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                         plot_counts.pool_passed.fetch_add(1, Ordering::Relaxed);
                     }
                     let sp_challenge_hash = calculate_pos_challenge(
-                        &plot_id,
-                        &data_arc.challenge_hash,
-                        &data_arc.sp_hash,
+                        plot_id,
+                        data_arc.challenge_hash,
+                        data_arc.sp_hash,
                     );
                     debug!("Starting Search for challenge {sp_challenge_hash} in plot {}", path.file_name);
                     let qualities = match plot_info
@@ -131,13 +132,13 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                 warn!("Failed to find Pool Contract Difficulties for PH: {} ", pool_contract_puzzle_hash);
                             }
                         }
-                        for (index, quality) in qualities.into_iter() {
+                        for (index, quality) in qualities {
                             let required_iters = calculate_iterations_quality(
                                 constants_arc.difficulty_constant_factor,
-                                &quality,
+                                quality,
                                 k,
                                 dif,
-                                &data_arc.sp_hash,
+                                data_arc.sp_hash,
                             );
                             if let Ok(sp_interval_iters) =
                                 calculate_sp_interval_iters(&constants_arc, sub_slot_iters)
@@ -221,7 +222,8 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                 },
                                                 None,
                                             )
-                                            .to_bytes(protocol_version),
+                                            .to_bytes(protocol_version)
+                                            .into(),
                                         ))
                                         .await;
                                     if is_partial {

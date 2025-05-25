@@ -1,16 +1,9 @@
-use bytes::Buf;
 use log::warn;
-use sha2::{Digest, Sha256};
 use std::convert::Infallible;
 use std::fmt::{Display, Formatter};
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::str::FromStr;
-
-pub fn hash_256(input: impl AsRef<[u8]>) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    hasher.finalize().to_vec()
-}
+use time::OffsetDateTime;
 
 #[derive(
     Default,
@@ -68,6 +61,25 @@ pub trait ChiaSerialize {
     where
         Self: Sized;
 }
+impl ChiaSerialize for OffsetDateTime {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    where
+        Self: Sized,
+    {
+        (self.unix_timestamp() as u64).to_bytes(version)
+    }
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        let timestamp: u64 = u64::from_bytes(bytes, version)?;
+        OffsetDateTime::from_unix_timestamp(timestamp as i64)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))
+    }
+}
 
 impl ChiaSerialize for String {
     fn to_bytes(&self, _version: ChiaProtocolVersion) -> Vec<u8>
@@ -75,6 +87,7 @@ impl ChiaSerialize for String {
         Self: Sized,
     {
         let mut bytes: Vec<u8> = Vec::new();
+        #[allow(clippy::cast_possible_truncation)]
         bytes.extend((self.len() as u32).to_be_bytes());
         bytes.extend(self.as_bytes());
         bytes
@@ -90,14 +103,14 @@ impl ChiaSerialize for String {
         bytes.read_exact(&mut u32_len_ary)?;
         let vec_len = u32::from_be_bytes(u32_len_ary) as usize;
         if vec_len > 2048 {
-            warn!("Serializing Large Vec: {vec_len}")
+            warn!("Serializing Large Vec: {vec_len}");
         }
         let mut buf = vec![0u8; vec_len];
         bytes.read_exact(&mut buf[0..vec_len])?;
         String::from_utf8(buf).map_err(|e| {
             Error::new(
                 ErrorKind::InvalidInput,
-                format!("Failed to parse Utf-8 String from Bytes: {:?}", e),
+                format!("Failed to parse Utf-8 String from Bytes: {e:?}"),
             )
         })
     }
@@ -108,7 +121,7 @@ impl ChiaSerialize for bool {
     where
         Self: Sized,
     {
-        vec![*self as u8]
+        vec![u8::from(*self)]
     }
     fn from_bytes<T: AsRef<[u8]>>(
         bytes: &mut Cursor<T>,
@@ -233,6 +246,7 @@ where
         Self: Sized,
     {
         let mut bytes: Vec<u8> = Vec::new();
+        #[allow(clippy::cast_possible_truncation)]
         bytes.extend((self.len() as u32).to_be_bytes());
         for e in self {
             bytes.extend(e.to_bytes(version));
@@ -251,7 +265,7 @@ where
         let buf: Vec<T> = Vec::new();
         let vec_len = u32::from_be_bytes(u32_buf);
         if vec_len > 2048 {
-            warn!("Serializing Large Vec: {vec_len}")
+            warn!("Serializing Large Vec: {vec_len}");
         }
         (0..vec_len).try_fold(buf, |mut vec, _| {
             vec.push(T::from_bytes(bytes, version)?);
@@ -269,8 +283,9 @@ macro_rules! impl_primitives {
                 }
                 fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>, _version: ChiaProtocolVersion) -> Result<Self, std::io::Error> where Self: Sized,
                 {
-                    if bytes.remaining() < $size {
-                        Err(Error::new(std::io::ErrorKind::InvalidInput, format!("Failed to Parse $name, expected length $size, found {}",  bytes.remaining())))
+                    let remaining = bytes.get_ref().as_ref().len().saturating_sub(bytes.position() as usize);
+                    if remaining < $size {
+                        Err(Error::new(std::io::ErrorKind::InvalidInput, format!("Failed to Parse $name, expected length $size, found {}", remaining)))
                     } else {
                         let mut buffer: [u8; $size] = [0; $size];
                         bytes.read_exact(&mut buffer)?;

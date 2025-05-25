@@ -19,6 +19,7 @@ use std::cmp::min;
 use std::io::{Error, ErrorKind};
 use std::mem::{size_of, swap};
 
+#[allow(clippy::cast_possible_truncation)]
 const F1ENTRIES_PER_BLOCK: u16 = K_F1_BLOCK_SIZE / size_of::<u32>() as u16;
 
 #[derive(Debug)]
@@ -28,6 +29,7 @@ pub struct F1Generator {
     context: ChachaContext,
 }
 impl F1Generator {
+    #[must_use]
     pub fn new(k: u8, thread_count: u8, orig_key: &[u8; 32]) -> Self {
         // First byte is 1, the index of this table
         let mut enc_key: [u8; 32] = [0; 32];
@@ -43,6 +45,9 @@ impl F1Generator {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn generate_f1(
         &self,
         bucket_entry_count: usize,
@@ -95,7 +100,7 @@ impl F1Generator {
                     job.x_sources.iter().zip(job.x_entries).zip(job.y_entries)
                 {
                     let x_start = (x_source * bucket_entry_count as u32) + entries_offset as u32;
-                    let block_index = x_start as u64 / F1ENTRIES_PER_BLOCK as u64;
+                    let block_index = u64::from(x_start) / u64::from(F1ENTRIES_PER_BLOCK);
                     x_slice = x_entries.slice(entries_offset);
                     y_slice = y_entries.slice(entries_offset);
                     chacha8_get_keystream_unsafe(
@@ -107,8 +112,8 @@ impl F1Generator {
                     for j in 0..entries_per_thread as isize {
                         // Get the starting and end locations of y in bits relative to our block
                         let x = x_start + j as u32;
-                        let mut y = ciphertext_bytes[j].to_be() as u64;
-                        y = (y << K_EXTRA_BITS) | (x >> x_shift) as u64;
+                        let mut y = u64::from(ciphertext_bytes[j].to_be());
+                        y = (y << K_EXTRA_BITS) | u64::from(x >> x_shift);
                         x_slice[j] = x;
                         y_slice[j] = y;
                     }
@@ -137,6 +142,7 @@ struct F1Job {
 unsafe impl Send for F1Job {}
 unsafe impl Sync for F1Job {}
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn get_proof_f1_and_meta(
     k: u32,
     plot_id: &[u8; 32],
@@ -145,7 +151,7 @@ pub fn get_proof_f1_and_meta(
     meta: &mut Vec<BitReader>,
 ) -> Result<(), Error> {
     // Convert these x's to f1 values
-    let x_shift = k - K_EXTRA_BITS as u32;
+    let x_shift = k - u32::from(K_EXTRA_BITS);
     // Prepare ChaCha key
     let mut enc_ctx: ChachaContext = ChachaContext { input: [0; 16] };
     let mut enc_key: [u8; 32] = [0; 32];
@@ -158,7 +164,7 @@ pub fn get_proof_f1_and_meta(
         let block_index_bits = *x as u128 * k as u128;
         let block_index = (block_index_bits / K_F1_BLOCK_SIZE_BITS as u128) as u64;
         let prefix_bits = (block_index_bits % K_F1_BLOCK_SIZE_BITS as u128) as u32;
-        let first_block_bits = min(K_F1_BLOCK_SIZE_BITS as u32 - prefix_bits, k);
+        let first_block_bits = min(u32::from(K_F1_BLOCK_SIZE_BITS) - prefix_bits, k);
         blocks.clear();
         chacha8_get_keystream(&enc_ctx, block_index, 1, &mut blocks);
         let first_block = BitReader::from_bytes_be(&blocks, K_F1_BLOCK_SIZE_BITS as usize);
@@ -225,11 +231,12 @@ pub fn forward_prop_f1_to_f7(
             i += 2;
             dst += 1;
         }
-        iter_count >>= 1
+        iter_count >>= 1;
     }
     Ok(())
 }
 
+#[allow(clippy::cast_sign_loss)]
 pub fn generate_fx_for_pairs_table2(
     thread_count: usize,
     k: u8,
@@ -238,22 +245,22 @@ pub fn generate_fx_for_pairs_table2(
     meta_in: Span<K32Meta1>,
     y_out: Span<u64>,
     meta_out: Span<K32Meta2>,
-) -> Result<(), Error> {
+) {
     debug_assert!(y_out.len() >= pairs.len());
     debug_assert!(meta_out.len() >= pairs.len());
     if thread_count == 1 {
-        generate_fx_table2(k, pairs, y_in, meta_in, y_out, meta_out)
+        generate_fx_table2(k, pairs, y_in, meta_in, y_out, meta_out);
     } else {
         (0..thread_count)
             .collect::<Vec<usize>>()
             .into_par_iter()
-            .try_for_each(|i| {
+            .for_each(|i| {
                 let t_info = calc_thread_vars(i, thread_count, pairs.len() as usize);
                 let pairs = pairs.range(t_info.offset, t_info.count);
                 let y_out = y_out.range(t_info.offset, t_info.count);
                 let meta_out = meta_out.range(t_info.offset, t_info.count);
-                generate_fx_table2(k, pairs, y_in, meta_in, y_out, meta_out)
-            })
+                generate_fx_table2(k, pairs, y_in, meta_in, y_out, meta_out);
+            });
     }
 }
 
@@ -264,7 +271,7 @@ fn generate_fx_table2(
     meta_in: Span<K32Meta1>,
     mut y_out: Span<u64>,
     mut meta_out: Span<K32Meta2>,
-) -> Result<(), Error> {
+) {
     let y_shift = 64 - (k + K_EXTRA_BITS);
     let buffer_size = ucdiv_t(
         (k + K_EXTRA_BITS) as usize + k as usize * get_meta_in(PlotTable::Table2).multiplier * 2,
@@ -278,19 +285,19 @@ fn generate_fx_table2(
             .iter_mut()
             .zip(meta_out[0..pairs.len()].iter_mut()),
     ) {
-        let l = meta_in[pair.left as usize] as u64;
-        let r = meta_in[pair.right as usize] as u64;
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l >> 6).to_be_bytes());
-        input[8..16].copy_from_slice(&(l << 58 | r << 26).to_be_bytes());
-        *meta_out = l << 32 | r;
+        let l = u64::from(meta_in[pair.left as usize]);
+        let r = u64::from(meta_in[pair.right as usize]);
+        input[0..8].copy_from_slice(&((y_in[pair.left as usize] << 26) | (l >> 6)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l << 58) | (r << 26)).to_be_bytes());
+        *meta_out = (l << 32) | r;
         hasher.reset();
         hasher.update(&input[0..buffer_size]);
         u64_buffer.copy_from_slice(&hasher.finalize().as_bytes()[0..8]);
         *y_out = u64::from_be_bytes(u64_buffer) >> y_shift;
     }
-    Ok(())
 }
 
+#[allow(clippy::cast_sign_loss)]
 pub fn generate_fx_for_pairs_table3(
     k: u8,
     thread_count: usize,
@@ -299,22 +306,22 @@ pub fn generate_fx_for_pairs_table3(
     meta_in: Span<K32Meta2>,
     y_out: Span<u64>,
     meta_out: Span<K32Meta4>,
-) -> Result<(), Error> {
+) {
     assert!(y_out.len() >= pairs.len());
     assert!(meta_out.len() >= pairs.len());
     if thread_count == 1 {
-        generate_fx_table3(k, pairs, y_in, meta_in, y_out, meta_out)
+        generate_fx_table3(k, pairs, y_in, meta_in, y_out, meta_out);
     } else {
         (0..thread_count)
             .collect::<Vec<usize>>()
             .into_par_iter()
-            .try_for_each(|i| {
+            .for_each(|i| {
                 let t_info = calc_thread_vars(i, thread_count, pairs.len() as usize);
                 let pairs = pairs.range(t_info.offset, t_info.count);
                 let y_out = y_out.range(t_info.offset, t_info.count);
                 let meta_out = meta_out.range(t_info.offset, t_info.count);
-                generate_fx_table3(k, pairs, y_in, meta_in, y_out, meta_out)
-            })
+                generate_fx_table3(k, pairs, y_in, meta_in, y_out, meta_out);
+            });
     }
 }
 
@@ -325,7 +332,7 @@ fn generate_fx_table3(
     meta_in: Span<K32Meta2>,
     mut y_out: Span<u64>,
     mut meta_out: Span<K32Meta4>,
-) -> Result<(), Error> {
+) {
     let y_shift = 64 - (k + K_EXTRA_BITS);
     let buffer_size = ucdiv_t(
         (k + K_EXTRA_BITS) as usize + k as usize * get_meta_in(PlotTable::Table3).multiplier * 2,
@@ -341,8 +348,8 @@ fn generate_fx_table3(
     ) {
         let l = &meta_in[pair.left as usize];
         let r = &meta_in[pair.right as usize];
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l >> 38).to_be_bytes());
-        input[8..16].copy_from_slice(&(l << 26 | r >> 38).to_be_bytes());
+        input[0..8].copy_from_slice(&((y_in[pair.left as usize] << 26) | (l >> 38)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l << 26) | (r >> 38)).to_be_bytes());
         input[16..24].copy_from_slice(&(r << 26).to_be_bytes());
         meta_out.m0 = *l;
         meta_out.m1 = *r;
@@ -351,9 +358,9 @@ fn generate_fx_table3(
         u64_buffer.copy_from_slice(&hasher.finalize().as_bytes()[0..8]);
         *y_out = u64::from_be_bytes(u64_buffer) >> y_shift;
     }
-    Ok(())
 }
 
+#[allow(clippy::cast_sign_loss)]
 pub fn generate_fx_for_pairs_table4(
     k: u8,
     thread_count: usize,
@@ -362,22 +369,22 @@ pub fn generate_fx_for_pairs_table4(
     meta_in: Span<K32Meta4>,
     y_out: Span<u64>,
     meta_out: Span<K32Meta4>,
-) -> Result<(), Error> {
+) {
     assert!(y_out.len() >= pairs.len());
     assert!(meta_out.len() >= pairs.len());
     if thread_count == 1 {
-        generate_fx_table4(k, pairs, y_in, meta_in, y_out, meta_out)
+        generate_fx_table4(k, pairs, y_in, meta_in, y_out, meta_out);
     } else {
         (0..thread_count)
             .collect::<Vec<usize>>()
             .into_par_iter()
-            .try_for_each(|i| {
+            .for_each(|i| {
                 let t_info = calc_thread_vars(i, thread_count, pairs.len() as usize);
                 let pairs = pairs.range(t_info.offset, t_info.count);
                 let y_out = y_out.range(t_info.offset, t_info.count);
                 let meta_out = meta_out.range(t_info.offset, t_info.count);
-                generate_fx_table4(k, pairs, y_in, meta_in, y_out, meta_out)
-            })
+                generate_fx_table4(k, pairs, y_in, meta_in, y_out, meta_out);
+            });
     }
 }
 
@@ -388,7 +395,7 @@ fn generate_fx_table4(
     meta_in: Span<K32Meta4>,
     mut y_out: Span<u64>,
     mut meta_out: Span<K32Meta4>,
-) -> Result<(), Error> {
+) {
     let y_size = k + K_EXTRA_BITS;
     let y_shift = 64 - (k + K_EXTRA_BITS);
     let buffer_size = ucdiv_t(
@@ -405,10 +412,11 @@ fn generate_fx_table4(
     ) {
         let l = &meta_in[pair.left as usize];
         let r = &meta_in[pair.right as usize];
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l.m0 >> 38).to_be_bytes());
-        input[8..16].copy_from_slice(&(l.m0 << 26 | l.m1 >> 38).to_be_bytes());
-        input[16..24].copy_from_slice(&(l.m1 << 26 | r.m0 >> 38).to_be_bytes());
-        input[24..32].copy_from_slice(&(r.m0 << 26 | r.m1 >> 38).to_be_bytes());
+        input[0..8]
+            .copy_from_slice(&((y_in[pair.left as usize] << 26) | (l.m0 >> 38)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l.m0 << 26) | (l.m1 >> 38)).to_be_bytes());
+        input[16..24].copy_from_slice(&((l.m1 << 26) | (r.m0 >> 38)).to_be_bytes());
+        input[24..32].copy_from_slice(&((r.m0 << 26) | (r.m1 >> 38)).to_be_bytes());
         input[32..40].copy_from_slice(&(r.m1 << 26).to_be_bytes());
         hasher.reset();
         hasher.update(&input[0..buffer_size]);
@@ -421,12 +429,12 @@ fn generate_fx_table4(
         let h1 = u64::from_be_bytes(u64_buffer);
         u64_buffer.copy_from_slice(&output[16..24]);
         let h2 = u64::from_be_bytes(u64_buffer);
-        meta_out.m0 = o2 << y_size | h1 >> 26;
-        meta_out.m1 = h1 << 38 | h2 >> 26;
+        meta_out.m0 = (o2 << y_size) | (h1 >> 26);
+        meta_out.m1 = (h1 << 38) | (h2 >> 26);
     }
-    Ok(())
 }
 
+#[allow(clippy::cast_sign_loss)]
 pub fn generate_fx_for_pairs_table5(
     k: u8,
     thread_count: usize,
@@ -435,22 +443,22 @@ pub fn generate_fx_for_pairs_table5(
     meta_in: Span<K32Meta4>,
     y_out: Span<u64>,
     meta_out: Span<K32Meta3>,
-) -> Result<(), Error> {
+) {
     assert!(y_out.len() >= pairs.len());
     assert!(meta_out.len() >= pairs.len());
     if thread_count == 1 {
-        generate_fx_table5(k, pairs, y_in, meta_in, y_out, meta_out)
+        generate_fx_table5(k, pairs, y_in, meta_in, y_out, meta_out);
     } else {
         (0..thread_count)
             .collect::<Vec<usize>>()
             .into_par_iter()
-            .try_for_each(|i| {
+            .for_each(|i| {
                 let t_info = calc_thread_vars(i, thread_count, pairs.len() as usize);
                 let pairs = pairs.range(t_info.offset, t_info.count);
                 let y_out = y_out.range(t_info.offset, t_info.count);
                 let meta_out = meta_out.range(t_info.offset, t_info.count);
-                generate_fx_table5(k, pairs, y_in, meta_in, y_out, meta_out)
-            })
+                generate_fx_table5(k, pairs, y_in, meta_in, y_out, meta_out);
+            });
     }
 }
 
@@ -461,7 +469,7 @@ fn generate_fx_table5(
     meta_in: Span<K32Meta4>,
     mut y_out: Span<u64>,
     mut meta_out: Span<K32Meta3>,
-) -> Result<(), Error> {
+) {
     let y_size = k + K_EXTRA_BITS;
     let y_shift = 64 - (k + K_EXTRA_BITS);
     let buffer_size = ucdiv_t(
@@ -478,10 +486,11 @@ fn generate_fx_table5(
     ) {
         let l = &meta_in[pair.left as usize];
         let r = &meta_in[pair.right as usize];
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l.m0 >> 38).to_be_bytes());
-        input[8..16].copy_from_slice(&(l.m0 << 26 | l.m1 >> 38).to_be_bytes());
-        input[16..24].copy_from_slice(&(l.m1 << 26 | r.m0 >> 38).to_be_bytes());
-        input[24..32].copy_from_slice(&(r.m0 << 26 | r.m1 >> 38).to_be_bytes());
+        input[0..8]
+            .copy_from_slice(&((y_in[pair.left as usize] << 26) | (l.m0 >> 38)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l.m0 << 26) | (l.m1 >> 38)).to_be_bytes());
+        input[16..24].copy_from_slice(&((l.m1 << 26) | (r.m0 >> 38)).to_be_bytes());
+        input[24..32].copy_from_slice(&((r.m0 << 26) | (r.m1 >> 38)).to_be_bytes());
         input[32..40].copy_from_slice(&(r.m1 << 26).to_be_bytes());
         hasher.reset();
         hasher.update(&input[0..buffer_size]);
@@ -494,12 +503,12 @@ fn generate_fx_table5(
         let h1 = u64::from_be_bytes(u64_buffer);
         u64_buffer.copy_from_slice(&output[16..24]);
         let h2 = u64::from_be_bytes(u64_buffer);
-        meta_out.m0 = o2 << y_size | h1 >> 26;
-        meta_out.m1 = ((h1 << 6) & 0xFFFFFFC0) | h2 >> 58;
+        meta_out.m0 = (o2 << y_size) | (h1 >> 26);
+        meta_out.m1 = ((h1 << 6) & 0xFFFF_FFC0) | (h2 >> 58);
     }
-    Ok(())
 }
 
+#[allow(clippy::cast_sign_loss)]
 pub fn generate_fx_for_pairs_table6(
     k: u8,
     thread_count: usize,
@@ -508,22 +517,22 @@ pub fn generate_fx_for_pairs_table6(
     meta_in: Span<K32Meta3>,
     y_out: Span<u64>,
     meta_out: Span<K32Meta2>,
-) -> Result<(), Error> {
+) {
     assert!(y_out.len() >= pairs.len());
     assert!(meta_out.len() >= pairs.len());
     if thread_count == 1 {
-        generate_fx_table6(k, pairs, y_in, meta_in, y_out, meta_out)
+        generate_fx_table6(k, pairs, y_in, meta_in, y_out, meta_out);
     } else {
         (0..thread_count)
             .collect::<Vec<usize>>()
             .into_par_iter()
-            .try_for_each(|i| {
+            .for_each(|i| {
                 let t_info = calc_thread_vars(i, thread_count, pairs.len() as usize);
                 let pairs = pairs.range(t_info.offset, t_info.count);
                 let y_out = y_out.range(t_info.offset, t_info.count);
                 let meta_out = meta_out.range(t_info.offset, t_info.count);
-                generate_fx_table6(k, pairs, y_in, meta_in, y_out, meta_out)
-            })
+                generate_fx_table6(k, pairs, y_in, meta_in, y_out, meta_out);
+            });
     }
 }
 
@@ -534,7 +543,7 @@ fn generate_fx_table6(
     meta_in: Span<K32Meta3>,
     mut y_out: Span<u64>,
     mut meta_out: Span<K32Meta2>,
-) -> Result<(), Error> {
+) {
     let y_size = k + K_EXTRA_BITS;
     let y_shift = 64 - (k + K_EXTRA_BITS);
     let buffer_size = ucdiv_t(
@@ -550,13 +559,13 @@ fn generate_fx_table6(
             .zip(meta_out[0..pairs.len()].iter_mut()),
     ) {
         let l0 = &meta_in[pair.left as usize].m0;
-        let l1 = &meta_in[pair.left as usize].m1 & 0xFFFFFFFF;
+        let l1 = &meta_in[pair.left as usize].m1 & 0xFFFF_FFFF;
         let r0 = &meta_in[pair.right as usize].m0;
-        let r1 = &meta_in[pair.right as usize].m1 & 0xFFFFFFFF;
-        input[0..8].copy_from_slice(&(y_in[pair.left as usize] << 26 | l0 >> 38).to_be_bytes());
-        input[8..16].copy_from_slice(&(l0 << 26 | l1 >> 6).to_be_bytes());
-        input[16..24].copy_from_slice(&(l1 << 58 | r0 >> 6).to_be_bytes());
-        input[24..32].copy_from_slice(&(r0 << 58 | r1 << 26).to_be_bytes());
+        let r1 = &meta_in[pair.right as usize].m1 & 0xFFFF_FFFF;
+        input[0..8].copy_from_slice(&((y_in[pair.left as usize] << 26) | (l0 >> 38)).to_be_bytes());
+        input[8..16].copy_from_slice(&((l0 << 26) | (l1 >> 6)).to_be_bytes());
+        input[16..24].copy_from_slice(&((l1 << 58) | (r0 >> 6)).to_be_bytes());
+        input[24..32].copy_from_slice(&((r0 << 58) | (r1 << 26)).to_be_bytes());
         hasher.reset();
         hasher.update(&input[0..buffer_size]);
         let output = hasher.finalize();
@@ -566,11 +575,12 @@ fn generate_fx_table6(
         *y_out = o2 >> y_shift;
         u64_buffer.copy_from_slice(&output[8..16]);
         let h1 = u64::from_be_bytes(u64_buffer);
-        *meta_out = o2 << y_size | h1 >> 26;
+        *meta_out = (o2 << y_size) | (h1 >> 26);
     }
-    Ok(())
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
 pub fn fx_match(y_l: &u64, y_r: &u64) -> bool {
     let y_l = *y_l as usize;
     let y_r = *y_r as usize;

@@ -15,14 +15,17 @@ pub struct TMemoCache {
     dt_memo: FxHashMap<[u8; 8], Arc<DTable>>,
 }
 impl TMemoCache {
+    #[must_use]
     pub fn new() -> Self {
-        Default::default()
+        TMemoCache::default()
     }
 
+    #[must_use]
     pub fn ct_exists(&self, r: f64) -> bool {
         self.ct_memo.contains_key(&r.to_be_bytes())
     }
 
+    #[must_use]
     pub fn dt_exists(&self, r: f64) -> bool {
         self.dt_memo.contains_key(&r.to_be_bytes())
     }
@@ -35,18 +38,21 @@ impl TMemoCache {
         self.dt_memo.insert(r.to_be_bytes(), Arc::new(dt));
     }
 
+    #[must_use]
     pub fn ct_get(&self, r: f64) -> Option<&Vec<CTable>> {
-        return self.ct_memo.get(&r.to_be_bytes());
+        self.ct_memo.get(&r.to_be_bytes())
     }
 
+    #[must_use]
     pub fn dt_get(&self, r: f64) -> Option<Arc<DTable>> {
-        return self.dt_memo.get(&r.to_be_bytes()).cloned();
+        self.dt_memo.get(&r.to_be_bytes()).cloned()
     }
 }
 lazy_static! {
     static ref MEMO_CACHE: Arc<Mutex<TMemoCache>> = Arc::new(Mutex::new(TMemoCache::new()));
 }
 
+#[must_use]
 pub fn get_x_enc(x: &u64) -> u64 {
     if x % 2 == 0 {
         (x >> 1).wrapping_mul(x.wrapping_sub(1))
@@ -55,6 +61,7 @@ pub fn get_x_enc(x: &u64) -> u64 {
     }
 }
 
+#[must_use]
 pub fn get_x_enc128(x: &u64) -> u128 {
     if x & 1 == 0 {
         (x >> 1) as u128 * x.wrapping_sub(1) as u128
@@ -63,6 +70,7 @@ pub fn get_x_enc128(x: &u64) -> u128 {
     }
 }
 
+#[must_use]
 pub fn square_to_line_point(x: u64, y: u64) -> u64 {
     // Always makes y < x, which maps the random x, y  points from a square into a
     // triangle. This means less data is needed to represent y, since we know it's less
@@ -74,6 +82,7 @@ pub fn square_to_line_point(x: u64, y: u64) -> u64 {
     }
 }
 
+#[must_use]
 pub fn square_to_line_point128(x: u64, y: u64) -> u128 {
     // Always makes y < x, which maps the random x, y  points from a square into a
     // triangle. This means less data is needed to represent y, since we know it's less
@@ -87,6 +96,8 @@ pub fn square_to_line_point128(x: u64, y: u64) -> u128 {
 
 // Does the opposite as the above function, deterministically mapping a one dimensional
 // line point into a 2d pair. However, we do not recover the original ordering here.
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
 pub fn line_point_to_square(index: u128) -> (u64, u64) {
     // Performs a square root, without the use of doubles, to use the precision of the u128.
     let mut x = 0;
@@ -99,6 +110,7 @@ pub fn line_point_to_square(index: u128) -> (u64, u64) {
     (x, (index - get_x_enc128(&x)) as u64)
 }
 
+#[must_use]
 pub fn line_point_to_square64(index: u64) -> (u64, u64) {
     let mut x = 0;
     let mut i = 63;
@@ -115,6 +127,7 @@ pub fn line_point_to_square64(index: u64) -> (u64, u64) {
 pub const MIN_PRB_THRESHOLD: f64 = 1e-50;
 pub const TOTAL_QUANTITY: usize = 1 << 14;
 
+#[allow(clippy::cast_precision_loss)]
 pub fn create_normalized_count(r: f64) -> Result<Vec<i16>, Error> {
     let mut dpdf: Vec<f64> = Vec::with_capacity(256);
     let mut n = 0;
@@ -142,19 +155,20 @@ pub fn create_normalized_count(r: f64) -> Result<Vec<i16>, Error> {
                 .last()
                 .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "pq Array was Empty"))?];
             v.0 += 1;
-            v.1 = (v.0 as f64 + 1.0).log2() - (v.0 as f64).log2();
+            v.1 = (f64::from(v.0) + 1.0).log2() - f64::from(v.0).log2();
         }
         pq.sort_unstable_by(sort_fn);
     }
     Ok(ans
         .into_iter()
         .map(|(i, _)| {
-            -((i == 1) as i16) // Set to -1 if it is 1
-            + i * ((i != 1) as i16) //Dont change otherwise
+            -i16::from(i == 1) // Set to -1 if it is 1
+            + i * i16::from(i != 1) //Dont change otherwise
         })
         .collect())
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn get_d_table(r: f64) -> Result<Arc<DTable>, Error> {
     let mut cache = MEMO_CACHE.as_ref().lock();
     if !cache.dt_exists(r) {

@@ -6,16 +6,17 @@ use dg_xch_clients::websocket::farmer::FarmerClient;
 use dg_xch_core::blockchain::pool_target::PoolTarget;
 use dg_xch_core::blockchain::proof_of_space::{generate_plot_public_key, generate_taproot_sk};
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
-use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend, AUG_SCHEME_DST};
+use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend};
 use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS_MAP, MAINNET};
+use dg_xch_core::constants::AUG_SCHEME_DST;
 #[cfg(feature = "metrics")]
 use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
-    DeclareProofOfSpace, FarmerIdentifier, FarmerPoolState, NewSignagePoint, ProofsMap,
-    SignedValues,
+    DeclareProofOfSpace, NewSignagePoint, ProofsMap, SignedValues,
 };
 use dg_xch_core::protocols::harvester::RespondSignatures;
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap, ProtocolMessageTypes};
+use dg_xch_core::traits::SizedBytes;
 use dg_xch_pos::verify_and_get_quality_string;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hyper_tungstenite::tungstenite::Message;
@@ -23,26 +24,21 @@ use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::RwLock;
 
 pub struct RespondSignaturesHandle<T> {
     pub signage_points: Arc<RwLock<HashMap<Bytes32, Vec<NewSignagePoint>>>>,
-    pub quality_to_identifiers: Arc<RwLock<HashMap<Bytes32, FarmerIdentifier>>>,
     pub proofs_of_space: ProofsMap,
-    pub cache_time: Arc<RwLock<HashMap<Bytes32, Instant>>>,
     pub pool_public_keys: Arc<HashMap<Bytes48, SecretKey>>,
     pub farmer_private_keys: Arc<HashMap<Bytes48, SecretKey>>,
-    pub owner_secret_keys: Arc<HashMap<Bytes48, SecretKey>>,
-    pub pool_state: Arc<RwLock<HashMap<Bytes32, FarmerPoolState>>>,
     pub full_node_client: Arc<RwLock<Option<FarmerClient<T>>>>,
     pub config: Arc<FarmerServerConfig>,
-    pub headers: Arc<HashMap<String, String>>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
 }
 #[async_trait]
 impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
+    #[allow(clippy::too_many_lines)]
     async fn handle(
         &self,
         msg: Arc<ChiaMessage>,
@@ -99,8 +95,8 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                     if let Some(computed_quality_string) = verify_and_get_quality_string(
                         &pospace,
                         constants,
-                        &response.challenge_hash,
-                        &response.sp_hash,
+                        response.challenge_hash,
+                        response.sp_hash,
                         peak_height,
                     ) {
                         if is_sp_signatures {
@@ -114,12 +110,10 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                             let local_pk = response.local_pk.into();
                             for sk in self.farmer_private_keys.values() {
                                 let pk = sk.sk_to_pk();
-                                if pk.to_bytes() == *response.farmer_pk.to_sized_bytes() {
+                                if pk.to_bytes() == response.farmer_pk.bytes() {
                                     let agg_pk =
                                         generate_plot_public_key(&local_pk, &pk, include_taproot)?;
-                                    if agg_pk.to_bytes()
-                                        != *pospace.plot_public_key.to_sized_bytes()
-                                    {
+                                    if agg_pk.to_bytes() != pospace.plot_public_key.bytes() {
                                         warn!(
                                             "Key Mismatch {:?} != {:?}",
                                             pospace.plot_public_key, agg_pk
@@ -161,7 +155,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .map_err(|e| {
                                                 Error::new(
                                                     ErrorKind::InvalidInput,
-                                                    format!("{:?}", e),
+                                                    format!("{e:?}"),
                                                 )
                                             })?;
                                     if agg_sig_cc_sp.to_signature().verify(
@@ -197,7 +191,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             .map_err(|e| {
                                                 Error::new(
                                                     ErrorKind::InvalidInput,
-                                                    format!("{:?}", e),
+                                                    format!("{e:?}"),
                                                 )
                                             })?;
                                     if agg_sig_rc_sp.to_signature().verify(
@@ -288,7 +282,8 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                 )
                                                 .to_bytes(
                                                     client.client.client_config.protocol_version,
-                                                ),
+                                                )
+                                                .into(),
                                             ))
                                             .await;
                                         info!("Declaring Proof of Space: {:?}", request);
@@ -319,7 +314,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                             let local_pk = response.local_pk.into();
                             for sk in self.farmer_private_keys.values() {
                                 let pk = sk.sk_to_pk();
-                                if pk.to_bytes() == *response.farmer_pk.to_sized_bytes() {
+                                if pk.to_bytes() == response.farmer_pk.bytes() {
                                     let agg_pk =
                                         generate_plot_public_key(&local_pk, &pk, include_taproot)?;
                                     let (
@@ -362,7 +357,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                     let foliage_agg_sig =
                                         AggregateSignature::aggregate(&foliage_sigs_to_agg, true)
                                             .map_err(|e| {
-                                            Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
+                                            Error::new(ErrorKind::InvalidInput, format!("{e:?}"))
                                         })?;
 
                                     let foliage_block_sigs_to_agg =
@@ -385,7 +380,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                         true,
                                     )
                                     .map_err(|e| {
-                                        Error::new(ErrorKind::InvalidInput, format!("{:?}", e))
+                                        Error::new(ErrorKind::InvalidInput, format!("{e:?}"))
                                     })?;
                                     if foliage_agg_sig.to_signature().verify(
                                         true,
@@ -446,7 +441,8 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                 )
                                                 .to_bytes(
                                                     client.client.client_config.protocol_version,
-                                                ),
+                                                )
+                                                .into(),
                                             ))
                                             .await;
                                         info!("Sending Signed Values: {:?}", request);

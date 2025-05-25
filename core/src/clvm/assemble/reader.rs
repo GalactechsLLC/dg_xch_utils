@@ -1,22 +1,6 @@
+use crate::constants::{CONS_CHARS, EOL_CHARS, QUOTE_CHARS, SPACE_CHARS};
 use log::error;
 
-const EOL_CHARS: [u8; 2] = [b'\r', b'\n'];
-const QUOTE_CHARS: [u8; 2] = [b'\'', b'"'];
-const CONS_CHARS: [u8; 3] = [b'(', b'.', b')'];
-const SPACE_CHARS: [u8; 2] = [b' ', b'\t'];
-
-pub const START_CONS: Token = Token {
-    bytes: &[b'('],
-    index: 0,
-};
-pub const DOT_CONS: Token = Token {
-    bytes: &[b'.'],
-    index: 0,
-};
-pub const END_CONS: Token = Token {
-    bytes: &[b')'],
-    index: 0,
-};
 #[derive(Debug)]
 pub struct Token<'a> {
     pub bytes: &'a [u8],
@@ -33,6 +17,7 @@ pub struct Reader<'a> {
     pub index: usize,
 }
 impl<'a> Reader<'a> {
+    #[must_use]
     pub fn new(stream: &'a [u8]) -> Self {
         Self { stream, index: 0 }
     }
@@ -80,7 +65,7 @@ impl<'a> Iterator for Reader<'a> {
             let chr = &self.stream[self.index];
             if CONS_CHARS.contains(chr) {
                 let token = Token {
-                    bytes: &self.stream[self.index..self.index + 1],
+                    bytes: &self.stream[self.index..=self.index],
                     index: self.index,
                 };
                 self.index += 1;

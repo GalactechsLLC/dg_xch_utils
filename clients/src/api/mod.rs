@@ -1,6 +1,7 @@
 pub mod full_node;
 pub mod pool;
 pub mod responses;
+pub mod simulator;
 pub mod wallet;
 
 use serde::Serialize;

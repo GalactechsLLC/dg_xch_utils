@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_core"
-version = "2.0.3"
+version = "2.1.0"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
@@ -9,42 +9,44 @@ homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
 repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
-async-trait = "0.1.77"
-bech32 = "0.9.1"
-bip39 = {version= "2.0.0", features=["rand"] }
+async-trait = "0.1.86"
 bls12_381 = "0.8.0"
-blst = { version = "0.3.11", features = ["portable"] }
+blst = { version = "0.3.14", features = ["portable"] }
 bytes = "1.5.0"
 der = "0.7.8"
 dg_xch_macros = {path = "../macros", version="2.0.3"}
 dg_xch_serialize = {path = "../serialize", version="2.0.3"}
-futures-util = "0.3.30"
+futures-util = "0.3.31"
 hex = "0.4.3"
 hkdf = "0.12.4"
-hyper = {version="1.1.0", features=["full"]}
-hyper-util = {version="0.1.3", features=["full"]}
-log = "0.4.20"
-num-bigint = { version = "0.4.4", features = ["serde"] }
+hyper = {version="1.6.0", features=["full"]}
+hyper-util = {version="0.1.10", features=["full"]}
+log = "0.4.26"
+num-bigint = { version = "0.4.6", features = ["serde"] }
 num-integer = "0.1.46"
-num-traits = "0.2.18"
-once_cell = "1.19.0"
-paperclip = { version = "0.8.2", features = ["actix4"], optional = true }
-prometheus = {version="0.13.3", features=["protobuf"], optional = true}
+num-traits = "0.2.19"
+once_cell = "1.20.3"
+parking_lot = "0.12.3"
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", branch = "pf_admin_updates"}
+prometheus = {version="0.13.4", features=["protobuf"], optional = true}
 rand = "0.8.5"
-regex = "1.10.3"
-rustls = {version = "0.21.10", features = ["dangerous_configuration"] }
-rustls-pemfile = "1.0.4"
+regex = "1.11.1"
+rustls = {version = "0.23.27" }
+rustls-pemfile = "2.2.0"
 rsa = { version = "0.9.6", features = ["std", "pem", "sha2"] }
-serde = { version = "1.0.197", features = ["derive"] }
-serde_json = "1.0.114"
+secrecy = "0.10.3"
+serde = { version = "1.0.218", features = ["derive"] }
 sha2 = { version = "0.10.8", features = ["oid"] }
-simple_logger = "4.3.3"
-sqlx = {version="0.7.3", features=["macros", "json", "time"], optional = true}
-time = "0.3.34"
-tokio = {version = "1.36.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
-tokio-tungstenite = {version = "0.20.1", features = ["rustls-tls-webpki-roots", "rustls"] }
-uuid = {version="1.7.0", features=["v4"]}
+sqlx = {version= "0.8.3", features=["macros", "json", "time", "runtime-tokio", "tls-rustls-aws-lc-rs"], optional = true}
+time = "0.3.37"
+tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
+tokio-tungstenite = {version = "0.26.2", features = ["rustls", "rustls-tls-webpki-roots"] }
+uuid = {version="1.14.0", features=["v4"]}
 x509-cert = { version = "0.2.5", features = ["std", "pem", "builder"] }
+lazy_static = "1.5.0"
+
+[dev-dependencies]
+dg_logger = { path = "../logging" }
 
 [features]
 mysql = ["sqlx/mysql"]

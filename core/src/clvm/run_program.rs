@@ -1,6 +1,6 @@
 use crate::clvm::dialect::Dialect;
-use crate::clvm::sexp::{PairBuf, SExp, NULL};
-use crate::clvm::utils::ptr_from_number;
+use crate::clvm::sexp::{PairBuf, SExp};
+use crate::constants::NULL_SEXP;
 use num_bigint::BigInt;
 use std::io::Error;
 use std::io::ErrorKind;
@@ -58,8 +58,9 @@ impl<D: Dialect> RunProgramContext<D> {
 
 // return a bitmask with a single bit set, for the most significant set bit in
 // the input byte
+#[allow(clippy::cast_possible_truncation)]
 fn msb_mask(byte: u8) -> u8 {
-    let mut byte = (byte | (byte >> 1)) as u32;
+    let mut byte = u32::from(byte | (byte >> 1));
     byte |= byte >> 2;
     byte |= byte >> 4;
     debug_assert!((byte + 1) >> 1 <= 0x80);
@@ -76,8 +77,8 @@ const fn first_non_zero(buf: &[u8]) -> usize {
     c
 }
 
-fn traverse_path(node_index: &[u8], args: SExp) -> Result<(u64, SExp), Error> {
-    let mut arg_list: &SExp = &args;
+fn traverse_path(node_index: &[u8], args: &SExp) -> Result<(u64, SExp), Error> {
+    let mut arg_list: &SExp = args;
 
     // find first non-zero byte
     let first_bit_byte_index = first_non_zero(node_index);
@@ -87,7 +88,7 @@ fn traverse_path(node_index: &[u8], args: SExp) -> Result<(u64, SExp), Error> {
         + TRAVERSE_COST_PER_BIT;
 
     if first_bit_byte_index >= node_index.len() {
-        return Ok((cost, NULL.clone()));
+        return Ok((cost, NULL_SEXP.clone()));
     }
 
     // find first non-zero bit (the most significant bit is a sentinel)
@@ -102,14 +103,14 @@ fn traverse_path(node_index: &[u8], args: SExp) -> Result<(u64, SExp), Error> {
             SExp::Atom(_) => {
                 return Err(Error::new(
                     ErrorKind::InvalidData,
-                    format!("path into atom: {:?}", arg_list),
+                    format!("path into atom: {arg_list:?}"),
                 ));
             }
             SExp::Pair(pair) => {
                 arg_list = if is_bit_set {
-                    pair.rest.as_ref()
+                    &*pair.rest
                 } else {
-                    pair.first.as_ref()
+                    &*pair.first
                 };
             }
         }
@@ -126,12 +127,12 @@ fn traverse_path(node_index: &[u8], args: SExp) -> Result<(u64, SExp), Error> {
 
 fn augment_cost_errors(r: Result<u64, Error>, max_cost: &SExp) -> Result<u64, Error> {
     if let Err(e) = r {
-        if format!("{:?}", e).contains("cost exceeded") {
+        if !format!("{e:?}").contains("cost exceeded") {
             Err(e)
         } else {
             Err(Error::new(
                 ErrorKind::InvalidData,
-                format!("Max Cost({:?}) Exceeded: {:?}", max_cost, e),
+                format!("Max Cost({max_cost:?}) Exceeded: {e:?}"),
             ))
         }
     } else {
@@ -165,18 +166,18 @@ impl<D: Dialect> RunProgramContext<D> {
 impl<D: Dialect> RunProgramContext<D> {
     fn eval_op_atom(
         &mut self,
-        operator_node: SExp,
-        operand_list: SExp,
-        args: SExp,
+        operator_node: &SExp,
+        operand_list: &SExp,
+        args: &SExp,
     ) -> Result<u64, Error> {
         let op_atom = operator_node.atom()?;
         if op_atom.data == self.dialect.quote_kw() {
-            self.push(operand_list);
+            self.push(operand_list.clone());
             Ok(QUOTE_COST)
         } else {
             self.op_stack.push(Operation::Apply);
-            self.push(operator_node);
-            let mut operands: &SExp = &operand_list;
+            self.push(operator_node.clone());
+            let mut operands: &SExp = operand_list;
             loop {
                 match operands {
                     SExp::Atom(buf) => {
@@ -185,7 +186,7 @@ impl<D: Dialect> RunProgramContext<D> {
                         }
                         return Err(Error::new(
                             ErrorKind::InvalidData,
-                            format!("bad operand list: {:?}", operand_list),
+                            format!("bad operand list: {operand_list:?}"),
                         ));
                     }
                     SExp::Pair(pair) => {
@@ -196,32 +197,32 @@ impl<D: Dialect> RunProgramContext<D> {
                     }
                 }
             }
-            self.push(NULL.clone());
+            self.push(NULL_SEXP.clone());
             Ok(OP_COST)
         }
     }
 
-    fn eval_pair(&mut self, program: SExp, args: SExp) -> Result<u64, Error> {
+    fn eval_pair(&mut self, program: &SExp, args: &SExp) -> Result<u64, Error> {
         let (op_node, op_list) = match program {
             SExp::Atom(path) => {
                 let r = traverse_path(&path.data, args)?;
-                self.push(r.1);
+                self.push(r.1.clone());
                 return Ok(r.0);
             }
-            SExp::Pair(pair) => (*pair.first, *pair.rest),
+            SExp::Pair(pair) => (&*pair.first, &*pair.rest),
         };
         if let SExp::Pair(pair) = &op_node {
             if let SExp::Atom(_) = pair.first.as_ref() {
                 if pair.rest.nullp() {
                     self.push(pair.first.as_ref().clone());
-                    self.push(op_list);
+                    self.push(op_list.clone());
                     self.op_stack.push(Operation::Apply);
                     return Ok(APPLY_COST);
                 }
             }
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                format!("in ((X)...) syntax X must be lone atom: {:?}", pair),
+                format!("in ((X)...) syntax X must be lone atom: {pair:?}"),
             ));
         };
         self.eval_op_atom(op_node, op_list, args)
@@ -232,7 +233,6 @@ impl<D: Dialect> RunProgramContext<D> {
         let program = self.pop()?;
         let args = self.pop()?;
         self.push(v2);
-
         let post_eval = match self.pre_eval {
             None => None,
             Some(ref pre_eval) => pre_eval(&program, &args)?,
@@ -243,7 +243,7 @@ impl<D: Dialect> RunProgramContext<D> {
         };
 
         self.op_stack.push(Operation::Cons);
-        self.eval_pair(program, args)
+        self.eval_pair(&program, &args)
     }
 
     fn eval_op(&mut self) -> Result<u64, Error> {
@@ -251,7 +251,7 @@ impl<D: Dialect> RunProgramContext<D> {
         match pair {
             SExp::Atom(_) => Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("pair expected: {:?}", pair),
+                format!("pair expected: {pair:?}"),
             )),
             SExp::Pair(pair) => {
                 let post_eval = match self.pre_eval {
@@ -263,7 +263,7 @@ impl<D: Dialect> RunProgramContext<D> {
                     self.op_stack.push(Operation::PostEval);
                 };
 
-                self.eval_pair(*pair.first, *pair.rest)
+                self.eval_pair(&pair.first, &pair.rest)
             }
         }
     }
@@ -274,7 +274,7 @@ impl<D: Dialect> RunProgramContext<D> {
         if let SExp::Pair(_) = operator {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("internal error: {:?}", operator),
+                format!("internal error: {operator:?}"),
             ));
         }
         let op_atom = operator.atom()?;
@@ -284,7 +284,7 @@ impl<D: Dialect> RunProgramContext<D> {
                 let (new_args, _) = arg_wrap.split()?;
                 let post_eval = match self.pre_eval {
                     None => None,
-                    Some(ref pre_eval) => pre_eval(&new_program, &new_args)?,
+                    Some(ref pre_eval) => pre_eval(new_program, new_args)?,
                 };
                 if let Some(post_eval) = post_eval {
                     self.posteval_stack.push(post_eval);
@@ -296,7 +296,7 @@ impl<D: Dialect> RunProgramContext<D> {
             } else {
                 Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("apply requires exactly 2 parameters: {:?}", operand_list),
+                    format!("apply requires exactly 2 parameters: {operand_list:?}"),
                 ))
             }
         } else {
@@ -316,14 +316,11 @@ impl<D: Dialect> RunProgramContext<D> {
         self.op_stack = vec![Operation::Eval];
         let max_cost = if max_cost == 0 { u64::MAX } else { max_cost };
         let max_cost_number: BigInt = max_cost.into();
-        let max_cost_ptr = ptr_from_number(&max_cost_number)?;
+        let max_cost_ptr = SExp::try_from(&max_cost_number)?;
         let mut cost: u64 = 0;
         loop {
             let top = self.op_stack.pop();
-            let op = match top {
-                Some(f) => f,
-                None => break,
-            };
+            let Some(op) = top else { break };
             cost += match op {
                 Operation::Apply => {
                     augment_cost_errors(self.apply_op(max_cost - cost), &max_cost_ptr)?
@@ -343,7 +340,7 @@ impl<D: Dialect> RunProgramContext<D> {
             if cost > max_cost {
                 return Err(Error::new(
                     ErrorKind::InvalidData,
-                    format!("cost exceeded: {:?}", max_cost_ptr),
+                    format!("cost exceeded: {max_cost_ptr:?}"),
                 ));
             }
         }

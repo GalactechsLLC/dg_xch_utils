@@ -19,6 +19,7 @@ pub struct RadixSorter {
     thread_pool: ThreadPool,
 }
 impl RadixSorter {
+    #[must_use]
     pub fn new(thread_count: usize, total_count: usize) -> Self {
         let entries_per_thread = max(total_count / thread_count, 1);
         Self {
@@ -34,6 +35,7 @@ impl RadixSorter {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     pub fn generate_key(&self, key: &mut [u32]) {
         let key = Span::new(key.as_mut_ptr(), self.total_count);
         self.thread_pool.broadcast(|ctx| {
@@ -73,7 +75,7 @@ impl RadixSorter {
         let input = Arc::new(input);
         self.thread_pool.broadcast(|ctx| {
             let length =
-                self.entries_per_thread + (trailing_entries * (ctx.index() == last) as usize);
+                self.entries_per_thread + (trailing_entries * usize::from(ctx.index() == last));
             let offset = ctx.index() * self.entries_per_thread;
             let counts = &mut counts.range(ctx.index() * RADIX, RADIX)[0..RADIX];
             counts.copy_from_slice(ZEROS.as_slice());
@@ -116,7 +118,7 @@ impl RadixSorter {
         let last = self.thread_count - 1;
         self.thread_pool.broadcast(|ctx| {
             let length =
-                self.entries_per_thread + (trailing_entries * (ctx.index() == last) as usize);
+                self.entries_per_thread + (trailing_entries * usize::from(ctx.index() == last));
             let offset = ctx.index() * self.entries_per_thread;
             let mut output = output;
             let mut prefix_sums = prefix_sums.slice(ctx.index() * RADIX);
@@ -143,7 +145,7 @@ impl RadixSorter {
         let last = self.thread_count - 1;
         let entries_per_thread = self.entries_per_thread;
         self.thread_pool.broadcast(|ctx| {
-            let length = entries_per_thread + (trailing_entries * (ctx.index() == last) as usize);
+            let length = entries_per_thread + (trailing_entries * usize::from(ctx.index() == last));
             let offset = ctx.index() * entries_per_thread;
             let mut output = output;
             let mut key_output = key_output;
@@ -176,7 +178,7 @@ impl RadixSorter {
             shift += SHIFT_BASE;
         }
         if max_iter % 2 == 0 {
-            output.copy_from_slice(input)
+            output.copy_from_slice(input);
         }
     }
 
@@ -203,7 +205,7 @@ impl RadixSorter {
             shift += SHIFT_BASE;
         }
         if max_iter % 2 == 0 {
-            output.copy_from_slice(input)
+            output.copy_from_slice(input);
         }
     }
 }

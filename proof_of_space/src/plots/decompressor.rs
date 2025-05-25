@@ -100,8 +100,8 @@ pub struct CompressedQualitiesRequest<'a> {
     pub line_points: [LinePoint; 2],
     pub f1_generator: Option<Arc<F1Generator>>,
 }
-unsafe impl<'a> Send for CompressedQualitiesRequest<'a> {}
-unsafe impl<'a> Sync for CompressedQualitiesRequest<'a> {}
+unsafe impl Send for CompressedQualitiesRequest<'_> {}
+unsafe impl Sync for CompressedQualitiesRequest<'_> {}
 
 #[derive(Debug)]
 pub struct TableContext<'a> {
@@ -112,8 +112,8 @@ pub struct TableContext<'a> {
     out_pairs: Span<Pair>,
     pub f1_generator: Arc<F1Generator>,
 }
-unsafe impl<'a> Send for TableContext<'a> {}
-unsafe impl<'a> Sync for TableContext<'a> {}
+unsafe impl Send for TableContext<'_> {}
+unsafe impl Sync for TableContext<'_> {}
 
 #[derive(Debug)]
 pub struct ProofRequest {
@@ -138,6 +138,7 @@ pub struct DecompressorConfig {
     pub mode: DecompressorMode,
 }
 impl Default for DecompressorConfig {
+    #[allow(clippy::cast_possible_truncation)]
     fn default() -> Self {
         Self {
             api_version: BB_PLOT_VERSION,
@@ -170,6 +171,7 @@ pub struct DecompressorPool {
 }
 impl DecompressorPool {
     #[inline]
+    #[must_use]
     pub fn new(depth: u8, thread_count: u8) -> DecompressorPool {
         let mut pool = VecDeque::new();
         for _ in 0..depth {
@@ -221,14 +223,13 @@ impl DecompressorPool {
                     ErrorKind::TimedOut,
                     "Timed out waiting for Decompressor",
                 ));
-            } else {
-                spin_loop();
             }
+            spin_loop();
         }
     }
     #[inline]
     pub async fn push(&self, t: Decompressor) {
-        self.pool.lock().await.push_back(t)
+        self.pool.lock().await.push_back(t);
     }
 }
 
@@ -260,6 +261,7 @@ impl Default for Decompressor {
     }
 }
 impl Decompressor {
+    #[must_use]
     pub fn new(config: DecompressorConfig) -> Self {
         Decompressor {
             config,
@@ -291,9 +293,13 @@ impl Decompressor {
             gpu_context: None,
         }
     }
+    #[must_use]
     pub fn has_gpu(&self) -> bool {
         self.gpu_context.is_some()
     }
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn prealloc_for_clevel(&mut self, k: u8, c_level: u8) {
         assert_eq!(k, 32);
         let entries_per_bucket = get_entries_per_bucket_for_compression_level(k, c_level);
@@ -341,11 +347,14 @@ impl Decompressor {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::too_many_lines)]
     pub fn fetch_full_proof(&mut self, k: u8, req: &mut ProofRequest) -> Result<(), Error> {
         self.request_setup(k, req.c_level)?;
         let num_groups = POST_PROOF_CMP_X_COUNT;
         let entries_per_bucket = get_entries_per_bucket_for_compression_level(k, req.c_level);
-        assert!(entries_per_bucket <= 0xFFFFFFFF);
+        assert!(entries_per_bucket <= 0xFFFF_FFFF);
         let mut tables = Span::new(self.tables.as_mut_ptr(), self.tables.len());
         let mut x_groups = [0u32; POST_PROOF_X_COUNT];
         if req.c_level < 9 {
@@ -400,8 +409,8 @@ impl Decompressor {
             out_pairs,
         };
         for (i, j) in (0..num_groups).zip((0..x_groups.len()).step_by(2)) {
-            let x1 = x_groups[j] as u64;
-            let x2 = x_groups[j + 1] as u64;
+            let x1 = u64::from(x_groups[j]);
+            let x2 = u64::from(x_groups[j + 1]);
             let group_index = i / 2;
             let table: &mut ProofTable = &mut tables[1usize];
             if i % 2 == 0 {
@@ -410,10 +419,10 @@ impl Decompressor {
             if let Err(e) =
                 Self::process_table1bucket(k, req.c_level, &mut table_context, x1, x2, group_index)
             {
-                error!("Error Processing Table1 Bucket: {:?}", e);
+                error!("Error Processing Table1 Bucket: {e:?}");
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Error Processing Table1 Bucket: {:?}", e),
+                    format!("Error Processing Table1 Bucket: {e:?}"),
                 ));
             }
         }
@@ -466,14 +475,14 @@ impl Decompressor {
     }
 
     pub fn request_setup(&mut self, k: u8, c_level: u8) -> Result<(), Error> {
-        if !(1..=9).contains(&c_level) {
+        if (1..=9).contains(&c_level) {
+            self.prealloc_for_clevel(k, c_level);
+            Ok(())
+        } else {
             Err(Error::new(
                 ErrorKind::InvalidInput,
                 format!("Invalid Compression level: {c_level}"),
             ))
-        } else {
-            self.prealloc_for_clevel(k, c_level);
-            Ok(())
         }
     }
 
@@ -523,6 +532,7 @@ impl Decompressor {
             "Forward Prop Failed to complete",
         ))
     }
+    #[allow(clippy::cast_sign_loss)]
     pub fn backtrace_proof(&mut self, table: PlotTable) -> Result<(), Error> {
         let mut backtrace: [[Pair; 64]; 2] = [[Pair::zero(); 64]; 2];
         let back_trace_in = &mut Span::new(backtrace[0].as_mut_ptr(), backtrace[0].len());
@@ -558,8 +568,8 @@ impl Decompressor {
         for i in 0..POST_PROOF_CMP_X_COUNT {
             let idx = i * 2;
             let p = &back_trace_in[i];
-            proof_context.proof[idx] = p.left as u64;
-            proof_context.proof[idx + 1] = p.right as u64;
+            proof_context.proof[idx] = u64::from(p.left);
+            proof_context.proof[idx + 1] = u64::from(p.right);
         }
         Ok(())
     }
@@ -852,6 +862,7 @@ impl Decompressor {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     pub fn sort_table6_and_flip_buffers(
         thread_count: u8,
         proof_context: &mut Option<ProofContext>,
@@ -942,6 +953,8 @@ impl Decompressor {
             Self::process_table1bucket_cpu(k, c_level, table_ctx, x1, x2, group_index)
         }
     }
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn process_table1bucket_cpu(
         k: u8,
         c_level: u8,
@@ -1000,7 +1013,7 @@ impl Decompressor {
             x_entries,
             table_ctx.out_y,
             table_ctx.out_meta,
-        )?;
+        );
         let total_count = pairs.len() as usize;
         let thread_count = min(config_thread_count as usize, total_count);
         let x_buffer = Span::new(
@@ -1022,6 +1035,10 @@ impl Decompressor {
         table_ctx.out_meta = table_ctx.out_meta.slice(pairs_length);
         Ok(pairs_length)
     }
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn forward_prop_table3(
         &mut self,
         thread_count: u8,
@@ -1104,7 +1121,7 @@ impl Decompressor {
                                 .cast(),
                             y_right,
                             meta_right,
-                        )?;
+                        );
                         self.tables[PlotTable::Table3 as usize]
                             .add_group_pairs(r_group, pairs.len() as u32);
                         pairs.len() as usize
@@ -1138,6 +1155,9 @@ impl Decompressor {
             Ok(ForwardPropResult::Continue)
         }
     }
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn forward_prop_table4(
         &mut self,
         thread_count: u8,
@@ -1215,7 +1235,7 @@ impl Decompressor {
                                 .cast(),
                             y_right,
                             meta_right,
-                        )?;
+                        );
                         self.tables[PlotTable::Table4 as usize]
                             .add_group_pairs(r_group, pairs.len() as u32);
                         pairs.len() as usize
@@ -1249,6 +1269,9 @@ impl Decompressor {
             Ok(ForwardPropResult::Continue)
         }
     }
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn forward_prop_table5(
         &mut self,
         thread_count: u8,
@@ -1322,7 +1345,7 @@ impl Decompressor {
                                 .slice_size(proof_context.left_length as usize),
                             y_right,
                             meta_right,
-                        )?;
+                        );
                         self.tables[PlotTable::Table5 as usize]
                             .add_group_pairs(r_group, pairs.len() as u32);
                         pairs.len() as usize
@@ -1356,6 +1379,9 @@ impl Decompressor {
             Ok(ForwardPropResult::Continue)
         }
     }
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     pub fn forward_prop_table6(
         &mut self,
         thread_count: u8,
@@ -1435,7 +1461,7 @@ impl Decompressor {
                                 .slice_size(proof_context.left_length as usize),
                             y_right,
                             meta_right,
-                        )?;
+                        );
                         self.tables[PlotTable::Table6 as usize]
                             .add_group_pairs(r_group, pairs.len() as u32);
                         pairs.len() as usize
@@ -1470,6 +1496,10 @@ impl Decompressor {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
+    #[allow(clippy::too_many_lines)]
     pub fn match_pairs(
         &mut self,
         y_entries: Span<u64>,
@@ -1478,7 +1508,6 @@ impl Decompressor {
         k: u8,
         c_level: u8,
     ) -> Span<Pair> {
-        assert!(y_entries.len() <= 0xFFFFFFFF);
         debug!("\t\tGroup Scan");
         let group_count = Self::scan_groups(
             self.config.thread_count,
@@ -1559,9 +1588,9 @@ impl Decompressor {
                             for target_r in &L_TARGETS[parity as usize][local_l as usize]
                                 [0..K_EXTRA_BITS_POW as usize]
                             {
-                                r_count = r_map_counts[*target_r as usize] as u32;
+                                r_count = u32::from(r_map_counts[*target_r as usize]);
                                 let prefix =
-                                    group_rstart + r_map_indices[*target_r as usize] as u32;
+                                    group_rstart + u32::from(r_map_indices[*target_r as usize]);
                                 for i_r in prefix..(prefix + r_count) {
                                     debug_assert!(i_l < i_r);
                                     // Add a new pair
@@ -1587,9 +1616,9 @@ impl Decompressor {
         let mut copy_offset = 0;
         let mut index = 0;
         while index < jobs.len() {
-            jobs[index].0 = copy_offset as isize * (index > 0) as isize;
+            jobs[index].0 = copy_offset as isize * isize::from(index > 0);
             copy_offset += jobs[index].1;
-            index += 1
+            index += 1;
         }
         jobs.into_par_iter().for_each(|job| unsafe {
             copy_nonoverlapping(job.2.ptr(), out_pairs.ptr().offset(job.0), job.1);
@@ -1597,6 +1626,11 @@ impl Decompressor {
         out_pairs.slice_size(copy_offset)
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
+    #[allow(clippy::too_many_lines)]
+    #[must_use]
     pub fn scan_groups(
         thread_count: u8,
         y_entries: Span<u64>,
@@ -1614,7 +1648,7 @@ impl Decompressor {
             0
         } else {
             let group_count = Arc::new(AtomicU64::new(0));
-            assert!(entry_count <= 0xFFFFFFFF);
+            assert!(entry_count <= 0xFFFF_FFFF);
             let all_thread_vars = (0..thread_count)
                 .collect::<Vec<usize>>()
                 .into_iter()
@@ -1687,7 +1721,7 @@ impl Decompressor {
                     thread_results[index].copy_offset = 0;
                 }
                 copy_offset += thread_results[index].group_count;
-                index += 1
+                index += 1;
             }
             (0..thread_count)
                 .zip(thread_results)
@@ -1745,6 +1779,9 @@ impl Decompressor {
         Ok(req.full_proof)
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::too_many_lines)]
     pub fn get_fetch_qualties_x_pair(
         &mut self,
         k: u8,
@@ -1752,10 +1789,10 @@ impl Decompressor {
     ) -> Result<(u64, u64), Error> {
         let entries_per_bucket =
             get_entries_per_bucket_for_compression_level(k, req.compression_level);
-        assert!(entries_per_bucket <= 0xFFFFFFFF);
+        assert!(entries_per_bucket <= 0xFFFF_FFFF);
         let mut x_groups = [0u32; 16];
         let mut num_xgroups;
-        let lp_index = (req.line_points[0].hi as u128) << 64 | req.line_points[0].lo as u128;
+        let lp_index = ((req.line_points[0].hi as u128) << 64) | req.line_points[0].lo as u128;
         let p = line_point_to_square(lp_index);
         let (x1, x2) = line_point_to_square64(p.0);
         let (x3, x4) = line_point_to_square64(p.1);
@@ -1781,7 +1818,7 @@ impl Decompressor {
             x_groups[7] = (x4 as u32) >> entrybits;
         }
         if req.compression_level >= 6 && req.compression_level < 9 {
-            let lp_index = (req.line_points[1].hi as u128) << 64 | req.line_points[1].lo as u128;
+            let lp_index = ((req.line_points[1].hi as u128) << 64) | req.line_points[1].lo as u128;
             let p = line_point_to_square(lp_index);
             let (x1, x2) = line_point_to_square64(p.0);
             let (x3, x4) = line_point_to_square64(p.1);
@@ -1833,8 +1870,8 @@ impl Decompressor {
             };
             let table: &mut ProofTable = &mut tables[1isize];
             for (i, j) in (0..num_xgroups).zip((0..x_groups.len()).step_by(2)) {
-                let x1 = x_groups[j] as u64;
-                let x2 = x_groups[j + 1] as u64;
+                let x1 = u64::from(x_groups[j]);
+                let x2 = u64::from(x_groups[j + 1]);
                 let group_index = i / 2;
                 if i % 2 == 0 {
                     table.begin_group(group_index);
@@ -1847,10 +1884,10 @@ impl Decompressor {
                     x2,
                     group_index,
                 ) {
-                    error!("Error Processing Table1 Bucket: {:?}", e);
+                    error!("Error Processing Table1 Bucket: {e:?}");
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
-                        format!("Error Processing Table1 Bucket: {:?}", e),
+                        format!("Error Processing Table1 Bucket: {e:?}"),
                     ));
                 }
             }
@@ -1930,16 +1967,7 @@ impl Decompressor {
                     req.compression_level,
                 )?;
             }
-            if res != ForwardPropResult::Success {
-                if proof_might_be_dropped {
-                    Err(Error::new(ErrorKind::Other, "Proof Dropped"))
-                } else {
-                    Err(Error::new(
-                        ErrorKind::NotFound,
-                        format!("Failed to look up quality, {:?}", res),
-                    ))
-                }
-            } else {
+            if res == ForwardPropResult::Success {
                 let mut quality_xs: [u64; 8] = [0; 8];
                 let mut pairs = [[Pair::zero(); 4]; 2];
                 let mut r_table = match_table as usize;
@@ -1974,21 +2002,27 @@ impl Decompressor {
                 // Grab the x's from the first group only
                 let x_pair0 = self.tables[1].pairs[t3pair.left as usize];
                 let x_pair1 = self.tables[1].pairs[t3pair.right as usize];
-                quality_xs[0] = x_pair0.left as u64;
-                quality_xs[1] = x_pair0.right as u64;
-                quality_xs[2] = x_pair1.left as u64;
-                quality_xs[3] = x_pair1.right as u64;
+                quality_xs[0] = u64::from(x_pair0.left);
+                quality_xs[1] = u64::from(x_pair0.right);
+                quality_xs[2] = u64::from(x_pair1.left);
+                quality_xs[3] = u64::from(x_pair1.right);
                 // We need to now sort the X's on y, in order to chose the right path
                 let mut quality_xs = Span::new(quality_xs.as_mut_ptr(), quality_xs.len());
                 sort_quality_xs(&mut quality_xs, 4);
                 // Follow the last path, based on the challenge in our x's
                 let last5bits = req.challenge[31] & 0x1f;
-                let is_table1bit_set = (last5bits & 1) == 1;
-                if !is_table1bit_set {
-                    Ok((quality_xs[0isize], quality_xs[1isize]))
-                } else {
+                if (last5bits & 1) == 1 {
                     Ok((quality_xs[2isize], quality_xs[3isize]))
+                } else {
+                    Ok((quality_xs[0isize], quality_xs[1isize]))
                 }
+            } else if proof_might_be_dropped {
+                Err(Error::new(ErrorKind::Other, "Proof Dropped"))
+            } else {
+                Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("Failed to look up quality, {res:?}"),
+                ))
             }
         }
     }
@@ -2010,6 +2044,9 @@ fn sort_quality_xs(x: &mut Span<u64>, count: usize) {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_wrap)]
+#[allow(clippy::cast_sign_loss)]
 fn scan_bc_group(
     _index: usize,
     y_buffer: &Span<u64>,

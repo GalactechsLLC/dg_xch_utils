@@ -2,6 +2,7 @@ use crate::websocket::farmer::request_signed_values::RequestSignedValuesHandle;
 use crate::websocket::farmer::signage_point::NewSignagePointHandle;
 use crate::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::consensus::constants::{ConsensusConstants, CONSENSUS_CONSTANTS_MAP, MAINNET};
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::farmer::FarmerSharedState;
 use dg_xch_core::protocols::{
     ChiaMessageFilter, ChiaMessageHandler, NodeType, ProtocolMessageTypes,
@@ -30,8 +31,17 @@ impl<T> FarmerClient<T> {
             .get(&client_config.network_id)
             .cloned()
             .unwrap_or(MAINNET.clone());
-        let handles = Arc::new(RwLock::new(handles(constants, shared_state.clone())));
-        let client = WsClient::new(client_config, NodeType::Farmer, handles, run).await?;
+        let handles = Arc::new(RwLock::new(handles(constants, &shared_state)));
+        let client = WsClient::with_ca(
+            client_config,
+            NodeType::Farmer,
+            handles,
+            run,
+            CHIA_CA_CRT.as_bytes(),
+            CHIA_CA_KEY.as_bytes(),
+        )
+        .await?;
+        *shared_state.upstream_handshake.write().await = client.handshake.clone();
         Ok(FarmerClient {
             client,
             shared_state,
@@ -43,6 +53,7 @@ impl<T> FarmerClient<T> {
         self.client.join().await
     }
 
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.client.handle.is_finished()
     }
@@ -50,7 +61,7 @@ impl<T> FarmerClient<T> {
 
 fn handles<T>(
     constants: Arc<ConsensusConstants>,
-    shared_state: Arc<FarmerSharedState<T>>,
+    shared_state: &FarmerSharedState<T>,
 ) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {
     HashMap::from([
         (
@@ -59,6 +70,7 @@ fn handles<T>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::NewSignagePoint),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(NewSignagePointHandle {
                     constants,
@@ -79,10 +91,11 @@ fn handles<T>(
                 Arc::new(ChiaMessageFilter {
                     msg_type: Some(ProtocolMessageTypes::RequestSignedValues),
                     id: None,
+                    custom_fn: None,
                 }),
                 Arc::new(RequestSignedValuesHandle {
                     quality_to_identifiers: shared_state.quality_to_identifiers.clone(),
-                    recent_errors: Arc::new(Default::default()),
+                    recent_errors: Arc::default(),
                     harvester_peers: shared_state.harvester_peers.clone(),
                 }),
             )),

@@ -93,18 +93,23 @@ pub const K_FORMAT_DESCRIPTION: &str = "v1.0";
 /// // panics on division by zero
 /// dg_xch_pos::constants::cdiv(10, 0);
 /// ```
+#[must_use]
 pub const fn cdiv(a: i32, b: i32) -> i32 {
     (a + b - 1) / b
 }
+#[must_use]
 pub const fn ucdiv(a: u32, b: u32) -> u32 {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
+#[must_use]
 pub const fn ucdiv64(a: u64, b: u64) -> u64 {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
+#[must_use]
 pub const fn ucdiv_t(a: usize, b: usize) -> usize {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
+#[must_use]
 pub const fn byte_align(num_bits: u32) -> u32 {
     num_bits + (8 - ((num_bits) % 8)) % 8
 }
@@ -140,6 +145,7 @@ pub const HEADER_MAGIC: [u8; 19] = [
 
 pub const HEADER_V2_MAGIC: [u8; 4] = [0x50, 0x4c, 0x4f, 0x54];
 
+#[derive(Default)]
 pub struct PlotEntry {
     pub y: u64,
     pub pos: u64,
@@ -151,6 +157,7 @@ pub struct PlotEntry {
 }
 pub static L_TARGETS: Lazy<Vec<Vec<Vec<u16>>>> = Lazy::new(gen_l_targets);
 
+#[allow(clippy::cast_possible_truncation)]
 fn gen_l_targets() -> Vec<Vec<Vec<u16>>> {
     let mut targets = vec![vec![vec![0u16; K_EXTRA_BITS_POW as usize]; K_BC]; 2];
     let mut parity = 0;
@@ -159,7 +166,7 @@ fn gen_l_targets() -> Vec<Vec<Vec<u16>>> {
         while i < K_BC {
             let j = i / K_C;
             let mut m = 0;
-            while m < K_EXTRA_BITS_POW as u16 {
+            while m < u16::from(K_EXTRA_BITS_POW) {
                 *targets
                     .index_mut(parity as usize)
                     .index_mut(i)

@@ -23,10 +23,10 @@ fn chacha_quarter_round(a: &mut u32, b: &mut u32, c: &mut u32, d: &mut u32) {
 
 #[inline]
 pub fn chacha8_keysetup(context: &mut ChachaContext, key: &[u8; 32], nonce: Option<&[u8; 8]>) {
-    context.input[0] = 0x61707865;
-    context.input[1] = 0x3320646E;
-    context.input[2] = 0x79622D32;
-    context.input[3] = 0x6B206574;
+    context.input[0] = 0x6170_7865;
+    context.input[1] = 0x3320_646E;
+    context.input[2] = 0x7962_2D32;
+    context.input[3] = 0x6B20_6574;
     //Input words 4 through 11 are taken from the 256-bit key, by reading
     //the bytes in little-endian order, in 4-byte chunks
     context.input[4] = from_le_bytes(&key[0..4]);
@@ -58,6 +58,7 @@ fn from_le_bytes(buf: impl AsRef<[u8]>) -> u32 {
     u32::from_le_bytes(out)
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn chacha8_get_keystream(
     context: &ChachaContext,
     pos: u64,
@@ -151,6 +152,7 @@ pub fn chacha8_get_keystream(
 /// # Safety
 ///
 /// This function assumes a correctly sized array
+#[allow(clippy::cast_possible_truncation)]
 pub unsafe fn chacha8_get_keystream_unsafe(
     context: &ChachaContext,
     pos: u64,
