@@ -2,6 +2,10 @@
 name = "dg_logger"
 version = "2.1.1"
 edition = "2024"
+description = "Druid Garden Logging Library"
+license = "Apache-2.0"
+homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
 log = { version = "0.4"}
