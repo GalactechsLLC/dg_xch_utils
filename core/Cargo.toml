@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_core"
-version = "2.0.3"
+version = "2.1.0"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
@@ -27,19 +27,20 @@ num-integer = "0.1.46"
 num-traits = "0.2.19"
 once_cell = "1.20.3"
 parking_lot = "0.12.3"
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", branch = "pf_admin_updates"}
 prometheus = {version="0.13.4", features=["protobuf"], optional = true}
 rand = "0.8.5"
 regex = "1.11.1"
-rustls = { version= "0.23.23", default-features = false, features = ["std", "ring"] }
+rustls = {version = "0.23.27" }
 rustls-pemfile = "2.2.0"
 rsa = { version = "0.9.6", features = ["std", "pem", "sha2"] }
 secrecy = "0.10.3"
 serde = { version = "1.0.218", features = ["derive"] }
 sha2 = { version = "0.10.8", features = ["oid"] }
-sqlx = {version= "0.8.3", features=["macros", "json", "time", "runtime-tokio-rustls"], optional = true}
+sqlx = {version= "0.8.3", features=["macros", "json", "time", "runtime-tokio", "tls-rustls-aws-lc-rs"], optional = true}
 time = "0.3.37"
 tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
-tokio-tungstenite = {version = "0.26.2", features = ["rustls"] }
+tokio-tungstenite = {version = "0.26.2", features = ["rustls", "rustls-tls-webpki-roots"] }
 uuid = {version="1.14.0", features=["v4"]}
 x509-cert = { version = "0.2.5", features = ["std", "pem", "builder"] }
 lazy_static = "1.5.0"

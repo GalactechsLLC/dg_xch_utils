@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_servers"
-version = "2.0.3"
+version = "2.1.0"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Library for Creating Servers compatible with Chia's RPC and Websocket Protocols"
@@ -24,10 +24,10 @@ hyper-tungstenite = "0.17.0"
 hyper-util = {version="0.1.10", features=["full"]}
 log = "0.4.26"
 prometheus = {version="0.13.4", features=["protobuf"], optional = true}
-rustls = { version= "0.23.23", default-features = false, features = ["std", "ring"] }
+rustls = {version = "0.23.27" }
 tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
-tokio-rustls = { version = "0.26.0", default-features = false, features = ["ring", "tls12", "logging"] }
-tokio-tungstenite = {version = "0.26.2", features = ["rustls"] }
+tokio-rustls = { version = "0.26.2" }
+tokio-tungstenite = {version = "0.26.2", features = ["rustls", "rustls-tls-webpki-roots"] }
 uuid = {version="1.14.0", features=["v4"]}
 
 [features]

@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_pos"
-version = "2.0.3"
+version = "2.1.0"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Proof of Space library for the Chia Blockchain"

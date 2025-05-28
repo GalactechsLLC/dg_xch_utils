@@ -515,7 +515,7 @@ fn binop_reduction(
     let mut total = initial_value;
     let mut arg_size: usize = 0;
     let mut cost = LOG_BASE_COST;
-    for arg in input {
+    for arg in input.iter() {
         let blob = int_atom(arg, op_name)?;
         let n0 = number_from_slice(blob);
         op_f(&mut total, &n0);
@@ -550,7 +550,7 @@ pub fn op_logior<D: Dialect>(
     max_cost: u64,
     _dialect: &D,
 ) -> Result<(u64, SExp), Error> {
-    let v: BigInt = (0).into();
+    let v: BigInt = 0.into();
     binop_reduction("logior", v, args, max_cost, logior_op)
 }
 
@@ -592,7 +592,7 @@ pub fn op_not<D: Dialect>(args: &SExp, _max_cost: u64, _dialect: &D) -> Result<(
 pub fn op_any<D: Dialect>(args: &SExp, max_cost: u64, _dialect: &D) -> Result<(u64, SExp), Error> {
     let mut cost = BOOL_BASE_COST;
     let mut is_any = false;
-    for arg in args {
+    for arg in args.iter() {
         cost += BOOL_COST_PER_ARG;
         check_cost(cost, max_cost)?;
         is_any = is_any || arg.as_bool();
@@ -617,7 +617,7 @@ pub fn op_all<D: Dialect>(args: &SExp, max_cost: u64, dialect: &D) -> Result<(u6
                 Ok((cost, SExp::from_bool(is_all).clone()))
             } else {
                 //Normal Case
-                for arg in args.iter().skip(1) {
+                for arg in args.iter() {
                     cost += BOOL_COST_PER_ARG;
                     check_cost(cost, max_cost)?;
                     is_all = is_all && arg.as_bool();
