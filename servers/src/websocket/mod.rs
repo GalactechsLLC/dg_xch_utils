@@ -259,12 +259,12 @@ struct ConnectionData {
 fn connection_handler(
     mut data: ConnectionData,
     #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
-) -> Result<Response<Full<Bytes>>, tungstenite::error::Error> {
+) -> Result<Response<Full<Bytes>>, Error> {
     if is_upgrade_request(&data.req) {
-        let (response, websocket) = upgrade(&mut data.req, None)?;
+        let (response, websocket) = upgrade(&mut data.req, None).map_err(Error::other)?;
         let addr = data
             .addr
-            .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid SocketAddr"))?;
+            .ok_or_else(|| Error::other("Invalid SocketAddr"))?;
         let peer_id = Arc::new(
             data.peer_id
                 .or_else(|| {
@@ -282,7 +282,8 @@ fn connection_handler(
                     tungstenite::error::Error::Tls(TlsError::Rustls(
                         rustls::Error::NoCertificatesPresented,
                     ))
-                })?,
+                })
+                .map_err(Error::other)?,
         );
         #[cfg(feature = "metrics")]
         if let Some(metrics) = metrics.as_ref() {
@@ -327,7 +328,7 @@ async fn handle_connection(
     run: Arc<AtomicBool>,
 ) -> Result<(), tungstenite::error::Error> {
     let (websocket, mut stream) = WebsocketConnection::new(
-        WebsocketMsgStream::TokioIo(websocket.await?),
+        WebsocketMsgStream::TokioIo(Box::new(websocket.await?)),
         message_handlers,
         peer_id.clone(),
         peers.clone(),

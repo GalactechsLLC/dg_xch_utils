@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_core"
-version = "2.1.1"
+version = "2.1.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
@@ -14,8 +14,8 @@ bls12_381 = "0.8.0"
 blst = { version = "0.3.14", features = ["portable"] }
 bytes = "1.5.0"
 der = "0.7.8"
-dg_xch_macros = {path = "../macros", version="2.1.1"}
-dg_xch_serialize = {path = "../serialize", version="2.1.1"}
+dg_xch_macros = {path = "../macros", version="2.1.2"}
+dg_xch_serialize = {path = "../serialize", version="2.1.2"}
 futures-util = "0.3.31"
 hex = "0.4.3"
 hkdf = "0.12.4"

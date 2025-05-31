@@ -421,7 +421,6 @@ pub struct HarvesterMetrics {
     pub compressed_plot_count: Option<GenericGauge<AtomicU64>>,
 }
 #[cfg(feature = "metrics")]
-
 impl HarvesterMetrics {
     pub fn new(registry: &Registry) -> Self {
         let uptime = GenericGauge::new("harvester_uptime", "Uptime of Harvester").map_or(

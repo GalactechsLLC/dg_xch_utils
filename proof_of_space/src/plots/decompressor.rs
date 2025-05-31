@@ -511,8 +511,7 @@ impl Decompressor {
                 }
                 _ => {
                     //Should never occur
-                    return Err(Error::new(
-                        ErrorKind::Other,
+                    return Err(Error::other(
                         "Unexpected Table Value in Forward Prop Tables",
                     ));
                 }
@@ -527,10 +526,7 @@ impl Decompressor {
                 ForwardPropResult::Continue => {}
             }
         }
-        Err(Error::new(
-            ErrorKind::Other,
-            "Forward Prop Failed to complete",
-        ))
+        Err(Error::other("Forward Prop Failed to complete"))
     }
     #[allow(clippy::cast_sign_loss)]
     pub fn backtrace_proof(&mut self, table: PlotTable) -> Result<(), Error> {
@@ -995,9 +991,9 @@ impl Decompressor {
         );
         if pairs.is_empty() {
             return if might_be_dropped {
-                Err(Error::new(ErrorKind::Other, "Proof Dropped"))
+                Err(Error::other("Proof Dropped"))
             } else {
-                Err(Error::new(ErrorKind::Other, "Failed to load Proof"))
+                Err(Error::other("Failed to load Proof"))
             };
         }
         {
@@ -1129,10 +1125,7 @@ impl Decompressor {
                 }
             };
             if match_count == 0 {
-                return Ok(ForwardPropResult::Failed(Error::new(
-                    ErrorKind::Other,
-                    "No Matches",
-                )));
+                return Ok(ForwardPropResult::Failed(Error::other("No Matches")));
             }
             table_match_count += match_count;
             out_pairs = out_pairs.slice(match_count);
@@ -1243,10 +1236,7 @@ impl Decompressor {
                 }
             };
             if match_count == 0 {
-                return Ok(ForwardPropResult::Failed(Error::new(
-                    ErrorKind::Other,
-                    "No Matches",
-                )));
+                return Ok(ForwardPropResult::Failed(Error::other("No Matches")));
             }
             out_pairs = out_pairs.slice(match_count);
             meta_right = meta_right.slice(match_count);
@@ -1353,10 +1343,7 @@ impl Decompressor {
                 }
             };
             if match_count == 0 {
-                return Ok(ForwardPropResult::Failed(Error::new(
-                    ErrorKind::Other,
-                    "No Matches",
-                )));
+                return Ok(ForwardPropResult::Failed(Error::other("No Matches")));
             }
             out_pairs = out_pairs.slice(match_count);
             meta_right = meta_right.slice(match_count);
@@ -1469,10 +1456,7 @@ impl Decompressor {
                 }
             };
             if match_count == 0 {
-                return Ok(ForwardPropResult::Failed(Error::new(
-                    ErrorKind::Other,
-                    "No Matches",
-                )));
+                return Ok(ForwardPropResult::Failed(Error::other("No Matches")));
             }
             table_match_count += match_count;
             out_pairs = out_pairs.slice(match_count);
@@ -2017,7 +2001,7 @@ impl Decompressor {
                     Ok((quality_xs[0isize], quality_xs[1isize]))
                 }
             } else if proof_might_be_dropped {
-                Err(Error::new(ErrorKind::Other, "Proof Dropped"))
+                Err(Error::other("Proof Dropped"))
             } else {
                 Err(Error::new(
                     ErrorKind::NotFound,

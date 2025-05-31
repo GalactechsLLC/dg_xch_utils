@@ -139,7 +139,7 @@ pub async fn migrate_plot_nft(
                 info!("Creating Leaving Pool Spend");
                 if fee > 0 && !pool_wallet.sync().await? {
                     error!("Failed to Sync Wallet");
-                    return Err(Error::new(ErrorKind::Other, "Failed to Sync"));
+                    return Err(Error::other("Failed to Sync"));
                 }
                 submit_next_state_spend_bundle(
                     client.clone(),
@@ -172,16 +172,13 @@ pub async fn migrate_plot_nft(
                 .await?
                 .ok_or_else(|| {
                     error!("Failed to reload plot_nft after first spend");
-                    Error::new(
-                        ErrorKind::Other,
-                        "Failed to reload plot_nft after first spend",
-                    )
+                    Error::other("Failed to reload plot_nft after first spend")
                 })?;
             }
             info!("Creating Farming to Pool Spend");
             if fee > 0 && !pool_wallet.sync().await? {
                 error!("Failed to Sync Wallet");
-                return Err(Error::new(ErrorKind::Other, "Failed to Sync"));
+                return Err(Error::other("Failed to Sync"));
             }
             submit_next_state_spend_bundle(
                 client.clone(),
@@ -268,10 +265,7 @@ pub async fn migrate_plot_nft_with_owner_key(
                 .await?
                 .ok_or_else(|| {
                     error!("Failed to reload plot_nft after first spend");
-                    Error::new(
-                        ErrorKind::Other,
-                        "Failed to reload plot_nft after first spend",
-                    )
+                    Error::other("Failed to reload plot_nft after first spend")
                 })?;
             }
             info!("Creating Farming to Pool Spend");
@@ -398,7 +392,7 @@ async fn get_pool_info(pool_url: &str) -> Result<GetPoolInfoResponse, Error> {
     let pool_info = DefaultPoolClient::new()
         .get_pool_info(pool_url)
         .await
-        .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to load pool info: {e:?}")))?;
+        .map_err(|e| Error::other(format!("Failed to load pool info: {e:?}")))?;
     validate_pool_info(&pool_info)?;
     Ok(pool_info)
 }

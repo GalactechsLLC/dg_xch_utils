@@ -85,12 +85,7 @@ pub fn handle_token(token: &Token, tokens: &mut Reader) -> Result<SExp, Error> {
             Some(v) => bigint_to_bytes(&v, true).map(|v| SExp::Atom(AtomBuf::new(v))),
             None => handle_hex(bytes)?
                 .or_else(|| handle_quote(bytes).or_else(|| Some(handle_bytes(bytes))))
-                .ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::Other,
-                        format!("Failed to parse Token: {token:?}"),
-                    )
-                }),
+                .ok_or_else(|| Error::other(format!("Failed to parse Token: {token:?}"))),
         }
     }
 }

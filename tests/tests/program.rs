@@ -9,7 +9,7 @@
 //     .use_colors(true)
 //     .current_level(Level::Info)
 //     .init()
-//     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+//     .map_err(|e| Error::other( format!("{e:?}")))?;
 //     let program = Program::to(vec![
 //         10.to_sexp(),
 //         20.to_sexp(),

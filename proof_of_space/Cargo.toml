@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_pos"
-version = "2.1.1"
+version = "2.1.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Proof of Space library for the Chia Blockchain"
@@ -11,7 +11,7 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 [dependencies]
 async-trait = "0.1.86"
 blake3 = "1.6.0"
-dg_xch_core = {path = "../core", version = "2.1.1", default-features = false }
+dg_xch_core = {path = "../core", version = "2.1.2", default-features = false }
 futures-util = "0.3.31"
 hex = "0.4.3"
 lazy_static = "1.5.0"

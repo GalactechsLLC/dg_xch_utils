@@ -240,7 +240,7 @@ pub fn sort_test() -> Result<(), std::io::Error> {
             if input[i] < input[i - 1] {
                 let err = format!("Error Not Sorted of {} > {}", input[i - 1], input[i]);
                 println!("{}", &err);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err));
+                return Err(std::io::Error::other(err));
             }
         }
     }

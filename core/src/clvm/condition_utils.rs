@@ -9,7 +9,7 @@ use crate::traits::SizedBytes;
 use crate::utils::hash_256;
 use log::info;
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 
 pub type ConditionsDict<S> = HashMap<ConditionOpcode, Vec<ConditionWithArgs>, S>;
 
@@ -46,7 +46,7 @@ pub fn created_outputs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
                 };
                 output_coins.push(coin);
             } else {
-                return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+                return Err(Error::other("Invalid Condition"));
             }
         }
     }
@@ -103,6 +103,15 @@ pub fn agg_sig_additional_data<S: std::hash::BuildHasher + Default>(
     }
     ret.insert(ConditionOpcode::AggSigMe, agg_sig_data);
     ret
+}
+
+pub fn agg_sig_additional_data_for_opcode(
+    agg_sig_data: Bytes32,
+    opcode: ConditionOpcode,
+) -> Bytes32 {
+    let mut buffer = agg_sig_data.bytes().to_vec();
+    buffer.push(opcode as u8);
+    Bytes32::from(hash_256(&buffer))
 }
 
 pub fn make_aggsig_final_message<S: std::hash::BuildHasher + Default>(

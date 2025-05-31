@@ -141,7 +141,7 @@ pub async fn get_parent_spend(
 //     .use_colors(true)
 //     .current_level(Level::Info)
 //     .init()
-//     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+//     .map_err(|e| Error::other( format!("{e:?}")))?;
 //     let mut clients = vec![];
 //     let simulate_count = 10;
 //     let host = env::var("FULLNODE_HOST").unwrap_or_else(|_| String::from("localhost"));

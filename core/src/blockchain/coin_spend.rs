@@ -9,7 +9,7 @@ use dg_xch_macros::ChiaSerial;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct CoinSpend {
@@ -39,14 +39,13 @@ impl CoinSpend {
             .run_with_cost(max_cost, &self.solution.to_program())?;
         for cond in Program::to(r).as_list() {
             if cost > max_cost {
-                return Err(Error::new(
-                    ErrorKind::Other,
+                return Err(Error::other(
                     "BLOCK_COST_EXCEEDS_MAX compute_additions() for CoinSpend",
                 ));
             }
             let atoms = cond.as_list();
             if atoms.is_empty() {
-                return Err(Error::new(ErrorKind::Other, "Atoms List is Empty"));
+                return Err(Error::other("Atoms List is Empty"));
             }
             let op = &atoms[0];
             if [ConditionOpcode::AggSigMe, ConditionOpcode::AggSigUnsafe].contains(&op.into()) {
@@ -58,10 +57,7 @@ impl CoinSpend {
             }
             cost += ConditionCost::CreateCoin as u64;
             if atoms.len() < 3 {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "Invalid Number ot Atoms in Program",
-                ));
+                return Err(Error::other("Invalid Number ot Atoms in Program"));
             }
             let puzzle_hash = Bytes32::parse(&atoms[1].as_vec().unwrap_or_default())?;
             let amount = atoms[2].as_int()?;

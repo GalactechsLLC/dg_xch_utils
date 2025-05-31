@@ -10,7 +10,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 use tokio::select;
+#[cfg(not(target_os = "windows"))]
 use tokio::signal::unix::{SignalKind, signal};
+#[cfg(target_os = "windows")]
+use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown};
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::task::JoinHandle;

@@ -12,12 +12,7 @@ pub fn parse_value(value: &[u8]) -> Result<SExp, Error> {
             Some(v) => bigint_to_bytes(&v, true).map(|v| SExp::Atom(AtomBuf::new(v))),
             None => handle_hex(value)?
                 .or_else(|| handle_quote(value).or_else(|| Some(handle_bytes(value))))
-                .ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::Other,
-                        format!("Failed to parse Value: {value:?}"),
-                    )
-                }),
+                .ok_or_else(|| Error::other(format!("Failed to parse Value: {value:?}"))),
         }
     }
 }
