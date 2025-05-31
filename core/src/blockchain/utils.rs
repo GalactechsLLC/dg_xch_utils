@@ -7,7 +7,9 @@ use crate::clvm::condition_utils::{
     ConditionsDict,
 };
 use crate::clvm::program::SerializedProgram;
+use crate::consensus::constants::ConsensusConstants;
 use crate::traits::SizedBytes;
+use crate::utils::hash_256;
 use log::warn;
 use num_bigint::BigInt;
 use std::hash::RandomState;
@@ -101,4 +103,28 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
         }
     }
     Ok(ret)
+}
+
+pub fn verify_agg_sig_unsafe_message(
+    message: &Message,
+    consensus_constants: &ConsensusConstants,
+) -> Result<(), Error> {
+    let mut buffer = consensus_constants.agg_sig_me_additional_data.clone();
+    let mut forbidden_message_suffix;
+    for code in [
+        ConditionOpcode::AggSigParent,
+        ConditionOpcode::AggSigPuzzle,
+        ConditionOpcode::AggSigAmount,
+        ConditionOpcode::AggSigPuzzleAmount,
+        ConditionOpcode::AggSigParentAmount,
+        ConditionOpcode::AggSigParentPuzzle,
+    ] {
+        buffer.push(code as u8);
+        forbidden_message_suffix = Bytes32::from(hash_256(&buffer));
+        if message.data().ends_with(forbidden_message_suffix.as_ref()) {
+            return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+        }
+        buffer.pop();
+    }
+    Ok(())
 }

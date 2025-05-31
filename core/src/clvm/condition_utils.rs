@@ -105,6 +105,15 @@ pub fn agg_sig_additional_data<S: std::hash::BuildHasher + Default>(
     ret
 }
 
+pub fn agg_sig_additional_data_for_opcode(
+    agg_sig_data: Bytes32,
+    opcode: ConditionOpcode,
+) -> Bytes32 {
+    let mut buffer = agg_sig_data.bytes().to_vec();
+    buffer.push(opcode as u8);
+    Bytes32::from(hash_256(&buffer))
+}
+
 pub fn make_aggsig_final_message<S: std::hash::BuildHasher + Default>(
     opcode: ConditionOpcode,
     msg: &[u8],

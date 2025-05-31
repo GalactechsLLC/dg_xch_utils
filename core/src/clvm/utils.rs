@@ -4,13 +4,16 @@ use num_bigint::BigInt;
 use std::io::{Error, ErrorKind};
 
 pub const NO_NEG_DIV: u32 = 0x0001;
-pub const NO_UNKNOWN_OPS: u32 = 0x0002;
-pub const COND_CANON_INTS: u32 = 0x0001_0000;
-pub const NO_UNKNOWN_CONDS: u32 = 0x20000;
-pub const COND_ARGS_NIL: u32 = 0x40000;
-pub const STRICT_ARGS_COUNT: u32 = 0x80000;
-pub const MEMPOOL_MODE: u32 =
-    NO_NEG_DIV | COND_CANON_INTS | NO_UNKNOWN_CONDS | NO_UNKNOWN_OPS | COND_ARGS_NIL;
+pub const NO_UNKNOWN_OPS: u32 = 0x0000_0002;
+pub const LIMIT_HEAP: u32 = 0x0000_0004;
+// pub const COND_CANON_INTS: u32 = 0x0001_0000;
+pub const DISABLE_SIGNATURE_VALIDATION: u32 = 0x0001_0000;
+pub const NO_UNKNOWN_CONDITIONS: u32 = 0x0002_0000;
+pub const COND_ARGS_NIL: u32 = 0x0004_0000;
+pub const STRICT_ARGS_COUNT: u32 = 0x0008_0000;
+pub const COST_CONDITIONS: u32 = 0x0080_0000;
+pub const ENABLE_KECCAK_OPS_OUTSIDE_FORK: u32 = 0x0000_0100;
+pub const MEMPOOL_MODE: u32 = NO_UNKNOWN_OPS | LIMIT_HEAP;
 pub const INFINITE_COST: u64 = 0x7FFF_FFFF_FFFF_FFFF;
 
 pub fn check_cost(cost: u64, max_cost: u64) -> Result<(), Error> {
