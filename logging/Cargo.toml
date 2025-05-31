@@ -1,13 +1,17 @@
 [package]
 name = "dg_logger"
-version = "2.0.3"
+version = "2.1.2"
 edition = "2024"
+description = "Druid Garden Logging Library"
+license = "Apache-2.0"
+homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
+repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
 log = { version = "0.4"}
 time = { version = "0.3", features = ["local-offset", "serde","macros","parsing","formatting"]}
 colored = { version = "3.0", optional = true}
-tokio = { version = "1.44.0", features = ["rt", "rt-multi-thread", "macros", "signal","process"] }
+tokio = { version = "1.44.0", features = ["rt", "rt-multi-thread", "macros", "signal","process","sync"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 

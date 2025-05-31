@@ -16,9 +16,10 @@ use dg_xch_serialize::ChiaProtocolVersion;
 
 use crate::blockchain::blockchain_state::BlockchainState;
 use crate::protocols::shared::Handshake;
+use portfu::pfcore::cache::CircularCache;
 #[cfg(feature = "metrics")]
 use prometheus::core::{
-    AtomicU64, GenericCounter, GenericCounterVec, GenericGauge, GenericGaugeVec,
+    AtomicI64, AtomicU64, GenericCounter, GenericCounterVec, GenericGauge, GenericGaugeVec,
 };
 #[cfg(feature = "metrics")]
 use prometheus::{Histogram, HistogramOpts, Opts, Registry};
@@ -27,7 +28,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use portfu::pfcore::cache::CircularCache;
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 #[cfg(feature = "metrics")]
@@ -458,27 +458,27 @@ const SP_INTERVAL_BUCKETS: [f64; 11] = [
 
 #[derive(Clone, Default)]
 pub struct PlotCounts {
-    pub og_plot_count: Arc<std::sync::atomic::AtomicU64>,
-    pub nft_plot_count: Arc<std::sync::atomic::AtomicU64>,
-    pub compresses_plot_count: Arc<std::sync::atomic::AtomicU64>,
-    pub invalid_plot_count: Arc<std::sync::atomic::AtomicU64>,
-    pub total_plot_space: Arc<std::sync::atomic::AtomicU64>,
+    pub og_plot_count: Arc<std::sync::atomic::AtomicI64>,
+    pub nft_plot_count: Arc<std::sync::atomic::AtomicI64>,
+    pub compressed_plot_count: Arc<std::sync::atomic::AtomicI64>,
+    pub invalid_plot_count: Arc<std::sync::atomic::AtomicI64>,
+    pub total_plot_space: Arc<std::sync::atomic::AtomicI64>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SerialPlotCounts {
-    pub og_plot_count: u64,
-    pub nft_plot_count: u64,
-    pub compresses_plot_count: u64,
-    pub invalid_plot_count: u64,
-    pub total_plot_space: u64,
+    pub og_plot_count: i64,
+    pub nft_plot_count: i64,
+    pub compresses_plot_count: i64,
+    pub invalid_plot_count: i64,
+    pub total_plot_space: i64,
 }
 impl From<&PlotCounts> for SerialPlotCounts {
     fn from(counts: &PlotCounts) -> Self {
         Self {
             og_plot_count: counts.og_plot_count.load(Ordering::Relaxed),
             nft_plot_count: counts.nft_plot_count.load(Ordering::Relaxed),
-            compresses_plot_count: counts.compresses_plot_count.load(Ordering::Relaxed),
+            compresses_plot_count: counts.compressed_plot_count.load(Ordering::Relaxed),
             invalid_plot_count: counts.invalid_plot_count.load(Ordering::Relaxed),
             total_plot_space: counts.total_plot_space.load(Ordering::Relaxed),
         }
@@ -486,26 +486,26 @@ impl From<&PlotCounts> for SerialPlotCounts {
 }
 
 pub struct PlotPassCounts {
-    pub og_passed: Arc<std::sync::atomic::AtomicU64>,
-    pub og_total: Arc<std::sync::atomic::AtomicU64>,
-    pub pool_total: Arc<std::sync::atomic::AtomicU64>,
-    pub pool_passed: Arc<std::sync::atomic::AtomicU64>,
-    pub compressed_passed: Arc<std::sync::atomic::AtomicU64>,
-    pub compressed_total: Arc<std::sync::atomic::AtomicU64>,
-    pub proofs_found: Arc<std::sync::atomic::AtomicU64>,
+    pub og_passed: Arc<std::sync::atomic::AtomicI64>,
+    pub og_total: Arc<std::sync::atomic::AtomicI64>,
+    pub pool_total: Arc<std::sync::atomic::AtomicI64>,
+    pub pool_passed: Arc<std::sync::atomic::AtomicI64>,
+    pub compressed_passed: Arc<std::sync::atomic::AtomicI64>,
+    pub compressed_total: Arc<std::sync::atomic::AtomicI64>,
+    pub proofs_found: Arc<std::sync::atomic::AtomicI64>,
     pub timestamp: OffsetDateTime,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SerialPlotPassCounts {
-    pub og_passed: u64,
-    pub og_total: u64,
-    pub pool_total: u64,
-    pub pool_passed: u64,
-    pub compressed_passed: u64,
-    pub compressed_total: u64,
-    pub proofs_found: u64,
-    pub timestamp: OffsetDateTime
+    pub og_passed: i64,
+    pub og_total: i64,
+    pub pool_total: i64,
+    pub pool_passed: i64,
+    pub compressed_passed: i64,
+    pub compressed_total: i64,
+    pub proofs_found: i64,
+    pub timestamp: OffsetDateTime,
 }
 impl From<&PlotPassCounts> for SerialPlotPassCounts {
     fn from(counts: &PlotPassCounts) -> Self {
@@ -591,7 +591,8 @@ pub struct FarmerSharedState<T> {
     pub force_pool_update: Arc<AtomicBool>,
     pub last_pool_update: Arc<std::sync::atomic::AtomicU64>,
     pub last_sp_timestamp: Arc<RwLock<Instant>>,
-    pub recent_plot_stats: Arc<RwLock<CircularCache<(Bytes32, Bytes32), SerialPlotPassCounts, 100>>>,
+    pub recent_plot_stats:
+        Arc<RwLock<CircularCache<(Bytes32, Bytes32), SerialPlotPassCounts, 100>>>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<RwLock<Option<FarmerMetrics>>>,
     pub recent_stats: Arc<RwLock<HashMap<(Bytes32, Bytes32), FarmerStats>>>,
@@ -648,13 +649,13 @@ pub struct FarmerMetrics {
     pub blockchain_synced: Arc<GenericGauge<AtomicU64>>,
     pub blockchain_height: Arc<GenericGauge<AtomicU64>>,
     pub blockchain_netspace: Arc<GenericGauge<AtomicU64>>,
-    pub total_proofs_found: Arc<GenericCounter<AtomicU64>>,
-    pub last_proofs_found: Arc<GenericGauge<AtomicU64>>,
+    pub total_proofs_found: Arc<GenericCounter<AtomicI64>>,
+    pub last_proofs_found: Arc<GenericGauge<AtomicI64>>,
     pub proofs_declared: Arc<GenericGauge<AtomicU64>>,
     pub total_partials_found: Arc<GenericCounter<AtomicU64>>,
     pub last_partials_found: Arc<GenericGauge<AtomicU64>>,
-    pub total_passed_filter: Arc<GenericCounter<AtomicU64>>,
-    pub last_passed_filter: Arc<GenericGauge<AtomicU64>>,
+    pub total_passed_filter: Arc<GenericCounter<AtomicI64>>,
+    pub last_passed_filter: Arc<GenericGauge<AtomicI64>>,
     pub partials_submitted: Arc<GenericCounterVec<AtomicU64>>,
     pub plot_file_size: Arc<GenericGaugeVec<AtomicU64>>,
     pub plot_counts: Arc<GenericGaugeVec<AtomicU64>>,
@@ -817,14 +818,14 @@ impl FarmerMetrics {
             ),
             total_proofs_found: Arc::new(
                 GenericCounter::new("total_proofs_found", "Total Proofs Found")
-                    .inspect(|g: &GenericCounter<AtomicU64>| {
+                    .inspect(|g: &GenericCounter<AtomicI64>| {
                         registry.register(Box::new(g.clone())).unwrap_or(());
                     })
                     .expect("Expected To Create Static Metrics"),
             ),
             last_proofs_found: Arc::new(
                 GenericGauge::new("last_proofs_found", "Last Value of Proofs Found")
-                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                    .inspect(|g: &GenericGauge<AtomicI64>| {
                         registry.register(Box::new(g.clone())).unwrap_or(());
                     })
                     .expect("Expected To Create Static Metrics"),
@@ -845,14 +846,14 @@ impl FarmerMetrics {
             ),
             total_passed_filter: Arc::new(
                 GenericCounter::new("total_passed_filter", "Total Plots Passed Filter")
-                    .inspect(|g: &GenericCounter<AtomicU64>| {
+                    .inspect(|g: &GenericCounter<AtomicI64>| {
                         registry.register(Box::new(g.clone())).unwrap_or(());
                     })
                     .expect("Expected To Create Static Metrics"),
             ),
             last_passed_filter: Arc::new(
                 GenericGauge::new("last_passed_filter", "Last Value of Plots Passed Filter")
-                    .inspect(|g: &GenericGauge<AtomicU64>| {
+                    .inspect(|g: &GenericGauge<AtomicI64>| {
                         registry.register(Box::new(g.clone())).unwrap_or(());
                     })
                     .expect("Expected To Create Static Metrics"),
