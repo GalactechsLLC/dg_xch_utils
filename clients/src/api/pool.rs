@@ -269,7 +269,7 @@ pub async fn create_pool_login_parts(
     let pool_info = pool_client
         .get_pool_info(target_pool)
         .await
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+        .map_err(|e| Error::other(format!("{e:?}")))?;
     let current_auth_token =
         get_current_authentication_token(pool_info.authentication_token_timeout);
     let mut sigs = vec![];

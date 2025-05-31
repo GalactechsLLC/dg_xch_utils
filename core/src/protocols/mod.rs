@@ -22,7 +22,7 @@ use hyper_util::rt::TokioIo;
 use log::{debug, error, info};
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{Cursor, Error, ErrorKind};
+use std::io::{Cursor, Error};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -539,8 +539,8 @@ pub struct SocketPeer {
 }
 
 pub enum WebsocketMsgStream {
-    TokioIo(WebSocketStream<TokioIo<Upgraded>>),
-    Tls(WebSocketStream<MaybeTlsStream<TcpStream>>),
+    TokioIo(Box<WebSocketStream<TokioIo<Upgraded>>>),
+    Tls(Box<WebSocketStream<MaybeTlsStream<TcpStream>>>),
 }
 impl Stream for WebsocketMsgStream {
     type Item = Result<Message, tokio_tungstenite::tungstenite::error::Error>;
@@ -612,10 +612,7 @@ impl WebsocketConnection {
         (websocket, stream)
     }
     pub async fn send(&mut self, msg: Message) -> Result<(), Error> {
-        self.write
-            .send(msg)
-            .await
-            .map_err(|e| Error::new(ErrorKind::Other, e))
+        self.write.send(msg).await.map_err(Error::other)
     }
 
     pub async fn subscribe(&self, uuid: Uuid, handle: Arc<ChiaMessageHandler>) {
@@ -628,20 +625,10 @@ impl WebsocketConnection {
 
     pub async fn close(&mut self, msg: Option<Message>) -> Result<(), Error> {
         if let Some(msg) = msg {
-            let _ = self
-                .write
-                .send(msg)
-                .await
-                .map_err(|e| Error::new(ErrorKind::Other, e));
-            self.write
-                .close()
-                .await
-                .map_err(|e| Error::new(ErrorKind::Other, e))
+            let _ = self.write.send(msg).await.map_err(Error::other);
+            self.write.close().await.map_err(Error::other)
         } else {
-            self.write
-                .close()
-                .await
-                .map_err(|e| Error::new(ErrorKind::Other, e))
+            self.write.close().await.map_err(Error::other)
         }
     }
     pub async fn clear(&self) {

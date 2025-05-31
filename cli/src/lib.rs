@@ -46,7 +46,7 @@ pub async fn run_cli() -> Result<(), Error> {
         .use_colors(true)
         .current_level(Level::Info)
         .init()
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+        .map_err(|e| Error::other(format!("{e:?}")))?;
     let host = cli
         .fullnode_host
         .unwrap_or(env::var("FULLNODE_HOST").unwrap_or("localhost".to_string()));

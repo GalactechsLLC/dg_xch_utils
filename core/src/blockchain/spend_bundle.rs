@@ -194,14 +194,11 @@ impl SpendBundle {
                 &constants.agg_sig_me_additional_data,
             )? {
                 let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
-                    Error::new(
-                        ErrorKind::Other,
-                        format!(
-                            "Failed to parse Public key: {}, {:?}",
-                            hex::encode(pk_bytes),
-                            e
-                        ),
-                    )
+                    Error::other(format!(
+                        "Failed to parse Public key: {}, {:?}",
+                        hex::encode(pk_bytes),
+                        e
+                    ))
                 })?;
                 let secret_key = (key_function)(&pk_bytes).await?;
                 assert_eq!(&secret_key.sk_to_pk(), &pk);
@@ -216,12 +213,7 @@ impl SpendBundle {
         let sig_refs: Vec<&Signature> = signatures.iter().collect();
         let msg_list: Vec<&[u8]> = msg_list.iter().map(Vec::as_slice).collect();
         let aggsig = AggregateSignature::aggregate(&sig_refs, true)
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!("Failed to aggregate signatures: {e:?}"),
-                )
-            })?
+            .map_err(|e| Error::other(format!("Failed to aggregate signatures: {e:?}")))?
             .to_signature();
         assert!(aggregate_verify_signature(&pk_list, &msg_list, &aggsig));
         self.aggregated_signature = aggsig.to_bytes().into();

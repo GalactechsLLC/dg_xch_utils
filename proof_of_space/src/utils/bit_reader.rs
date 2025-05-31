@@ -50,11 +50,7 @@ impl BitReader {
             Self::with_capacity(0)
         } else {
             let num_bytes = min(big_endian_bytes.len(), bit_size / 8);
-            let mut extra_space = if num_bytes * 8 <= bit_size {
-                bit_size - num_bytes * 8
-            } else {
-                0
-            };
+            let mut extra_space = bit_size.saturating_sub(num_bytes * 8);
             let mut reader = Self::with_capacity(num_bytes / 8 + 1);
             while extra_space >= 64 {
                 reader.append_value(0, 64);

@@ -68,11 +68,10 @@ impl<'a> Simulator<'a> {
             return Err(Error::new(ErrorKind::AlreadyExists, "User already exists"));
         }
         let mnemonic = match menmonic {
-            Some(s) => Mnemonic::parse(s).map_err(|e| Error::new(ErrorKind::Other, e))?,
-            None => Mnemonic::generate(24).map_err(|e| Error::new(ErrorKind::Other, e))?,
+            Some(s) => Mnemonic::parse(s).map_err(Error::other)?,
+            None => Mnemonic::generate(24).map_err(Error::other)?,
         };
-        let secret_key =
-            key_from_mnemonic(&mnemonic).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let secret_key = key_from_mnemonic(&mnemonic).map_err(Error::other)?;
         let chain_user = Arc::new(ChainUser {
             simulator: self,
             wallet: Arc::new(MemoryWallet::create_simulator(

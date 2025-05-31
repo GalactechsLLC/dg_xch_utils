@@ -89,7 +89,7 @@ impl WsClient {
         ) {
             let (cert_bytes, key_bytes) =
                 generate_ca_signed_cert_data(crt.as_bytes(), key.as_bytes())
-                    .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
+                    .map_err(|e| Error::other(format!("OpenSSL Errors: {e:?}")))?;
             Self::build(
                 client_config,
                 node_type,
@@ -103,7 +103,7 @@ impl WsClient {
         } else {
             let (cert_bytes, key_bytes) =
                 generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
-                    .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
+                    .map_err(|e| Error::other(format!("OpenSSL Errors: {e:?}")))?;
             Self::build(
                 client_config,
                 node_type,
@@ -125,7 +125,7 @@ impl WsClient {
         key_data: &[u8],
     ) -> Result<Self, Error> {
         let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("OpenSSL Errors: {e:?}")))?;
+            .map_err(|e| Error::other(format!("OpenSSL Errors: {e:?}")))?;
         Self::build(
             client_config,
             node_type,
@@ -192,16 +192,14 @@ impl WsClient {
                     .dangerous()
                     .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
                     .with_client_auth_cert(certs, key)
-                    .map_err(|e| {
-                        Error::new(ErrorKind::Other, format!("Error Building Client: {e:?}"))
-                    })?,
+                    .map_err(|e| Error::other(format!("Error Building Client: {e:?}")))?,
             ))),
         )
         .await
-        .map_err(|e| Error::new(ErrorKind::Other, format!("Error Connecting Client: {e:?}")))?;
+        .map_err(|e| Error::other(format!("Error Connecting Client: {e:?}")))?;
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (ws_con, mut stream) = WebsocketConnection::new(
-            WebsocketMsgStream::Tls(stream),
+            WebsocketMsgStream::Tls(Box::new(stream)),
             message_handlers,
             peer_id.clone(),
             peers.clone(),
@@ -238,7 +236,7 @@ impl WsClient {
     pub async fn join(self) -> Result<(), Error> {
         self.handle
             .await
-            .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to join farmer: {e:?}")))
+            .map_err(|e| Error::other(format!("Failed to join farmer: {e:?}")))
     }
 
     #[must_use]
@@ -362,8 +360,7 @@ pub async fn oneshot<R: ChiaSerialize>(
     select!(
         () = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
             connection.write().await.unsubscribe(handle.id).await;
-            Err(Error::new(
-                ErrorKind::Other,
+            Err(Error::other(
                 "Timeout before oneshot completed",
             ))
         }
@@ -380,8 +377,7 @@ pub async fn oneshot<R: ChiaSerialize>(
                 })
             } else {
                 connection.write().await.unsubscribe(handle.id).await;
-                Err(Error::new(
-                    ErrorKind::Other,
+                Err(Error::other(
                     "Channel Closed before response received",
                 ))
             }

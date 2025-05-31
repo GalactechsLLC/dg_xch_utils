@@ -590,9 +590,7 @@ pub fn fx_match(y_l: &u64, y_r: &u64) -> bool {
         return false;
     }
     let local_ry = (y_r - group_r * K_BC) as u16;
-    L_TARGETS[group_l & 1][y_l - group_l * K_BC]
-        .iter()
-        .any(|v| *v == local_ry)
+    L_TARGETS[group_l & 1][y_l - group_l * K_BC].contains(&local_ry)
 }
 
 pub fn fx_gen(

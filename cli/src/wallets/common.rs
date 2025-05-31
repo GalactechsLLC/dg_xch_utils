@@ -16,7 +16,7 @@ use num_traits::cast::ToPrimitive;
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::RandomState;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 
 pub struct DerivationRecord {
     pub index: u32,
@@ -75,22 +75,18 @@ where
             pkm_pairs_for_conditions_dict(&conditions_dict, coin_spend.coin, additional_data)?
         {
             let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "Failed to parse Public key: {}, {:?}",
-                        hex::encode(pk_bytes),
-                        e
-                    ),
-                )
+                Error::other(format!(
+                    "Failed to parse Public key: {}, {:?}",
+                    hex::encode(pk_bytes),
+                    e
+                ))
             })?;
             let secret_key = (key_fn)(&pk_bytes).await?;
             let signature = if secret_key.sk_to_pk() != pk {
                 //Found no Secret Key, Check if the Map Contains our Signature
                 pre_calculated_signatures.get(&(pk_bytes, msg)).ok_or_else(|| {
                     info!("Failed to find ({pk_bytes}, {msg}) in map \n {pre_calculated_signatures:#?}");
-                    Error::new(
-                        ErrorKind::Other,
+                    Error::other(
                         format!(
                             "Failed to find Secret Key for Public Key: {}",
                             Bytes48::new(pk.to_bytes())
@@ -103,13 +99,10 @@ where
             };
             assert!(verify_signature(&pk, msg.as_ref(), &signature));
             if !verify_signature(&pk, msg.as_ref(), &signature) {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "Failed to find Validate Signature for Message: {}",
-                        UnsizedBytes::new(msg.as_ref())
-                    ),
-                ));
+                return Err(Error::other(format!(
+                    "Failed to find Validate Signature for Message: {}",
+                    UnsizedBytes::new(msg.as_ref())
+                )));
             }
             pk_list.push(pk_bytes);
             msg_list.push(msg.as_ref().to_vec());
@@ -120,12 +113,7 @@ where
     let sig_refs: Vec<&Signature> = signatures.iter().collect();
     let msg_list: Vec<&[u8]> = msg_list.iter().map(Vec::as_slice).collect();
     let aggsig = AggregateSignature::aggregate(&sig_refs, true)
-        .map_err(|e| {
-            Error::new(
-                ErrorKind::Other,
-                format!("Failed to aggregate signatures: {e:?}"),
-            )
-        })?
+        .map_err(|e| Error::other(format!("Failed to aggregate signatures: {e:?}")))?
         .to_signature();
     assert!(aggregate_verify_signature(&pk_list, &msg_list, &aggsig));
     Ok(SpendBundle {
@@ -164,14 +152,11 @@ where
             pkm_pairs_for_conditions_dict(&conditions_dict, coin_spend.coin, additional_data)?
         {
             let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "Failed to parse Public key: {}, {:?}",
-                        hex::encode(pk_bytes),
-                        e
-                    ),
-                )
+                Error::other(format!(
+                    "Failed to parse Public key: {}, {:?}",
+                    hex::encode(pk_bytes),
+                    e
+                ))
             })?;
             total_messages += 1;
             if let Ok(secret_key) = (key_fn)(&pk_bytes).await {
@@ -187,13 +172,10 @@ where
                 if let Some(signature) = signature {
                     info!("Signing Partial Message");
                     if !verify_signature(&pk, msg.as_ref(), &signature) {
-                        return Err(Error::new(
-                            ErrorKind::Other,
-                            format!(
-                                "Failed to find Validate Signature for Message: {}",
-                                UnsizedBytes::new(msg.as_ref())
-                            ),
-                        ));
+                        return Err(Error::other(format!(
+                            "Failed to find Validate Signature for Message: {}",
+                            UnsizedBytes::new(msg.as_ref())
+                        )));
                     }
                     signed_messages += 1;
                     pk_list.push(pk_bytes);
@@ -211,18 +193,10 @@ where
         let sig_refs: Vec<&Signature> = signatures.iter().collect();
         let msg_list: Vec<&[u8]> = msg_list.iter().map(Vec::as_slice).collect();
         let aggsig = AggregateSignature::aggregate(&sig_refs, true)
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!("Failed to aggregate signatures: {e:?}"),
-                )
-            })?
+            .map_err(|e| Error::other(format!("Failed to aggregate signatures: {e:?}")))?
             .to_signature();
         if !aggregate_verify_signature(&pk_list, &msg_list, &aggsig) {
-            return Err(Error::new(
-                ErrorKind::Other,
-                "Failed to Validate Aggregate Signature",
-            ));
+            return Err(Error::other("Failed to Validate Aggregate Signature"));
         }
         assert!(aggregate_verify_signature(&pk_list, &msg_list, &aggsig));
         SpendBundle {

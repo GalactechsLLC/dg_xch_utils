@@ -7,7 +7,7 @@
 //     .use_colors(true)
 //     .current_level(Level::Info)
 //     .init()
-//     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+//     .map_err(|e| Error::other( format!("{e:?}")))?;
 //     let ssl_path = "/home/luna/ssl_test/";
 //     create_all_ssl(ssl_path.as_ref(), true).unwrap();
 //     Ok(())
@@ -21,7 +21,7 @@
 //     .use_colors(true)
 //     .current_level(Level::Info)
 //     .init()
-//     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+//     .map_err(|e| Error::other( format!("{e:?}")))?;
 //     let path = Path::new("/home/luna/ssl_test/");
 //     create_all_ssl(path, false).unwrap();
 //     if validate_all_ssl(path) {

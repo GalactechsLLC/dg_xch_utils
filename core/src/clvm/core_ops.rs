@@ -2,7 +2,7 @@ use crate::clvm::dialect::Dialect;
 use crate::clvm::sexp::SExp;
 use crate::clvm::utils::{atom, check_arg_count};
 use crate::constants::{NULL_SEXP, ONE_SEXP};
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 
 const FIRST_COST: u64 = 30;
 const IF_COST: u64 = 33;
@@ -70,21 +70,15 @@ pub fn op_raise<D: Dialect>(
     _dialect: &D,
 ) -> Result<(u64, SExp), Error> {
     match args {
-        SExp::Atom(atom) => Err(Error::new(
-            ErrorKind::Other,
-            format!("clvm raise: {:?}", atom),
-        )),
+        SExp::Atom(atom) => Err(Error::other(format!("clvm raise: {:?}", atom))),
         SExp::Pair(pair) => {
             if pair.rest.nullp() {
-                Err(Error::new(
-                    ErrorKind::Other,
-                    format!("clvm raise: {:?}", pair.first.atom()?),
-                ))
+                Err(Error::other(format!(
+                    "clvm raise: {:?}",
+                    pair.first.atom()?
+                )))
             } else {
-                Err(Error::new(
-                    ErrorKind::Other,
-                    format!("clvm raise: {:?}", &pair.rest),
-                ))
+                Err(Error::other(format!("clvm raise: {:?}", &pair.rest)))
             }
         }
     }
