@@ -492,6 +492,7 @@ pub struct PlotPassCounts {
     pub pool_passed: Arc<std::sync::atomic::AtomicU64>,
     pub compressed_passed: Arc<std::sync::atomic::AtomicU64>,
     pub compressed_total: Arc<std::sync::atomic::AtomicU64>,
+    pub proofs_found: Arc<std::sync::atomic::AtomicU64>,
     pub timestamp: OffsetDateTime,
 }
 
@@ -503,6 +504,7 @@ pub struct SerialPlotPassCounts {
     pub pool_passed: u64,
     pub compressed_passed: u64,
     pub compressed_total: u64,
+    pub proofs_found: u64,
     pub timestamp: OffsetDateTime
 }
 impl From<&PlotPassCounts> for SerialPlotPassCounts {
@@ -514,6 +516,7 @@ impl From<&PlotPassCounts> for SerialPlotPassCounts {
             pool_passed: counts.pool_passed.load(Ordering::Relaxed),
             compressed_passed: counts.compressed_passed.load(Ordering::Relaxed),
             compressed_total: counts.compressed_total.load(Ordering::Relaxed),
+            proofs_found: counts.proofs_found.load(Ordering::Relaxed),
             timestamp: counts.timestamp,
         }
     }
@@ -523,15 +526,19 @@ impl From<&PlotPassCounts> for SerialPlotPassCounts {
 pub struct FarmerStats {
     pub challenge_hash: Bytes32,
     pub sp_hash: Bytes32,
-    pub running: i64,
-    pub og_plot_count: i64,
-    pub nft_plot_count: i64,
-    pub compresses_plot_count: i64,
-    pub invalid_plot_count: i64,
-    pub total_plot_space: i64,
-    pub full_node_height: i64,
-    pub full_node_difficulty: i64,
-    pub full_node_synced: i64,
+    pub running: bool,
+    pub og_passed_filter: u64,
+    pub og_plot_count: u64,
+    pub nft_passed_filter: u64,
+    pub nft_plot_count: u64,
+    pub compressed_passed_filter: u64,
+    pub compresses_plot_count: u64,
+    pub invalid_plot_count: u64,
+    pub proofs_found: u64,
+    pub total_plot_space: u64,
+    pub full_node_height: u64,
+    pub full_node_difficulty: u64,
+    pub full_node_synced: bool,
     pub gathered: OffsetDateTime,
 }
 
@@ -540,15 +547,19 @@ impl Default for FarmerStats {
         Self {
             challenge_hash: Default::default(),
             sp_hash: Default::default(),
-            running: 0,
+            running: false,
+            og_passed_filter: 0,
             og_plot_count: 0,
+            nft_passed_filter: 0,
             nft_plot_count: 0,
+            compressed_passed_filter: 0,
             compresses_plot_count: 0,
             invalid_plot_count: 0,
+            proofs_found: 0,
             total_plot_space: 0,
             full_node_height: 0,
             full_node_difficulty: 0,
-            full_node_synced: 0,
+            full_node_synced: false,
             gathered: OffsetDateTime::now_utc(),
         }
     }
