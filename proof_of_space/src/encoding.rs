@@ -193,7 +193,7 @@ pub fn ans_decode_deltas(
     let mut dst = vec![0u8; num_deltas];
     match decompress_using_dtable(&mut dst, num_deltas, input, input_size, dt) {
         Ok(c) => {
-            if dst.iter().any(|d| *d == 0xff) {
+            if dst.contains(&0xff) {
                 Err(Error::new(ErrorKind::InvalidInput, "Bad delta detected"))
             } else {
                 Ok((c, dst))

@@ -211,12 +211,12 @@ impl PlotNFTWallet {
             .fullnode_client
             .get_coin_record_by_name(&plot_nft.launcher_id)
             .await?
-            .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load launcher_coin"))?;
+            .ok_or_else(|| Error::other("Failed to load launcher_coin"))?;
         let last_record = self
             .fullnode_client
             .get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info)
             .await?
-            .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load launcher_coin"))?;
+            .ok_or_else(|| Error::other("Failed to load launcher_coin"))?;
         let last_coin_spend = self.fullnode_client.get_coin_spend(&last_record).await?;
         let next_state = if plot_nft.pool_state.state == FARMING_TO_POOL {
             PoolState {
@@ -278,12 +278,7 @@ impl PlotNFTWallet {
             let fee_tx = self.generate_fee_transaction(fee, None).await?;
             if let Some(fee_bundle) = fee_tx.spend_bundle {
                 signed_spend_bundle = SpendBundle::aggregate(vec![signed_spend_bundle, fee_bundle])
-                    .map_err(|e| {
-                        Error::new(
-                            ErrorKind::Other,
-                            format!("Failed to parse Public key: {e:?}"),
-                        )
-                    })?;
+                    .map_err(|e| Error::other(format!("Failed to parse Public key: {e:?}")))?;
             }
         }
         let additions = signed_spend_bundle.additions()?;
@@ -329,11 +324,11 @@ where
     let launcher_coin = client
         .get_coin_record_by_name(&plot_nft.launcher_id)
         .await?
-        .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load launcher_coin"))?;
+        .ok_or_else(|| Error::other("Failed to load launcher_coin"))?;
     let last_record = client
         .get_coin_record_by_name(&plot_nft.singleton_coin.coin.parent_coin_info)
         .await?
-        .ok_or_else(|| Error::new(ErrorKind::Other, "Failed to load launcher_coin"))?;
+        .ok_or_else(|| Error::other("Failed to load launcher_coin"))?;
     let last_coin_spend = client.get_coin_spend(&last_record).await?;
     let next_state = if plot_nft.pool_state.state == FARMING_TO_POOL {
         PoolState {
@@ -727,8 +722,8 @@ pub async fn submit_next_state_spend_bundle(
             }
             Ok(())
         }
-        TXStatus::PENDING => Err(Error::new(ErrorKind::Other, "Transaction is pending")),
-        TXStatus::FAILED => Err(Error::new(ErrorKind::Other, "Failed to submit transaction")),
+        TXStatus::PENDING => Err(Error::other("Transaction is pending")),
+        TXStatus::FAILED => Err(Error::other("Failed to submit transaction")),
     }
 }
 
@@ -781,7 +776,7 @@ pub async fn submit_next_state_spend_bundle_with_key(
             }
             Ok(())
         }
-        TXStatus::PENDING => Err(Error::new(ErrorKind::Other, "Transaction is pending")),
-        TXStatus::FAILED => Err(Error::new(ErrorKind::Other, "Failed to submit transaction")),
+        TXStatus::PENDING => Err(Error::other("Transaction is pending")),
+        TXStatus::FAILED => Err(Error::other("Failed to submit transaction")),
     }
 }

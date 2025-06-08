@@ -13,7 +13,7 @@ use crate::utils::hash_256;
 use log::warn;
 use num_bigint::BigInt;
 use std::hash::RandomState;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 
 pub fn additions_for_solution(
     coin_name: Bytes32,
@@ -65,11 +65,11 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
         for cwa in v {
             if let ConditionWithArgs::AggSigUnsafe(key, msg) = *cwa {
                 if msg.data().ends_with(additional_data) {
-                    return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+                    return Err(Error::other("Invalid Condition"));
                 }
                 ret.push((key, msg));
             } else {
-                return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+                return Err(Error::other("Invalid Condition"));
             }
         }
     }
@@ -81,7 +81,7 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
                 buf.extend(additional_data);
                 ret.push((key, Message::new(buf)?));
             } else {
-                return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+                return Err(Error::other("Invalid Condition"));
             }
         }
     }
@@ -98,7 +98,7 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
                 buf.extend(additional_data);
                 ret.push((key, Message::new(buf)?));
             } else {
-                return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+                return Err(Error::other("Invalid Condition"));
             }
         }
     }
@@ -122,7 +122,7 @@ pub fn verify_agg_sig_unsafe_message(
         buffer.push(code as u8);
         forbidden_message_suffix = Bytes32::from(hash_256(&buffer));
         if message.data().ends_with(forbidden_message_suffix.as_ref()) {
-            return Err(Error::new(ErrorKind::Other, "Invalid Condition"));
+            return Err(Error::other("Invalid Condition"));
         }
         buffer.pop();
     }

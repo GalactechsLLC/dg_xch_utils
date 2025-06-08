@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_core"
-version = "2.1.0"
+version = "2.1.2"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
@@ -14,8 +14,8 @@ bls12_381 = "0.8.0"
 blst = { version = "0.3.14", features = ["portable"] }
 bytes = "1.5.0"
 der = "0.7.8"
-dg_xch_macros = {path = "../macros", version="2.0.3"}
-dg_xch_serialize = {path = "../serialize", version="2.0.3"}
+dg_xch_macros = {path = "../macros", version="2.1.2"}
+dg_xch_serialize = {path = "../serialize", version="2.1.2"}
 futures-util = "0.3.31"
 hex = "0.4.3"
 hkdf = "0.12.4"
@@ -27,7 +27,7 @@ num-integer = "0.1.46"
 num-traits = "0.2.19"
 once_cell = "1.20.3"
 parking_lot = "0.12.3"
-portfu = { git = "https://github.com/GalactechsLLC/portfu.git", branch = "pf_admin_updates"}
+portfu = { version = "1.3.0"}
 prometheus = {version="0.13.4", features=["protobuf"], optional = true}
 rand = "0.8.5"
 regex = "1.11.1"
@@ -37,7 +37,7 @@ rsa = { version = "0.9.6", features = ["std", "pem", "sha2"] }
 secrecy = "0.10.3"
 serde = { version = "1.0.218", features = ["derive"] }
 sha2 = { version = "0.10.8", features = ["oid"] }
-sqlx = {version= "0.8.3", features=["macros", "json", "time", "runtime-tokio", "tls-rustls-aws-lc-rs"], optional = true}
+sqlx = {version= "0.8.6", features=["macros", "json", "time", "runtime-tokio", "tls-rustls-aws-lc-rs"], optional = true}
 time = { version = "0.3.37", features = ["serde"]}
 tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
 tokio-tungstenite = {version = "0.26.2", features = ["rustls", "rustls-tls-webpki-roots"] }

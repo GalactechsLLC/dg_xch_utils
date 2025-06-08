@@ -198,10 +198,7 @@ pub fn get_seconds_and_delayed_puzhash_from_p2_singleton_puzzle(
         Ok((_, args)) => {
             let as_list = args.as_list();
             if as_list.len() < 5 {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "Failed to unpack inner puzzle",
-                ));
+                return Err(Error::other("Failed to unpack inner puzzle"));
             }
             let seconds_delay = as_list[3].clone();
             let delayed_puzzle_hash = as_list[4].clone();
@@ -458,7 +455,7 @@ pub fn get_pubkey_from_member_inner_puzzle(inner_puzzle: &Program) -> Result<Byt
             .as_atom()
             .unwrap_or_else(|| Program::new(Vec::new()))
             .try_into()?),
-        Err(_) => Err(Error::new(ErrorKind::Other, "Unable to extract pubkey")),
+        Err(_) => Err(Error::other("Unable to extract pubkey")),
     }
 }
 
@@ -470,10 +467,7 @@ pub fn uncurry_pool_member_inner_puzzle(
             Ok((inner_f, args)) => {
                 let mut as_list: Vec<Program> = args.as_list().into_iter().take(5).collect();
                 if as_list.len() < 5 {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        "Failed to unpack inner puzzle",
-                    ));
+                    return Err(Error::other("Failed to unpack inner puzzle"));
                 }
                 let escape_puzzlehash = as_list.remove(4);
                 let pool_reward_prefix = as_list.remove(3);
@@ -489,14 +483,10 @@ pub fn uncurry_pool_member_inner_puzzle(
                     escape_puzzlehash,
                 ))
             }
-            Err(_) => Err(Error::new(
-                ErrorKind::Other,
-                "Failed to unpack inner puzzle",
-            )),
+            Err(_) => Err(Error::other("Failed to unpack inner puzzle")),
         }
     } else {
-        Err(Error::new(
-            ErrorKind::Other,
+        Err(Error::other(
             "Attempting to unpack a non-waitingroom inner puzzle",
         ))
     }
@@ -510,10 +500,7 @@ pub fn uncurry_pool_waitingroom_inner_puzzle(
             Ok((_, args)) => {
                 let as_list = args.as_list();
                 if as_list.len() < 5 {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        "Failed to unpack inner puzzle",
-                    ));
+                    return Err(Error::other("Failed to unpack inner puzzle"));
                 }
                 let target_puzzle_hash = as_list[0].clone();
                 let p2_singleton_hash = as_list[1].clone();
@@ -526,14 +513,12 @@ pub fn uncurry_pool_waitingroom_inner_puzzle(
                     p2_singleton_hash,
                 ))
             }
-            Err(e) => Err(Error::new(
-                ErrorKind::Other,
-                format!("Failed to unpack inner puzzle: {e:?}"),
-            )),
+            Err(e) => Err(Error::other(format!(
+                "Failed to unpack inner puzzle: {e:?}"
+            ))),
         }
     } else {
-        Err(Error::new(
-            ErrorKind::Other,
+        Err(Error::other(
             "Attempting to unpack a non-waitingroom inner puzzle",
         ))
     }

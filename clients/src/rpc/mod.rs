@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::env;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -81,19 +81,19 @@ pub fn get_client(ssl_path: &Option<ClientSSLConfig>, timeout: u64) -> Result<Cl
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
         .with_client_auth_cert(certs, key)
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?;
+        .map_err(|e| Error::other(format!("{e:?}")))?;
     ClientBuilder::new()
         .use_preconfigured_tls(config)
         .timeout(Duration::from_secs(timeout))
         .build()
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))
+        .map_err(|e| Error::other(format!("{e:?}")))
 }
 
 pub fn get_http_client(timeout: u64) -> Result<Client, Error> {
     ClientBuilder::new()
         .timeout(Duration::from_secs(timeout))
         .build()
-        .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))
+        .map_err(|e| Error::other(format!("{e:?}")))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,14 +104,11 @@ pub struct ChiaRpcError {
 
 impl From<ChiaRpcError> for Error {
     fn from(error: ChiaRpcError) -> Self {
-        Error::new(
-            ErrorKind::Other,
-            format!(
-                "Success: {}, Message: {}",
-                error.success,
-                error.error.unwrap_or_default()
-            ),
-        )
+        Error::other(format!(
+            "Success: {}, Message: {}",
+            error.success,
+            error.error.unwrap_or_default()
+        ))
     }
 }
 

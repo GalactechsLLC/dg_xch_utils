@@ -423,7 +423,7 @@ pub async fn phase1(
             tmp_files[table_index + 1].Truncate(right_writer);
         }
         if matches != right_writer_count {
-            return Err(Error::new(ErrorKind::Other, format!(
+            return Err(Error::other( format!(
                 "Matches do not match with number of write entries: Matches {matches} vs Writer Count {right_writer_count}"
             )));
         }
