@@ -9,9 +9,7 @@ use crate::clvm::condition_utils::{
     agg_sig_additional_data_for_opcode, conditions_dict_for_solution,
 };
 use crate::clvm::program::Program;
-use crate::clvm::utils::{
-    COST_CONDITIONS, DISABLE_SIGNATURE_VALIDATION, INFINITE_COST, NO_UNKNOWN_OPS,
-};
+use crate::clvm::utils::{COST_CONDITIONS, DISABLE_SIGNATURE_VALIDATION, IGNORE_ASSERT_CONCURRENT_NULL, INFINITE_COST, NO_UNKNOWN_OPS};
 use crate::consensus::constants::{ConsensusConstants, MAINNET};
 use crate::consensus::{AGG_SIG_COST, CREATE_COIN_COST};
 use crate::formatting::u64_to_bytes;
@@ -497,12 +495,23 @@ impl SpendBundle {
                         ));
                     }
                     ConditionWithArgs::ReceiveMessage(m_type, message_address, message) => {
-                        state.messages_received.push((
-                            *m_type,
-                            *message_address,
-                            *message,
-                            spend.coin.coin_id(),
-                        ));
+                        if *message_address == Bytes32::default() {
+                            if flags & IGNORE_ASSERT_CONCURRENT_NULL == 0 {
+                                state.messages_received.push((
+                                    *m_type,
+                                    *message_address,
+                                    *message,
+                                    spend.coin.coin_id(),
+                                ))
+                            }
+                        } else {
+                            state.messages_received.push((
+                                *m_type,
+                                *message_address,
+                                *message,
+                                spend.coin.coin_id(),
+                            ));
+                        }
                     }
                     ConditionWithArgs::CreatePuzzleAnnouncement(message) => {
                         if flags & COST_CONDITIONS == 0 {
@@ -745,10 +754,13 @@ impl SpendBundle {
             }
         }
 
-        if state.messages_received != state.messages_sent {
+        if state.messages_received.len() != state.messages_sent.len() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                "Send Messages amount != Receive Messages amount",
+                format!("Sent Messages {} != Received Messages {}",
+                    state.messages_received.len(),
+                    state.messages_sent.len()
+                )
             ));
         }
         for (send_type, send_target, send_message, send_source) in &state.messages_sent {
