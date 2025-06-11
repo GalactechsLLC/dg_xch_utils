@@ -9,7 +9,10 @@ use crate::clvm::condition_utils::{
     agg_sig_additional_data_for_opcode, conditions_dict_for_solution,
 };
 use crate::clvm::program::Program;
-use crate::clvm::utils::{COST_CONDITIONS, DISABLE_SIGNATURE_VALIDATION, IGNORE_ASSERT_CONCURRENT_NULL, INFINITE_COST, NO_UNKNOWN_OPS};
+use crate::clvm::utils::{
+    COST_CONDITIONS, DISABLE_SIGNATURE_VALIDATION, IGNORE_ASSERT_CONCURRENT_NULL, INFINITE_COST,
+    NO_UNKNOWN_OPS,
+};
 use crate::consensus::constants::{ConsensusConstants, MAINNET};
 use crate::consensus::{AGG_SIG_COST, CREATE_COIN_COST};
 use crate::formatting::u64_to_bytes;
@@ -749,10 +752,11 @@ impl SpendBundle {
         if state.messages_received.len() != state.messages_sent.len() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("Sent Messages {} != Received Messages {}",
+                format!(
+                    "Sent Messages {} != Received Messages {}",
                     state.messages_received.len(),
                     state.messages_sent.len()
-                )
+                ),
             ));
         }
         for (send_type, send_target, send_message, send_source) in &state.messages_sent {

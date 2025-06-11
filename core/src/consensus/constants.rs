@@ -76,6 +76,7 @@ pub struct ConsensusConstants {
     //This is NOT standard, but makes some things easier
     pub bech32_prefix: String,
     pub is_testnet: bool,
+    pub simulated: bool,
 }
 impl Default for ConsensusConstants {
     fn default() -> Self {
@@ -142,8 +143,17 @@ pub static MAINNET: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         plot_filter_32_height: 20_643_000,
         bech32_prefix: String::from("xch"),
         is_testnet: false,
+        simulated: false,
     })
 });
+
+pub static SIMULATOR: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
+    Arc::new(ConsensusConstants {
+        simulated: true,
+        ..Default::default()
+    })
+});
+
 pub static TESTNET_0: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
         genesis_challenge: Bytes32::from_str(

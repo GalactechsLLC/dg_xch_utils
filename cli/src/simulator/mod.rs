@@ -8,7 +8,7 @@ use dg_xch_clients::api::simulator::SimulatorAPI;
 use dg_xch_clients::rpc::simulator::SimulatorClient;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::wallet_type::WalletType;
-use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_core::consensus::constants::{ConsensusConstants, SIMULATOR};
 use dg_xch_keys::{decode_puzzle_hash, key_from_mnemonic};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -42,7 +42,7 @@ impl<'a> Simulator<'a> {
         network: Option<ConsensusConstants>,
     ) -> Result<Self, Error> {
         Ok(Self {
-            network: network.unwrap_or_default(),
+            network: network.unwrap_or((**SIMULATOR).clone()),
             client: SimulatorClient::new(host, port, timeout, additional_headers)?,
             run: Arc::new(AtomicBool::new(false)),
             background: Mutex::new(None),
