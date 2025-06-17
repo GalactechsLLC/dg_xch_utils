@@ -56,6 +56,7 @@ impl FullnodeClient {
         ssl_path: Option<ClientSSLConfig>,
         additional_headers: &Option<HashMap<String, String>>,
     ) -> Result<Self, Error> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         Ok(FullnodeClient {
             client: get_client(&ssl_path, timeout)?,
             secure: true,
@@ -67,6 +68,7 @@ impl FullnodeClient {
         })
     }
     pub fn new_simulator(host: &str, port: u16, timeout: u64) -> Result<Self, Error> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         Ok(FullnodeClient {
             client: get_http_client(timeout)?,
             secure: false,

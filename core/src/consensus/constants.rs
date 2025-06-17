@@ -368,6 +368,7 @@ pub static TESTNET_11: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 pub static CONSENSUS_CONSTANTS_MAP: Lazy<HashMap<String, Arc<ConsensusConstants>>> =
     Lazy::new(|| {
         HashMap::from([
+            ("simulator".to_string(), SIMULATOR.clone()),
             ("testnet0".to_string(), TESTNET_0.clone()),
             ("testnet2".to_string(), TESTNET_2.clone()),
             ("testnet3".to_string(), TESTNET_3.clone()),

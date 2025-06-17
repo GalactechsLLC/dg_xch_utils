@@ -2,6 +2,7 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::condition_with_args::{ConditionWithArgs, Message};
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
+use crate::blockchain::unsized_bytes::UnsizedBytes;
 use crate::blockchain::utils::{pkm_pairs_for_conditions_dict, verify_agg_sig_unsafe_message};
 use crate::clvm::bls_bindings;
 use crate::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
@@ -189,7 +190,7 @@ impl SpendBundle {
             )?
             .0;
             //Create signature
-            for (pk_bytes, msg) in pkm_pairs_for_conditions_dict(
+            for (code, pk_bytes, msg) in pkm_pairs_for_conditions_dict(
                 &conditions_dict,
                 coin_spend.coin,
                 &constants.agg_sig_me_additional_data,
@@ -204,7 +205,14 @@ impl SpendBundle {
                 let secret_key = (key_function)(&pk_bytes).await?;
                 assert_eq!(&secret_key.sk_to_pk(), &pk);
                 let signature = bls_bindings::sign(&secret_key, msg.as_ref());
-                assert!(verify_signature(&pk, msg.as_ref(), &signature));
+                if !verify_signature(&pk, msg.as_ref(), &signature) {
+                    return Err(Error::other(format!(
+                        "PH({}) Failed to Validate Signature for Message: {} - {}",
+                        pk_bytes,
+                        code,
+                        UnsizedBytes::new(msg.as_ref())
+                    )));
+                }
                 pk_list.push(pk_bytes);
                 msg_list.push(msg.as_ref().to_vec());
                 signatures.push(signature);

@@ -59,7 +59,7 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
     conditions_dict: &ConditionsDict<S>,
     coin: Coin,
     additional_data: &[u8],
-) -> Result<Vec<(Bytes48, Message)>, Error> {
+) -> Result<Vec<(ConditionOpcode, Bytes48, Message)>, Error> {
     let mut ret = vec![];
     if let Some(v) = conditions_dict.get(&ConditionOpcode::AggSigUnsafe) {
         for cwa in v {
@@ -67,7 +67,7 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
                 if msg.data().ends_with(additional_data) {
                     return Err(Error::other("Invalid Condition"));
                 }
-                ret.push((key, msg));
+                ret.push((ConditionOpcode::AggSigUnsafe, key, msg));
             } else {
                 return Err(Error::other("Invalid Condition"));
             }
@@ -79,7 +79,7 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
                 let mut buf = msg.data().to_vec();
                 buf.extend(coin.name());
                 buf.extend(additional_data);
-                ret.push((key, Message::new(buf)?));
+                ret.push((ConditionOpcode::AggSigMe, key, Message::new(buf)?));
             } else {
                 return Err(Error::other("Invalid Condition"));
             }
@@ -96,7 +96,7 @@ pub fn pkm_pairs_for_conditions_dict<S: std::hash::BuildHasher + Default>(
                 let mut buf = msg.data().to_vec();
                 buf.extend(coin.puzzle_hash);
                 buf.extend(additional_data);
-                ret.push((key, Message::new(buf)?));
+                ret.push((ConditionOpcode::AggSigPuzzle, key, Message::new(buf)?));
             } else {
                 return Err(Error::other("Invalid Condition"));
             }

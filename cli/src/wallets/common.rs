@@ -71,7 +71,7 @@ where
         )?
         .0;
         //Create signature
-        for (pk_bytes, msg) in
+        for (code, pk_bytes, msg) in
             pkm_pairs_for_conditions_dict(&conditions_dict, coin_spend.coin, additional_data)?
         {
             let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
@@ -97,10 +97,10 @@ where
                 assert_eq!(&secret_key.sk_to_pk(), &pk);
                 bls_bindings::sign(&secret_key, msg.as_ref())
             };
-            assert!(verify_signature(&pk, msg.as_ref(), &signature));
             if !verify_signature(&pk, msg.as_ref(), &signature) {
                 return Err(Error::other(format!(
-                    "Failed to find Validate Signature for Message: {}",
+                    "Failed to find Validate Signature for Message: {} - {}",
+                    code,
                     UnsizedBytes::new(msg.as_ref())
                 )));
             }
@@ -148,7 +148,7 @@ where
         //Create signature
         let mut total_messages = 0;
         let mut signed_messages = 0;
-        for (pk_bytes, msg) in
+        for (code, pk_bytes, msg) in
             pkm_pairs_for_conditions_dict(&conditions_dict, coin_spend.coin, additional_data)?
         {
             let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
@@ -173,7 +173,7 @@ where
                     info!("Signing Partial Message");
                     if !verify_signature(&pk, msg.as_ref(), &signature) {
                         return Err(Error::other(format!(
-                            "Failed to find Validate Signature for Message: {}",
+                            "Failed to find Validate Signature for Message: {code} - {}",
                             UnsizedBytes::new(msg.as_ref())
                         )));
                     }
