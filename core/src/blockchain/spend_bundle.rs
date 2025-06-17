@@ -275,7 +275,7 @@ impl SpendBundle {
                 }
                 //Check Costs
                 match condition_with_args {
-                    ConditionWithArgs::Remark | ConditionWithArgs::Unknown => {}
+                    ConditionWithArgs::Remark(_) | ConditionWithArgs::Unknown => {}
                     ConditionWithArgs::CreateCoin(puzzle_hash, amount, _) => {
                         if max_cost < CREATE_COIN_COST {
                             return Err(Error::new(ErrorKind::InvalidInput, "Max Cost Exceeded"));
@@ -720,10 +720,13 @@ impl SpendBundle {
             state.output_conditions.extend(conditions_with_args);
         }
         for coin_id in state.asserted_concurrent_spend {
+            if coin_id == Bytes32::default() && flags & IGNORE_ASSERT_CONCURRENT_NULL == IGNORE_ASSERT_CONCURRENT_NULL {
+                continue;
+            }
             if !state.coins_spent.iter().any(|c| c.coin_id() == coin_id) {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    "Invalid Concurrent Spend",
+                    format!("Invalid Concurrent Spend: Missing Coin {coin_id}"),
                 ));
             }
         }

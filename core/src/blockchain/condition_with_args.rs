@@ -1,5 +1,6 @@
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
+use crate::clvm::parser::sexp_to_bytes;
 use crate::clvm::sexp::{AtomBuf, IntoSExp, SExp};
 use crate::constants::NULL_SEXP;
 use crate::formatting::{number_from_slice, u32_from_slice, u64_from_bigint};
@@ -105,7 +106,7 @@ impl ChiaSerialize for Message {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ConditionWithArgs {
     Unknown,
-    Remark,
+    Remark(Message),
     AggSigParent(Bytes48, Message),
     AggSigPuzzle(Bytes48, Message),
     AggSigAmount(Bytes48, Message),
@@ -179,7 +180,7 @@ impl ConditionWithArgs {
     pub fn op_code_with_args(&self) -> (ConditionOpcode, Vec<SExp>) {
         match *self {
             ConditionWithArgs::Unknown => (ConditionOpcode::Unknown, vec![]),
-            ConditionWithArgs::Remark => (ConditionOpcode::Remark, vec![]),
+            ConditionWithArgs::Remark(msg) => (ConditionOpcode::Remark, vec![msg.to_sexp()]),
             ConditionWithArgs::AggSigParent(key, msg) => (
                 ConditionOpcode::AggSigParent,
                 vec![key.to_sexp(), msg.to_sexp()],
@@ -312,7 +313,7 @@ impl ConditionWithArgs {
     pub fn op_code(&self) -> ConditionOpcode {
         match self {
             ConditionWithArgs::Unknown => ConditionOpcode::Unknown,
-            ConditionWithArgs::Remark => ConditionOpcode::Remark,
+            ConditionWithArgs::Remark(_) => ConditionOpcode::Remark,
             ConditionWithArgs::AggSigParent(_, _) => ConditionOpcode::AggSigParent,
             ConditionWithArgs::AggSigPuzzle(_, _) => ConditionOpcode::AggSigPuzzle,
             ConditionWithArgs::AggSigAmount(_, _) => ConditionOpcode::AggSigAmount,
@@ -374,9 +375,11 @@ impl ChiaSerialize for ConditionWithArgs {
                 bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::Unknown, version));
                 bytes
             }
-            ConditionWithArgs::Remark => {
+            ConditionWithArgs::Remark(msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::Remark, version));
+                let vars = vec![ChiaSerialize::to_bytes(msg, version)];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
                 bytes
             }
             ConditionWithArgs::AggSigParent(key, msg) => {
@@ -775,7 +778,17 @@ fn from_opcode_with_args(
     //This means args are fetched in reverse order from the array
     Ok(match op_code {
         ConditionOpcode::Unknown => ConditionWithArgs::Unknown,
-        ConditionOpcode::Remark => ConditionWithArgs::Remark,
+        ConditionOpcode::Remark => {
+            if args.len() != 1 {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "Invalid Vars for Remark",
+                ));
+            } else {
+                let message = Message::new(args.pop().unwrap_or_default())?;
+                ConditionWithArgs::Remark(message)
+            }
+        }
         ConditionOpcode::AggSigParent => {
             if args.len() != 2 {
                 return Err(Error::new(
@@ -1251,8 +1264,12 @@ pub fn op_code_with_args_from_sexp(sexp: &SExp) -> Result<(ConditionOpcode, Vec<
                 }
             }
             SExp::Pair(_) => {
-                warn!("Got pair in opcode({}) args: {:?}", opcode, arg);
-                break;
+                if opcode == ConditionOpcode::Remark {
+                    vars.push(sexp_to_bytes(arg)?);
+                } else {
+                    warn!("Got pair in opcode({}) args: {:?}", opcode, arg);
+                    break;
+                }
             }
         }
     }
