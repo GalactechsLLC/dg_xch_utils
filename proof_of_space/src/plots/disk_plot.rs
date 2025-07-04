@@ -136,9 +136,7 @@ impl DiskPlot<fs::File> {
         info!("Buffer size is: {buf_megabytes} MiB");
         info!("Using {num_buckets} buckets");
         info!("Final Directory is: {}", final_dir.display());
-        info!(
-            "Using {num_threads} threads of stripe size {stripe_size}"
-        );
+        info!("Using {num_threads} threads of stripe size {stripe_size}");
         info!("Process ID is: {}", std::process::id());
         let mut tmp_1_filenames: Vec<PathBuf> = Vec::new();
         tmp_1_filenames.push(Path::new(tmp1_dir).join(format!("{}.sort.tmp", filename.display())));
@@ -185,9 +183,7 @@ impl DiskPlot<fs::File> {
         if final_filename.exists() {
             fs::remove_file(&final_filename).await?;
         }
-        info!(
-            "Starting phase 1/4: Forward Propagation into tmp files: {final_dir:?}"
-        );
+        info!("Starting phase 1/4: Forward Propagation into tmp files: {final_dir:?}");
         let phase_1_start = Instant::now();
         // let table_size = phase1(
         //

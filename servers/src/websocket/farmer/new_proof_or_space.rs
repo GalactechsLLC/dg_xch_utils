@@ -309,9 +309,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
         };
         if required_iters >= calculate_sp_interval_iters(constants, constants.pool_sub_slot_iters)?
         {
-            debug!(
-                "Proof of space not good enough for pool {pool_url}: {pool_dif:?}"
-            );
+            debug!("Proof of space not good enough for pool {pool_url}: {pool_dif:?}");
             return Ok(());
         }
         let Some(Some(auth_token_timeout)) = self

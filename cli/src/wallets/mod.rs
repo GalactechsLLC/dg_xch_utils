@@ -925,12 +925,8 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                         .map(|v| { hex::encode(v) })
                         .collect::<Vec<String>>()
                 );
-                info!(
-                    "coin_announcements_to_assert: {coin_announcements_to_assert:?}"
-                );
-                info!(
-                    "puzzle_announcements_to_assert: {puzzle_announcements_to_assert:?}"
-                );
+                info!("coin_announcements_to_assert: {coin_announcements_to_assert:?}");
+                info!("puzzle_announcements_to_assert: {puzzle_announcements_to_assert:?}");
                 let puzzle = self.puzzle_for_puzzle_hash(&coin.puzzle_hash).await?;
                 let solution = self.make_solution(
                     &primaries,

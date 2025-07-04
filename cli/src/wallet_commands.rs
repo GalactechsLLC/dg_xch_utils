@@ -339,9 +339,7 @@ async fn wait_for_num_blocks(client: Arc<FullnodeClient>, height: u32, timeout_s
                 }
             }
             Err(e) => {
-                error!(
-                    "Error Checking PlotNFT State, Waiting and Trying again. {e:?}"
-                );
+                error!("Error Checking PlotNFT State, Waiting and Trying again. {e:?}");
             }
         }
     }

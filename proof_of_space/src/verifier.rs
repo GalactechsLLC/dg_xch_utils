@@ -117,9 +117,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
         start_c3park += min(c3park_count, (c3park_count as f64 * start_offset) as usize);
         c3park_count = c3park_end - start_c3park;
     }
-    info!(
-        "Index: {index} Park range: {start_c3park}..{c3park_end}  Park count: {c3park_count}"
-    );
+    info!("Index: {index} Park range: {start_c3park}..{c3park_end}  Park count: {c3park_count}");
     let mut f7_entries;
     let mut fx: [u64; PROOF_X_COUNT] = [0; PROOF_X_COUNT];
     let mut meta: Vec<BitReader> = Vec::with_capacity(PROOF_X_COUNT);
