@@ -186,7 +186,7 @@ where
                 }
             }
         }
-        info!("Signed {}/{} messages", signed_messages, total_messages);
+        info!("Signed {signed_messages}/{total_messages} messages");
     }
     let spend_bundle = if !signatures.is_empty() {
         info!("Creating Aggregate signature");

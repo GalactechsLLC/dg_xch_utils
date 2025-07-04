@@ -68,7 +68,7 @@ pub fn create_cold_wallet() -> Result<(), Error> {
             &puzzle_hash_for_pk(Bytes48::from(wallet_sk.sk_to_pk().to_bytes()))?,
             "xch",
         )?;
-        info!("Index: {}, Address: {}", i, address);
+        info!("Index: {i}, Address: {address}");
     }
     Ok(())
 }
@@ -91,9 +91,9 @@ pub fn keys_for_coinspends(
             let puz_hash = puzzle_hash_for_pk(pub_key.into())?;
             let synthetic_secret_key =
                 calculate_synthetic_secret_key(&sec_key, *DEFAULT_HIDDEN_PUZZLE_HASH)?;
-            info!("MasterSK: {:?}", master_sk);
-            info!("WalletSK: {:?}", sec_key);
-            info!("SyntheticSK: {:?}", synthetic_secret_key);
+            info!("MasterSK: {master_sk:?}");
+            info!("WalletSK: {sec_key:?}");
+            info!("SyntheticSK: {synthetic_secret_key:?}");
             key_cache.insert(pub_key.into(), synthetic_secret_key.clone());
             puz_key_cache.insert(puz_hash);
             if c.coin.puzzle_hash == puz_hash {
@@ -340,8 +340,7 @@ async fn wait_for_num_blocks(client: Arc<FullnodeClient>, height: u32, timeout_s
             }
             Err(e) => {
                 error!(
-                    "Error Checking PlotNFT State, Waiting and Trying again. {:?}",
-                    e
+                    "Error Checking PlotNFT State, Waiting and Trying again. {e:?}"
                 );
             }
         }
@@ -378,7 +377,7 @@ async fn create_and_validate_target_state(
             "Current State equal to Target State: {:?}",
             &target_pool_state
         );
-        error!("{}", error_message);
+        error!("{error_message}");
         return Err(Error::new(ErrorKind::InvalidData, error_message));
     }
     info!(
@@ -400,14 +399,14 @@ async fn get_pool_info(pool_url: &str) -> Result<GetPoolInfoResponse, Error> {
 fn validate_pool_info(pool_info: &GetPoolInfoResponse) -> Result<(), Error> {
     if pool_info.relative_lock_height > 1000 {
         let error_message = "Relative lock height too high for this pool, cannot join";
-        error!("{}", error_message);
+        error!("{error_message}");
         Err(Error::new(ErrorKind::InvalidData, error_message))
     } else if pool_info.protocol_version != POOL_PROTOCOL_VERSION {
         let error_message = format!(
             "Incorrect version: {}, should be {POOL_PROTOCOL_VERSION}",
             pool_info.protocol_version
         );
-        error!("{}", error_message);
+        error!("{error_message}");
         Err(Error::new(ErrorKind::InvalidData, error_message))
     } else {
         Ok(())
@@ -427,7 +426,7 @@ pub async fn get_plotnft_ready_state(
     let peak = peak.unwrap();
     match get_plotnft_by_launcher_id(client, launcher_id, last_known_coin_name).await? {
         None => {
-            error!("Failed to find PlotNFT with LauncherID: {}", launcher_id);
+            error!("Failed to find PlotNFT with LauncherID: {launcher_id}");
             Ok(false)
         }
         Some(plotnft) => {

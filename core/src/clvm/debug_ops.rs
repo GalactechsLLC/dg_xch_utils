@@ -20,15 +20,15 @@ pub fn op_print<D: Dialect>(
                 let mut buffer = String::new();
                 match args.first() {
                     Some(arg) => {
-                        buffer.extend(format!("{}:", arg).chars());
+                        buffer.extend(format!("{arg}:").chars());
                         let mut cost = BOOL_BASE_COST * 2;
                         let iter = args.iter().skip(1);
                         for arg in iter {
                             cost += BOOL_BASE_COST;
-                            buffer.extend(format!(" {},", arg).chars());
+                            buffer.extend(format!(" {arg},",).chars());
                         }
                         buffer.remove(buffer.len() - 1);
-                        info!("CLVM DEBUG: {}", buffer);
+                        info!("CLVM DEBUG: {buffer}");
                         Ok((cost, NULL_SEXP.clone()))
                     }
                     None => Ok((BOOL_BASE_COST, NULL_SEXP.clone())),
@@ -67,5 +67,5 @@ fn test_print_ops() {
         .to_program()
         .run(INFINITE_COST, 0, &Program::to(vec![50]))
         .unwrap();
-    info!("Output {:?}", results);
+    info!("Output {results:?}");
 }

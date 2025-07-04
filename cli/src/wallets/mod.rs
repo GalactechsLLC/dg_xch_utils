@@ -223,7 +223,7 @@ pub trait WalletStore {
             }
             valid_spendable_coins.sort_by(|f, s| f.amount.cmp(&s.amount));
             if let Some(c) = check_for_exact_match(&valid_spendable_coins, amount) {
-                info!("Selected coin with an exact match: {:?}", c);
+                info!("Selected coin with an exact match: {c:?}");
                 Ok(HashSet::from([c]))
             } else {
                 let mut smaller_coin_sum = 0; //coins smaller than target.
@@ -238,7 +238,7 @@ pub trait WalletStore {
                 }
                 if smaller_coin_sum == amount && smaller_coins.len() < max_num_coins && amount != 0
                 {
-                    debug!("Selected all smaller coins because they equate to an exact match of the target: {:?}", smaller_coins);
+                    debug!("Selected all smaller coins because they equate to an exact match of the target: {smaller_coins:?}");
                     Ok(smaller_coins.iter().copied().collect())
                 } else if smaller_coin_sum < amount {
                     let smallest_coin =
@@ -257,7 +257,7 @@ pub trait WalletStore {
                         max_num_coins,
                         None,
                     );
-                    debug!("Selected coins from knapsack algorithm: {:?}", coin_set);
+                    debug!("Selected coins from knapsack algorithm: {coin_set:?}");
                     if coin_set.is_none() {
                         coin_set = sum_largest_coins(amount as u128, &smaller_coins);
                         if coin_set.is_none()
@@ -282,7 +282,7 @@ pub trait WalletStore {
                 } else {
                     match select_smallest_coin_over_target(amount, &valid_spendable_coins) {
                         Some(coin) => {
-                            debug!("Resorted to selecting smallest coin over target due to dust.: {:?}", coin);
+                            debug!("Resorted to selecting smallest coin over target due to dust.: {coin:?}");
                             Ok(HashSet::from([coin]))
                         }
                         None => Err(Error::new(
@@ -780,7 +780,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             if total_amount > max_send {
                 return Err(Error::new(ErrorKind::InvalidInput, format!("Can't send more than {max_send} mojos in a single transaction, got {total_amount}")));
             }
-            debug!("Max send amount: {}", max_send);
+            debug!("Max send amount: {max_send}");
         }
         let coins_set: HashSet<Coin>;
         if coins.is_none() {
@@ -917,7 +917,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                 let coin_announcements = HashSet::from([Bytes32::new(message)]);
                 let coin_announcements_to_assert = HashSet::from_iter(coin_announcements_bytes);
                 let puzzle_announcements_to_assert = HashSet::from_iter(puzzle_announcements_bytes);
-                info!("Primaries: {:?}", primaries);
+                info!("Primaries: {primaries:?}");
                 info!(
                     "coin_announcements: {:?}",
                     coin_announcements
@@ -926,12 +926,10 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                         .collect::<Vec<String>>()
                 );
                 info!(
-                    "coin_announcements_to_assert: {:?}",
-                    coin_announcements_to_assert
+                    "coin_announcements_to_assert: {coin_announcements_to_assert:?}"
                 );
                 info!(
-                    "puzzle_announcements_to_assert: {:?}",
-                    puzzle_announcements_to_assert
+                    "puzzle_announcements_to_assert: {puzzle_announcements_to_assert:?}"
                 );
                 let puzzle = self.puzzle_for_puzzle_hash(&coin.puzzle_hash).await?;
                 let solution = self.make_solution(

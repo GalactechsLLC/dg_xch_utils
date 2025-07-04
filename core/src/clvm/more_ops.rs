@@ -791,7 +791,7 @@ pub fn op_coinid<D: Dialect>(
         if amount.len() > 9 || (amount.len() == 9 && amount[0] != 0) {
             return Err(Error::new(
                 ErrorKind::InvalidData,
-                format!("coin amount exceeds max, {}", as_int),
+                format!("coin amount exceeds max, {as_int}"),
             ));
         }
         as_int

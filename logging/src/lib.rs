@@ -152,7 +152,7 @@ impl DruidGardenLoggerBuilder {
                                 Err(e) => {
                                     err_count += 1;
                                     if err_count > 5 {
-                                        error!("Failed to receive buffer too many times: {:?}", e);
+                                        error!("Failed to receive buffer too many times: {e:?}");
                                         break;
                                     }
                                 }
@@ -212,7 +212,7 @@ where
         "info" => Ok(Level::Info),
         "debug" => Ok(Level::Debug),
         "trace" => Ok(Level::Trace),
-        _ => Err(D::Error::custom(format!("Unknown log level: {}", s))),
+        _ => Err(D::Error::custom(format!("Unknown log level: {s}"))),
     }
 }
 
@@ -292,7 +292,7 @@ impl Log for DruidGardenLogger {
                         let minutes = (total_seconds % 3600) / 60;
                         let seconds = total_seconds % 60;
                         let millis = duration.subsec_millis();
-                        format!("{:02}:{:02}:{:02}.{:03} ", hours, minutes, seconds, millis)
+                        format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03} ")
                     }
                 }
             } else {

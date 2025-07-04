@@ -50,12 +50,12 @@ pub async fn validate_plot(path: &Path, options: ValidatePlotOptions) -> Result<
     for _ in 0..thread_count {
         plot_files.push(DiskPlot::new(path).await?);
     }
-    info!("Validating Plot: {:?}", path);
+    info!("Validating Plot: {path:?}");
     info!("Mode: {}", if options.in_ram { "Ram" } else { "Disk" });
     info!("K Size: {}", plot_files[0].k());
     info!("Unpacked: {}", options.unpacked);
     let plot_c3park_count = plot_files[0].table_size(PlotTable::C1) as usize / size_of::<u32>() - 1;
-    info!("Maximum C3 Parks: {}", plot_c3park_count);
+    info!("Maximum C3 Parks: {plot_c3park_count}");
     if options.unpacked {
         todo!()
     } else {
@@ -81,11 +81,11 @@ pub async fn validate_plot(path: &Path, options: ValidatePlotOptions) -> Result<
                         info!("Validator Thread Finished");
                     }
                     Err(e) => {
-                        error!("Error in Validator: {:?}", e);
+                        error!("Error in Validator: {e:?}");
                     }
                 },
                 Err(e) => {
-                    error!("Join Error for Plot Read Thread: {:?}", e);
+                    error!("Join Error for Plot Read Thread: {e:?}");
                 }
             }
         }
@@ -118,8 +118,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
         c3park_count = c3park_end - start_c3park;
     }
     info!(
-        "Index: {} Park range: {}..{}  Park count: {}",
-        index, start_c3park, c3park_end, c3park_count
+        "Index: {index} Park range: {start_c3park}..{c3park_end}  Park count: {c3park_count}"
     );
     let mut f7_entries;
     let mut fx: [u64; PROOF_X_COUNT] = [0; PROOF_X_COUNT];
@@ -139,7 +138,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
         let f7idx_base = c3_park_index * K_CHECKPOINT1INTERVAL as usize;
         let entry_count = f7_entries.len();
         let mut threshold = 0;
-        info!("Validating c3 Park: {}", c3_park_index);
+        info!("Validating c3 Park: {c3_park_index}");
         for (index, f7) in f7_entries.iter().enumerate() {
             if index / entry_count > threshold {
                 info!(
@@ -176,20 +175,19 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
                     ) {
                         Ok(v_f7) => {
                             if v_f7 != *f7 {
-                                error!("Failed to validate F7 v_f7({}) != f7({})", v_f7, f7);
+                                error!("Failed to validate F7 v_f7({v_f7}) != f7({f7})");
                                 fail_counter.fetch_add(1, Ordering::SeqCst);
                             }
                         }
                         Err(err) => {
-                            error!("Error Validating Proof: {:?}", err);
+                            error!("Error Validating Proof: {err:?}");
                             fail_counter.fetch_add(1, Ordering::SeqCst);
                         }
                     }
                 }
                 Err(err) => {
                     error!(
-                        "Park [{}][{index}] proof fetch failed for f7[{}] local({}) = {}: {:?}, {:?}",
-                        c3_park_index, f7idx, index, f7, index, err
+                        "Park [{c3_park_index}][{index}] proof fetch failed for f7[{f7idx}] local({index}) = {f7}: {index:?}, {err:?}"
                     );
                     fail_counter.fetch_add(1, Ordering::SeqCst);
                 }

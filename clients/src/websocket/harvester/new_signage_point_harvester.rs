@@ -124,12 +124,12 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                             if let Some(p_dif) = data_arc.pool_difficulties.iter().find(|p| {
                                 p.pool_contract_puzzle_hash == *pool_contract_puzzle_hash
                             }) {
-                                debug!("Setting Difficulty for pool: {}", dif);
+                                debug!("Setting Difficulty for pool: {dif}");
                                 dif = p_dif.difficulty;
                                 sub_slot_iters = p_dif.sub_slot_iters;
                                 is_partial = true;
                             } else if memo.pool_contract_puzzle_hash.is_some() {
-                                warn!("Failed to find Pool Contract Difficulties for PH: {} ", pool_contract_puzzle_hash);
+                                warn!("Failed to find Pool Contract Difficulties for PH: {pool_contract_puzzle_hash} ");
                             }
                         }
                         for (index, quality) in qualities {
@@ -172,13 +172,12 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                             ));
                                         }
                                         Err(e) => {
-                                            error!("Failed to read Proof: {:?}", e);
+                                            error!("Failed to read Proof: {e:?}");
                                         }
                                     }
                                 } else {
                                     debug!(
-                                        "Not Enough Iterations: {} > {}",
-                                        required_iters, sp_interval_iters
+                                        "Not Enough Iterations: {required_iters} > {sp_interval_iters}"
                                     );
                                 }
                             }
@@ -241,15 +240,15 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                             }
                         }
                         Err(e) => {
-                            debug!("Failed to read plot: {:?}", e);
+                            debug!("Failed to read plot: {e:?}");
                         }
                     },
                     Err(e) => {
-                        error!("Failed to join reader thread: {:?}", e);
+                        error!("Failed to join reader thread: {e:?}");
                     }
                 },
                 Err(e) => {
-                    error!("Failed to read qualities due to Timeout: {:?}", e);
+                    error!("Failed to read qualities due to Timeout: {e:?}");
                 }
             }
         }

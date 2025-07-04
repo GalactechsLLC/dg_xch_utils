@@ -89,11 +89,11 @@ impl Scene for WalletImportMnemonicScene {
                         }
                         Err(err) => {
                             self.error_message =
-                                Some(format!("Failed to read clipboard content: {}", err));
+                                Some(format!("Failed to read clipboard content: {err}"));
                         }
                     },
                     Err(err) => {
-                        self.error_message = Some(format!("Failed to access clipboard: {}", err));
+                        self.error_message = Some(format!("Failed to access clipboard: {err}"));
                     }
                 }
             }
@@ -115,13 +115,12 @@ impl Scene for WalletImportMnemonicScene {
                 match import_wallet_with_mnemonic(gui, mnemonic) {
                     Ok((master_sk, wallet_sk)) => {
                         self.success_message = Some(format!(
-                            "Mnemonic imported successfully!\nMaster SK: {:?}\nWallet SK: {:?}",
-                            master_sk, wallet_sk
+                            "Mnemonic imported successfully!\nMaster SK: {master_sk:?}\nWallet SK: {wallet_sk:?}"
                         ));
                         self.error_message = None;
                     }
                     Err(e) => {
-                        self.error_message = Some(format!("Error: {}", e));
+                        self.error_message = Some(format!("Error: {e}"));
                         self.success_message = None;
                     }
                 }
@@ -143,8 +142,7 @@ fn import_wallet_with_mnemonic(
 
     if word_count != 12 && word_count != 24 {
         return Err(format!(
-            "Mnemonic must be exactly 12 or 24 words, not {}",
-            word_count
+            "Mnemonic must be exactly 12 or 24 words, not {word_count}"
         ));
     }
 

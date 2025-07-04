@@ -70,7 +70,7 @@ pub fn op_raise<D: Dialect>(
     _dialect: &D,
 ) -> Result<(u64, SExp), Error> {
     match args {
-        SExp::Atom(atom) => Err(Error::other(format!("clvm raise: {:?}", atom))),
+        SExp::Atom(atom) => Err(Error::other(format!("clvm raise: {atom:?}"))),
         SExp::Pair(pair) => {
             if pair.rest.nullp() {
                 Err(Error::other(format!(

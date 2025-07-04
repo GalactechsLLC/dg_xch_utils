@@ -210,7 +210,7 @@ impl<const SIZE: usize> Visitor<'_> for SizedBytesImplVisitor<SIZE> {
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter
-            .write_str(format!("Expecting a hex String, or byte array of size {}", SIZE).as_str())
+            .write_str(format!("Expecting a hex String, or byte array of size {SIZE}").as_str())
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>

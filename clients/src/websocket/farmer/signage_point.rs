@@ -57,7 +57,7 @@ impl MessageHandler for NewSignagePointHandle {
                     continue;
                 }
                 if let Some(difficulty) = pool_dict.current_difficulty {
-                    debug!("Setting Difficulty for pool: {}", difficulty);
+                    debug!("Setting Difficulty for pool: {difficulty}");
                     pool_difficulties.push(PoolDifficulty {
                         difficulty,
                         sub_slot_iters: POOL_SUB_SLOT_ITERS,

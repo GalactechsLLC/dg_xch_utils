@@ -152,9 +152,9 @@ impl TryFrom<&SExp> for ConditionWithArgs {
 impl Display for ConditionWithArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (op_code, vars) = self.clone().op_code_with_args();
-        write!(f, "{} ", op_code)?;
+        write!(f, "{op_code} ")?;
         for var in &vars {
-            write!(f, "{} ", var)?;
+            write!(f, "{var} ")?;
         }
         Ok(())
     }
@@ -1267,7 +1267,7 @@ pub fn op_code_with_args_from_sexp(sexp: &SExp) -> Result<(ConditionOpcode, Vec<
                 if opcode == ConditionOpcode::Remark {
                     vars.push(sexp_to_bytes(arg)?);
                 } else {
-                    warn!("Got pair in opcode({}) args: {:?}", opcode, arg);
+                    warn!("Got pair in opcode({opcode}) args: {arg:?}");
                     break;
                 }
             }

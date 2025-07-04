@@ -420,7 +420,7 @@ impl From<u8> for ProtocolMessageTypes {
 
 impl fmt::Display for ProtocolMessageTypes {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -681,21 +681,21 @@ impl ReadStream {
                                                 }
                                             }
                                             if !matched{
-                                                error!("No Matches for Message: {:?}", &msg_arc);
+                                                error!("No Matches for Message: {msg_arc:?}");
                                             }
                                             debug!("Processed Message: {:?}", &msg_arc.msg_type);
                                         }
                                         Err(e) => {
-                                            error!("Invalid Message: {:?}", e);
+                                            error!("Invalid Message: {e:?}");
                                         }
                                     }
                                 }
                                 Message::Close(e) => {
-                                    debug!("Server Got Close Message: {:?}", e);
+                                    debug!("Server Got Close Message: {e:?}");
                                     return;
                                 },
                                 _ => {
-                                    error!("Invalid Message: {:?}", msg);
+                                    error!("Invalid Message: {msg:?}");
                                 }
                             }
                         }
@@ -705,7 +705,7 @@ impl ReadStream {
                                     debug!("Server Stream Closed without Handshake");
                                 },
                                 others => {
-                                    error!("Server Stream Error: {:?}", others);
+                                    error!("Server Stream Error: {others:?}");
                                 }
                             }
                             return;

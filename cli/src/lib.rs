@@ -119,8 +119,8 @@ pub async fn run_cli() -> Result<(), Error> {
                 Bytes48::from(master_sk_to_farmer_sk(&master_key)?.sk_to_pk().to_bytes());
             let pool_key = Bytes48::from(master_sk_to_pool_sk(&master_key)?.sk_to_pk().to_bytes());
             info!("{{");
-            info!("\tFarmerPublicKey(All Plots): {},", farmer_key);
-            info!("\tPoolPublicKey(OG Plots): {},", pool_key);
+            info!("\tFarmerPublicKey(All Plots): {farmer_key},");
+            info!("\tPoolPublicKey(OG Plots): {pool_key},");
             info!("\tPlotNfts(NFT Plots): {{");
             let total = plotnfts.len();
             for (index, plot_nft) in plotnfts.into_iter().enumerate() {
@@ -784,7 +784,7 @@ pub async fn run_cli() -> Result<(), Error> {
                     println!("{}", encode(&curried_program.serialized))
                 }
                 ProgramOutput::String => {
-                    println!("{}", curried_program)
+                    println!("{curried_program}")
                 }
             }
         }
@@ -819,7 +819,7 @@ pub async fn run_cli() -> Result<(), Error> {
                     println!("{}", encode(&program_output.serialized))
                 }
                 ProgramOutput::String => {
-                    println!("{}", program_output)
+                    println!("{program_output}")
                 }
             }
         }

@@ -76,7 +76,7 @@ impl<'a> Iterator for Reader<'a> {
                 self.index += 1;
                 loop {
                     if self.stream.len() <= self.index {
-                        error!("ERROR: Unterminated String at {}, ", start);
+                        error!("ERROR: Unterminated String at {start}, ");
                         return None;
                     } else if bs {
                         bs = false;

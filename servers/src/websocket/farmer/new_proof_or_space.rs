@@ -115,7 +115,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                             debug!("Not a pooling proof of space");
                         }
                     } else {
-                        warn!("Invalid proof of space {:?}", new_pos);
+                        warn!("Invalid proof of space {new_pos:?}");
                     }
                 }
             } else {
@@ -125,7 +125,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                 );
             }
         } else {
-            warn!("Peer Not Found {:?}", peer_id);
+            warn!("Peer Not Found {peer_id:?}");
         }
         Ok(())
     }
@@ -304,14 +304,13 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                 pool_dif,
             )
         } else {
-            warn!("No pool specific difficulty has been set for {p2_singleton_puzzle_hash}, check communication with the pool, skipping this partial to {}.", pool_url);
+            warn!("No pool specific difficulty has been set for {p2_singleton_puzzle_hash}, check communication with the pool, skipping this partial to {pool_url}.");
             return Ok(());
         };
         if required_iters >= calculate_sp_interval_iters(constants, constants.pool_sub_slot_iters)?
         {
             debug!(
-                "Proof of space not good enough for pool {}: {:?}",
-                pool_url, pool_dif
+                "Proof of space not good enough for pool {pool_url}: {pool_dif:?}"
             );
             return Ok(());
         }
@@ -529,7 +528,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                             }
                         }
                         Err(e) => {
-                            error!("Error in pooling: {:?}", e);
+                            error!("Error in pooling: {e:?}");
                             if let Some(v) = self
                                 .pool_state
                                 .write()
