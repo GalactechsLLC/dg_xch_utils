@@ -221,7 +221,6 @@ impl SpendBundle {
             .to_signature();
         assert!(aggregate_verify_signature(&pk_list, &msg_list, &aggsig));
         self.aggregated_signature = aggsig.to_bytes().into();
-        info!("Signed Bundle");
         Ok(self)
     }
     pub fn validate(
@@ -231,11 +230,6 @@ impl SpendBundle {
         consensus_constants: &ConsensusConstants,
         print: bool,
     ) -> Result<Vec<ConditionWithArgs>, Error> {
-        info!(
-            "Using Constants: {} - {}",
-            consensus_constants.simulated,
-            Bytes32::parse(&consensus_constants.agg_sig_me_additional_data)?
-        );
         let mut max_cost = max_cost.unwrap_or(INFINITE_COST);
         let mut create_conditions = vec![];
         let mut state = ValidationState::default();
