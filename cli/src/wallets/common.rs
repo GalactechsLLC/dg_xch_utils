@@ -11,7 +11,7 @@ use dg_xch_core::clvm::bls_bindings::{aggregate_verify_signature, verify_signatu
 use dg_xch_core::clvm::condition_utils::conditions_for_solution;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::traits::SizedBytes;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use num_traits::cast::ToPrimitive;
 use std::collections::HashMap;
 use std::future::Future;
@@ -78,10 +78,10 @@ where
             })?;
             let secret_key = (key_fn)(&pk_bytes).await?;
             let signature = if secret_key.sk_to_pk() != pk {
-                info!("Searching for PreCalc on op {code} ({pk_bytes}, {msg})");
+                debug!("Searching for PreCalc on op {code} ({pk_bytes}, {msg})");
                 //Found no Secret Key, Check if the Map Contains our Signature
                 pre_calculated_signatures.get(&(pk_bytes, msg)).ok_or_else(|| {
-                    info!("Failed to find ({pk_bytes}, {msg}) in map \n {pre_calculated_signatures:#?}");
+                    error!("Failed to find ({pk_bytes}, {msg}) in map \n {pre_calculated_signatures:#?}");
                     Error::other(
                         format!(
                             "Failed to find Secret Key for Public Key: {}",

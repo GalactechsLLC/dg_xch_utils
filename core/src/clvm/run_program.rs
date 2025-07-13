@@ -1,9 +1,11 @@
 use crate::clvm::dialect::Dialect;
 use crate::clvm::sexp::{PairBuf, SExp};
 use crate::constants::NULL_SEXP;
-use num_bigint::BigInt;
+use log::debug;
 use std::io::Error;
 use std::io::ErrorKind;
+use std::sync::Arc;
+use std::time::Instant;
 
 // lowered from 46
 const QUOTE_COST: u64 = 20;
@@ -125,9 +127,9 @@ fn traverse_path(node_index: &[u8], args: &SExp) -> Result<(u64, SExp), Error> {
     Ok((cost, arg_list.clone()))
 }
 
-fn augment_cost_errors(r: Result<u64, Error>, max_cost: &SExp) -> Result<u64, Error> {
+fn augment_cost_errors(r: Result<u64, Error>, max_cost: u64) -> Result<u64, Error> {
     if let Err(e) = r {
-        if !format!("{e:?}").contains("cost exceeded") {
+        if !e.to_string().contains("cost exceeded") {
             Err(e)
         } else {
             Err(Error::new(
@@ -155,8 +157,8 @@ impl<D: Dialect> RunProgramContext<D> {
         let v1 = self.pop()?;
         let v2 = self.pop()?;
         let p = SExp::Pair(PairBuf {
-            first: Box::new(v1),
-            rest: Box::new(v2),
+            first: Arc::new(v1),
+            rest: Arc::new(v2),
         });
         self.push(p);
         Ok(0)
@@ -315,19 +317,16 @@ impl<D: Dialect> RunProgramContext<D> {
         self.val_stack = vec![SExp::Pair((program, args).into())];
         self.op_stack = vec![Operation::Eval];
         let max_cost = if max_cost == 0 { u64::MAX } else { max_cost };
-        let max_cost_number: BigInt = max_cost.into();
-        let max_cost_ptr = SExp::try_from(&max_cost_number)?;
         let mut cost: u64 = 0;
+        let start = Instant::now();
         loop {
             let top = self.op_stack.pop();
             let Some(op) = top else { break };
             cost += match op {
-                Operation::Apply => {
-                    augment_cost_errors(self.apply_op(max_cost - cost), &max_cost_ptr)?
-                }
+                Operation::Apply => augment_cost_errors(self.apply_op(max_cost - cost), max_cost)?,
                 Operation::Cons => self.cons_op()?,
-                Operation::Eval => augment_cost_errors(self.eval_op(), &max_cost_ptr)?,
-                Operation::SwapEval => augment_cost_errors(self.swap_eval_op(), &max_cost_ptr)?,
+                Operation::Eval => augment_cost_errors(self.eval_op(), max_cost)?,
+                Operation::SwapEval => augment_cost_errors(self.swap_eval_op(), max_cost)?,
                 Operation::PostEval => {
                     let f = self.posteval_stack.pop().ok_or_else(|| {
                         Error::new(ErrorKind::InvalidData, "post_eval_stack is empty")
@@ -340,10 +339,12 @@ impl<D: Dialect> RunProgramContext<D> {
             if cost > max_cost {
                 return Err(Error::new(
                     ErrorKind::InvalidData,
-                    format!("cost exceeded: {max_cost_ptr:?}"),
+                    format!("cost exceeded: {max_cost:?}"),
                 ));
             }
         }
+        let duration = start.elapsed();
+        debug!("Program duration: {duration:?}");
         Ok((cost, self.pop()?))
     }
 }

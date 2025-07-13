@@ -5,7 +5,8 @@ use crate::blockchain::sized_bytes::{
 use crate::clvm::assemble::is_hex;
 use crate::clvm::program::Program;
 use crate::constants::{
-    ADD, APPLY, CONS, DIV, DIVMOD, KEYWORD_FROM_ATOM, MUL, NULL_SEXP, ONE_SEXP, QUOTE, SUB,
+    ADD, APPLY, CONS, DIV, DIVMOD, KEYWORD_FROM_ATOM, MUL, NULL_CELL, NULL_SEXP, ONE_SEXP, QUOTE,
+    SUB,
 };
 use crate::formatting::{number_from_slice, u32_from_slice, u64_from_bigint};
 use crate::traits::SizedBytes;
@@ -18,6 +19,7 @@ use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Error, ErrorKind};
 use std::mem::replace;
+use std::sync::Arc;
 
 #[derive(Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SExp {
@@ -91,8 +93,8 @@ impl SExp {
     #[must_use]
     pub fn cons(self, other: SExp) -> SExp {
         SExp::Pair(PairBuf {
-            first: Box::new(self),
-            rest: Box::new(other),
+            first: Arc::new(self),
+            rest: Arc::new(other),
         })
     }
     pub fn split(&self) -> Result<(&SExp, &SExp), Error> {
@@ -132,20 +134,20 @@ impl SExp {
         }
     }
 
-    pub fn to_map(self) -> Result<HashMap<SExp, SExp>, Error> {
-        let mut rtn: HashMap<SExp, SExp> = HashMap::new();
+    pub fn to_map(&self) -> Result<HashMap<Arc<SExp>, Arc<SExp>>, Error> {
+        let mut rtn: HashMap<Arc<SExp>, Arc<SExp>> = HashMap::new();
         let mut cur_node = self;
         loop {
             match cur_node {
                 SExp::Atom(_) => break,
                 SExp::Pair(pair) => {
-                    cur_node = *pair.rest;
-                    match *pair.first {
+                    cur_node = &pair.rest;
+                    match pair.first.as_ref() {
                         SExp::Atom(_) => {
-                            rtn.insert(*pair.first, NULL_SEXP.clone());
+                            rtn.insert(pair.first.clone(), NULL_CELL.clone());
                         }
                         SExp::Pair(inner_pair) => {
-                            rtn.insert(*inner_pair.first, *inner_pair.rest);
+                            rtn.insert(inner_pair.first.clone(), inner_pair.rest.clone());
                         }
                     }
                 }
@@ -227,7 +229,7 @@ impl SExp {
     }
 
     #[must_use]
-    pub fn proper_list(self, store: bool) -> Option<Vec<SExp>> {
+    pub fn proper_list(&self, store: bool) -> Option<Vec<SExp>> {
         let mut args = vec![];
         let mut args_sexp = self;
         loop {
@@ -241,9 +243,9 @@ impl SExp {
                 }
                 SExp::Pair(buf) => {
                     if store {
-                        args.push(*buf.first);
+                        args.push(buf.first.as_ref().clone());
                     }
-                    args_sexp = *buf.rest;
+                    args_sexp = &buf.rest;
                 }
             }
         }
@@ -507,8 +509,8 @@ impl PartialEq<[u8]> for &AtomBuf {
 }
 #[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairBuf {
-    pub first: Box<SExp>,
-    pub rest: Box<SExp>,
+    pub first: Arc<SExp>,
+    pub rest: Arc<SExp>,
 }
 
 impl Display for PairBuf {
@@ -624,8 +626,8 @@ impl Debug for PairBuf {
 impl From<(&SExp, &SExp)> for PairBuf {
     fn from(v: (&SExp, &SExp)) -> Self {
         PairBuf {
-            first: Box::new(v.0.clone()),
-            rest: Box::new(v.1.clone()),
+            first: Arc::new(v.0.clone()),
+            rest: Arc::new(v.1.clone()),
         }
     }
 }
@@ -633,8 +635,8 @@ impl From<(&SExp, &SExp)> for PairBuf {
 impl From<(SExp, SExp)> for PairBuf {
     fn from(v: (SExp, SExp)) -> Self {
         PairBuf {
-            first: Box::new(v.0),
-            rest: Box::new(v.1),
+            first: Arc::new(v.0),
+            rest: Arc::new(v.1),
         }
     }
 }

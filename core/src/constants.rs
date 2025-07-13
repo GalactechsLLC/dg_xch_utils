@@ -5,6 +5,7 @@ use num_bigint::BigUint;
 use once_cell::sync::Lazy;
 use std::clone::Clone;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 //Keywords
 pub const QUOTE: u8 = 0x01;
@@ -88,6 +89,7 @@ pub static CONS_SEXP: Lazy<SExp> = Lazy::new(|| SExp::Atom(AtomBuf::new(vec![CON
 pub static APPLY_SEXP: Lazy<SExp> = Lazy::new(|| SExp::Atom(AtomBuf::new(vec![APPLY])));
 pub static QUOTE_SEXP: Lazy<SExp> = Lazy::new(|| SExp::Atom(AtomBuf::new(vec![QUOTE])));
 pub static NULL_SEXP: Lazy<SExp> = Lazy::new(|| SExp::Atom(vec![].into()));
+pub static NULL_CELL: Lazy<Arc<SExp>> = Lazy::new(|| Arc::new(SExp::Atom(vec![].into())));
 pub static ONE_SEXP: Lazy<SExp> = Lazy::new(|| SExp::Atom(AtomBuf::new(vec![1])));
 pub static NULL_PROG: Lazy<Program> = Lazy::new(|| Program {
     sexp: NULL_SEXP.clone(),
