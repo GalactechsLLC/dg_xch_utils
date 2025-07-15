@@ -13,7 +13,7 @@ use crate::traits::SizedBytes;
 use crate::utils::hash_256;
 use hex::encode;
 use num_bigint::BigInt;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
@@ -507,10 +507,32 @@ impl PartialEq<[u8]> for &AtomBuf {
         self.data == other
     }
 }
-#[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Hash, Clone, PartialEq, Eq)]
 pub struct PairBuf {
     pub first: Arc<SExp>,
     pub rest: Arc<SExp>,
+}
+
+impl Serialize for PairBuf {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        (&*self.first, &*self.rest).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PairBuf {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let (first, rest): (SExp, SExp) = Deserialize::deserialize(deserializer)?;
+        Ok(PairBuf {
+            first: Arc::new(first),
+            rest: Arc::new(rest),
+        })
+    }
 }
 
 impl Display for PairBuf {

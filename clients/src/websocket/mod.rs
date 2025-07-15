@@ -1,6 +1,7 @@
 pub mod farmer;
 pub mod full_node;
 pub mod harvester;
+pub mod introducer;
 pub mod wallet;
 
 use crate::ClientSSLConfig;
