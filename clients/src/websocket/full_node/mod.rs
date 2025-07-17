@@ -1,10 +1,12 @@
 use crate::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
-use dg_xch_core::protocols::NodeType;
+use dg_xch_core::protocols::{ChiaMessageHandler, NodeType};
+use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 pub struct FullnodeClient {
     pub client: WsClient,
@@ -13,8 +15,9 @@ impl FullnodeClient {
     pub async fn new(
         client_config: Arc<WsClientConfig>,
         run: Arc<AtomicBool>,
+        handles: Option<HashMap<Uuid, Arc<ChiaMessageHandler>>>,
     ) -> Result<Self, Error> {
-        let handles = Arc::new(RwLock::new(Default::default()));
+        let handles = Arc::new(RwLock::new(handles.unwrap_or_default()));
         let client = WsClient::with_ca(
             client_config,
             NodeType::FullNode,
