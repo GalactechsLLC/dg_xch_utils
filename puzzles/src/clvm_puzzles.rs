@@ -367,7 +367,7 @@ pub fn create_travel_spend(
             vec![(
                 "p".to_sexp(),
                 SExp::Atom(AtomBuf::new(
-                    target.to_bytes(ChiaProtocolVersion::default()),
+                    target.to_bytes(ChiaProtocolVersion::default())?,
                 )),
             )]
             .to_sexp(),
@@ -384,14 +384,14 @@ pub fn create_travel_spend(
         debug!(
             "create_travel_spend: waitingroom: target PoolState bytes:\n{:?}\nhash:{}",
             target,
-            Program::to(target.to_bytes(ChiaProtocolVersion::default())).tree_hash()
+            Program::to(target.to_bytes(ChiaProtocolVersion::default())?).tree_hash()
         );
         Program::to(vec![
             1.to_sexp(),
             vec![(
                 "p".to_sexp(),
                 SExp::Atom(AtomBuf::new(
-                    target.to_bytes(ChiaProtocolVersion::default()),
+                    target.to_bytes(ChiaProtocolVersion::default())?,
                 )),
             )]
             .to_sexp(),

@@ -13,7 +13,7 @@ pub fn derive_chia_serial(input: TokenStream) -> TokenStream {
     let (to_bytes, from_bytes) = create_to_bytes(input.data);
     let gen = quote! {
         impl dg_xch_serialize::ChiaSerialize for #name {
-            fn to_bytes(&self, macro_chia_protocol_version: dg_xch_serialize::ChiaProtocolVersion) -> Vec<u8> {
+            fn to_bytes(&self, macro_chia_protocol_version: dg_xch_serialize::ChiaProtocolVersion) -> Result<Vec<u8>, std::io::Error> {
                 #to_bytes
             }
             fn from_bytes<T: AsRef<[u8]>>(bytes: &mut std::io::Cursor<T>, macro_chia_protocol_version: dg_xch_serialize::ChiaProtocolVersion) -> Result<Self, std::io::Error>
@@ -35,7 +35,7 @@ fn create_to_bytes(data: Data) -> (TokenStream2, TokenStream2) {
                     let to_bytes = fields.named.iter().map(|f| {
                         let name = &f.ident;
                         quote_spanned! {f.span()=>
-                            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.#name, macro_chia_protocol_version));
+                            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.#name, macro_chia_protocol_version)?);
                         }
                     });
                     let names = fields.named.iter().map(|f| {
@@ -54,7 +54,7 @@ fn create_to_bytes(data: Data) -> (TokenStream2, TokenStream2) {
                         quote! {
                             let mut bytes = vec![];
                             #(#to_bytes)*
-                            bytes
+                            Ok(bytes)
                         },
                         quote! {
                             #(#names)*
@@ -68,7 +68,7 @@ fn create_to_bytes(data: Data) -> (TokenStream2, TokenStream2) {
                     let to_bytes = fields.unnamed.iter().enumerate().map(|(i, f)| {
                         let index = Index::from(i);
                         quote_spanned! {f.span()=>
-                            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.#index, macro_chia_protocol_version));
+                            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(&self.#index, macro_chia_protocol_version)?);
                         }
                     });
                     let names = fields.unnamed.iter().enumerate().map(|(i, f)| {
@@ -85,7 +85,9 @@ fn create_to_bytes(data: Data) -> (TokenStream2, TokenStream2) {
                     });
                     (
                         quote! {
+                            let mut bytes = vec![];
                             #(#to_bytes)*
+                            Ok(bytes)
                         },
                         quote! {
                             #(#names)*
@@ -103,7 +105,7 @@ fn create_to_bytes(data: Data) -> (TokenStream2, TokenStream2) {
         }
         Data::Enum(e) => (
             quote_spanned! {e.enum_token.span()=>
-                vec![*self as u8]
+                Ok(vec![*self as u8])
             },
             quote_spanned! {e.enum_token.span()=>
                 use std::io::Read;

@@ -76,9 +76,8 @@ pub struct SpendBundle {
     pub aggregated_signature: Bytes96,
 }
 impl SpendBundle {
-    #[must_use]
-    pub fn name(&self) -> Bytes32 {
-        hash_256(self.to_bytes(ChiaProtocolVersion::default())).into()
+    pub fn name(&self) -> Result<Bytes32, Error> {
+        Ok(hash_256(&self.to_bytes(ChiaProtocolVersion::default())?).into())
     }
     pub fn aggregate(bundles: Vec<SpendBundle>) -> Result<Self, Error> {
         let mut coin_spends = vec![];

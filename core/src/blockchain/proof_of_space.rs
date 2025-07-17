@@ -39,7 +39,7 @@ impl Debug for ProofBytes {
 }
 
 impl ChiaSerialize for ProofBytes {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {

@@ -714,7 +714,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             .into_iter()
             .map(|v| (v.0, v.1))
             .collect::<Vec<(Bytes32, Vec<Vec<u8>>)>>();
-        let name = spend_bundle.name();
+        let name = spend_bundle.name()?;
         Ok(TransactionRecord {
             confirmed_at_height: 0,
             created_at_time: now,
@@ -911,7 +911,10 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     );
                 }
                 let message = hash_256(message_list.iter().fold(vec![], |mut v, e| {
-                    v.extend(e.to_bytes(ChiaProtocolVersion::default()));
+                    v.extend(
+                        e.to_bytes(ChiaProtocolVersion::default())
+                            .expect("Bytes32 has Safe to_bytes"),
+                    );
                     v
                 }));
                 let coin_announcements = HashSet::from([Bytes32::new(message)]);

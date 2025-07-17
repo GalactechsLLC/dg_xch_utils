@@ -50,8 +50,8 @@ impl MessageHandler for HandshakeHandle {
                                 .collect(),
                         },
                         msg.id,
-                    )
-                    .to_bytes(protocol_version)
+                    )?
+                    .to_bytes(protocol_version)?
                     .into(),
                 ))
                 .await

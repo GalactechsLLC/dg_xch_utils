@@ -267,7 +267,7 @@ impl WsClient {
                         .collect(),
                 },
                 None,
-            ),
+            )?,
             Some(ProtocolMessageTypes::Handshake),
             chia_protocol_version,
             None,

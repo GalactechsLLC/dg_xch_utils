@@ -9,7 +9,8 @@ use dg_xch_core::protocols::{
     ProtocolMessageTypes,
 };
 use dg_xch_serialize::ChiaSerialize;
-use log::{error, info};
+use log::{debug, error, info};
+use rustls::crypto::ring::default_provider;
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::atomic::AtomicBool;
@@ -32,19 +33,46 @@ impl IntroducerClient {
         run: Arc<AtomicBool>,
         state: Arc<RwLock<IntroducerState>>,
     ) -> Result<Self, Error> {
-        let handles = Arc::new(RwLock::new(HashMap::from([(
-            Uuid::new_v4(),
-            Arc::new(ChiaMessageHandler {
-                filter: Arc::new(ChiaMessageFilter {
-                    msg_type: Some(ProtocolMessageTypes::RespondPeersIntroducer),
-                    id: None,
-                    custom_fn: None,
+        default_provider().install_default().unwrap_or_default();
+        struct IgnoreExtraMessagesHandler {}
+        #[async_trait]
+        impl MessageHandler for IgnoreExtraMessagesHandler {
+            async fn handle(
+                &self,
+                msg: Arc<ChiaMessage>,
+                _peer_id: Arc<Bytes32>,
+                _peers: PeerMap,
+            ) -> Result<(), Error> {
+                debug!("Got websocket Message: {}", msg.msg_type);
+                Ok(())
+            }
+        }
+        let handles = Arc::new(RwLock::new(HashMap::from([
+            (
+                Uuid::new_v4(),
+                Arc::new(ChiaMessageHandler {
+                    filter: Arc::new(ChiaMessageFilter {
+                        msg_type: Some(ProtocolMessageTypes::RespondPeersIntroducer),
+                        id: None,
+                        custom_fn: None,
+                    }),
+                    handle: Arc::new(RespondPeersHandler {
+                        state: state.clone(),
+                    }),
                 }),
-                handle: Arc::new(RespondPeersHandler {
-                    state: state.clone(),
+            ),
+            (
+                Uuid::new_v4(),
+                Arc::new(ChiaMessageHandler {
+                    filter: Arc::new(ChiaMessageFilter {
+                        msg_type: None,
+                        id: None,
+                        custom_fn: Some(Box::new(|_msg| true)),
+                    }),
+                    handle: Arc::new(IgnoreExtraMessagesHandler {}),
                 }),
-            }),
-        )])));
+            ),
+        ])));
         let client = WsClient::with_ca(
             client_config,
             NodeType::Introducer,

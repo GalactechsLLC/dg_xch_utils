@@ -279,8 +279,8 @@ macro_rules! impl_sized_bytes {
                 }
             }
             impl ChiaSerialize for $name {
-                fn to_bytes(&self, _version: ChiaProtocolVersion) -> Vec<u8> {
-                    self.bytes().to_vec()
+                fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, std::io::Error> {
+                    Ok(self.bytes().to_vec())
                 }
                 fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>, _version: ChiaProtocolVersion) -> Result<Self, Error> where Self: Sized,
                 {

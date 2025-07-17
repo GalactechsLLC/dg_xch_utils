@@ -151,22 +151,22 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                         (
                             SignatureRequestSourceData {
                                 kind: SigningDataKind::ChallengeChainVdf,
-                                data: vdf.cc_vdf.to_bytes(protocol_version),
+                                data: vdf.cc_vdf.to_bytes(protocol_version)?,
                             },
                             SignatureRequestSourceData {
                                 kind: SigningDataKind::RewardChainVdf,
-                                data: vdf.rc_vdf.to_bytes(protocol_version),
+                                data: vdf.rc_vdf.to_bytes(protocol_version)?,
                             },
                         )
                     } else if let Some(vdf) = sp_data.sub_slot_data.as_ref() {
                         (
                             SignatureRequestSourceData {
                                 kind: SigningDataKind::ChallengeChainSubSlot,
-                                data: vdf.cc_sub_slot.to_bytes(protocol_version),
+                                data: vdf.cc_sub_slot.to_bytes(protocol_version)?,
                             },
                             SignatureRequestSourceData {
                                 kind: SigningDataKind::RewardChainSubSlot,
-                                data: vdf.rc_sub_slot.to_bytes(protocol_version),
+                                data: vdf.rc_sub_slot.to_bytes(protocol_version)?,
                             },
                         )
                     } else {
@@ -237,8 +237,8 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                         protocol_version,
                         &request,
                         None,
-                    )
-                    .to_bytes(protocol_version)
+                    )?
+                    .to_bytes(protocol_version)?
                     .into(),
                 ))
                 .await;
@@ -331,14 +331,14 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
             end_of_sub_slot: is_eos,
             harvester_id: *peer_id,
         };
-        let to_sign = hash_256(payload.to_bytes(protocol_version));
+        let to_sign = hash_256(payload.to_bytes(protocol_version)?);
         let sp_src_data = {
             if new_pos.include_source_signature_data
                 || new_pos.farmer_reward_address_override.is_some()
             {
                 Some(vec![Some(SignatureRequestSourceData {
                     kind: SigningDataKind::Partial,
-                    data: payload.to_bytes(protocol_version),
+                    data: payload.to_bytes(protocol_version)?,
                 })])
             } else {
                 None
@@ -361,7 +361,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                     protocol_version,
                     &request,
                     msg_id,
-                ),
+                )?,
                 Some(ProtocolMessageTypes::RespondSignatures),
                 protocol_version,
                 msg_id,

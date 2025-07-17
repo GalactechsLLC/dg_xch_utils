@@ -2,6 +2,7 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::header_block::HeaderBlock;
 use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::spend_bundle::SpendBundle;
+use crate::blockchain::tx_status::TXStatus;
 use crate::clvm::program::SerializedProgram;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
@@ -39,7 +40,7 @@ pub struct SendTransaction {
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct TransactionAck {
     pub txid: Bytes32,         //Min Version 0.0.34
-    pub status: u8,            //Min Version 0.0.34
+    pub status: TXStatus,      //Min Version 0.0.34
     pub error: Option<String>, //Min Version 0.0.34
 }
 
@@ -238,4 +239,121 @@ pub struct FeeEstimateGroup {
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct FeeRate {
     pub mojos_per_clvm_cost: u64, //Min Version 0.0.34
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RequestRemovePuzzleSubscriptions {
+    pub puzzle_hashes: Option<Vec<Bytes32>>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RespondRemovePuzzleSubscriptions {
+    pub puzzle_hashes: Vec<Bytes32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RequestRemoveCoinSubscriptions {
+    pub coin_ids: Option<Vec<Bytes32>>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RespondRemoveCoinSubscriptions {
+    pub coin_ids: Vec<Bytes32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct CoinStateFilters {
+    pub include_spent: bool,
+    pub include_unspent: bool,
+    pub include_hinted: bool,
+    pub min_amount: u64,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RequestPuzzleState {
+    pub puzzle_hashes: Vec<Bytes32>,
+    pub previous_height: Option<u32>,
+    pub header_hash: Bytes32,
+    pub filters: CoinStateFilters,
+    pub subscribe_when_finished: bool,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RespondPuzzleState {
+    pub puzzle_hashes: Vec<Bytes32>,
+    pub height: u32,
+    pub header_hash: Bytes32,
+    pub is_finished: bool,
+    pub coin_states: Vec<CoinState>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RejectPuzzleState {
+    pub reason: u8, //RejectStateReason
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RequestCoinState {
+    pub coin_ids: Vec<Bytes32>,
+    pub previous_height: Option<u32>,
+    pub header_hash: Bytes32,
+    pub subscribe: bool,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RespondCoinState {
+    pub coin_ids: Vec<Bytes32>,
+    pub coin_states: Vec<CoinState>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RejectCoinState {
+    pub reason: RejectStateReason,
+}
+
+#[derive(ChiaSerial, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum RejectStateReason {
+    UNKNOWN = 255,
+    REORG = 0,
+    ExceededSubscriptionLimit = 1,
+}
+impl From<u8> for RejectStateReason {
+    fn from(value: u8) -> Self {
+        if value == 0 {
+            RejectStateReason::REORG
+        } else if value == 1 {
+            RejectStateReason::ExceededSubscriptionLimit
+        } else {
+            RejectStateReason::UNKNOWN
+        }
+    }
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RemovedMempoolItem {
+    pub transaction_id: Bytes32,
+    pub reason: u8, //MempoolRemoveReason
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct MempoolItemsAdded {
+    pub transaction_ids: Vec<Bytes32>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct MempoolItemsRemoved {
+    pub removed_items: Vec<RemovedMempoolItem>,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RequestCostInfo {}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RespondCostInfo {
+    pub max_transaction_cost: u64,
+    pub max_block_cost: u64,
+    pub max_mempool_cost: u64,
+    pub mempool_cost: u64,
+    pub mempool_fee: u64,
+    pub bump_fee_per_cost: u8,
 }

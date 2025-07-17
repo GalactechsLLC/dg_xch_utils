@@ -16,11 +16,10 @@ enum ParserOp {
 }
 
 #[allow(clippy::cast_possible_truncation)]
-pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
-    if bytes.as_ref().is_empty() {
+pub fn sexp_from_bytes<T: AsRef<[u8]>>(stream: &mut Cursor<T>) -> Result<SExp, Error> {
+    if !stream.has_remaining() {
         return Ok(NULL_SEXP.clone());
     }
-    let mut stream = Cursor::new(bytes);
     let mut byte_buf = [0; 1];
     let mut op_buf = vec![ParserOp::Exp];
     let mut val_buf = vec![];
@@ -37,7 +36,7 @@ pub fn sexp_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<SExp, Error> {
                 } else if byte_buf[0] <= MAX_SINGLE_BYTE {
                     val_buf.push(SExp::Atom(AtomBuf::new(byte_buf.to_vec())));
                 } else {
-                    let blob_size = decode_size(&mut stream, byte_buf[0])?;
+                    let blob_size = decode_size(stream, byte_buf[0])?;
                     if stream.remaining() < blob_size as usize {
                         return Err(Error::new(ErrorKind::InvalidInput, "bad encoding"));
                     }
@@ -90,7 +89,7 @@ pub fn sexp_to_bytes(sexp: &SExp) -> std::io::Result<Vec<u8>> {
 }
 
 #[allow(clippy::cast_possible_truncation)]
-fn encode_size(f: &mut dyn Write, size: u64) -> Result<(), Error> {
+pub fn encode_size(f: &mut dyn Write, size: u64) -> Result<(), Error> {
     if size < 0x40 {
         f.write_all(&[(0x80 | size) as u8])?;
     } else if size < 0x2000 {
@@ -122,7 +121,7 @@ fn encode_size(f: &mut dyn Write, size: u64) -> Result<(), Error> {
     Ok(())
 }
 
-fn decode_size(stream: &mut dyn Read, initial_b: u8) -> Result<u64, Error> {
+pub fn decode_size(stream: &mut dyn Read, initial_b: u8) -> Result<u64, Error> {
     if initial_b & 0x80 == 0 {
         return Err(Error::new(ErrorKind::InvalidInput, "bad encoding"));
     }

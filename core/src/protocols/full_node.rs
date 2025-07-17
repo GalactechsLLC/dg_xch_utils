@@ -109,6 +109,12 @@ pub struct NewUnfinishedBlock2 {
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct RequestUnfinishedBlock2 {
+    pub unfinished_reward_hash: Bytes32, //Min Version 0.0.36
+    pub foliage_hash: Option<Bytes32>,   //Min Version 0.0.36
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct RespondUnfinishedBlock {
     pub unfinished_block: UnfinishedBlock, //Min Version 0.0.34
 }

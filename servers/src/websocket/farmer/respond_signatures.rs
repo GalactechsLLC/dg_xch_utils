@@ -225,7 +225,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             let pool_target_signature = sign(
                                                 sk,
                                                 &pool_target
-                                                    .to_bytes(ChiaProtocolVersion::default()),
+                                                    .to_bytes(ChiaProtocolVersion::default())?,
                                             );
                                             (Some(pool_target), Some(pool_target_signature))
                                         } else {
@@ -279,10 +279,10 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                     client.client.client_config.protocol_version,
                                                     &request,
                                                     None,
-                                                )
+                                                )?
                                                 .to_bytes(
                                                     client.client.client_config.protocol_version,
-                                                )
+                                                )?
                                                 .into(),
                                             ))
                                             .await;
@@ -437,10 +437,10 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                     client.client.client_config.protocol_version,
                                                     &request,
                                                     None,
-                                                )
+                                                )?
                                                 .to_bytes(
                                                     client.client.client_config.protocol_version,
-                                                )
+                                                )?
                                                 .into(),
                                             ))
                                             .await;

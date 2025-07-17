@@ -3,6 +3,7 @@ use crate::blockchain::sized_bytes::{
     Bytes100, Bytes32, Bytes4, Bytes48, Bytes480, Bytes8, Bytes96,
 };
 use crate::clvm::assemble::is_hex;
+use crate::clvm::parser::{sexp_from_bytes, sexp_to_bytes};
 use crate::clvm::program::Program;
 use crate::constants::{
     ADD, APPLY, CONS, DIV, DIVMOD, KEYWORD_FROM_ATOM, MUL, NULL_CELL, NULL_SEXP, ONE_SEXP, QUOTE,
@@ -11,13 +12,14 @@ use crate::constants::{
 use crate::formatting::{number_from_slice, u32_from_slice, u64_from_bigint};
 use crate::traits::SizedBytes;
 use crate::utils::hash_256;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::encode;
 use num_bigint::BigInt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
-use std::io::{Error, ErrorKind};
+use std::io::{Cursor, Error, ErrorKind};
 use std::mem::replace;
 use std::sync::Arc;
 
@@ -819,3 +821,22 @@ impl_ints!(
     i64;
     i128
 );
+
+impl ChiaSerialize for SExp {
+    fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
+    where
+        Self: Sized,
+    {
+        sexp_to_bytes(self)
+    }
+
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        sexp_from_bytes(bytes)
+    }
+}

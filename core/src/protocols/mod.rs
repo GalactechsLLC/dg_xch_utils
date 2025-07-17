@@ -149,6 +149,28 @@ pub enum ProtocolMessageTypes {
     RespondBlockHeaders = 88,
     RequestFeeEstimates = 89,
     RespondFeeEstimates = 90,
+
+    //new Full Node protocol messages
+    NewUnfinishedBlock2 = 92,
+    RequestUnfinishedBlock2 = 93,
+
+    //New wallet sync protocol
+    RequestRemovePuzzleSubscriptions = 94,
+    RespondRemovePuzzleSubscriptions = 95,
+    RequestRemoveCoinSubscriptions = 96,
+    RespondRemoveCoinSubscriptions = 97,
+    RequestPuzzleState = 98,
+    RespondPuzzleState = 99,
+    RejectPuzzleState = 100,
+    RequestCoinState = 101,
+    RespondCoinState = 102,
+    RejectCoinState = 103,
+
+    //Wallet protocol mempool updates
+    MempoolItemsAdded = 104,
+    MempoolItemsRemoved = 105,
+    RequestCostInfo = 106,
+    RespondCostInfo = 107,
 }
 impl From<u8> for ProtocolMessageTypes {
     #[allow(clippy::too_many_lines)]
@@ -413,6 +435,54 @@ impl From<u8> for ProtocolMessageTypes {
             i if i == ProtocolMessageTypes::RespondFeeEstimates as u8 => {
                 ProtocolMessageTypes::RespondFeeEstimates
             }
+            i if i == ProtocolMessageTypes::NewUnfinishedBlock2 as u8 => {
+                ProtocolMessageTypes::NewUnfinishedBlock2
+            }
+            i if i == ProtocolMessageTypes::RequestUnfinishedBlock2 as u8 => {
+                ProtocolMessageTypes::RequestUnfinishedBlock2
+            }
+            i if i == ProtocolMessageTypes::RequestRemovePuzzleSubscriptions as u8 => {
+                ProtocolMessageTypes::RequestRemovePuzzleSubscriptions
+            }
+            i if i == ProtocolMessageTypes::RespondRemovePuzzleSubscriptions as u8 => {
+                ProtocolMessageTypes::RespondRemovePuzzleSubscriptions
+            }
+            i if i == ProtocolMessageTypes::RequestRemoveCoinSubscriptions as u8 => {
+                ProtocolMessageTypes::RequestRemoveCoinSubscriptions
+            }
+            i if i == ProtocolMessageTypes::RespondRemoveCoinSubscriptions as u8 => {
+                ProtocolMessageTypes::RespondRemoveCoinSubscriptions
+            }
+            i if i == ProtocolMessageTypes::RequestPuzzleState as u8 => {
+                ProtocolMessageTypes::RequestPuzzleState
+            }
+            i if i == ProtocolMessageTypes::RespondPuzzleState as u8 => {
+                ProtocolMessageTypes::RespondPuzzleState
+            }
+            i if i == ProtocolMessageTypes::RejectPuzzleState as u8 => {
+                ProtocolMessageTypes::RejectPuzzleState
+            }
+            i if i == ProtocolMessageTypes::RequestCoinState as u8 => {
+                ProtocolMessageTypes::RequestCoinState
+            }
+            i if i == ProtocolMessageTypes::RespondCoinState as u8 => {
+                ProtocolMessageTypes::RespondCoinState
+            }
+            i if i == ProtocolMessageTypes::RejectCoinState as u8 => {
+                ProtocolMessageTypes::RejectCoinState
+            }
+            i if i == ProtocolMessageTypes::MempoolItemsAdded as u8 => {
+                ProtocolMessageTypes::MempoolItemsAdded
+            }
+            i if i == ProtocolMessageTypes::MempoolItemsRemoved as u8 => {
+                ProtocolMessageTypes::MempoolItemsRemoved
+            }
+            i if i == ProtocolMessageTypes::RequestCostInfo as u8 => {
+                ProtocolMessageTypes::RequestCostInfo
+            }
+            i if i == ProtocolMessageTypes::RespondCostInfo as u8 => {
+                ProtocolMessageTypes::RespondCostInfo
+            }
             _ => ProtocolMessageTypes::Unknown,
         }
     }
@@ -477,17 +547,21 @@ impl ChiaMessage {
         version: ChiaProtocolVersion,
         msg: &T,
         id: Option<u16>,
-    ) -> Self {
-        ChiaMessage {
+    ) -> Result<Self, Error> {
+        Ok(ChiaMessage {
             msg_type,
             id,
-            data: msg.to_bytes(version),
-        }
+            data: msg.to_bytes(version)?,
+        })
     }
 }
 impl From<ChiaMessage> for Message {
     fn from(val: ChiaMessage) -> Self {
-        Message::Binary(val.to_bytes(ChiaProtocolVersion::default()).into())
+        Message::Binary(
+            val.to_bytes(ChiaProtocolVersion::default())
+                .expect("Chia Message has Safe to Bytes")
+                .into(),
+        )
     }
 }
 

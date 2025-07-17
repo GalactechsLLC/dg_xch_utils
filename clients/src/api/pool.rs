@@ -279,7 +279,7 @@ pub async fn create_pool_login_parts(
             target_puzzle_hash: pool_info.target_puzzle_hash,
             authentication_token: current_auth_token,
         };
-        let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
+        let to_sign = hash_256(&payload.to_bytes(ChiaProtocolVersion::default())?);
         let sig = sign(sec_key, &to_sign);
         sigs.push(sig);
     }

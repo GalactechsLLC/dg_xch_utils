@@ -152,7 +152,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                 "File: {:?} Plot ID: {}, challenge: {sp_challenge_hash}, Quality Str: {}, proof: {:?}",
                                                 path,
                                                 &plot_id,
-                                                encode(quality.to_bytes(protocol_version)),
+                                                encode(quality.to_bytes(protocol_version)?),
                                                 encode(&proof_bytes)
                                             );
                                             responses.push((
@@ -210,7 +210,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                     challenge_hash: harvester_point.challenge_hash,
                                                     sp_hash: harvester_point.sp_hash,
                                                     plot_identifier: encode(
-                                                        quality.to_bytes(protocol_version),
+                                                        quality.to_bytes(protocol_version)?,
                                                     ) + path.file_name.as_str(),
                                                     proof,
                                                     signage_point_index: harvester_point
@@ -220,8 +220,8 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                                     fee_info: None,
                                                 },
                                                 None,
-                                            )
-                                            .to_bytes(protocol_version)
+                                            )?
+                                            .to_bytes(protocol_version)?
                                             .into(),
                                         ))
                                         .await;
