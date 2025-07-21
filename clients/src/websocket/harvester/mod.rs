@@ -29,6 +29,7 @@ impl HarvesterClient {
         plots_ready: Arc<AtomicBool>,
         harvester_state: Arc<RwLock<HarvesterState>>,
         run: Arc<AtomicBool>,
+        timeout: u64,
     ) -> Result<Self, Error> {
         let constants = CONSENSUS_CONSTANTS_MAP
             .get(&client_config.network_id)
@@ -46,6 +47,7 @@ impl HarvesterClient {
             run,
             CHIA_CA_CRT.as_bytes(),
             CHIA_CA_KEY.as_bytes(),
+            timeout,
         )
         .await?;
         Ok(HarvesterClient { client })

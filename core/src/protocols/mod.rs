@@ -19,7 +19,7 @@ use futures_util::SinkExt;
 use futures_util::{Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{Cursor, Error};
@@ -765,7 +765,7 @@ impl ReadStream {
                                     }
                                 }
                                 Message::Close(e) => {
-                                    debug!("Server Got Close Message: {e:?}");
+                                    info!("Got Close Message: {e:?}");
                                     return;
                                 },
                                 _ => {
@@ -776,7 +776,7 @@ impl ReadStream {
                         Some(Err(msg)) => {
                             match msg {
                                 tokio_tungstenite::tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake) => {
-                                    debug!("Server Stream Closed without Handshake");
+                                    warn!("Server Stream Closed without Handshake");
                                 },
                                 others => {
                                     error!("Server Stream Error: {others:?}");
@@ -791,12 +791,12 @@ impl ReadStream {
                     }
                 }
                 _ = await_termination() => {
+                    info!("Got Termination Signal for WS");
                     return;
                 }
                 () = async {
                     loop {
                         if !run.load(Ordering::Relaxed){
-                            debug!("Server is exiting");
                             return;
                         }
                         tokio::time::sleep(Duration::from_millis(100)).await;

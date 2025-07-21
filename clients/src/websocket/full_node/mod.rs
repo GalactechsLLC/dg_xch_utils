@@ -16,6 +16,7 @@ impl FullnodeClient {
         client_config: Arc<WsClientConfig>,
         run: Arc<AtomicBool>,
         handles: Option<HashMap<Uuid, Arc<ChiaMessageHandler>>>,
+        timeout: u64,
     ) -> Result<Self, Error> {
         let handles = Arc::new(RwLock::new(handles.unwrap_or_default()));
         let client = WsClient::with_ca(
@@ -25,6 +26,7 @@ impl FullnodeClient {
             run,
             CHIA_CA_CRT.as_bytes(),
             CHIA_CA_KEY.as_bytes(),
+            timeout,
         )
         .await?;
         Ok(FullnodeClient { client })

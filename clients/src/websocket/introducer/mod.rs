@@ -32,6 +32,7 @@ impl IntroducerClient {
         client_config: Arc<WsClientConfig>,
         run: Arc<AtomicBool>,
         state: Arc<RwLock<IntroducerState>>,
+        timeout: u64,
     ) -> Result<Self, Error> {
         default_provider().install_default().unwrap_or_default();
         struct IgnoreExtraMessagesHandler {}
@@ -80,6 +81,7 @@ impl IntroducerClient {
             run,
             CHIA_CA_CRT.as_bytes(),
             CHIA_CA_KEY.as_bytes(),
+            timeout,
         )
         .await?;
         Ok(IntroducerClient { client, state })

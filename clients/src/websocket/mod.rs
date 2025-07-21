@@ -37,6 +37,7 @@ use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use urlencoding::encode;
@@ -72,6 +73,7 @@ impl WsClient {
         node_type: NodeType,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         run: Arc<AtomicBool>,
+        timeout: u64,
     ) -> Result<Self, Error> {
         if let Some(ssl_info) = &client_config.ssl_info {
             Self::build(
@@ -82,6 +84,7 @@ impl WsClient {
                 load_certs(&ssl_info.ssl_crt_path)?,
                 load_private_key(&ssl_info.ssl_key_path)?,
                 &fs::read(&ssl_info.ssl_crt_path)?,
+                timeout,
             )
             .await
         } else if let (Some(crt), Some(key)) = (
@@ -99,6 +102,7 @@ impl WsClient {
                 load_certs_from_bytes(&cert_bytes)?,
                 load_private_key_from_bytes(&key_bytes)?,
                 &cert_bytes,
+                timeout,
             )
             .await
         } else {
@@ -113,6 +117,7 @@ impl WsClient {
                 load_certs_from_bytes(&cert_bytes)?,
                 load_private_key_from_bytes(&key_bytes)?,
                 &cert_bytes,
+                timeout,
             )
             .await
         }
@@ -124,6 +129,7 @@ impl WsClient {
         run: Arc<AtomicBool>,
         cert_data: &[u8],
         key_data: &[u8],
+        timeout: u64,
     ) -> Result<Self, Error> {
         let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(cert_data, key_data)
             .map_err(|e| Error::other(format!("OpenSSL Errors: {e:?}")))?;
@@ -135,10 +141,11 @@ impl WsClient {
             load_certs_from_bytes(&cert_bytes)?,
             load_private_key_from_bytes(&key_bytes)?,
             &cert_bytes,
+            timeout,
         )
         .await
     }
-
+    #[allow(clippy::too_many_arguments)]
     async fn build(
         client_config: Arc<WsClientConfig>,
         node_type: NodeType,
@@ -147,6 +154,7 @@ impl WsClient {
         certs: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
         cert_str: &[u8],
+        timeout_secs: u64,
     ) -> Result<Self, Error> {
         let mut request = format!("wss://{}:{}/ws", client_config.host, client_config.port)
             .into_client_request()
@@ -184,19 +192,23 @@ impl WsClient {
             })?,
         );
         let peer_id = Arc::new(Bytes32::new(hash_256(certs[0].as_ref())));
-        let (stream, _) = connect_async_tls_with_config(
-            request,
-            None,
-            false,
-            Some(Connector::Rustls(Arc::new(
-                ClientConfig::builder()
-                    .dangerous()
-                    .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-                    .with_client_auth_cert(certs, key)
-                    .map_err(|e| Error::other(format!("Error Building Client: {e:?}")))?,
-            ))),
+        let (stream, _) = timeout(
+            Duration::from_secs(timeout_secs),
+            connect_async_tls_with_config(
+                request,
+                None,
+                false,
+                Some(Connector::Rustls(Arc::new(
+                    ClientConfig::builder()
+                        .dangerous()
+                        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+                        .with_client_auth_cert(certs, key)
+                        .map_err(|e| Error::other(format!("Error Building Client: {e:?}")))?,
+                ))),
+            ),
         )
         .await
+        .map_err(|_| Error::other("Timeout Connecting Client"))?
         .map_err(|e| Error::other(format!("Error Connecting Client: {e:?}")))?;
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (ws_con, mut stream) = WebsocketConnection::new(
