@@ -26,6 +26,9 @@ pub fn sexp_from_bytes<T: AsRef<[u8]>>(stream: &mut Cursor<T>) -> Result<SExp, E
     while let Some(op) = op_buf.pop() {
         match op {
             ParserOp::Exp => {
+                if !stream.has_remaining() {
+                    return Err(Error::new(ErrorKind::UnexpectedEof, "Unexpected End of SExp Stream"))
+                }
                 stream.read_exact(&mut byte_buf)?;
                 if byte_buf[0] == CONS_BOX_MARKER {
                     op_buf.push(ParserOp::Cons);
