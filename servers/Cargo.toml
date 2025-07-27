@@ -24,7 +24,7 @@ hyper-tungstenite = "0.17.0"
 hyper-util = {version="0.1.10", features=["full"]}
 log = "0.4.26"
 prometheus = {version="0.13.4", features=["protobuf"], optional = true}
-rustls = {version = "0.23.27" }
+rustls = {version = "0.23.30" }
 tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
 tokio-rustls = { version = "0.26.2" }
 tokio-tungstenite = {version = "0.26.2", features = ["rustls", "rustls-tls-webpki-roots"] }
