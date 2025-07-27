@@ -24,6 +24,7 @@ pub enum ChiaProtocolVersion {
     Chia0_0_35 = 35, //2.0.0
     #[default]
     Chia0_0_36 = 36, //2.2.0
+    Chia0_0_37 = 37, //2.2.0
 }
 impl Display for ChiaProtocolVersion {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -31,6 +32,7 @@ impl Display for ChiaProtocolVersion {
             ChiaProtocolVersion::Chia0_0_34 => f.write_str("0.0.34"),
             ChiaProtocolVersion::Chia0_0_35 => f.write_str("0.0.35"),
             ChiaProtocolVersion::Chia0_0_36 => f.write_str("0.0.36"),
+            ChiaProtocolVersion::Chia0_0_37 => f.write_str("0.0.37"),
         }
     }
 }
@@ -41,6 +43,7 @@ impl FromStr for ChiaProtocolVersion {
             "0.0.34" => ChiaProtocolVersion::Chia0_0_34,
             "0.0.35" => ChiaProtocolVersion::Chia0_0_35,
             "0.0.36" => ChiaProtocolVersion::Chia0_0_36,
+            "0.0.37" => ChiaProtocolVersion::Chia0_0_37,
             _ => {
                 warn!(
                     "Failed to detect Protocol Version: {s}, defaulting to {}",

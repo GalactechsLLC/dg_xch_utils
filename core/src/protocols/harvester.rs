@@ -23,7 +23,7 @@ pub struct HarvesterHandshake {
     pub pool_public_keys: Vec<Bytes48>,   //Min Version 0.0.34
 }
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct NewSignagePointHarvester {
     pub challenge_hash: Bytes32,                //Min Version 0.0.34
     pub difficulty: u64,                        //Min Version 0.0.34
@@ -32,6 +32,83 @@ pub struct NewSignagePointHarvester {
     pub sp_hash: Bytes32,                       //Min Version 0.0.34
     pub pool_difficulties: Vec<PoolDifficulty>, //Min Version 0.0.34
     pub filter_prefix_bits: i8,                 //Min Version 0.0.35
+    pub last_tx_height: u32,                    //Min Version 0.0.37
+}
+impl dg_xch_serialize::ChiaSerialize for NewSignagePointHarvester {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
+        let mut bytes = vec![];
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.challenge_hash,
+            version,
+        )?);
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.difficulty,
+            version,
+        )?);
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.sub_slot_iters,
+            version,
+        )?);
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.signage_point_index,
+            version,
+        )?);
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.sp_hash,
+            version,
+        )?);
+        bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+            &self.pool_difficulties,
+            version,
+        )?);
+        if version >= ChiaProtocolVersion::Chia0_0_35 {
+            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+                &self.filter_prefix_bits,
+                version,
+            )?);
+        }
+        if version >= ChiaProtocolVersion::Chia0_0_37 {
+            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+                &self.last_tx_height,
+                version,
+            )?);
+        }
+        Ok(bytes)
+    }
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut std::io::Cursor<T>,
+        version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        let challenge_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?;
+        let difficulty = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?;
+        let sub_slot_iters = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?;
+        let signage_point_index = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?;
+        let sp_hash = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?;
+        let pool_difficulties = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?;
+        let filter_prefix_bits = if version >= ChiaProtocolVersion::Chia0_0_35 {
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?
+        } else {
+            0i8
+        };
+        let last_tx_height = if version >= ChiaProtocolVersion::Chia0_0_37 {
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?
+        } else {
+            0u32
+        };
+        Ok(Self {
+            challenge_hash,
+            difficulty,
+            sub_slot_iters,
+            signage_point_index,
+            sp_hash,
+            pool_difficulties,
+            filter_prefix_bits,
+            last_tx_height,
+        })
+    }
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]

@@ -64,6 +64,7 @@ pub struct NewSignagePoint {
     pub sub_slot_iters: u64,                            //Min Version 0.0.34
     pub signage_point_index: u8,                        //Min Version 0.0.34
     pub peak_height: u32,                               //Min Version 0.0.35
+    pub last_tx_height: u32,                            //Min Version 0.0.37
     pub sp_source_data: Option<SignagePointSourceData>, //Min Version 0.0.36
 }
 impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
@@ -99,6 +100,12 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
                 version,
             )?);
         }
+        if version >= ChiaProtocolVersion::Chia0_0_37 {
+            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+                &self.last_tx_height,
+                version,
+            )?);
+        }
         if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.sp_source_data,
@@ -125,6 +132,11 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
         } else {
             0u32
         };
+        let last_tx_height = if version >= ChiaProtocolVersion::Chia0_0_37 {
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?
+        } else {
+            0u32
+        };
         let sp_source_data = if version >= ChiaProtocolVersion::Chia0_0_36 {
             dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version).unwrap_or_default()
         } else {
@@ -138,6 +150,7 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
             sub_slot_iters,
             signage_point_index,
             peak_height,
+            last_tx_height,
             sp_source_data,
         })
     }

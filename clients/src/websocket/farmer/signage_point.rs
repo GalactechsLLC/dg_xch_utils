@@ -81,6 +81,7 @@ impl MessageHandler for NewSignagePointHandle {
             sp_hash: sp.challenge_chain_sp,
             pool_difficulties,
             filter_prefix_bits: calculate_prefix_bits(self.constants.as_ref(), sp.peak_height),
+            last_tx_height: sp.last_tx_height,
         };
         let peers: Vec<Arc<SocketPeer>> = self
             .harvester_peers
