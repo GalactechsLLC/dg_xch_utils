@@ -184,11 +184,6 @@ pub fn get_current_authentication_token(timeout: u8) -> u64 {
 
 #[must_use]
 pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
-    let cur_token = get_current_authentication_token(timeout);
-    let dif = if token > cur_token {
-        token - cur_token
-    } else {
-        cur_token - token
-    };
+    let dif = token.abs_diff(get_current_authentication_token(timeout));
     dif <= u64::from(timeout)
 }

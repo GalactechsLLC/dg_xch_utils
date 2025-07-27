@@ -56,14 +56,14 @@ impl MessageHandler for RequestSignedValuesHandle {
                     include_source_data = true;
                     foliage_block_data = Some(SignatureRequestSourceData {
                         kind: SigningDataKind::FoliageBlockData,
-                        data: data.to_bytes(protocol_version),
+                        data: data.to_bytes(protocol_version)?,
                     });
                 }
                 if let Some(data) = request.foliage_transaction_block_data {
                     include_source_data = true;
                     foliage_transaction_block = Some(SignatureRequestSourceData {
                         kind: SigningDataKind::FoliageTransactionBlock,
-                        data: data.to_bytes(protocol_version),
+                        data: data.to_bytes(protocol_version)?,
                     });
                 }
                 let _ = peer
@@ -90,8 +90,8 @@ impl MessageHandler for RequestSignedValuesHandle {
                                 rc_block_unfinished: request.rc_block_unfinished,
                             },
                             None,
-                        )
-                        .to_bytes(protocol_version)
+                        )?
+                        .to_bytes(protocol_version)?
                         .into(),
                     ))
                     .await;

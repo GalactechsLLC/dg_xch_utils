@@ -64,7 +64,7 @@ impl SimulatorAPI for SimulatorClient {
             "address".to_string(),
             json!(
                 encode_puzzle_hash(&address, "xch").map_err(|e| ChiaRpcError {
-                    error: Some(format!("{}", e)),
+                    error: Some(format!("{e}")),
                     success: false,
                 })?
             ),

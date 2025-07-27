@@ -76,6 +76,7 @@ pub struct ConsensusConstants {
     //This is NOT standard, but makes some things easier
     pub bech32_prefix: String,
     pub is_testnet: bool,
+    pub simulated: bool,
 }
 impl Default for ConsensusConstants {
     fn default() -> Self {
@@ -142,8 +143,31 @@ pub static MAINNET: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
         plot_filter_32_height: 20_643_000,
         bech32_prefix: String::from("xch"),
         is_testnet: false,
+        simulated: false,
     })
 });
+
+pub static SIMULATOR: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
+    Arc::new(ConsensusConstants {
+        genesis_challenge: Bytes32::from_str(
+            "eb8c4d20b322be8d9fddbf9412016bdffe9a2901d7edb0e364e94266d0e095f7",
+        )
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_farmer_puzzle_hash: Bytes32::from_str(
+            "b1b5203daca45bc00fac9ce11afcfd88a111ba564b3ca5e07ba0f8e31ff66a41",
+        )
+        .expect("Failed to parse known good hex"),
+        genesis_pre_farm_pool_puzzle_hash: Bytes32::from_str(
+            "b1b5203daca45bc00fac9ce11afcfd88a111ba564b3ca5e07ba0f8e31ff66a41",
+        )
+        .expect("Failed to parse known good hex"),
+        hard_fork_height: 0,
+        min_plot_size: 18,
+        simulated: true,
+        ..Default::default()
+    })
+});
+
 pub static TESTNET_0: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
     Arc::new(ConsensusConstants {
         genesis_challenge: Bytes32::from_str(
@@ -358,6 +382,7 @@ pub static TESTNET_11: Lazy<Arc<ConsensusConstants>> = Lazy::new(|| {
 pub static CONSENSUS_CONSTANTS_MAP: Lazy<HashMap<String, Arc<ConsensusConstants>>> =
     Lazy::new(|| {
         HashMap::from([
+            ("simulator".to_string(), SIMULATOR.clone()),
             ("testnet0".to_string(), TESTNET_0.clone()),
             ("testnet2".to_string(), TESTNET_2.clone()),
             ("testnet3".to_string(), TESTNET_3.clone()),

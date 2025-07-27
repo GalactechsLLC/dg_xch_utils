@@ -1,7 +1,9 @@
 use log::warn;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::{Display, Formatter};
-use std::io::{Cursor, Error, ErrorKind, Read};
+use std::hash::Hash;
+use std::io::{Cursor, Error, ErrorKind, Read, Write};
 use std::str::FromStr;
 use time::OffsetDateTime;
 
@@ -20,8 +22,9 @@ use time::OffsetDateTime;
 pub enum ChiaProtocolVersion {
     Chia0_0_34 = 34, //Pre 2.0.0
     Chia0_0_35 = 35, //2.0.0
-    #[default]
     Chia0_0_36 = 36, //2.2.0
+    #[default]
+    Chia0_0_37 = 37, //2.5.5
 }
 impl Display for ChiaProtocolVersion {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -29,6 +32,7 @@ impl Display for ChiaProtocolVersion {
             ChiaProtocolVersion::Chia0_0_34 => f.write_str("0.0.34"),
             ChiaProtocolVersion::Chia0_0_35 => f.write_str("0.0.35"),
             ChiaProtocolVersion::Chia0_0_36 => f.write_str("0.0.36"),
+            ChiaProtocolVersion::Chia0_0_37 => f.write_str("0.0.37"),
         }
     }
 }
@@ -39,6 +43,7 @@ impl FromStr for ChiaProtocolVersion {
             "0.0.34" => ChiaProtocolVersion::Chia0_0_34,
             "0.0.35" => ChiaProtocolVersion::Chia0_0_35,
             "0.0.36" => ChiaProtocolVersion::Chia0_0_36,
+            "0.0.37" => ChiaProtocolVersion::Chia0_0_37,
             _ => {
                 warn!(
                     "Failed to detect Protocol Version: {s}, defaulting to {}",
@@ -51,7 +56,7 @@ impl FromStr for ChiaProtocolVersion {
 }
 
 pub trait ChiaSerialize {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized;
     fn from_bytes<T: AsRef<[u8]>>(
@@ -62,7 +67,7 @@ pub trait ChiaSerialize {
         Self: Sized;
 }
 impl ChiaSerialize for OffsetDateTime {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
@@ -82,7 +87,7 @@ impl ChiaSerialize for OffsetDateTime {
 }
 
 impl ChiaSerialize for String {
-    fn to_bytes(&self, _version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
@@ -90,7 +95,7 @@ impl ChiaSerialize for String {
         #[allow(clippy::cast_possible_truncation)]
         bytes.extend((self.len() as u32).to_be_bytes());
         bytes.extend(self.as_bytes());
-        bytes
+        Ok(bytes)
     }
     fn from_bytes<T: AsRef<[u8]>>(
         bytes: &mut Cursor<T>,
@@ -117,11 +122,11 @@ impl ChiaSerialize for String {
 }
 
 impl ChiaSerialize for bool {
-    fn to_bytes(&self, _version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
-        vec![u8::from(*self)]
+        Ok(vec![u8::from(*self)])
     }
     fn from_bytes<T: AsRef<[u8]>>(
         bytes: &mut Cursor<T>,
@@ -147,7 +152,7 @@ impl<T> ChiaSerialize for Option<T>
 where
     T: ChiaSerialize,
 {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
@@ -155,13 +160,13 @@ where
         match &self {
             Some(t) => {
                 bytes.push(1u8);
-                bytes.extend(t.to_bytes(version));
+                bytes.extend(t.to_bytes(version)?);
             }
             None => {
                 bytes.push(0u8);
             }
         }
-        bytes
+        Ok(bytes)
     }
     fn from_bytes<B: AsRef<[u8]>>(
         bytes: &mut Cursor<B>,
@@ -185,14 +190,14 @@ where
     T: ChiaSerialize,
     U: ChiaSerialize,
 {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
         let mut bytes: Vec<u8> = Vec::new();
-        bytes.extend(self.0.to_bytes(version));
-        bytes.extend(self.1.to_bytes(version));
-        bytes
+        bytes.extend(self.0.to_bytes(version)?);
+        bytes.extend(self.1.to_bytes(version)?);
+        Ok(bytes)
     }
     fn from_bytes<B: AsRef<[u8]>>(
         bytes: &mut Cursor<B>,
@@ -213,15 +218,15 @@ where
     U: ChiaSerialize,
     V: ChiaSerialize,
 {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
         let mut bytes: Vec<u8> = Vec::new();
-        bytes.extend(self.0.to_bytes(version));
-        bytes.extend(self.1.to_bytes(version));
-        bytes.extend(self.2.to_bytes(version));
-        bytes
+        bytes.extend(self.0.to_bytes(version)?);
+        bytes.extend(self.1.to_bytes(version)?);
+        bytes.extend(self.2.to_bytes(version)?);
+        Ok(bytes)
     }
     fn from_bytes<B: AsRef<[u8]>>(
         bytes: &mut Cursor<B>,
@@ -241,7 +246,7 @@ impl<T> ChiaSerialize for Vec<T>
 where
     T: ChiaSerialize,
 {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
@@ -249,9 +254,9 @@ where
         #[allow(clippy::cast_possible_truncation)]
         bytes.extend((self.len() as u32).to_be_bytes());
         for e in self {
-            bytes.extend(e.to_bytes(version));
+            bytes.extend(e.to_bytes(version)?);
         }
-        bytes
+        Ok(bytes)
     }
     fn from_bytes<B: AsRef<[u8]>>(
         bytes: &mut Cursor<B>,
@@ -278,14 +283,14 @@ macro_rules! impl_primitives {
     ($($name: ident, $size:expr);*) => {
         $(
             impl ChiaSerialize for $name {
-                fn to_bytes(&self, _version: ChiaProtocolVersion) -> Vec<u8> {
-                    self.to_be_bytes().to_vec()
+                fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
+                    Ok(self.to_be_bytes().to_vec())
                 }
                 fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>, _version: ChiaProtocolVersion) -> Result<Self, std::io::Error> where Self: Sized,
                 {
                     let remaining = bytes.get_ref().as_ref().len().saturating_sub(bytes.position() as usize);
                     if remaining < $size {
-                        Err(Error::new(std::io::ErrorKind::InvalidInput, format!("Failed to Parse $name, expected length $size, found {}", remaining)))
+                        Err(Error::new(std::io::ErrorKind::InvalidInput, format!("Failed to Parse {}, expected length {}, found {}", stringify!($name), stringify!($size), remaining)))
                     } else {
                         let mut buffer: [u8; $size] = [0; $size];
                         bytes.read_exact(&mut buffer)?;
@@ -311,3 +316,107 @@ impl_primitives!(
     f32, 4;
     f64, 8
 );
+
+const MAX_DECODE_SIZE: u64 = 0x0004_0000_0000;
+
+#[allow(clippy::cast_possible_truncation)]
+pub fn encode_size(f: &mut dyn Write, size: u64) -> Result<(), Error> {
+    if size < 0x40 {
+        f.write_all(&[(0x80 | size) as u8])?;
+    } else if size < 0x2000 {
+        f.write_all(&[(0xc0 | (size >> 8)) as u8, ((size) & 0xff) as u8])?;
+    } else if size < 0x10_0000 {
+        f.write_all(&[
+            (0xe0 | (size >> 16)) as u8,
+            ((size >> 8) & 0xff) as u8,
+            ((size) & 0xff) as u8,
+        ])?;
+    } else if size < 0x800_0000 {
+        f.write_all(&[
+            (0xf0 | (size >> 24)) as u8,
+            ((size >> 16) & 0xff) as u8,
+            ((size >> 8) & 0xff) as u8,
+            ((size) & 0xff) as u8,
+        ])?;
+    } else if size < 0x4_0000_0000 {
+        f.write_all(&[
+            (0xf8 | (size >> 32)) as u8,
+            ((size >> 24) & 0xff) as u8,
+            ((size >> 16) & 0xff) as u8,
+            ((size >> 8) & 0xff) as u8,
+            ((size) & 0xff) as u8,
+        ])?;
+    } else {
+        return Err(Error::new(ErrorKind::InvalidData, "atom too big"));
+    }
+    Ok(())
+}
+
+pub fn decode_size(stream: &mut dyn Read, initial_b: u8) -> Result<u64, Error> {
+    if initial_b & 0x80 == 0 {
+        return Err(Error::new(ErrorKind::InvalidInput, "bad encoding"));
+    }
+    let mut bit_count = 0;
+    let mut bit_mask: u8 = 0x80;
+    let mut b = initial_b;
+    while b & bit_mask != 0 {
+        bit_count += 1;
+        b &= 0xff ^ bit_mask;
+        bit_mask >>= 1;
+    }
+    let mut size_blob: Vec<u8> = vec![0; bit_count];
+    size_blob[0] = b;
+    if bit_count > 1 {
+        stream.read_exact(&mut size_blob[1..])?;
+    }
+    let mut v = 0;
+    if size_blob.len() > 6 {
+        return Err(Error::new(ErrorKind::InvalidInput, "bad encoding"));
+    }
+    for b in &size_blob {
+        v <<= 8;
+        v += u64::from(*b);
+    }
+    if v >= MAX_DECODE_SIZE {
+        return Err(Error::new(ErrorKind::InvalidInput, "bad encoding"));
+    }
+    Ok(v)
+}
+
+impl<K: ChiaSerialize + Eq + Hash, V: ChiaSerialize> ChiaSerialize for HashMap<K, V> {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
+    where
+        Self: Sized,
+    {
+        let mut bytes: Vec<u8> = Vec::new();
+        #[allow(clippy::cast_possible_truncation)]
+        bytes.extend((self.len() as u32).to_be_bytes());
+        for (k, v) in self {
+            bytes.extend(k.to_bytes(version)?);
+            bytes.extend(v.to_bytes(version)?);
+        }
+        Ok(bytes)
+    }
+
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        let mut u32_buf: [u8; 4] = [0; 4];
+        bytes.read_exact(&mut u32_buf)?;
+        let map_len = u32::from_be_bytes(u32_buf);
+        if map_len > 2048 {
+            warn!("Serializing Large Map: {map_len}");
+        }
+        let buf: HashMap<K, V> = HashMap::with_capacity(map_len as usize);
+        (0..map_len).try_fold(buf, |mut map, _| {
+            let key = K::from_bytes(bytes, version)?;
+            let value = V::from_bytes(bytes, version)?;
+            map.insert(key, value);
+            Ok(map)
+        })
+    }
+}

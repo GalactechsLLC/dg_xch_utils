@@ -16,7 +16,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cmp::min;
 use std::io::{Cursor, Error, ErrorKind, Read};
-use std::ops::{Index, IndexMut, Range};
+use std::ops::{BitXor, Index, IndexMut, Range};
 use std::str::FromStr;
 
 #[derive(Copy, Clone)]
@@ -51,6 +51,41 @@ impl<const SIZE: usize> SizedBytes<'_, SIZE> for SizedBytesImpl<SIZE> {
     fn bytes(&self) -> [u8; SIZE] {
         self.bytes
     }
+}
+impl<const SIZE: usize> BitXor for SizedBytesImpl<SIZE> {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        self ^ rhs.bytes
+    }
+}
+impl<const SIZE: usize> BitXor<[u8; SIZE]> for SizedBytesImpl<SIZE> {
+    type Output = Self;
+
+    fn bitxor(self, rhs: [u8; SIZE]) -> Self::Output {
+        let mut output: [u8; SIZE] = [0; SIZE];
+        for ((x, y), o) in self.bytes.iter().zip(rhs.iter()).zip(output.iter_mut()) {
+            *o = x ^ y;
+        }
+        Self::new(output)
+    }
+}
+#[tokio::test]
+pub async fn test() {
+    let first: [u8; 32] = rand::random();
+    let second: [u8; 32] = rand::random();
+    let first = Bytes32::new(first);
+    let second = Bytes32::new(second);
+    let product = first ^ second;
+    let should_be_second = product ^ first;
+    let should_be_first = product ^ second;
+    println!("first: {:?}", first);
+    println!("second: {:?}", second);
+    println!("product: {:?}", product);
+    println!("should_be_second: {:?}", should_be_second);
+    println!("should_be_first: {:?}", should_be_first);
+    assert_eq!(first, should_be_first);
+    assert_eq!(second, should_be_second);
 }
 impl<const SIZE: usize> Fill for SizedBytesImpl<SIZE> {
     fn try_fill<R: Rng + ?Sized>(&mut self, rng: &mut R) -> Result<(), rand::Error> {
@@ -175,7 +210,7 @@ impl<const SIZE: usize> Visitor<'_> for SizedBytesImplVisitor<SIZE> {
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter
-            .write_str(format!("Expecting a hex String, or byte array of size {}", SIZE).as_str())
+            .write_str(format!("Expecting a hex String, or byte array of size {SIZE}").as_str())
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
@@ -244,8 +279,8 @@ macro_rules! impl_sized_bytes {
                 }
             }
             impl ChiaSerialize for $name {
-                fn to_bytes(&self, _version: ChiaProtocolVersion) -> Vec<u8> {
-                    self.bytes().to_vec()
+                fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, std::io::Error> {
+                    Ok(self.bytes().to_vec())
                 }
                 fn from_bytes<T: AsRef<[u8]>>(bytes: &mut Cursor<T>, _version: ChiaProtocolVersion) -> Result<Self, Error> where Self: Sized,
                 {

@@ -2,15 +2,15 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::condition_with_args::{ConditionWithArgs, Message};
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
-use crate::blockchain::utils::{pkm_pairs_for_conditions_dict, verify_agg_sig_unsafe_message};
+use crate::blockchain::unsized_bytes::UnsizedBytes;
+use crate::blockchain::utils::{pkm_pairs_for_conditions, verify_agg_sig_unsafe_message};
 use crate::clvm::bls_bindings;
 use crate::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
-use crate::clvm::condition_utils::{
-    agg_sig_additional_data_for_opcode, conditions_dict_for_solution,
-};
+use crate::clvm::condition_utils::{agg_sig_additional_data_for_opcode, conditions_for_solution};
 use crate::clvm::program::Program;
 use crate::clvm::utils::{
-    COST_CONDITIONS, DISABLE_SIGNATURE_VALIDATION, INFINITE_COST, NO_UNKNOWN_OPS,
+    COST_CONDITIONS, DISABLE_SIGNATURE_VALIDATION, IGNORE_ASSERT_CONCURRENT_NULL, INFINITE_COST,
+    NO_UNKNOWN_OPS,
 };
 use crate::consensus::constants::{ConsensusConstants, MAINNET};
 use crate::consensus::{AGG_SIG_COST, CREATE_COIN_COST};
@@ -20,12 +20,12 @@ use crate::utils::hash_256;
 use blst::min_pk::{AggregateSignature, PublicKey, SecretKey, Signature};
 use dg_xch_macros::ChiaSerial;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
+use log::info;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::collections::HashSet;
 use std::future::Future;
-use std::hash::RandomState;
 use std::io::{Error, ErrorKind};
 
 const ANNOUNCEMENT_LIMIT: u64 = 1024;
@@ -76,9 +76,8 @@ pub struct SpendBundle {
     pub aggregated_signature: Bytes96,
 }
 impl SpendBundle {
-    #[must_use]
-    pub fn name(&self) -> Bytes32 {
-        hash_256(self.to_bytes(ChiaProtocolVersion::default())).into()
+    pub fn name(&self) -> Result<Bytes32, Error> {
+        Ok(hash_256(&self.to_bytes(ChiaProtocolVersion::default())?).into())
     }
     pub fn aggregate(bundles: Vec<SpendBundle>) -> Result<Self, Error> {
         let mut coin_spends = vec![];
@@ -181,15 +180,12 @@ impl SpendBundle {
             .ok_or(Error::new(ErrorKind::InvalidInput, "Invalid Max Cost"))?;
         for coin_spend in self.coin_spends.iter() {
             //Get AGG_SIG conditions
-            let conditions_dict = conditions_dict_for_solution::<RandomState>(
-                &coin_spend.puzzle_reveal,
-                &coin_spend.solution,
-                max_cost,
-            )?
-            .0;
+            let conditions =
+                conditions_for_solution(&coin_spend.puzzle_reveal, &coin_spend.solution, max_cost)?
+                    .0;
             //Create signature
-            for (pk_bytes, msg) in pkm_pairs_for_conditions_dict(
-                &conditions_dict,
+            for (code, pk_bytes, msg) in pkm_pairs_for_conditions(
+                &conditions,
                 coin_spend.coin,
                 &constants.agg_sig_me_additional_data,
             )? {
@@ -203,7 +199,14 @@ impl SpendBundle {
                 let secret_key = (key_function)(&pk_bytes).await?;
                 assert_eq!(&secret_key.sk_to_pk(), &pk);
                 let signature = bls_bindings::sign(&secret_key, msg.as_ref());
-                assert!(verify_signature(&pk, msg.as_ref(), &signature));
+                if !verify_signature(&pk, msg.as_ref(), &signature) {
+                    return Err(Error::other(format!(
+                        "PH({}) Failed to Validate Signature for Message: {} - {}",
+                        pk_bytes,
+                        code,
+                        UnsizedBytes::new(msg.as_ref())
+                    )));
+                }
                 pk_list.push(pk_bytes);
                 msg_list.push(msg.as_ref().to_vec());
                 signatures.push(signature);
@@ -229,8 +232,7 @@ impl SpendBundle {
         let mut max_cost = max_cost.unwrap_or(INFINITE_COST);
         let mut create_conditions = vec![];
         let mut state = ValidationState::default();
-        let agg_sig_me_additional_data =
-            Bytes32::parse(&consensus_constants.agg_sig_me_additional_data)?;
+        let additional_data = Bytes32::parse(&consensus_constants.agg_sig_me_additional_data)?;
         for spend in &self.coin_spends {
             if spend.coin.puzzle_hash != spend.puzzle_reveal.to_program().tree_hash() {
                 return Err(Error::new(
@@ -262,11 +264,15 @@ impl SpendBundle {
                 (&output_conditions_program.sexp).try_into()?;
             for condition_with_args in &conditions_with_args {
                 if print {
-                    log::info!("{condition_with_args}");
+                    info!("{condition_with_args}");
                 }
+                let agg_sig_additional_data = agg_sig_additional_data_for_opcode(
+                    additional_data,
+                    condition_with_args.op_code(),
+                );
                 //Check Costs
                 match condition_with_args {
-                    ConditionWithArgs::Remark | ConditionWithArgs::Unknown => {}
+                    ConditionWithArgs::Remark(_) | ConditionWithArgs::Unknown => {}
                     ConditionWithArgs::CreateCoin(puzzle_hash, amount, _) => {
                         if max_cost < CREATE_COIN_COST {
                             return Err(Error::new(ErrorKind::InvalidInput, "Max Cost Exceeded"));
@@ -302,8 +308,8 @@ impl SpendBundle {
                         if (flags & DISABLE_SIGNATURE_VALIDATION) == 0 {
                             let mut msg = message.data().to_vec();
                             msg.extend(spend.coin.coin_id());
-                            msg.extend(agg_sig_me_additional_data.bytes().as_ref());
-                            state.pkm_pairs.push((*public_key, *message));
+                            msg.extend(agg_sig_additional_data.bytes().as_ref());
+                            state.pkm_pairs.push((*public_key, Message::new(msg)?));
                         }
                     }
                     ConditionWithArgs::AggSigParent(public_key, message) => {
@@ -317,14 +323,7 @@ impl SpendBundle {
                         if (flags & DISABLE_SIGNATURE_VALIDATION) == 0 {
                             let mut msg = message.data().to_vec();
                             msg.extend(spend.coin.parent_coin_info);
-                            msg.extend(
-                                agg_sig_additional_data_for_opcode(
-                                    agg_sig_me_additional_data,
-                                    condition_with_args.op_code(),
-                                )
-                                .bytes()
-                                .as_ref(),
-                            );
+                            msg.extend(agg_sig_additional_data.bytes().as_ref());
                             state.pkm_pairs.push((*public_key, Message::new(msg)?));
                         }
                     }
@@ -339,14 +338,7 @@ impl SpendBundle {
                         if (flags & DISABLE_SIGNATURE_VALIDATION) == 0 {
                             let mut msg = message.data().to_vec();
                             msg.extend(spend.coin.puzzle_hash);
-                            msg.extend(
-                                agg_sig_additional_data_for_opcode(
-                                    agg_sig_me_additional_data,
-                                    condition_with_args.op_code(),
-                                )
-                                .bytes()
-                                .as_ref(),
-                            );
+                            msg.extend(agg_sig_additional_data.bytes().as_ref());
                             state.pkm_pairs.push((*public_key, Message::new(msg)?));
                         }
                     }
@@ -361,14 +353,7 @@ impl SpendBundle {
                         if (flags & DISABLE_SIGNATURE_VALIDATION) == 0 {
                             let mut msg = message.data().to_vec();
                             msg.extend(u64_to_bytes(spend.coin.amount));
-                            msg.extend(
-                                agg_sig_additional_data_for_opcode(
-                                    agg_sig_me_additional_data,
-                                    condition_with_args.op_code(),
-                                )
-                                .bytes()
-                                .as_ref(),
-                            );
+                            msg.extend(agg_sig_additional_data.bytes().as_ref());
                             state.pkm_pairs.push((*public_key, Message::new(msg)?));
                         }
                     }
@@ -384,14 +369,7 @@ impl SpendBundle {
                             let mut msg = message.data().to_vec();
                             msg.extend(spend.coin.puzzle_hash);
                             msg.extend(u64_to_bytes(spend.coin.amount));
-                            msg.extend(
-                                agg_sig_additional_data_for_opcode(
-                                    agg_sig_me_additional_data,
-                                    condition_with_args.op_code(),
-                                )
-                                .bytes()
-                                .as_ref(),
-                            );
+                            msg.extend(agg_sig_additional_data.bytes().as_ref());
                             state.pkm_pairs.push((*public_key, Message::new(msg)?));
                         }
                     }
@@ -407,14 +385,7 @@ impl SpendBundle {
                             let mut msg = message.data().to_vec();
                             msg.extend(spend.coin.parent_coin_info);
                             msg.extend(u64_to_bytes(spend.coin.amount));
-                            msg.extend(
-                                agg_sig_additional_data_for_opcode(
-                                    agg_sig_me_additional_data,
-                                    condition_with_args.op_code(),
-                                )
-                                .bytes()
-                                .as_ref(),
-                            );
+                            msg.extend(agg_sig_additional_data.bytes().as_ref());
                             state.pkm_pairs.push((*public_key, Message::new(msg)?));
                         }
                     }
@@ -430,14 +401,7 @@ impl SpendBundle {
                             let mut msg = message.data().to_vec();
                             msg.extend(spend.coin.parent_coin_info);
                             msg.extend(spend.coin.puzzle_hash);
-                            msg.extend(
-                                agg_sig_additional_data_for_opcode(
-                                    agg_sig_me_additional_data,
-                                    condition_with_args.op_code(),
-                                )
-                                .bytes()
-                                .as_ref(),
-                            );
+                            msg.extend(agg_sig_additional_data.bytes().as_ref());
                             state.pkm_pairs.push((*public_key, Message::new(msg)?));
                         }
                     }
@@ -489,12 +453,23 @@ impl SpendBundle {
                         ));
                     }
                     ConditionWithArgs::ReceiveMessage(m_type, message_address, message) => {
-                        state.messages_received.push((
-                            *m_type,
-                            *message_address,
-                            *message,
-                            spend.coin.coin_id(),
-                        ));
+                        if *message_address == Bytes32::default() {
+                            if flags & IGNORE_ASSERT_CONCURRENT_NULL == 0 {
+                                state.messages_received.push((
+                                    *m_type,
+                                    *message_address,
+                                    *message,
+                                    spend.coin.coin_id(),
+                                ))
+                            }
+                        } else {
+                            state.messages_received.push((
+                                *m_type,
+                                *message_address,
+                                *message,
+                                spend.coin.coin_id(),
+                            ));
+                        }
                     }
                     ConditionWithArgs::CreatePuzzleAnnouncement(message) => {
                         if flags & COST_CONDITIONS == 0 {
@@ -699,11 +674,36 @@ impl SpendBundle {
             }
             state.output_conditions.extend(conditions_with_args);
         }
+        if (flags & DISABLE_SIGNATURE_VALIDATION) == 0 {
+            let (keys, messages) = state.pkm_pairs.iter().fold(
+                (vec![], vec![]),
+                |(mut keys, mut messages), (key, msg)| {
+                    keys.push(*key);
+                    messages.push(msg.data());
+                    (keys, messages)
+                },
+            );
+            let signature = self.aggregated_signature.try_into()?;
+            if !aggregate_verify_signature(&keys, &messages, &signature) {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!(
+                        "Invalid signature on Spendbundle: {}",
+                        self.aggregated_signature
+                    ),
+                ));
+            };
+        }
         for coin_id in state.asserted_concurrent_spend {
+            if coin_id == Bytes32::default()
+                && flags & IGNORE_ASSERT_CONCURRENT_NULL == IGNORE_ASSERT_CONCURRENT_NULL
+            {
+                continue;
+            }
             if !state.coins_spent.iter().any(|c| c.coin_id() == coin_id) {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    "Invalid Concurrent Spend",
+                    format!("Invalid Concurrent Spend: Missing Coin {coin_id}"),
                 ));
             }
         }
@@ -737,10 +737,14 @@ impl SpendBundle {
             }
         }
 
-        if state.messages_received != state.messages_sent {
+        if state.messages_received.len() != state.messages_sent.len() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                "Send Messages amount != Receive Messages amount",
+                format!(
+                    "Sent Messages {} != Received Messages {}",
+                    state.messages_received.len(),
+                    state.messages_sent.len()
+                ),
             ));
         }
         for (send_type, send_target, send_message, send_source) in &state.messages_sent {

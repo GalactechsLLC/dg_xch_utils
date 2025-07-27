@@ -15,6 +15,7 @@ impl WalletClient {
     pub async fn new(
         client_config: Arc<WsClientConfig>,
         run: Arc<AtomicBool>,
+        timeout: u64,
     ) -> Result<Self, Error> {
         let handles = Arc::new(RwLock::new(handles()));
         let client = WsClient::with_ca(
@@ -24,6 +25,7 @@ impl WalletClient {
             run,
             CHIA_CA_CRT.as_bytes(),
             CHIA_CA_KEY.as_bytes(),
+            timeout,
         )
         .await?;
         Ok(WalletClient { client })

@@ -276,18 +276,18 @@ impl RpcServer {
                                     let connection = http.serve_connection(TokioIo::new(stream), service);
                                     tokio::spawn( async move {
                                         if let Err(err) = connection.await {
-                                            error!("Error serving connection: {:?}", err);
+                                            error!("Error serving connection: {err:?}");
                                         }
                                         Ok::<(), Error>(())
                                     });
                                 }
                                 Err(e) => {
-                                    error!("Error accepting connection: {:?}", e);
+                                    error!("Error accepting connection: {e:?}");
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("Error accepting connection: {:?}", e);
+                            error!("Error accepting connection: {e:?}");
                         }
                     }
                 },

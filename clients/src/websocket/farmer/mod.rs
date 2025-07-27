@@ -26,6 +26,7 @@ impl<T> FarmerClient<T> {
         client_config: Arc<WsClientConfig>,
         shared_state: Arc<FarmerSharedState<T>>,
         run: Arc<AtomicBool>,
+        timeout: u64,
     ) -> Result<Self, Error> {
         let constants = CONSENSUS_CONSTANTS_MAP
             .get(&client_config.network_id)
@@ -39,6 +40,7 @@ impl<T> FarmerClient<T> {
             run,
             CHIA_CA_CRT.as_bytes(),
             CHIA_CA_KEY.as_bytes(),
+            timeout,
         )
         .await?;
         *shared_state.upstream_handshake.write().await = client.handshake.clone();

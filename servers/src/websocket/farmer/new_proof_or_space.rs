@@ -115,7 +115,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                             debug!("Not a pooling proof of space");
                         }
                     } else {
-                        warn!("Invalid proof of space {:?}", new_pos);
+                        warn!("Invalid proof of space {new_pos:?}");
                     }
                 }
             } else {
@@ -125,7 +125,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
                 );
             }
         } else {
-            warn!("Peer Not Found {:?}", peer_id);
+            warn!("Peer Not Found {peer_id:?}");
         }
         Ok(())
     }
@@ -151,22 +151,22 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                         (
                             SignatureRequestSourceData {
                                 kind: SigningDataKind::ChallengeChainVdf,
-                                data: vdf.cc_vdf.to_bytes(protocol_version),
+                                data: vdf.cc_vdf.to_bytes(protocol_version)?,
                             },
                             SignatureRequestSourceData {
                                 kind: SigningDataKind::RewardChainVdf,
-                                data: vdf.rc_vdf.to_bytes(protocol_version),
+                                data: vdf.rc_vdf.to_bytes(protocol_version)?,
                             },
                         )
                     } else if let Some(vdf) = sp_data.sub_slot_data.as_ref() {
                         (
                             SignatureRequestSourceData {
                                 kind: SigningDataKind::ChallengeChainSubSlot,
-                                data: vdf.cc_sub_slot.to_bytes(protocol_version),
+                                data: vdf.cc_sub_slot.to_bytes(protocol_version)?,
                             },
                             SignatureRequestSourceData {
                                 kind: SigningDataKind::RewardChainSubSlot,
-                                data: vdf.rc_sub_slot.to_bytes(protocol_version),
+                                data: vdf.rc_sub_slot.to_bytes(protocol_version)?,
                             },
                         )
                     } else {
@@ -237,8 +237,8 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                         protocol_version,
                         &request,
                         None,
-                    )
-                    .to_bytes(protocol_version)
+                    )?
+                    .to_bytes(protocol_version)?
                     .into(),
                 ))
                 .await;
@@ -304,15 +304,12 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                 pool_dif,
             )
         } else {
-            warn!("No pool specific difficulty has been set for {p2_singleton_puzzle_hash}, check communication with the pool, skipping this partial to {}.", pool_url);
+            warn!("No pool specific difficulty has been set for {p2_singleton_puzzle_hash}, check communication with the pool, skipping this partial to {pool_url}.");
             return Ok(());
         };
         if required_iters >= calculate_sp_interval_iters(constants, constants.pool_sub_slot_iters)?
         {
-            debug!(
-                "Proof of space not good enough for pool {}: {:?}",
-                pool_url, pool_dif
-            );
+            debug!("Proof of space not good enough for pool {pool_url}: {pool_dif:?}");
             return Ok(());
         }
         let Some(Some(auth_token_timeout)) = self
@@ -334,14 +331,14 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
             end_of_sub_slot: is_eos,
             harvester_id: *peer_id,
         };
-        let to_sign = hash_256(payload.to_bytes(protocol_version));
+        let to_sign = hash_256(payload.to_bytes(protocol_version)?);
         let sp_src_data = {
             if new_pos.include_source_signature_data
                 || new_pos.farmer_reward_address_override.is_some()
             {
                 Some(vec![Some(SignatureRequestSourceData {
                     kind: SigningDataKind::Partial,
-                    data: payload.to_bytes(protocol_version),
+                    data: payload.to_bytes(protocol_version)?,
                 })])
             } else {
                 None
@@ -364,7 +361,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                     protocol_version,
                     &request,
                     msg_id,
-                ),
+                )?,
                 Some(ProtocolMessageTypes::RespondSignatures),
                 protocol_version,
                 msg_id,
@@ -529,7 +526,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                             }
                         }
                         Err(e) => {
-                            error!("Error in pooling: {:?}", e);
+                            error!("Error in pooling: {e:?}");
                             if let Some(v) = self
                                 .pool_state
                                 .write()

@@ -137,7 +137,7 @@ impl fmt::Debug for UnsizedBytes {
     }
 }
 impl ChiaSerialize for UnsizedBytes {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8> {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
         self.bytes.to_bytes(version)
     }
     fn from_bytes<T: AsRef<[u8]>>(

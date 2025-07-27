@@ -25,6 +25,7 @@ use prometheus::core::{
 use prometheus::{Histogram, HistogramOpts, Opts, Registry};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::io::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -63,48 +64,55 @@ pub struct NewSignagePoint {
     pub sub_slot_iters: u64,                            //Min Version 0.0.34
     pub signage_point_index: u8,                        //Min Version 0.0.34
     pub peak_height: u32,                               //Min Version 0.0.35
+    pub last_tx_height: u32,                            //Min Version 0.0.37
     pub sp_source_data: Option<SignagePointSourceData>, //Min Version 0.0.36
 }
 impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8> {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
         let mut bytes = vec![];
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.challenge_hash,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.challenge_chain_sp,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.reward_chain_sp,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.difficulty,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.sub_slot_iters,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.signage_point_index,
             version,
-        ));
+        )?);
         if version >= ChiaProtocolVersion::Chia0_0_35 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.peak_height,
                 version,
-            ));
+            )?);
+        }
+        if version >= ChiaProtocolVersion::Chia0_0_37 {
+            bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
+                &self.last_tx_height,
+                version,
+            )?);
         }
         if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.sp_source_data,
                 version,
-            ));
+            )?);
         }
-        bytes
+        Ok(bytes)
     }
     fn from_bytes<T: AsRef<[u8]>>(
         bytes: &mut std::io::Cursor<T>,
@@ -124,6 +132,11 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
         } else {
             0u32
         };
+        let last_tx_height = if version >= ChiaProtocolVersion::Chia0_0_37 {
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?
+        } else {
+            0u32
+        };
         let sp_source_data = if version >= ChiaProtocolVersion::Chia0_0_36 {
             dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version).unwrap_or_default()
         } else {
@@ -137,6 +150,7 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
             sub_slot_iters,
             signage_point_index,
             peak_height,
+            last_tx_height,
             sp_source_data,
         })
     }
@@ -158,55 +172,55 @@ pub struct DeclareProofOfSpace {
 }
 
 impl dg_xch_serialize::ChiaSerialize for DeclareProofOfSpace {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8> {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
         let mut bytes = vec![];
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.challenge_hash,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.challenge_chain_sp,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.signage_point_index,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.reward_chain_sp,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.proof_of_space,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.challenge_chain_sp_signature,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.reward_chain_sp_signature,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.farmer_puzzle_hash,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.pool_target,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.pool_signature,
             version,
-        ));
+        )?);
         if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.include_signature_source_data,
                 version,
-            ));
+            )?);
         }
-        bytes
+        Ok(bytes)
     }
     fn from_bytes<T: AsRef<[u8]>>(
         bytes: &mut std::io::Cursor<T>,
@@ -258,35 +272,35 @@ pub struct RequestSignedValues {
     pub rc_block_unfinished: Option<RewardChainBlockUnfinished>, //Min Version 0.0.36
 }
 impl dg_xch_serialize::ChiaSerialize for RequestSignedValues {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8> {
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
         let mut bytes = vec![];
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.quality_string,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.foliage_block_data_hash,
             version,
-        ));
+        )?);
         bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
             &self.foliage_transaction_block_hash,
             version,
-        ));
+        )?);
         if version >= ChiaProtocolVersion::Chia0_0_36 {
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.foliage_block_data,
                 version,
-            ));
+            )?);
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.foliage_transaction_block_data,
                 version,
-            ));
+            )?);
             bytes.extend(dg_xch_serialize::ChiaSerialize::to_bytes(
                 &self.rc_block_unfinished,
                 version,
-            ));
+            )?);
         }
-        bytes
+        Ok(bytes)
     }
     fn from_bytes<T: AsRef<[u8]>>(
         bytes: &mut std::io::Cursor<T>,

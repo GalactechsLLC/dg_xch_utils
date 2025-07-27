@@ -143,7 +143,7 @@ impl Scene for ConfigScene {
                             self.message_time = ctx.input(|i| i.time);
                         }
                         Err(e) => {
-                            self.last_message = Some(format!("Error saving config: {:?}", e));
+                            self.last_message = Some(format!("Error saving config: {e:?}"));
                             self.message_time = ctx.input(|i| i.time);
                         }
                     }
@@ -157,7 +157,7 @@ impl Scene for ConfigScene {
                             self.message_time = ctx.input(|i| i.time);
                         }
                         Err(e) => {
-                            self.last_message = Some(format!("Error loading config: {:?}", e));
+                            self.last_message = Some(format!("Error loading config: {e:?}"));
                             self.message_time = ctx.input(|i| i.time);
                         }
                     }

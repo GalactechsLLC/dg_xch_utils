@@ -1,5 +1,6 @@
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
+use crate::clvm::parser::sexp_to_bytes;
 use crate::clvm::sexp::{AtomBuf, IntoSExp, SExp};
 use crate::constants::NULL_SEXP;
 use crate::formatting::{number_from_slice, u32_from_slice, u64_from_bigint};
@@ -83,7 +84,7 @@ impl<'de> Deserialize<'de> for Message {
 }
 
 impl ChiaSerialize for Message {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
@@ -105,7 +106,7 @@ impl ChiaSerialize for Message {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ConditionWithArgs {
     Unknown,
-    Remark,
+    Remark(Message),
     AggSigParent(Bytes48, Message),
     AggSigPuzzle(Bytes48, Message),
     AggSigAmount(Bytes48, Message),
@@ -151,9 +152,9 @@ impl TryFrom<&SExp> for ConditionWithArgs {
 impl Display for ConditionWithArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (op_code, vars) = self.clone().op_code_with_args();
-        write!(f, "{} ", op_code)?;
+        write!(f, "{op_code} ")?;
         for var in &vars {
-            write!(f, "{} ", var)?;
+            write!(f, "{var} ")?;
         }
         Ok(())
     }
@@ -179,7 +180,7 @@ impl ConditionWithArgs {
     pub fn op_code_with_args(&self) -> (ConditionOpcode, Vec<SExp>) {
         match *self {
             ConditionWithArgs::Unknown => (ConditionOpcode::Unknown, vec![]),
-            ConditionWithArgs::Remark => (ConditionOpcode::Remark, vec![]),
+            ConditionWithArgs::Remark(msg) => (ConditionOpcode::Remark, vec![msg.to_sexp()]),
             ConditionWithArgs::AggSigParent(key, msg) => (
                 ConditionOpcode::AggSigParent,
                 vec![key.to_sexp(), msg.to_sexp()],
@@ -312,7 +313,7 @@ impl ConditionWithArgs {
     pub fn op_code(&self) -> ConditionOpcode {
         match self {
             ConditionWithArgs::Unknown => ConditionOpcode::Unknown,
-            ConditionWithArgs::Remark => ConditionOpcode::Remark,
+            ConditionWithArgs::Remark(_) => ConditionOpcode::Remark,
             ConditionWithArgs::AggSigParent(_, _) => ConditionOpcode::AggSigParent,
             ConditionWithArgs::AggSigPuzzle(_, _) => ConditionOpcode::AggSigPuzzle,
             ConditionWithArgs::AggSigAmount(_, _) => ConditionOpcode::AggSigAmount,
@@ -364,392 +365,400 @@ impl ConditionWithArgs {
 }
 
 impl ChiaSerialize for ConditionWithArgs {
-    fn to_bytes(&self, version: ChiaProtocolVersion) -> Vec<u8>
+    fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
         match self {
             ConditionWithArgs::Unknown => {
                 let mut bytes = vec![];
-                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::Unknown, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::Unknown, version)?);
+                Ok(bytes)
             }
-            ConditionWithArgs::Remark => {
+            ConditionWithArgs::Remark(msg) => {
                 let mut bytes = vec![];
-                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::Remark, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::Remark, version)?);
+                let vars = vec![ChiaSerialize::to_bytes(msg, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AggSigParent(key, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AggSigParent,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(key, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(key, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AggSigPuzzle(key, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AggSigPuzzle,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(key, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(key, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AggSigAmount(key, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AggSigAmount,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(key, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(key, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AggSigPuzzleAmount(key, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AggSigPuzzleAmount,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(key, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(key, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AggSigParentAmount(key, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AggSigParentAmount,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(key, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(key, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AggSigParentPuzzle(key, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AggSigParentPuzzle,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(key, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(key, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AggSigUnsafe(key, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AggSigUnsafe,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(key, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(key, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AggSigMe(key, msg) => {
                 let mut bytes = vec![];
-                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::AggSigMe, version));
+                bytes.extend(ChiaSerialize::to_bytes(
+                    &ConditionOpcode::AggSigMe,
+                    version,
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(key, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(key, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::CreateCoin(puzzle_hash, amount, hint) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::CreateCoin,
                     version,
-                ));
+                )?);
                 let mut vars = vec![
-                    ChiaSerialize::to_bytes(puzzle_hash, version),
-                    ChiaSerialize::to_bytes(amount, version),
+                    ChiaSerialize::to_bytes(puzzle_hash, version)?,
+                    ChiaSerialize::to_bytes(amount, version)?,
                 ];
                 if let Some(hint) = hint {
-                    vars.push(ChiaSerialize::to_bytes(hint, version));
+                    vars.push(ChiaSerialize::to_bytes(hint, version)?);
                 }
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::ReserveFee(fee) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::ReserveFee,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(fee, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(fee, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::CreateCoinAnnouncement(msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::CreateCoinAnnouncement,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(msg, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(msg, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertCoinAnnouncement(puzzle_hash) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertCoinAnnouncement,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::CreatePuzzleAnnouncement(msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::CreatePuzzleAnnouncement,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(msg, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(msg, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertPuzzleAnnouncement(puzzle_hash) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertPuzzleAnnouncement,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertConcurrentSpend(puzzle_hash) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertConcurrentSpend,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertConcurrentPuzzle(puzzle_hash) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertConcurrentPuzzle,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::SendMessage(mode, puzzle_hash, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::SendMessage,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(mode, version),
-                    ChiaSerialize::to_bytes(puzzle_hash, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(mode, version)?,
+                    ChiaSerialize::to_bytes(puzzle_hash, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::ReceiveMessage(puzzle_hash, mode, msg) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::ReceiveMessage,
                     version,
-                ));
+                )?);
                 let vars = vec![
-                    ChiaSerialize::to_bytes(puzzle_hash, version),
-                    ChiaSerialize::to_bytes(mode, version),
-                    ChiaSerialize::to_bytes(msg, version),
+                    ChiaSerialize::to_bytes(puzzle_hash, version)?,
+                    ChiaSerialize::to_bytes(mode, version)?,
+                    ChiaSerialize::to_bytes(msg, version)?,
                 ];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertMyCoinId(puzzle_hash) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertMyCoinId,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertMyParentId(puzzle_hash) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertMyParentId,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertMyPuzzlehash(puzzle_hash) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertMyPuzzlehash,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(puzzle_hash, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertMyAmount(amount) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertMyAmount,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(amount, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(amount, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertMyBirthSeconds(seconds) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertMyBirthSeconds,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertMyBirthHeight(height) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertMyBirthHeight,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(height, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(height, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertEphemeral => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertEphemeral,
                     version,
-                ));
+                )?);
                 let vars: Vec<u8> = Vec::with_capacity(0);
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertSecondsRelative(seconds) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertSecondsRelative,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertSecondsAbsolute(seconds) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertSecondsAbsolute,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertHeightRelative(height) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertHeightRelative,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(height, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(height, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertHeightAbsolute(height) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertHeightAbsolute,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(height, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(height, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertBeforeSecondsRelative(seconds) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertBeforeSecondsRelative,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertBeforeSecondsAbsolute(seconds) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertBeforeSecondsAbsolute,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(seconds, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(seconds, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertBeforeHeightRelative(height) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertBeforeHeightRelative,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(height, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(height, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::AssertBeforeHeightAbsolute(height) => {
                 let mut bytes = vec![];
                 bytes.extend(ChiaSerialize::to_bytes(
                     &ConditionOpcode::AssertBeforeHeightAbsolute,
                     version,
-                ));
-                let vars = vec![ChiaSerialize::to_bytes(height, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(height, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
             ConditionWithArgs::SoftFork(cost) => {
                 let mut bytes = vec![];
-                bytes.extend(ChiaSerialize::to_bytes(&ConditionOpcode::SoftFork, version));
-                let vars = vec![ChiaSerialize::to_bytes(cost, version)];
-                bytes.extend(ChiaSerialize::to_bytes(&vars, version));
-                bytes
+                bytes.extend(ChiaSerialize::to_bytes(
+                    &ConditionOpcode::SoftFork,
+                    version,
+                )?);
+                let vars = vec![ChiaSerialize::to_bytes(cost, version)?];
+                bytes.extend(ChiaSerialize::to_bytes(&vars, version)?);
+                Ok(bytes)
             }
         }
     }
@@ -775,7 +784,17 @@ fn from_opcode_with_args(
     //This means args are fetched in reverse order from the array
     Ok(match op_code {
         ConditionOpcode::Unknown => ConditionWithArgs::Unknown,
-        ConditionOpcode::Remark => ConditionWithArgs::Remark,
+        ConditionOpcode::Remark => {
+            if args.len() != 1 {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "Invalid Vars for Remark",
+                ));
+            } else {
+                let message = Message::new(args.pop().unwrap_or_default())?;
+                ConditionWithArgs::Remark(message)
+            }
+        }
         ConditionOpcode::AggSigParent => {
             if args.len() != 2 {
                 return Err(Error::new(
@@ -1251,8 +1270,12 @@ pub fn op_code_with_args_from_sexp(sexp: &SExp) -> Result<(ConditionOpcode, Vec<
                 }
             }
             SExp::Pair(_) => {
-                warn!("Got pair in opcode({}) args: {:?}", opcode, arg);
-                break;
+                if opcode == ConditionOpcode::Remark {
+                    vars.push(sexp_to_bytes(arg)?);
+                } else {
+                    warn!("Got pair in opcode({opcode}) args: {arg:?}");
+                    break;
+                }
             }
         }
     }

@@ -4,18 +4,17 @@ use dg_xch_core::blockchain::condition_with_args::Message;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::unsized_bytes::UnsizedBytes;
-use dg_xch_core::blockchain::utils::pkm_pairs_for_conditions_dict;
+use dg_xch_core::blockchain::utils::pkm_pairs_for_conditions;
 use dg_xch_core::blockchain::wallet_type::WalletType;
 use dg_xch_core::clvm::bls_bindings;
 use dg_xch_core::clvm::bls_bindings::{aggregate_verify_signature, verify_signature};
-use dg_xch_core::clvm::condition_utils::conditions_dict_for_solution;
+use dg_xch_core::clvm::condition_utils::conditions_for_solution;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::traits::SizedBytes;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use num_traits::cast::ToPrimitive;
 use std::collections::HashMap;
 use std::future::Future;
-use std::hash::RandomState;
 use std::io::Error;
 
 pub struct DerivationRecord {
@@ -64,15 +63,11 @@ where
     debug!("Creating Signatures for Coin Spends");
     for coin_spend in &coin_spends {
         //Get AGG_SIG conditions
-        let conditions_dict = conditions_dict_for_solution::<RandomState>(
-            &coin_spend.puzzle_reveal,
-            &coin_spend.solution,
-            max_cost,
-        )?
-        .0;
+        let conditions =
+            conditions_for_solution(&coin_spend.puzzle_reveal, &coin_spend.solution, max_cost)?.0;
         //Create signature
-        for (pk_bytes, msg) in
-            pkm_pairs_for_conditions_dict(&conditions_dict, coin_spend.coin, additional_data)?
+        for (code, pk_bytes, msg) in
+            pkm_pairs_for_conditions(&conditions, coin_spend.coin, additional_data)?
         {
             let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
                 Error::other(format!(
@@ -83,9 +78,10 @@ where
             })?;
             let secret_key = (key_fn)(&pk_bytes).await?;
             let signature = if secret_key.sk_to_pk() != pk {
+                debug!("Searching for PreCalc on op {code} ({pk_bytes}, {msg})");
                 //Found no Secret Key, Check if the Map Contains our Signature
                 pre_calculated_signatures.get(&(pk_bytes, msg)).ok_or_else(|| {
-                    info!("Failed to find ({pk_bytes}, {msg}) in map \n {pre_calculated_signatures:#?}");
+                    error!("Failed to find ({pk_bytes}, {msg}) in map \n {pre_calculated_signatures:#?}");
                     Error::other(
                         format!(
                             "Failed to find Secret Key for Public Key: {}",
@@ -97,10 +93,10 @@ where
                 assert_eq!(&secret_key.sk_to_pk(), &pk);
                 bls_bindings::sign(&secret_key, msg.as_ref())
             };
-            assert!(verify_signature(&pk, msg.as_ref(), &signature));
             if !verify_signature(&pk, msg.as_ref(), &signature) {
                 return Err(Error::other(format!(
-                    "Failed to find Validate Signature for Message: {}",
+                    "Failed to find Validate Signature for Message: {} - {}",
+                    code,
                     UnsizedBytes::new(msg.as_ref())
                 )));
             }
@@ -139,17 +135,13 @@ where
     debug!("Creating Signatures for Coin Spends");
     for coin_spend in &coin_spends {
         //Get AGG_SIG conditions
-        let conditions_dict = conditions_dict_for_solution::<RandomState>(
-            &coin_spend.puzzle_reveal,
-            &coin_spend.solution,
-            max_cost,
-        )?
-        .0;
+        let conditions_dict =
+            conditions_for_solution(&coin_spend.puzzle_reveal, &coin_spend.solution, max_cost)?.0;
         //Create signature
         let mut total_messages = 0;
         let mut signed_messages = 0;
-        for (pk_bytes, msg) in
-            pkm_pairs_for_conditions_dict(&conditions_dict, coin_spend.coin, additional_data)?
+        for (code, pk_bytes, msg) in
+            pkm_pairs_for_conditions(&conditions_dict, coin_spend.coin, additional_data)?
         {
             let pk = PublicKey::from_bytes(pk_bytes.as_ref()).map_err(|e| {
                 Error::other(format!(
@@ -173,7 +165,7 @@ where
                     info!("Signing Partial Message");
                     if !verify_signature(&pk, msg.as_ref(), &signature) {
                         return Err(Error::other(format!(
-                            "Failed to find Validate Signature for Message: {}",
+                            "Failed to find Validate Signature for Message: {code} - {}",
                             UnsizedBytes::new(msg.as_ref())
                         )));
                     }
@@ -186,7 +178,7 @@ where
                 }
             }
         }
-        info!("Signed {}/{} messages", signed_messages, total_messages);
+        info!("Signed {signed_messages}/{total_messages} messages");
     }
     let spend_bundle = if !signatures.is_empty() {
         info!("Creating Aggregate signature");

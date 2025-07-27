@@ -130,7 +130,7 @@ where
     match request_builder.json(data).send().await {
         Ok(resp) => {
             let body = resp.text().await.map_err(|e| ChiaRpcError {
-                error: Some(format!("{}", e)),
+                error: Some(format!("{e}")),
                 success: false,
             })?;
             match serde_json::from_str(body.as_str()) {
@@ -138,14 +138,14 @@ where
                 Err(_) => match serde_json::from_str::<ChiaRpcError>(body.as_str()) {
                     Ok(e) => Err(e),
                     Err(e) => Err(ChiaRpcError {
-                        error: Some(format!("{}", e)),
+                        error: Some(format!("{e}")),
                         success: false,
                     }),
                 },
             }
         }
         Err(e) => Err(ChiaRpcError {
-            error: Some(format!("{}", e)),
+            error: Some(format!("{e}")),
             success: false,
         }),
     }

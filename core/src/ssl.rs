@@ -8,11 +8,11 @@ use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
 use rustls::client::danger::HandshakeSignatureValid;
-use rustls::internal::msgs::handshake::DistinguishedName;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::server::ParsedCertificate;
 use rustls::DigitallySignedStruct;
+use rustls::DistinguishedName;
 use rustls::SignatureScheme;
 use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
@@ -479,7 +479,7 @@ fn validate_cert(path: &Path) -> bool {
                         }
                     }
                     Err(e) => {
-                        error!("Failed to read Cert File: {path:?}, {:?}", e);
+                        error!("Failed to read Cert File: {path:?}, {e:?}");
                         return false;
                     }
                 }
@@ -487,7 +487,7 @@ fn validate_cert(path: &Path) -> bool {
             true
         }
         Err(e) => {
-            error!("Failed to read Cert File: {path:?}, {:?}", e);
+            error!("Failed to read Cert File: {path:?}, {e:?}");
             false
         }
     }
@@ -524,7 +524,7 @@ fn validate_key(path: &Path) -> bool {
             true
         }
         Err(e) => {
-            error!("Failed to read Cert File: {path:?}, {:?}", e);
+            error!("Failed to read Cert File: {path:?}, {e:?}");
             false
         }
     }
@@ -547,7 +547,7 @@ fn generate_ssl_for_nodes(
             continue;
         }
         if let Err(e) = generate_ca_signed_cert(&crt_path, crt, &key_path, key, overwrite) {
-            error!("Failed to write Cert Files: {:?}", e);
+            error!("Failed to write Cert Files: {e:?}");
         }
     }
     Ok(())

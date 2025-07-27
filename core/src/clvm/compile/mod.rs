@@ -787,7 +787,7 @@ impl<'a> Compiler<'a> {
             _ => {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Unexpected Expression: {:?}", operator),
+                    format!("Unexpected Expression: {operator:?}"),
                 ))
             }
         }

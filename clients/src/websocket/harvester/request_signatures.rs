@@ -83,8 +83,8 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
                             farmer_reward_address_override: None,
                         },
                         msg.id,
-                    )
-                    .to_bytes(protocol_version)
+                    )?
+                    .to_bytes(protocol_version)?
                     .into(),
                 ))
                 .await;

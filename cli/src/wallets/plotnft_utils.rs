@@ -283,7 +283,7 @@ impl PlotNFTWallet {
         }
         let additions = signed_spend_bundle.additions()?;
         let removals = signed_spend_bundle.removals();
-        let name = signed_spend_bundle.name();
+        let name = signed_spend_bundle.name()?;
         let tx_record = TransactionRecord {
             confirmed_at_height: 0,
             created_at_time: SystemTime::now()
@@ -387,7 +387,7 @@ where
     assert_eq!(signed_spend_bundle.removals()[0].name(), singleton.name());
     let additions = signed_spend_bundle.additions()?;
     let removals = signed_spend_bundle.removals();
-    let name = signed_spend_bundle.name();
+    let name = signed_spend_bundle.name()?;
     let tx_record = TransactionRecord {
         confirmed_at_height: 0,
         created_at_time: SystemTime::now()

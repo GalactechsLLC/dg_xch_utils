@@ -173,7 +173,11 @@ pub async fn get_farmer<
         target_puzzle_hash,
         authentication_token,
     }
-    .to_bytes(ChiaProtocolVersion::default());
+    .to_bytes(ChiaProtocolVersion::default())
+    .map_err(|e| PoolError {
+        error_code: PoolErrorCode::RequestFailed as u8,
+        error_message: e.to_string(),
+    })?;
     let to_sign = hash_256(&msg);
     let signature = sign(authentication_sk, &to_sign);
     if !verify_signature(&authentication_sk.sk_to_pk(), &to_sign, &signature) {
@@ -230,7 +234,14 @@ pub async fn post_farmer<
         })?,
         suggested_difficulty,
     };
-    let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
+    let to_sign = hash_256(
+        payload
+            .to_bytes(ChiaProtocolVersion::default())
+            .map_err(|e| PoolError {
+                error_code: PoolErrorCode::RequestFailed as u8,
+                error_message: e.to_string(),
+            })?,
+    );
     let signature = sign(owner_sk, &to_sign);
     if !verify_signature(&owner_sk.sk_to_pk(), &to_sign, &signature) {
         error!("Farmer POST Failed to Validate Signature");
@@ -278,7 +289,14 @@ pub async fn put_farmer<
         })?),
         suggested_difficulty,
     };
-    let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
+    let to_sign = hash_256(
+        payload
+            .to_bytes(ChiaProtocolVersion::default())
+            .map_err(|e| PoolError {
+                error_code: PoolErrorCode::RequestFailed as u8,
+                error_message: e.to_string(),
+            })?,
+    );
     let signature = sign(owner_sk, &to_sign);
     if !verify_signature(&owner_sk.sk_to_pk(), &to_sign, &signature) {
         error!("Local Failed to Validate Signature");

@@ -494,7 +494,7 @@ impl Decompressor {
             PlotTable::Table5,
             PlotTable::Table6,
         ] {
-            debug!("\tStarting {:?}", r_table);
+            debug!("\tStarting {r_table:?}");
             let group_count = 32 >> (r_table as u8 - 1);
             let res: ForwardPropResult = match r_table {
                 PlotTable::Table3 => {

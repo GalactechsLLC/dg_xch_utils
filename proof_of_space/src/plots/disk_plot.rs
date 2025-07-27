@@ -56,7 +56,7 @@ impl DiskPlot<fs::File> {
         if k < constants.min_plot_size || k > constants.max_plot_size {
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                format!("Plot size k= {} is invalid", k),
+                format!("Plot size k= {k} is invalid"),
             ));
         }
         if buf_megabytes < 10 {
@@ -76,7 +76,7 @@ impl DiskPlot<fs::File> {
         if sub_mbytes > buf_megabytes as u64 {
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                format!("Please provide more memory. At least {} MiB", sub_mbytes),
+                format!("Please provide more memory. At least {sub_mbytes} MiB"),
             ));
         }
 
@@ -100,7 +100,7 @@ impl DiskPlot<fs::File> {
         if num_buckets < K_MIN_BUCKETS {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("Minimum buckets is {}", K_MIN_BUCKETS),
+                format!("Minimum buckets is {K_MIN_BUCKETS}"),
             ));
         } else if num_buckets > K_MAX_BUCKETS {
             // if num_buckets_input != 0 {
@@ -114,7 +114,7 @@ impl DiskPlot<fs::File> {
                     + sub_mbytes as f64;
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                format!("Do not have enough memory. Need {:.2} MiB", required_mem),
+                format!("Do not have enough memory. Need {required_mem:.2} MiB"),
             ));
         }
 
@@ -131,15 +131,12 @@ impl DiskPlot<fs::File> {
             tmp1_dir.display(),
             tmp2_dir.display()
         );
-        info!("ID: {}", plot_id);
-        info!("Plot size is: {}", k);
-        info!("Buffer size is: {} MiB", buf_megabytes);
-        info!("Using {} buckets", num_buckets);
+        info!("ID: {plot_id}");
+        info!("Plot size is: {k}");
+        info!("Buffer size is: {buf_megabytes} MiB");
+        info!("Using {num_buckets} buckets");
         info!("Final Directory is: {}", final_dir.display());
-        info!(
-            "Using {} threads of stripe size {}",
-            num_threads, stripe_size
-        );
+        info!("Using {num_threads} threads of stripe size {stripe_size}");
         info!("Process ID is: {}", std::process::id());
         let mut tmp_1_filenames: Vec<PathBuf> = Vec::new();
         tmp_1_filenames.push(Path::new(tmp1_dir).join(format!("{}.sort.tmp", filename.display())));
@@ -186,10 +183,7 @@ impl DiskPlot<fs::File> {
         if final_filename.exists() {
             fs::remove_file(&final_filename).await?;
         }
-        info!(
-            "Starting phase 1/4: Forward Propagation into tmp files: {:?}",
-            final_dir
-        );
+        info!("Starting phase 1/4: Forward Propagation into tmp files: {final_dir:?}");
         let phase_1_start = Instant::now();
         // let table_size = phase1(
         //

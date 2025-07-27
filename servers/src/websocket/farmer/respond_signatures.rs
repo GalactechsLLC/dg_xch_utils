@@ -225,7 +225,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                             let pool_target_signature = sign(
                                                 sk,
                                                 &pool_target
-                                                    .to_bytes(ChiaProtocolVersion::default()),
+                                                    .to_bytes(ChiaProtocolVersion::default())?,
                                             );
                                             (Some(pool_target), Some(pool_target_signature))
                                         } else {
@@ -279,14 +279,14 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                     client.client.client_config.protocol_version,
                                                     &request,
                                                     None,
-                                                )
+                                                )?
                                                 .to_bytes(
                                                     client.client.client_config.protocol_version,
-                                                )
+                                                )?
                                                 .into(),
                                             ))
                                             .await;
-                                        info!("Declaring Proof of Space: {:?}", request);
+                                        info!("Declaring Proof of Space: {request:?}");
                                         #[cfg(feature = "metrics")]
                                         if let Some(r) = self.metrics.write().await.as_mut() {
                                             if let Some(c) = &mut r.proofs_declared {
@@ -295,8 +295,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                         }
                                     } else {
                                         error!(
-                                            "Failed to declare Proof of Space: {:?} No Client",
-                                            request
+                                            "Failed to declare Proof of Space: {request:?} No Client"
                                         );
                                     }
                                 }
@@ -438,31 +437,30 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                                     client.client.client_config.protocol_version,
                                                     &request,
                                                     None,
-                                                )
+                                                )?
                                                 .to_bytes(
                                                     client.client.client_config.protocol_version,
-                                                )
+                                                )?
                                                 .into(),
                                             ))
                                             .await;
-                                        info!("Sending Signed Values: {:?}", request);
+                                        info!("Sending Signed Values: {request:?}");
                                     } else {
                                         error!(
-                                            "Failed to Sending Signed Values: {:?} No Client",
-                                            request
+                                            "Failed to Sending Signed Values: {request:?} No Client"
                                         );
                                     }
                                 }
                             }
                         } else if msg.id.is_some() {
-                            debug!("Detected Partial Signatures Request {:?}", pospace);
+                            debug!("Detected Partial Signatures Request {pospace:?}");
                             return Ok(());
                         } else {
-                            warn!("Detected Possible invalid PoSpace {:?}", pospace);
+                            warn!("Detected Possible invalid PoSpace {pospace:?}");
                             return Ok(());
                         }
                     } else {
-                        warn!("Have invalid PoSpace {:?}", pospace);
+                        warn!("Have invalid PoSpace {pospace:?}");
                         return Ok(());
                     }
                 } else {

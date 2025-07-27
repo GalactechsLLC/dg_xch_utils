@@ -102,7 +102,7 @@ pub fn get_quality_string(pos: &ProofOfSpace, plot_id: &Bytes32) -> Option<Bytes
     ) {
         Ok(q) => Some(q),
         Err(e) => {
-            warn!("Failed to Validate Proof: {:?}", e);
+            warn!("Failed to Validate Proof: {e:?}");
             None
         }
     }

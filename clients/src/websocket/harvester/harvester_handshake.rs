@@ -50,7 +50,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for HarvesterHandshakeHan
                 debug!("Done Loading Plots");
             }
             Err(e) => {
-                debug!("Error loading plots: {:?}", e);
+                debug!("Error loading plots: {e:?}");
             }
         }
         Ok(())

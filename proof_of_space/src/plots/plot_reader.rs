@@ -674,7 +674,7 @@ impl<
         let proof = match self.fetch_proof(index).await {
             Ok(p) => p,
             Err(e) => {
-                warn!("Failed to get Proof at index {index}: {:?}", e);
+                warn!("Failed to get Proof at index {index}: {e:?}");
                 return Err(e);
             }
         };
@@ -1125,14 +1125,14 @@ pub fn read_all_plot_headers(p: impl AsRef<Path>) -> Result<AllPlotHeaders, Erro
                                 valid_rtn.push(d);
                             }
                             Err(e) => {
-                                error!("Failed to open plot: {:?}", e);
+                                error!("Failed to open plot: {e:?}");
                                 failed_rtn.push(path.clone());
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    error!("Failed to open directory entry: {:?}", e);
+                    error!("Failed to open directory entry: {e:?}");
                 }
             }
         }
@@ -1166,7 +1166,7 @@ pub async fn read_all_plot_headers_async(
                                 valid_rtn.push(d);
                             }
                             Err(e) => {
-                                error!("Failed to open plot: {:?}", e);
+                                error!("Failed to open plot: {e:?}");
                                 failed_rtn.push(path.clone());
                             }
                         }
@@ -1176,7 +1176,7 @@ pub async fn read_all_plot_headers_async(
                     break;
                 }
                 Err(e) => {
-                    error!("Failed to open directory entry: {:?}", e);
+                    error!("Failed to open directory entry: {e:?}");
                 }
             }
         }

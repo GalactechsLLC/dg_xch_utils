@@ -193,8 +193,7 @@ async fn send_request<
                                 Ok(r) => Ok(r),
                                 Err(e) => {
                                     warn!(
-                                        "Failed to parse {method} response, Invalid Json: {:?}, {}",
-                                        e, body
+                                        "Failed to parse {method} response, Invalid Json: {e:?}, {body}"
                                     );
                                     Err(PoolError {
                                         error_code: PoolErrorCode::RequestFailed as u8,
@@ -205,7 +204,7 @@ async fn send_request<
                         }
                     }
                     Err(e) => {
-                        warn!("Failed to {method}, Invalid Body: {:?}", e);
+                        warn!("Failed to {method}, Invalid Body: {e:?}");
                         Err(PoolError {
                             error_code: PoolErrorCode::RequestFailed as u8,
                             error_message: e.to_string(),
@@ -228,7 +227,7 @@ async fn send_request<
             }
         }
         Err(e) => {
-            warn!("Failed to {method}: {:?}", e);
+            warn!("Failed to {method}: {e:?}");
             Err(PoolError {
                 error_code: PoolErrorCode::RequestFailed as u8,
                 error_message: e.to_string(),
@@ -280,7 +279,7 @@ pub async fn create_pool_login_parts(
             target_puzzle_hash: pool_info.target_puzzle_hash,
             authentication_token: current_auth_token,
         };
-        let to_sign = hash_256(payload.to_bytes(ChiaProtocolVersion::default()));
+        let to_sign = hash_256(&payload.to_bytes(ChiaProtocolVersion::default())?);
         let sig = sign(sec_key, &to_sign);
         sigs.push(sig);
     }

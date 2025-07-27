@@ -11,7 +11,7 @@ use crate::clvm::sexp::{AtomBuf, IntoSExp};
 use crate::clvm::utils::MEMPOOL_MODE;
 use crate::constants::NULL_SEXP;
 use crate::formatting::hex_to_bytes;
-use dg_xch_macros::ChiaSerial;
+use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::encode;
 use log::error;
 use num_bigint::BigInt;
@@ -23,7 +23,7 @@ use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::hash::Hasher;
-use std::io::{Error, ErrorKind};
+use std::io::{Cursor, Error, ErrorKind};
 use std::path::Path;
 
 #[derive(Eq, Serialize, Deserialize)]
@@ -46,7 +46,8 @@ impl Debug for Program {
 
 impl Program {
     pub fn new(serialized: Vec<u8>) -> Self {
-        match sexp_from_bytes(&serialized) {
+        let mut stream = Cursor::new(&serialized);
+        match sexp_from_bytes(&mut stream) {
             Ok(sexp) => Program { serialized, sexp },
             Err(e) => {
                 println!("Error building Program: {e:?}");
@@ -112,7 +113,8 @@ impl Program {
 
     #[must_use]
     pub fn tree_hash(&self) -> Bytes32 {
-        let sexp = sexp_from_bytes(&self.serialized).unwrap_or_else(|e| {
+        let mut stream = Cursor::new(&self.serialized);
+        let sexp = sexp_from_bytes(&mut stream).unwrap_or_else(|e| {
             error!("ERROR: {e:?}");
             NULL_SEXP.clone()
         });
@@ -272,8 +274,10 @@ impl Program {
     }
 
     pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
-        let program = sexp_from_bytes(&self.serialized)?;
-        let args = sexp_from_bytes(&args.serialized)?;
+        let mut stream = Cursor::new(&self.serialized);
+        let program = sexp_from_bytes(&mut stream)?;
+        let mut stream = Cursor::new(&args.serialized);
+        let args = sexp_from_bytes(&mut stream)?;
         let dialect = ChiaDialect::new(flags | NO_UNKNOWN_OPS);
         let (cost, result) = match run_program(dialect, &program, &args, max_cost, None) {
             Ok(reduct) => reduct,
@@ -282,7 +286,8 @@ impl Program {
             }
         };
         let serialized = sexp_to_bytes(&result)?;
-        let sexp = sexp_from_bytes(&serialized)?;
+        let mut stream = Cursor::new(&serialized);
+        let sexp = sexp_from_bytes(&mut stream)?;
         Ok((cost, Program { serialized, sexp }))
     }
 }
@@ -320,8 +325,10 @@ impl TryFrom<&[u8]> for Program {
 impl TryFrom<(Program, Program)> for Program {
     type Error = Error;
     fn try_from((first, second): (Program, Program)) -> Result<Self, Self::Error> {
-        let first = sexp_from_bytes(first.serialized)?;
-        let rest = sexp_from_bytes(second.serialized)?;
+        let mut stream = Cursor::new(&first.serialized);
+        let first = sexp_from_bytes(&mut stream)?;
+        let mut stream = Cursor::new(&second.serialized);
+        let rest = sexp_from_bytes(&mut stream)?;
         let sexp = SExp::Pair((&first, &rest).into());
         let bytes = sexp_to_bytes(&sexp)?;
         Ok(Program {
@@ -424,9 +431,32 @@ impl_ints!(
     i128, 16
 );
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SerializedProgram {
     buffer: Vec<u8>,
+}
+impl ChiaSerialize for SerializedProgram {
+    fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
+    where
+        Self: Sized,
+    {
+        let mut stream = Cursor::new(&self.buffer);
+        let claim_sexp = sexp_from_bytes(&mut stream)?;
+        let as_bytes = sexp_to_bytes(&claim_sexp)?;
+        Ok(as_bytes)
+    }
+
+    fn from_bytes<T: AsRef<[u8]>>(
+        bytes: &mut Cursor<T>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        let claim_sexp = sexp_from_bytes(bytes)?;
+        let buffer = sexp_to_bytes(&claim_sexp)?;
+        Ok(Self { buffer })
+    }
 }
 impl Display for SerializedProgram {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -500,8 +530,10 @@ impl SerializedProgram {
     }
 
     pub fn run(&self, max_cost: u64, flags: u32, args: &Program) -> Result<(u64, Program), Error> {
-        let program = sexp_from_bytes(&self.buffer)?;
-        let args = sexp_from_bytes(&args.serialized)?;
+        let mut stream = Cursor::new(&self.buffer);
+        let program = sexp_from_bytes(&mut stream)?;
+        let mut stream = Cursor::new(&args.serialized);
+        let args = sexp_from_bytes(&mut stream)?;
         let dialect = ChiaDialect::new(flags);
         let (cost, result) = match run_program(dialect, &program, &args, max_cost, None) {
             Ok(reduct) => reduct,
@@ -510,7 +542,8 @@ impl SerializedProgram {
             }
         };
         let serialized = sexp_to_bytes(&result)?;
-        let sexp = sexp_from_bytes(&serialized)?;
+        let mut stream = Cursor::new(&serialized);
+        let sexp = sexp_from_bytes(&mut stream)?;
         Ok((cost, Program { serialized, sexp }))
     }
 }

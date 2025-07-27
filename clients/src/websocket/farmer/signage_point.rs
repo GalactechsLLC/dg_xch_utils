@@ -57,7 +57,7 @@ impl MessageHandler for NewSignagePointHandle {
                     continue;
                 }
                 if let Some(difficulty) = pool_dict.current_difficulty {
-                    debug!("Setting Difficulty for pool: {}", difficulty);
+                    debug!("Setting Difficulty for pool: {difficulty}");
                     pool_difficulties.push(PoolDifficulty {
                         difficulty,
                         sub_slot_iters: POOL_SUB_SLOT_ITERS,
@@ -81,6 +81,7 @@ impl MessageHandler for NewSignagePointHandle {
             sp_hash: sp.challenge_chain_sp,
             pool_difficulties,
             filter_prefix_bits: calculate_prefix_bits(self.constants.as_ref(), sp.peak_height),
+            last_tx_height: sp.last_tx_height,
         };
         let peers: Vec<Arc<SocketPeer>> = self
             .harvester_peers
@@ -103,8 +104,8 @@ impl MessageHandler for NewSignagePointHandle {
                                 protocol_version,
                                 &harvester_point,
                                 None,
-                            )
-                            .to_bytes(protocol_version)
+                            )?
+                            .to_bytes(protocol_version)?
                             .into(),
                         )
                         .clone(),
