@@ -22,9 +22,9 @@ use time::OffsetDateTime;
 pub enum ChiaProtocolVersion {
     Chia0_0_34 = 34, //Pre 2.0.0
     Chia0_0_35 = 35, //2.0.0
-    #[default]
     Chia0_0_36 = 36, //2.2.0
-    Chia0_0_37 = 37, //2.2.0
+    #[default]
+    Chia0_0_37 = 37, //2.5.5
 }
 impl Display for ChiaProtocolVersion {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
