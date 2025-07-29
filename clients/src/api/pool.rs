@@ -255,7 +255,7 @@ pub async fn create_pool_login_url(
         ids.push_str(&hex::encode(launcher_id));
     }
     Ok(format!(
-        "{target_pool}/login?launcher_id={ids}&authentication_token={}&signature={})",
+        "{target_pool}/login?launcher_id={ids}&authentication_token={}&signature={}",
         parts.auth_token, parts.aggregate_signature
     ))
 }
