@@ -138,7 +138,7 @@ impl dg_xch_serialize::ChiaSerialize for NewSignagePoint {
             0u32
         };
         let sp_source_data = if version >= ChiaProtocolVersion::Chia0_0_36 {
-            dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version).unwrap_or_default()
+            dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?
         } else {
             None
         };
