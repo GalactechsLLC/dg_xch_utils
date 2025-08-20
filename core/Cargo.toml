@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_core"
-version = "2.1.4"
+version = "2.2.0"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "Core library containing type/error definitions, CLVM tools, Consensus and Pool definitions"
@@ -9,39 +9,39 @@ homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
 repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
-async-trait = "0.1.86"
+async-trait = "0.1.89"
 bls12_381 = "0.8.0"
-blst = { version = "0.3.14", features = ["portable"] }
-bytes = "1.5.0"
-der = "0.7.8"
-dg_xch_macros = {path = "../macros", version="2.1.3"}
-dg_xch_serialize = {path = "../serialize", version="2.1.3"}
+blst = { version = "0.3.15", features = ["portable"] }
+bytes = "1.10.1"
+der = "0.7.9"
+dg_xch_macros = {path = "../macros", version="2.2.0"}
+dg_xch_serialize = {path = "../serialize", version="2.2.0"}
 futures-util = "0.3.31"
 hex = "0.4.3"
 hkdf = "0.12.4"
-hyper = {version="1.6.0", features=["full"]}
-hyper-util = {version="0.1.10", features=["full"]}
-log = "0.4.26"
+hyper = {version="1.7.0", features=["full"]}
+hyper-util = {version="0.1.16", features=["full"]}
+log = "0.4.27"
 num-bigint = { version = "0.4.6", features = ["serde"] }
 num-integer = "0.1.46"
 num-traits = "0.2.19"
-once_cell = "1.20.3"
-parking_lot = "0.12.3"
-portfu = { version = "1.3.0"}
-prometheus = {version="0.13.4", features=["protobuf"], optional = true}
-rand = "0.8.5"
+once_cell = "1.21.3"
+parking_lot = "0.12.4"
+portfu = { version = "1.3.3"}
+prometheus = {version="0.14.0", features=["protobuf"], optional = true}
+rand = "0.9.2"
 regex = "1.11.1"
-rustls = {version = "0.23.29" }
+rustls = {version = "0.23.31" }
 rustls-pemfile = "2.2.0"
-rsa = { version = "0.9.6", features = ["std", "pem", "sha2"] }
+rsa = { version = "0.9.8", features = ["std", "pem", "sha2"] }
 secrecy = "0.10.3"
-serde = { version = "1.0.218", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
 sha2 = { version = "0.10.8", features = ["oid"] }
 sqlx = {version= "=0.8.6", features=["macros", "json", "time", "runtime-tokio", "tls-rustls-aws-lc-rs"], optional = true}
-time = { version = "0.3.37", features = ["serde"]}
-tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
+time = { version = "0.3.41", features = ["serde"]}
+tokio = {version = "1.47.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
 tokio-tungstenite = {version = "0.26.2", features = ["rustls", "rustls-tls-webpki-roots"] }
-uuid = {version="1.14.0", features=["v4"]}
+uuid = {version="1.18.0", features=["v4"]}
 x509-cert = { version = "0.2.5", features = ["std", "pem", "builder"] }
 lazy_static = "1.5.0"
 

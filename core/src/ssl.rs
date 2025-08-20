@@ -3,7 +3,6 @@ use der::asn1::{Ia5String, UtcTime};
 use der::pem::LineEnding;
 use der::{DateTime, EncodePem};
 use log::{error, info};
-use rand::Rng;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
@@ -218,7 +217,8 @@ pub fn generate_ca_signed_cert_data(
     let root_key = rsa::RsaPrivateKey::from_pkcs1_pem(&String::from_utf8_lossy(key_data))
         .or_else(|_| rsa::RsaPrivateKey::from_pkcs8_pem(&String::from_utf8_lossy(key_data)))
         .map_err(|e| Error::other(format!("Failed to load Root Key: {e:?}")))?;
-    let mut rng = rand::thread_rng();
+    use rsa::rand_core::RngCore;
+    let mut rng = rsa::rand_core::OsRng;
     let cert_key =
         rsa::RsaPrivateKey::new(&mut rng, 2048).map_err(|e| Error::other(format!("{e:?}")))?;
     let pub_key = cert_key.to_public_key();
@@ -236,7 +236,7 @@ pub fn generate_ca_signed_cert_data(
             enable_key_agreement: false,
             enable_key_encipherment: false,
         },
-        SerialNumber::from(rng.gen::<u32>()),
+        SerialNumber::from(rng.next_u32()),
         Validity {
             not_before: Time::UtcTime(
                 UtcTime::from_system_time(SystemTime::now().sub(Duration::from_secs(60 * 60 * 24)))
@@ -282,7 +282,8 @@ pub fn make_ca_cert(cert_path: &Path, key_path: &Path) -> Result<(Vec<u8>, Vec<u
 }
 
 fn make_ca_cert_data() -> Result<(Vec<u8>, Vec<u8>), Error> {
-    let mut rng = rand::rngs::OsRng;
+    use rsa::rand_core::RngCore;
+    let mut rng = rsa::rand_core::OsRng;
     let root_key = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate a key");
     let pub_key = root_key.to_public_key();
     let signing_key: SigningKey<Sha256> = SigningKey::new(root_key.clone());
@@ -300,7 +301,7 @@ fn make_ca_cert_data() -> Result<(Vec<u8>, Vec<u8>), Error> {
             issuer: name.clone(),
             path_len_constraint: None,
         },
-        SerialNumber::from(rng.gen::<u32>()),
+        SerialNumber::from(rng.next_u32()),
         Validity {
             not_before: Time::UtcTime(
                 UtcTime::from_system_time(SystemTime::UNIX_EPOCH)

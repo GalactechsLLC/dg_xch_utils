@@ -51,7 +51,7 @@ impl Scene for WalletOverviewScene {
                     })
                     .collect();
 
-                let line = Line::new(line_points).name("Total Balance");
+                let line = Line::new("Total Balance", line_points);
 
                 ui.heading("Balance Over Time");
 
@@ -71,7 +71,7 @@ impl Scene for WalletOverviewScene {
                     })
                     .collect();
 
-                let bar_chart = BarChart::new(gain_loss_bars).name("Gains/Losses");
+                let bar_chart = BarChart::new("Gains/Losses", gain_loss_bars);
 
                 ui.heading("Gains and Losses Over Time");
 

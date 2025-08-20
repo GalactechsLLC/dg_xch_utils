@@ -8,8 +8,6 @@ use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
 use num_traits::AsPrimitive;
-use rand::distributions::Standard;
-use rand::prelude::Distribution;
 use rand::{Fill, Rng};
 use secrecy::zeroize::DefaultIsZeroes;
 use serde::de::Visitor;
@@ -88,16 +86,8 @@ pub async fn test() {
     assert_eq!(second, should_be_second);
 }
 impl<const SIZE: usize> Fill for SizedBytesImpl<SIZE> {
-    fn try_fill<R: Rng + ?Sized>(&mut self, rng: &mut R) -> Result<(), rand::Error> {
+    fn fill<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         rng.fill_bytes(&mut self.bytes);
-        Ok(())
-    }
-}
-impl<const SIZE: usize> Distribution<SizedBytesImpl<SIZE>> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> SizedBytesImpl<SIZE> {
-        let mut slf = SizedBytesImpl { bytes: [0u8; SIZE] };
-        rng.fill(&mut slf);
-        slf
     }
 }
 impl<const SIZE: usize> FromStr for SizedBytesImpl<SIZE> {

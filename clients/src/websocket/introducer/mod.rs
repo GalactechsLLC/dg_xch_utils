@@ -133,7 +133,7 @@ impl MessageHandler for RespondPeersHandler {
                         .write()
                         .await
                         .peer_list
-                        .extend(peer_list.peer_list.into_iter());
+                        .extend(peer_list.peer_list);
                 }
             }
             Ok(())

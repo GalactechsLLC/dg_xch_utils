@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_simulator"
-version = "2.1.3"
+version = "2.2.0"
 edition = "2021"
 
 [lib]
@@ -12,7 +12,7 @@ path = "src/main.rs"
 name = "dg_xch_simulator"
 
 [dependencies]
-dg_logger = { path="../logging", version="2.1.2" }
-log = "0.4.26"
-portfu = { version = "1.3.0" }
-tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+dg_logger = { path="../logging", version="2.2.0" }
+log = "0.4.27"
+portfu = { version = "1.3.3" }
+tokio = {version = "1.47.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

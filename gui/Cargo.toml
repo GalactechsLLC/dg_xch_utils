@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_gui"
-version = "2.1.3"
+version = "2.2.0"
 edition = "2021"
 authors = ["James Hoerr"]
 description = "GUI for the dg_xch_utils"
@@ -13,15 +13,15 @@ name = "dg_xch_gui"
 path = "src/main.rs"
 
 [dependencies]
-blst = { version = "0.3.14", features = ["portable"] }
-dg_logger = { path="../logging", version="2.1.2" }
-dg_xch_clients = {path = "../clients", version="2.1.4"}
-dg_xch_core = {path = "../core", version = "2.1.3", default-features = false}
-dg_xch_keys = {path = "../keys", version="2.1.3"}
-eframe = "0.31.0"
-log = "0.4.26"
-serde = "1.0.218"
-tokio = {version = "1.43.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+blst = { version = "0.3.15", features = ["portable"] }
+dg_logger = { path="../logging", version="2.2.0" }
+dg_xch_clients = {path = "../clients", version="2.2.0"}
+dg_xch_core = {path = "../core", version = "2.2.0", default-features = false}
+dg_xch_keys = {path = "../keys", version="2.2.0"}
+eframe = "0.32.0"
+log = "0.4.27"
+serde = "1.0.219"
+tokio = {version = "1.47.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
 serde_yaml = "0.9.34"
-egui_plot = "0.31.0"
-arboard = "3.4.1"
+egui_plot = "0.33.0"
+arboard = "3.6.0"
