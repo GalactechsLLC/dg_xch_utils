@@ -70,10 +70,15 @@ struct ValidationState {
     pub birth_height: Option<u32>,
 }
 
-#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct SpendBundle {
     pub coin_spends: Vec<CoinSpend>,
     pub aggregated_signature: Bytes96,
+}
+impl Default for SpendBundle {
+    fn default() -> Self {
+        Self::empty()
+    }
 }
 impl SpendBundle {
     pub fn name(&self) -> Result<Bytes32, Error> {
@@ -102,9 +107,11 @@ impl SpendBundle {
 
     #[must_use]
     pub fn empty() -> Self {
+        let mut sig = [0u8; 96];
+        sig[0] = 0xc0; // compressed + infinity flag
         SpendBundle {
             coin_spends: vec![],
-            aggregated_signature: Bytes96::default(),
+            aggregated_signature: sig.into(),
         }
     }
 

@@ -600,10 +600,10 @@ pub fn solution_to_pool_state(coin_solution: &CoinSpend) -> Result<Option<PoolSt
         extra_data = rest.first()?;
         pool_state_from_extra_data(extra_data)
     } else {
-        return Err(Error::new(
+        Err(Error::new(
             ErrorKind::InvalidInput,
             format!("Invalid Arg Length {num_args}, expected 2 or 3"),
-        ));
+        ))
     }
 }
 

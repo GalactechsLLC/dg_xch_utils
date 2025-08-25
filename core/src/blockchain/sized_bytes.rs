@@ -7,6 +7,7 @@ use bytes::Buf;
 use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_serialize::ChiaSerialize;
 use hex::encode;
+use num_bigint::BigInt;
 use num_traits::AsPrimitive;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
@@ -29,21 +30,19 @@ impl<const SIZE: usize> SizedBytes<'_, SIZE> for SizedBytesImpl<SIZE> {
         Self { bytes }
     }
     fn parse(bytes: &[u8]) -> Result<Self, Error> {
-        let mut buf = [0u8; SIZE];
-        if bytes.len() > SIZE {
+        if bytes.len() != SIZE {
             Err(Error::new(
                 ErrorKind::InvalidInput,
                 format!(
-                    "Too Many Bytes Sent to parse, expected {} got {}",
+                    "Too {} Bytes Sent to parse, expected {} got {}",
+                    if bytes.len() > SIZE { "Many" } else { "Few" },
                     SIZE,
                     bytes.len()
                 ),
             ))
         } else {
-            let offset = SIZE - bytes.len();
-            for (i, v) in bytes.iter().enumerate() {
-                buf[offset + i] = *v;
-            }
+            let mut buf = [0u8; SIZE];
+            buf.copy_from_slice(bytes);
             Ok(Self { bytes: buf })
         }
     }
@@ -52,6 +51,30 @@ impl<const SIZE: usize> SizedBytes<'_, SIZE> for SizedBytesImpl<SIZE> {
         self.bytes
     }
 }
+impl<const SIZE: usize> TryFrom<BigInt> for SizedBytesImpl<SIZE> {
+    type Error = Error;
+    fn try_from(value: BigInt) -> Result<Self, Error> {
+        let bytes = value.to_bytes_be().1;
+        if bytes.len() > SIZE {
+            Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!(
+                    "BigInt Too Large, expected {} bytes got {}",
+                    SIZE,
+                    bytes.len()
+                ),
+            ))
+        } else {
+            let mut buf = [0u8; SIZE];
+            let offset = SIZE - bytes.len();
+            for (i, v) in bytes.iter().enumerate() {
+                buf[offset + i] = *v;
+            }
+            Ok(Self { bytes: buf })
+        }
+    }
+}
+
 impl<const SIZE: usize> BitXor for SizedBytesImpl<SIZE> {
     type Output = Self;
 

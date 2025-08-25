@@ -209,7 +209,7 @@ impl SExp {
     }
 
     #[must_use]
-    pub fn iter(&self) -> SExpIter {
+    pub fn iter(&self) -> SExpIter<'_> {
         SExpIter { c: self }
     }
 

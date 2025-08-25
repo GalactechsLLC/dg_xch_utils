@@ -484,10 +484,10 @@ impl SerializedProgram {
         } else if path.ends_with("clvm") {
             assemble_text(tokio::fs::read_to_string(&path).await?.trim())
         } else {
-            return Err(Error::new(
+            Err(Error::new(
                 ErrorKind::InvalidInput,
                 format!("Invalid File type, Expected Hex or Bin: {path:?}"),
-            ));
+            ))
         }
     }
     #[must_use]

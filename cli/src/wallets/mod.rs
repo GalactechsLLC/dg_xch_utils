@@ -56,7 +56,10 @@ impl SecretKeyStore {
         )
     }
     #[must_use]
-    pub fn secret_key_for_public_key(&self, pub_key: &Bytes48) -> Option<Ref<Bytes48, Bytes32>> {
+    pub fn secret_key_for_public_key(
+        &self,
+        pub_key: &Bytes48,
+    ) -> Option<Ref<'_, Bytes48, Bytes32>> {
         self.keys.get(pub_key)
     }
 }
