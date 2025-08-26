@@ -257,7 +257,7 @@ impl SpendBundle {
             if state.total_cost > max_cost {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
-                    format!("Max Cost Exceded {} > {max_cost}", state.total_cost),
+                    format!("Max Cost Exceeded {} > {max_cost}", state.total_cost),
                 ));
             }
             if !state.coins_spent.insert(spend.coin) {
