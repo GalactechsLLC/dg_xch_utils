@@ -49,6 +49,14 @@ impl<const SIZE: usize> SizedBytes<'_, SIZE> for SizedBytesImpl<SIZE> {
         self.bytes
     }
 }
+impl<const SIZE: usize> SizedBytesImpl<SIZE> {
+    pub fn random() -> Self {
+        let mut slf = Self::default();
+        let mut rng = rand::rng();
+        slf.fill(&mut rng);
+        slf
+    }
+}
 impl<const SIZE: usize> TryFrom<BigInt> for SizedBytesImpl<SIZE> {
     type Error = Error;
     fn try_from(value: BigInt) -> Result<Self, Error> {
