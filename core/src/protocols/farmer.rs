@@ -16,6 +16,7 @@ use dg_xch_serialize::ChiaProtocolVersion;
 
 use crate::blockchain::blockchain_state::BlockchainState;
 use crate::protocols::shared::Handshake;
+#[cfg(feature = "portfu")]
 use portfu::pfcore::cache::CircularCache;
 #[cfg(feature = "metrics")]
 use prometheus::core::{
@@ -605,6 +606,7 @@ pub struct FarmerSharedState<T> {
     pub force_pool_update: Arc<AtomicBool>,
     pub last_pool_update: Arc<std::sync::atomic::AtomicU64>,
     pub last_sp_timestamp: Arc<RwLock<Instant>>,
+    #[cfg(feature = "portfu")]
     pub recent_plot_stats:
         Arc<RwLock<CircularCache<(Bytes32, Bytes32), SerialPlotPassCounts, 100>>>,
     #[cfg(feature = "metrics")]
@@ -638,6 +640,7 @@ impl<T: Default> Default for FarmerSharedState<T> {
             force_pool_update: Arc::new(Default::default()),
             last_pool_update: Arc::new(Default::default()),
             last_sp_timestamp: Arc::new(RwLock::new(Instant::now())),
+            #[cfg(feature = "portfu")]
             recent_plot_stats: Arc::new(Default::default()),
             #[cfg(feature = "metrics")]
             metrics: Arc::new(Default::default()),
