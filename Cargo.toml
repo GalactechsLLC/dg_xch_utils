@@ -15,7 +15,8 @@ members = [
     "servers",
     "simulator",
     "tests",
-    "vdf"
+    "vdf",
+    "weight-proof"
 ]
 
 [workspace.package]

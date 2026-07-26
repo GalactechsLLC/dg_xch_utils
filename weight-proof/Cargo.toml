@@ -1,0 +1,30 @@
+[package]
+name = "dg_xch_weight_proof"
+description = "Weight-proof validation: the verifying light client's trust anchor (consensus verification over core + vdf + proof-of-space)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+# A consensus-verification library that sits above core/vdf/pos: it turns a `WeightProof` (defined in
+# dg_xch_core) into a verified claim about the heaviest chain. Kept out of dg_xch_core because wiring the
+# VDF and proof-of-space verifiers from core would be a dependency cycle (vdf and pos both depend on core).
+[dependencies]
+dg_xch_core = { path = "../core", version = "3.0.0", default-features = false }
+dg_xch_vdf = { path = "../vdf", version = "3.0.0" }
+dg_xch_pos = { path = "../proof_of_space", version = "3.0.0" }
+dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
+# Sha512 for CPython-compatible MT19937 seeding (phase 1 sampling RNG); Sha256 comes via dg_xch_core.
+sha2 = { version = "0.10.9", features = ["oid"] }
+# BLS signature verification for the phase-5 recent-chain header validator (rc-sp / cc-sp / plot / pool /
+# foliage signatures). Same pin/features as dg_xch_core; the Bytes48->PublicKey / Bytes96->Signature
+# conversions and the AugScheme `verify_signature` glue live in dg_xch_core.
+blst = { version = "0.3.16", features = ["portable"] }
+
+# For the integration harness in tests/ (the reference's differential-parity + tamper-reject). `dg_xch_core` and
+# `dg_xch_serialize` are already available to tests via [dependencies]; `hex` is harness-only.
+[dev-dependencies]
+hex = "0.4.3"
+num-bigint = "0.4.6"

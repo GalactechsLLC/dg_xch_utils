@@ -159,7 +159,7 @@ fn prove_with_discriminant(
         if i % kl == 0 {
             intermediates.push(y.clone());
         }
-        y = y.square();
+        y = y.square()?;
     }
 
     let witness = generate_wesolowski(discriminant, &y, x, &intermediates, num_iterations, k, l)?;

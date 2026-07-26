@@ -67,22 +67,28 @@ impl Form {
         &self.b * &self.b - BigInt::from(4u8) * &self.a * &self.c == *discriminant
     }
 
-    pub fn square(&self) -> Self {
-        let egcd = self.b.extended_gcd(&self.a);
-        let u = positive_mod(&((&self.c / &egcd.gcd) * &egcd.x), &self.a);
-        let a = &self.a * &self.a;
-        let b = &self.b - ((&self.a * &u) << 1usize);
-        let c = &u * &u - ((&self.b * &u - &self.c) / &self.a);
-        let mut result = Self { a, b, c };
-        result.reduce();
-        result
+    /// Squaring is composition of the form with itself, routed through the general composition
+    /// [`Form::compose`] rather than a direct doubling formula.
+    ///
+    /// The classic direct-square formula solves `b·u ≡ c (mod a)`, which has NO solution for a primitive
+    /// form with `gcd(a,b) = g > 1` (there `g ∤ c`, since `g | gcd(a,b,c) = 1` would force `g = 1`). The old
+    /// code computed `u = ((c / g) · x) mod a` with a TRUNCATING `c / g`, silently producing a wrong `u`
+    /// (and then a non-exact `(b·u − c) / a`) → a degenerate output form → `get_b` mismatch → spurious VDF
+    /// rejection. It only worked for `gcd(a,b) = 1` (the common case), which is why most forms verified but
+    /// occasional ones failed. The general composition absorbs `gcd(a,b)` into the 3-way gcd `w`, so it is
+    /// correct for every form; the unique reduced representative makes the result identical to the reference.
+    pub fn square(&self) -> Result<Self> {
+        self.compose(self)
     }
 
     pub fn multiply(&self, rhs: &Self) -> Result<Self> {
-        if self == rhs {
-            return Ok(self.square());
-        }
+        self.compose(rhs)
+    }
 
+    /// NUCOMP-style composition of two forms of the same discriminant, matching the reference class-group
+    /// algorithm (Chia's `inkfish`/`chiavdf`). Correct for the general `gcd(a,b) > 1` case via
+    /// `w = gcd(gcd(a₁,a₂), (b₁+b₂)/2)`, which divides out the common factor before solving.
+    fn compose(&self, rhs: &Self) -> Result<Self> {
         let two = BigInt::from(2u8);
         let g = (&rhs.b + &self.b) / &two;
         let h = (&rhs.b - &self.b) / &two;
@@ -137,7 +143,7 @@ pub fn fast_pow_form(base: &Form, discriminant: &BigInt, exponent: &BigInt) -> R
 
     let mut result = base.clone();
     for bit in (0..bit_len(exponent).saturating_sub(1)).rev() {
-        result = result.square();
+        result = result.square()?;
         if exponent.bit(bit.try_into().expect("bit index fits u64")) {
             result = result.multiply(base)?;
         }
@@ -407,27 +413,90 @@ fn rounded_discriminant_bits(discriminant: &BigInt) -> Result<usize> {
     Ok((d_bits + 31) & !31usize)
 }
 
+/// The bit length of a non-negative value, matching chiavdf's `mpz_sizeinbase(x, 2)` (returns 1 for 0).
+fn xgcd_bitlen(x: &BigInt) -> i64 {
+    let b = bit_len(x);
+    if b == 0 { 1 } else { b as i64 }
+}
+
+/// The low 64-bit word of `(x >> shift)`, interpreted as signed — chiavdf's
+/// `chiavdf_mpz_extract_uword_from_shift_nonneg`. `x` is non-negative here; the shift is chosen so the
+/// extracted word is ~63 bits, hence non-negative.
+fn xgcd_extract_word(x: &BigInt, shift: i64) -> i128 {
+    let w = if shift > 0 {
+        u64_low_word(&(x >> (shift as usize)))
+    } else {
+        u64_low_word(x)
+    };
+    i64::from_ne_bytes(w.to_ne_bytes()) as i128
+}
+
+/// A faithful port of chiavdf's `mpz_xgcd_partial` (Lehmer partial extended GCD, `xgcd_partial.c`). The
+/// returned cofactor `co1` is the canonical value chiavdf's `bqfc_compress` uses for `t`; a pure-slow
+/// Euclidean version diverges (it stops one step short of chiavdf's word-batched fast path), which is
+/// exactly the bqfc serialization mismatch that broke `serialize_form` round-trips and `get_b` hashes.
+/// The Lehmer word arithmetic uses `i128` (panic-safe); chiavdf's `i64` never overflows on valid inputs,
+/// so the results are identical there.
 fn xgcd_partial_co1(r2: &mut BigInt, r1: &mut BigInt, limit: &BigInt) -> BigInt {
     let mut co2 = BigInt::zero();
     let mut co1 = -BigInt::one();
 
     while !r1.is_zero() && &*r1 > limit {
-        let q = &*r2 / &*r1;
-        let r = &*r2 - &q * &*r1;
-        *r2 = r1.clone();
-        *r1 = r;
+        let bits = (xgcd_bitlen(r2).max(xgcd_bitlen(r1)) - 64 + 1).max(0);
+        let mut rr2 = xgcd_extract_word(r2, bits);
+        let mut rr1 = xgcd_extract_word(r1, bits);
+        let bb = xgcd_extract_word(limit, bits);
 
-        let next = &co2 - &q * &co1;
-        co2 = co1;
-        co1 = next;
-
-        if r1.is_negative() {
-            *r1 = -r1.clone();
-            co1 = -co1;
+        let (mut aa2, mut aa1, mut bb2, mut bb1): (i128, i128, i128, i128) = (0, 1, 1, 0);
+        let mut i: i64 = 0;
+        while rr1 != 0 && rr1 > bb {
+            let qq = rr2 / rr1; // trunc toward zero, matching C integer division
+            let t1 = rr2 - qq * rr1;
+            let t2 = aa2 - qq * aa1;
+            let t3 = bb2 - qq * bb1;
+            if i & 1 != 0 {
+                if t1 < -t3 || rr1 - t1 < t2 - aa1 {
+                    break;
+                }
+            } else if t1 < -t2 || rr1 - t1 < t3 - bb1 {
+                break;
+            }
+            rr2 = rr1;
+            rr1 = t1;
+            aa2 = aa1;
+            aa1 = t2;
+            bb2 = bb1;
+            bb1 = t3;
+            i += 1;
         }
-        if r2.is_negative() {
-            *r2 = -r2.clone();
-            co2 = -co2;
+
+        if i == 0 {
+            // Single exact big-integer Euclidean step (chiavdf's slow branch).
+            let q = &*r2 / &*r1;
+            let rem = &*r2 - &q * &*r1;
+            *r2 = r1.clone();
+            *r1 = rem;
+            let next = &co2 - &q * &co1;
+            co2 = co1;
+            co1 = next;
+        } else {
+            // Apply the accumulated word-level transform to the big integers, from OLD (r2, r1)/(co2, co1).
+            let new_r2 = &*r2 * bb2 + &*r1 * aa2;
+            let new_r1 = &*r1 * aa1 + &*r2 * bb1;
+            *r2 = new_r2;
+            *r1 = new_r1;
+            let new_co2 = &co2 * bb2 + &co1 * aa2;
+            let new_co1 = &co1 * aa1 + &co2 * bb1;
+            co2 = new_co2;
+            co1 = new_co1;
+            if r1.is_negative() {
+                co1 = -co1;
+                *r1 = -&*r1;
+            }
+            if r2.is_negative() {
+                co2 = -co2;
+                *r2 = -&*r2;
+            }
         }
     }
 

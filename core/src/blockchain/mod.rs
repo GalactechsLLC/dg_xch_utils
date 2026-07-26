@@ -52,3 +52,6 @@ pub mod wallet_info;
 pub mod wallet_sync;
 pub mod wallet_type;
 pub mod weight_proof;
+// The weight-proof VALIDATOR lives in the `dg_xch_weight_proof` crate, not here: wiring the VDF and
+// proof-of-space verifiers from core would be a dependency cycle (vdf/pos both depend on core). The
+// `WeightProof` wire type above stays in core because the full-node protocol needs it.

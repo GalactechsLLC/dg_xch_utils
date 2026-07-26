@@ -1,0 +1,17 @@
+{
+  "description": "Real Chia MAINNET weight proof, fetched live via dg_xch_clients full-node P2P protocol (RequestProofOfWeight → RespondProofOfWeight). Accept-vector for the dg_xch_weight_proof validator.",
+  "network": "mainnet",
+  "consensus_constants": "dg_xch_core::consensus::constants::MAINNET",
+  "protocol_version": "0.0.37",
+  "source_peer": "216.19.183.173:8444",
+  "fetched_utc": "2026-07-25",
+  "tip_header_hash": "0xe1feb288f12788bc4f97bb3cfef8af2827fa387d7a7a3e1dffcc8d6d602a69a4",
+  "height": 9054698,
+  "weight": 55606644880,
+  "sub_epochs": 23579,
+  "sub_epoch_segments": 236,
+  "recent_chain_data": 722,
+  "wp_serialized_bytes": 14148195,
+  "encoding": "ChiaSerialize (WeightProof::to_bytes / from_bytes), raw binary; round-trip verified",
+  "note_dos_bound": "sub_epochs=23579; dg_xch_weight_proof::MAX_SUB_EPOCHS was raised from 10000 to 300000 to admit this real proof."
+}
