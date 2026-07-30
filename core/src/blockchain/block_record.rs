@@ -2,6 +2,8 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::sub_epoch_summary::SubEpochSummary;
 use crate::blockchain::vdf_output::VdfOutput;
+use crate::consensus::constants::ConsensusConstants;
+use crate::consensus::pot_iterations::calculate_ip_iters;
 use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 
@@ -32,4 +34,38 @@ pub struct BlockRecord {
     pub finished_infused_challenge_slot_hashes: Option<Vec<Bytes32>>,
     pub finished_reward_slot_hashes: Option<Vec<Bytes32>>,
     pub sub_epoch_summary_included: Option<SubEpochSummary>,
+}
+
+impl BlockRecord {
+    /// chia_rs `BlockRecord::first_in_sub_slot` — true when this record starts a new sub-slot.
+    #[must_use]
+    pub fn first_in_sub_slot(&self) -> bool {
+        self.finished_challenge_slot_hashes.is_some()
+    }
+
+    /// chia_rs `BlockRecord::is_transaction_block` — true when this record is a transaction block.
+    #[must_use]
+    pub fn is_transaction_block(&self) -> bool {
+        self.timestamp.is_some()
+    }
+
+    /// chia_rs `BlockRecord::is_challenge_block` — true when this record is a challenge block, i.e. its
+    /// deficit is `min_blocks_per_challenge_block - 1`.
+    #[must_use]
+    pub fn is_challenge_block(&self, min_blocks_per_challenge_block: u8) -> bool {
+        self.deficit == min_blocks_per_challenge_block - 1
+    }
+
+    /// chia_rs `BlockRecord::ip_iters` — the infusion-point iterations for this record.
+    ///
+    /// # Errors
+    /// Returns an error if `calculate_ip_iters` rejects the record's iteration parameters.
+    pub fn ip_iters(&self, constants: &ConsensusConstants) -> Result<u64, std::io::Error> {
+        calculate_ip_iters(
+            constants,
+            self.sub_slot_iters,
+            self.signage_point_index,
+            self.required_iters,
+        )
+    }
 }

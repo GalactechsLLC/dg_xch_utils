@@ -20,8 +20,7 @@ use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
 use dg_xch_core::blockchain::end_of_subslot_bundle::EndOfSubSlotBundle;
 use dg_xch_core::blockchain::header_block::HeaderBlock;
 use dg_xch_core::blockchain::proof_of_space::ProofOfSpace;
-use dg_xch_core::blockchain::sized_bytes::{Bytes100, Bytes32, Bytes48, Bytes96};
-use dg_xch_core::blockchain::unsized_bytes::UnsizedBytes;
+use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary;
 use dg_xch_core::blockchain::vdf_info::VdfInfo;
 use dg_xch_core::blockchain::vdf_output::VdfOutput;
@@ -34,47 +33,14 @@ use dg_xch_core::consensus::pot_iterations::{
 };
 use dg_xch_pos::verify_and_get_quality_string;
 use dg_xch_serialize::ChiaSerialize;
-use dg_xch_vdf::{default_classgroup_element, validate_vdf_info};
+use dg_xch_vdf::validate_vdf_info;
 
 use crate::{hash_of, WeightProofError};
 
-// ---- small accessors (dg_xch's HeaderBlock/wire types carry no consensus methods) ----
-
-fn hb_prev_hash(b: &HeaderBlock) -> Bytes32 {
-    b.foliage.prev_block_hash
-}
-fn hb_header_hash(b: &HeaderBlock) -> Result<Bytes32, WeightProofError> {
-    // chia_rs HeaderBlock::header_hash == foliage.hash()
-    hash_of(&b.foliage)
-}
-fn hb_height(b: &HeaderBlock) -> u32 {
-    b.reward_chain_block.height
-}
-fn hb_total_iters(b: &HeaderBlock) -> u128 {
-    b.reward_chain_block.total_iters
-}
-fn hb_weight(b: &HeaderBlock) -> u128 {
-    b.reward_chain_block.weight
-}
-
-fn default_el() -> ClassgroupElement {
-    default_classgroup_element()
-}
-
-// dg_xch models `BlockRecord.challenge_vdf_output` as `VdfOutput { data: UnsizedBytes }` but VDF
-// inputs/outputs elsewhere as `ClassgroupElement { data: Bytes100 }`. In the recent-blocks path this
-// field is a pure internal carrier (never consensus-hashed — the record's hashes use the reward-chain
-// block directly), and a VDF output is always exactly 100 bytes, so this round-trip is lossless.
-fn cge_to_vdf_output(e: ClassgroupElement) -> VdfOutput {
-    VdfOutput {
-        data: UnsizedBytes::new(AsRef::<[u8]>::as_ref(&e.data).to_vec()),
-    }
-}
-fn vdf_output_to_cge(o: &VdfOutput) -> ClassgroupElement {
-    ClassgroupElement {
-        data: Bytes100::from(o.data.as_slice().to_vec()),
-    }
-}
+// HeaderBlock accessors (`prev_header_hash`/`header_hash`/`height`/`weight`/`total_iters`/
+// `first_in_sub_slot`) now live as methods on `dg_xch_core::HeaderBlock`. The
+// `ClassgroupElement` <-> `VdfOutput` carrier conversion is `From`/`Into` beside those models in
+// dg_xch_core, and the identity element is `ClassgroupElement::get_default_element()`.
 
 /// `VDFInfo(challenge, iters, output)`.
 fn vdf_info(challenge: Bytes32, iters: u64, output: ClassgroupElement) -> VdfInfo {
@@ -147,40 +113,9 @@ impl BlockCache {
     }
 }
 
-/// `BlockRecord` consensus methods (chia_rs `block_record.rs`). dg_xch's `BlockRecord` is a bare data
-/// struct; these are the missing methods, ported near-verbatim. dg_xch's `calculate_sp_iters` /
-/// `calculate_ip_iters` take `&ConsensusConstants` (they read `num_sps_sub_slot` /
-/// `num_sp_intervals_extra` internally), so the num-sps / extra-intervals args fold into `c`.
-pub(crate) trait BlockRecordExt {
-    fn first_in_sub_slot(&self) -> bool;
-    fn is_transaction_block(&self) -> bool;
-    fn is_challenge_block(&self, min_blocks_per_challenge_block: u8) -> bool;
-    fn ip_iters(&self, c: &ConsensusConstants) -> Result<u64, WeightProofError>;
-}
-
-impl BlockRecordExt for BlockRecord {
-    fn first_in_sub_slot(&self) -> bool {
-        self.finished_challenge_slot_hashes.is_some()
-    }
-
-    fn is_transaction_block(&self) -> bool {
-        self.timestamp.is_some()
-    }
-
-    fn is_challenge_block(&self, min_blocks_per_challenge_block: u8) -> bool {
-        self.deficit == min_blocks_per_challenge_block - 1
-    }
-
-    fn ip_iters(&self, c: &ConsensusConstants) -> Result<u64, WeightProofError> {
-        calculate_ip_iters(
-            c,
-            self.sub_slot_iters,
-            self.signage_point_index,
-            self.required_iters,
-        )
-        .map_err(|_| WeightProofError::Rejected("ip_iters"))
-    }
-}
+// `BlockRecord`'s consensus accessors (`first_in_sub_slot`/`is_transaction_block`/`is_challenge_block`/
+// `ip_iters`) now live as methods on `dg_xch_core::BlockRecord`. `ip_iters` there returns the native
+// `std::io::Error` from `calculate_ip_iters`; call sites here map it to `WeightProofError`.
 
 /// `calculate_deficit` (ref `chia/consensus/deficit.py:7`) — the deficit state machine at a block.
 pub(crate) fn calculate_deficit(
@@ -478,18 +413,18 @@ fn get_signage_point_vdf_info(
         rc_vdf_challenge = hash_of(&last.reward_chain)?;
         cc_vdf_challenge = hash_of(&last.challenge_chain)?;
         sp_vdf_iters = sp_iters;
-        cc_vdf_input = default_el();
+        cc_vdf_input = ClassgroupElement::get_default_element();
     } else if new_sub_slot && overflow && n > 1 {
         let prev = &finished_sub_slots[n - 2];
         rc_vdf_challenge = hash_of(&prev.reward_chain)?;
         cc_vdf_challenge = hash_of(&prev.challenge_chain)?;
         sp_vdf_iters = sp_iters;
-        cc_vdf_input = default_el();
+        cc_vdf_input = ClassgroupElement::get_default_element();
     } else if genesis_block {
         rc_vdf_challenge = c.genesis_challenge;
         cc_vdf_challenge = c.genesis_challenge;
         sp_vdf_iters = sp_iters;
-        cc_vdf_input = default_el();
+        cc_vdf_input = ClassgroupElement::get_default_element();
     } else if new_sub_slot && overflow && n == 1 {
         // Case 4.
         let prev = prev_b.ok_or(WeightProofError::Rejected("sp_vdf: prev_b"))?;
@@ -500,7 +435,7 @@ fn get_signage_point_vdf_info(
         if curr.total_iters < sp_total_iters {
             sp_vdf_iters = u64::try_from(sp_total_iters - curr.total_iters)
                 .map_err(|_| WeightProofError::Rejected("sp_vdf: iters"))?;
-            cc_vdf_input = vdf_output_to_cge(&curr.challenge_vdf_output);
+            cc_vdf_input = ClassgroupElement::from(&curr.challenge_vdf_output);
             rc_vdf_challenge = curr.reward_infusion_new_challenge;
         } else {
             let hashes = curr
@@ -508,7 +443,7 @@ fn get_signage_point_vdf_info(
                 .as_ref()
                 .ok_or(WeightProofError::Rejected("sp_vdf: no reward slot hashes"))?;
             sp_vdf_iters = sp_iters;
-            cc_vdf_input = default_el();
+            cc_vdf_input = ClassgroupElement::get_default_element();
             rc_vdf_challenge = *hashes
                 .last()
                 .ok_or(WeightProofError::Rejected("sp_vdf: empty reward slot hashes"))?;
@@ -566,11 +501,11 @@ fn get_signage_point_vdf_info(
         if let Some(pre) = sp_pre_sb {
             sp_vdf_iters = u64::try_from(sp_total_iters - pre.total_iters)
                 .map_err(|_| WeightProofError::Rejected("sp_vdf: iters"))?;
-            cc_vdf_input = vdf_output_to_cge(&pre.challenge_vdf_output);
+            cc_vdf_input = ClassgroupElement::from(&pre.challenge_vdf_output);
             rc_vdf_challenge = pre.reward_infusion_new_challenge;
         } else {
             sp_vdf_iters = sp_iters;
-            cc_vdf_input = default_el();
+            cc_vdf_input = ClassgroupElement::get_default_element();
             rc_vdf_challenge = found_sub_slots[1].1;
         }
         cc_vdf_challenge = found_sub_slots[1].0;
@@ -584,7 +519,7 @@ fn get_signage_point_vdf_info(
         if curr.total_iters < sp_total_iters {
             sp_vdf_iters = u64::try_from(sp_total_iters - curr.total_iters)
                 .map_err(|_| WeightProofError::Rejected("sp_vdf: iters"))?;
-            cc_vdf_input = vdf_output_to_cge(&curr.challenge_vdf_output);
+            cc_vdf_input = ClassgroupElement::from(&curr.challenge_vdf_output);
             rc_vdf_challenge = curr.reward_infusion_new_challenge;
         } else {
             let hashes = curr
@@ -592,7 +527,7 @@ fn get_signage_point_vdf_info(
                 .as_ref()
                 .ok_or(WeightProofError::Rejected("sp_vdf: no reward slot hashes"))?;
             sp_vdf_iters = sp_iters;
-            cc_vdf_input = default_el();
+            cc_vdf_input = ClassgroupElement::get_default_element();
             rc_vdf_challenge = *hashes
                 .last()
                 .ok_or(WeightProofError::Rejected("sp_vdf: empty reward slot hashes"))?;
@@ -615,7 +550,7 @@ fn get_signage_point_vdf_info(
         cc_vdf_challenge,
         rc_vdf_challenge,
         cc_vdf_input,
-        default_el(),
+        ClassgroupElement::get_default_element(),
         sp_vdf_iters,
         sp_vdf_iters,
     ))
@@ -659,7 +594,7 @@ fn header_block_to_sub_block_record(
             }
         }
         (Some(cc), Some(rw), Some(icc))
-    } else if hb_height(block) == 0 {
+    } else if block.height() == 0 {
         (
             Some(vec![c.genesis_challenge]),
             Some(vec![c.genesis_challenge]),
@@ -682,14 +617,14 @@ fn header_block_to_sub_block_record(
     };
 
     Ok(BlockRecord {
-        header_hash: hb_header_hash(block)?,
-        prev_hash: hb_prev_hash(block),
-        height: hb_height(block),
-        weight: hb_weight(block),
-        total_iters: hb_total_iters(block),
+        header_hash: block.header_hash().map_err(|_| WeightProofError::Malformed("serialize"))?,
+        prev_hash: block.prev_header_hash(),
+        height: block.height(),
+        weight: block.weight(),
+        total_iters: block.total_iters(),
         signage_point_index: rcb.signage_point_index,
-        challenge_vdf_output: cge_to_vdf_output(rcb.challenge_chain_ip_vdf.output),
-        infused_challenge_vdf_output: icc_output.map(cge_to_vdf_output),
+        challenge_vdf_output: VdfOutput::from(rcb.challenge_chain_ip_vdf.output),
+        infused_challenge_vdf_output: icc_output.map(VdfOutput::from),
         reward_infusion_new_challenge: hash_of(rcb)?,
         challenge_block_info_hash: hash_of(&cbi)?,
         sub_slot_iters,
@@ -756,9 +691,9 @@ fn validate_unfinished_header_block(
         return Err(e("INVALID_SP_INDEX"));
     }
     // 1. previous block / genesis
-    let prev_b = blocks.try_block_record(hb_prev_hash(block));
+    let prev_b = blocks.try_block_record(block.prev_header_hash());
     let genesis_block = prev_b.is_none();
-    if genesis_block && hb_prev_hash(block) != c.genesis_challenge {
+    if genesis_block && block.prev_header_hash() != c.genesis_challenge {
         return Err(e("INVALID_PREV_BLOCK_HASH"));
     }
     let overflow = is_overflow_block(c, rcb.signage_point_index).map_err(|_| e("overflow"))?;
@@ -838,7 +773,7 @@ fn validate_unfinished_header_block(
                         if curr.is_challenge_block(c.min_blocks_per_challenge_block) {
                             icc_challenge_hash = Some(curr.challenge_block_info_hash);
                             icc_iters_committed =
-                                Some(pb.sub_slot_iters - curr.ip_iters(c)?);
+                                Some(pb.sub_slot_iters - curr.ip_iters(c).map_err(|_| e("ip_iters"))?);
                         } else {
                             let ficsh = curr
                                 .finished_infused_challenge_slot_hashes
@@ -847,12 +782,12 @@ fn validate_unfinished_header_block(
                             icc_challenge_hash = Some(*ficsh.last().ok_or(e("empty ficsh"))?);
                             icc_iters_committed = Some(pb.sub_slot_iters);
                         }
-                        icc_iters_proof = Some(pb.sub_slot_iters - pb.ip_iters(c)?);
+                        icc_iters_proof = Some(pb.sub_slot_iters - pb.ip_iters(c).map_err(|_| e("ip_iters"))?);
                         if pb.is_challenge_block(c.min_blocks_per_challenge_block) {
-                            icc_vdf_input = Some(default_el());
+                            icc_vdf_input = Some(ClassgroupElement::get_default_element());
                         } else {
                             icc_vdf_input =
-                                pb.infused_challenge_vdf_output.as_ref().map(vdf_output_to_cge);
+                                pb.infused_challenge_vdf_output.as_ref().map(ClassgroupElement::from);
                         }
                     } else if block.finished_sub_slots[n - 1].reward_chain.deficit
                         < c.min_blocks_per_challenge_block
@@ -865,7 +800,7 @@ fn validate_unfinished_header_block(
                         icc_challenge_hash = Some(hash_of(icc_ss)?);
                         icc_iters_committed = Some(pb.sub_slot_iters);
                         icc_iters_proof = icc_iters_committed;
-                        icc_vdf_input = Some(default_el());
+                        icc_vdf_input = Some(ClassgroupElement::get_default_element());
                     }
                 }
 
@@ -895,7 +830,7 @@ fn validate_unfinished_header_block(
                         return Err(e("INVALID_ICC_EOS_VDF"));
                     }
                     if icc_proof.normalized_to_identity
-                        && !validate_vdf(c, &default_el(), icc_eos, icc_proof, None)
+                        && !validate_vdf(c, &ClassgroupElement::get_default_element(), icc_eos, icc_proof, None)
                     {
                         return Err(e("INVALID_ICC_EOS_VDF"));
                     }
@@ -957,7 +892,7 @@ fn validate_unfinished_header_block(
             }
 
             let mut eos_vdf_iters = vs.ssi;
-            let mut cc_start_element = default_el();
+            let mut cc_start_element = ClassgroupElement::get_default_element();
             let mut cc_eos_vdf_challenge = challenge_hash;
             let rc_eos_vdf_challenge: Bytes32;
             if genesis_block {
@@ -972,8 +907,8 @@ fn validate_unfinished_header_block(
                 let pb = prev_b.ok_or(e("prev_b"))?;
                 if n == 0 {
                     rc_eos_vdf_challenge = pb.reward_infusion_new_challenge;
-                    eos_vdf_iters = pb.sub_slot_iters - pb.ip_iters(c)?;
-                    cc_start_element = vdf_output_to_cge(&pb.challenge_vdf_output);
+                    eos_vdf_iters = pb.sub_slot_iters - pb.ip_iters(c).map_err(|_| e("ip_iters"))?;
+                    cc_start_element = ClassgroupElement::from(&pb.challenge_vdf_output);
                 } else {
                     rc_eos_vdf_challenge =
                         hash_of(&block.finished_sub_slots[n - 1].reward_chain)?;
@@ -984,7 +919,7 @@ fn validate_unfinished_header_block(
             let rc_target = vdf_info(rc_eos_vdf_challenge, eos_vdf_iters, rc.end_of_slot_vdf.output);
             if !validate_vdf(
                 c,
-                &default_el(),
+                &ClassgroupElement::get_default_element(),
                 &rc.end_of_slot_vdf,
                 &sub_slot.proofs.reward_chain_slot_proof,
                 Some(&rc_target),
@@ -1020,7 +955,7 @@ fn validate_unfinished_header_block(
             if cc_proof.normalized_to_identity
                 && !validate_vdf(
                     c,
-                    &default_el(),
+                    &ClassgroupElement::get_default_element(),
                     &cc.challenge_chain_end_of_slot_vdf,
                     cc_proof,
                     None,
@@ -1105,7 +1040,7 @@ fn validate_unfinished_header_block(
     let pre_sp_tx_h = pre_sp_tx_block_height(
         c,
         blocks,
-        hb_prev_hash(block),
+        block.prev_header_hash(),
         rcb.signage_point_index,
         block.finished_sub_slots.len(),
     )?;
@@ -1150,11 +1085,11 @@ fn validate_unfinished_header_block(
         let pb = prev_b.ok_or(e("prev_b"))?;
         if new_sub_slot {
             let mut t = pb.total_iters;
-            t += u128::from(pb.sub_slot_iters - pb.ip_iters(c)?);
+            t += u128::from(pb.sub_slot_iters - pb.ip_iters(c).map_err(|_| e("ip_iters"))?);
             t += u128::from(vs.ssi) * (finished_sub_slots_since_prev as u128 - 1);
             t
         } else {
-            pb.total_iters - u128::from(pb.ip_iters(c)?)
+            pb.total_iters - u128::from(pb.ip_iters(c).map_err(|_| e("ip_iters"))?)
         }
     };
     let total_iters = total_iters + u128::from(ip_iters);
@@ -1226,7 +1161,7 @@ fn validate_unfinished_header_block(
             return Err(e("INVALID_CC_SP_VDF"));
         }
         if cc_sp_proof.normalized_to_identity
-            && !validate_vdf(c, &default_el(), cc_sp_vdf, cc_sp_proof, None)
+            && !validate_vdf(c, &ClassgroupElement::get_default_element(), cc_sp_vdf, cc_sp_proof, None)
         {
             return Err(e("INVALID_CC_SP_VDF"));
         }
@@ -1382,11 +1317,11 @@ fn validate_finished_header_block(
     let rcb = &block.reward_chain_block;
     let required_iters = validate_unfinished_header_block(c, blocks, block, vs, check_sub_epoch_summary)?;
 
-    let genesis_block = hb_height(block) == 0;
+    let genesis_block = block.height() == 0;
     let prev_b = if genesis_block {
         None
     } else {
-        Some(blocks.block_record(hb_prev_hash(block))?)
+        Some(blocks.block_record(block.prev_header_hash())?)
     };
     let new_sub_slot = !block.finished_sub_slots.is_empty();
     let ip_iters = calculate_ip_iters(c, vs.ssi, rcb.signage_point_index, required_iters)
@@ -1394,20 +1329,20 @@ fn validate_finished_header_block(
 
     if !genesis_block {
         let pb = prev_b.ok_or(e("prev_b"))?;
-        if hb_height(block) != pb.height + 1 {
+        if block.height() != pb.height + 1 {
             return Err(e("INVALID_HEIGHT"));
         }
-        if hb_weight(block) != pb.weight + u128::from(vs.difficulty) {
+        if block.weight() != pb.weight + u128::from(vs.difficulty) {
             return Err(e("INVALID_WEIGHT"));
         }
     } else {
-        if hb_height(block) != 0 {
+        if block.height() != 0 {
             return Err(e("INVALID_HEIGHT (genesis)"));
         }
-        if hb_weight(block) != u128::from(c.difficulty_starting) {
+        if block.weight() != u128::from(c.difficulty_starting) {
             return Err(e("INVALID_WEIGHT (genesis)"));
         }
-        if hb_prev_hash(block) != c.genesis_challenge {
+        if block.prev_header_hash() != c.genesis_challenge {
             return Err(e("INVALID_PREV_BLOCK_HASH (genesis)"));
         }
     }
@@ -1417,7 +1352,7 @@ fn validate_finished_header_block(
     let ip_vdf_iters: u64;
     let rc_vdf_challenge: Bytes32;
     if genesis_block {
-        cc_vdf_output = default_el();
+        cc_vdf_output = ClassgroupElement::get_default_element();
         ip_vdf_iters = ip_iters;
         rc_vdf_challenge = if new_sub_slot {
             hash_of(&last.ok_or(e("no last ss"))?.reward_chain)?
@@ -1429,12 +1364,12 @@ fn validate_finished_header_block(
         if new_sub_slot {
             rc_vdf_challenge = hash_of(&last.ok_or(e("no last ss"))?.reward_chain)?;
             ip_vdf_iters = ip_iters;
-            cc_vdf_output = default_el();
+            cc_vdf_output = ClassgroupElement::get_default_element();
         } else {
             rc_vdf_challenge = pb.reward_infusion_new_challenge;
             ip_vdf_iters = u64::try_from(rcb.total_iters - pb.total_iters)
                 .map_err(|_| e("ip_vdf_iters"))?;
-            cc_vdf_output = vdf_output_to_cge(&pb.challenge_vdf_output);
+            cc_vdf_output = ClassgroupElement::from(&pb.challenge_vdf_output);
         }
     }
 
@@ -1466,7 +1401,7 @@ fn validate_finished_header_block(
         return Err(e("INVALID_CC_IP_VDF"));
     }
     if cc_ip_proof.normalized_to_identity
-        && !validate_vdf(c, &default_el(), &rcb.challenge_chain_ip_vdf, cc_ip_proof, None)
+        && !validate_vdf(c, &ClassgroupElement::get_default_element(), &rcb.challenge_chain_ip_vdf, cc_ip_proof, None)
     {
         return Err(e("INVALID_CC_IP_VDF (norm)"));
     }
@@ -1474,7 +1409,7 @@ fn validate_finished_header_block(
     let rc_target = vdf_info(rc_vdf_challenge, ip_vdf_iters, rcb.reward_chain_ip_vdf.output);
     if !validate_vdf(
         c,
-        &default_el(),
+        &ClassgroupElement::get_default_element(),
         &rcb.reward_chain_ip_vdf,
         &block.reward_chain_ip_proof,
         Some(&rc_target),
@@ -1487,7 +1422,7 @@ fn validate_finished_header_block(
         let overflow = is_overflow_block(c, rcb.signage_point_index).map_err(|_| e("overflow"))?;
         let deficit = calculate_deficit(
             c,
-            hb_height(block),
+            block.height(),
             Some(pb),
             overflow,
             block.finished_sub_slots.len(),
@@ -1507,12 +1442,12 @@ fn validate_finished_header_block(
                     .infused_challenge_chain
                     .as_ref()
                     .ok_or(e("no last icc"))?;
-                (hash_of(icc_ss)?, Some(default_el()))
+                (hash_of(icc_ss)?, Some(ClassgroupElement::get_default_element()))
             } else {
                 let input = if pb.is_challenge_block(c.min_blocks_per_challenge_block) {
-                    Some(default_el())
+                    Some(ClassgroupElement::get_default_element())
                 } else {
-                    pb.infused_challenge_vdf_output.as_ref().map(vdf_output_to_cge)
+                    pb.infused_challenge_vdf_output.as_ref().map(ClassgroupElement::from)
                 };
                 let mut curr = pb;
                 while curr.finished_infused_challenge_slot_hashes.is_none()
@@ -1577,7 +1512,7 @@ fn validate_pospace_recent_chain(
     let pre_sp_tx_h = pre_sp_tx_block_height(
         c,
         blocks,
-        hb_prev_hash(block),
+        block.prev_header_hash(),
         rcb.signage_point_index,
         block.finished_sub_slots.len(),
     )?;
@@ -1586,7 +1521,7 @@ fn validate_pospace_recent_chain(
         &rcb.proof_of_space,
         if overflow { prev_challenge } else { challenge },
         cc_sp_hash,
-        hb_height(block),
+        block.height(),
         diff,
         pre_sp_tx_h,
     )
@@ -1664,7 +1599,7 @@ pub(crate) fn validate_recent_blocks(
     let mut challenge: Option<Bytes32> =
         Some(recent_chain[0].reward_chain_block.pos_ss_cc_challenge_hash);
     let mut prev_challenge: Option<Bytes32> = None;
-    let tip_height = hb_height(&recent_chain[recent_chain.len() - 1]);
+    let tip_height = recent_chain[recent_chain.len() - 1].height();
     let mut prev_block_record: Option<BlockRecord> = None;
     let mut deficit: u8 = 0;
     let mut adjusted = false;
@@ -1675,7 +1610,7 @@ pub(crate) fn validate_recent_blocks(
         let mut required_iters: u64 = 0;
         let mut overflow = false;
         let mut ses = false;
-        let height = hb_height(block);
+        let height = block.height();
 
         for sub_slot in &block.finished_sub_slots {
             prev_challenge = Some(sub_slot.challenge_chain.challenge_chain_end_of_slot_vdf.challenge);
@@ -1747,7 +1682,7 @@ pub(crate) fn validate_recent_blocks(
         )?;
         sub_blocks.add_block(block_record.clone());
 
-        if block.first_in_sub_slot_hb() {
+        if block.first_in_sub_slot() {
             sub_slots += 1;
         }
         if rcb.is_transaction_block {
@@ -1766,16 +1701,6 @@ pub(crate) fn validate_recent_blocks(
         return Err(e("did not validate enough blocks in recent chain"));
     }
     Ok(())
-}
-
-// `HeaderBlock.first_in_sub_slot` == has finished sub slots.
-trait HeaderBlockExt {
-    fn first_in_sub_slot_hb(&self) -> bool;
-}
-impl HeaderBlockExt for HeaderBlock {
-    fn first_in_sub_slot_hb(&self) -> bool {
-        !self.finished_sub_slots.is_empty()
-    }
 }
 
 #[cfg(test)]

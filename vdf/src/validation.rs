@@ -1,7 +1,6 @@
 use crate::error::{Error, Result};
 use crate::proof::verify_vdf;
 use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
-use dg_xch_core::blockchain::sized_bytes::Bytes100;
 use dg_xch_core::blockchain::vdf_info::VdfInfo;
 use dg_xch_core::blockchain::vdf_proof::VdfProof;
 use dg_xch_core::consensus::constants::ConsensusConstants;
@@ -14,9 +13,8 @@ pub const DEFAULT_ELEMENT_BYTES: [u8; 100] = {
 
 #[must_use]
 pub fn default_classgroup_element() -> ClassgroupElement {
-    ClassgroupElement {
-        data: Bytes100::from(DEFAULT_ELEMENT_BYTES),
-    }
+    // Single source of truth for the identity element now lives on the model in dg_xch_core.
+    ClassgroupElement::get_default_element()
 }
 
 #[must_use]

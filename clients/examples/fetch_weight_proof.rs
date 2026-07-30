@@ -8,9 +8,9 @@
 //! `WeightProof::from_bytes` reads straight back.
 //!
 //! Run (from the dg_xch_utils workspace root):
-//!   FRIA_WP_NETWORK=mainnet FRIA_WP_OUT=weight_proof_mainnet.hex \
-//!     cargo run -p dg_xch_clients --example fetch_weight_proof
-//! Optional: FRIA_WP_SEED=dns-introducer.chia.net  FRIA_WP_PORT=8444  FRIA_WP_PEER=<ip>  FRIA_WP_TIMEOUT_MS=180000
+//!   cargo run -p dg_xch_clients --example fetch_weight_proof
+//! Defaults to the druid.garden full node. Override the peer with the standard env vars:
+//!   FULLNODE_HOST=<host>  FULLNODE_PORT=<port>  cargo run -p dg_xch_clients --example fetch_weight_proof
 
 use dg_xch_clients::websocket::{oneshot, WsClient, WsClientConfig};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
@@ -160,70 +160,55 @@ async fn try_peer(
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let _ = default_provider().install_default();
-    let network = std::env::var("FRIA_WP_NETWORK").unwrap_or_else(|_| "mainnet".to_string());
-    let seed = std::env::var("FRIA_WP_SEED")
-        .unwrap_or_else(|_| "dns-introducer.chia.net".to_string());
-    let port: u16 = std::env::var("FRIA_WP_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8444);
-    let out = std::env::var("FRIA_WP_OUT")
-        .unwrap_or_else(|_| format!("weight_proof_{network}.hex"));
-    let timeout_ms: u64 = std::env::var("FRIA_WP_TIMEOUT_MS")
+    // mainnet is the only network this fixture targets; the id is only needed for the handshake.
+    let network = "mainnet";
+    // Standard dg_xch env vars (see cli/src/lib.rs); default to the druid.garden full node.
+    let host = std::env::var("FULLNODE_HOST").unwrap_or_else(|_| "druid.garden".to_string());
+    let port: u16 = std::env::var("FULLNODE_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(180_000);
+        .unwrap_or(8444);
+    let timeout_ms: u64 = 180_000;
+    let out = format!("weight_proof_{network}.hex");
     let version = ChiaProtocolVersion::default();
 
-    // Peer list: an explicit FRIA_WP_PEER, else resolve the DNS seeder (its A records ARE full nodes).
-    let mut peers: Vec<String> = Vec::new();
-    if let Ok(p) = std::env::var("FRIA_WP_PEER") {
-        peers.push(p);
-    } else {
-        let addrs = tokio::net::lookup_host((seed.as_str(), port)).await?;
-        for a in addrs {
-            peers.push(a.ip().to_string());
+    println!("network={network} version={version} node={host}:{port} timeout={timeout_ms}ms");
+    println!("connecting to {host}:{port} ...");
+    match try_peer(&host, port, network, version, timeout_ms).await {
+        Ok((wp, peak)) => {
+            let bytes = wp.to_bytes(version)?;
+            let hex_str = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+            std::fs::write(&out, &hex_str)?;
+            // Also drop the raw binary (half the size — better for a committed `include_bytes!` fixture).
+            let bin_out = out
+                .strip_suffix(".hex")
+                .map(|s| format!("{s}.bin"))
+                .unwrap_or_else(|| format!("{out}.bin"));
+            std::fs::write(&bin_out, &bytes)?;
+            // Prove it round-trips before we call it a fixture.
+            let mut cur = Cursor::new(bytes.as_slice());
+            let back = WeightProof::from_bytes(&mut cur, version)
+                .map_err(|e| Error::other(format!("fixture failed to round-trip: {e:?}")))?;
+            let reser = back.to_bytes(version)?;
+            assert_eq!(reser, bytes, "round-trip mismatch");
+            println!("\nSUCCESS");
+            println!("  network         : {network}");
+            println!("  node            : {host}:{port}");
+            println!("  tip             : {}", peak.header_hash);
+            println!("  height          : {}", peak.height);
+            println!("  weight          : {}", peak.weight);
+            println!("  sub_epochs      : {}", wp.sub_epochs.len());
+            println!("  sub_epoch_segs  : {}", wp.sub_epoch_segments.len());
+            println!("  recent_chain    : {}", wp.recent_chain_data.len());
+            println!("  wp bytes        : {}", bytes.len());
+            println!("  fixture (bin)   : {bin_out}  ({} bytes)", bytes.len());
+            println!("  fixture (hex)   : {out}  ({} chars)", hex_str.len());
+            println!("  round-trips     : yes (to_bytes → from_bytes → to_bytes identical)");
+            Ok(())
+        }
+        Err(e) => {
+            println!("  node failed: {e}");
+            Err(Error::other("node did not produce a weight proof"))
         }
     }
-    println!(
-        "network={network} version={version} seed={seed} candidates={} timeout={}ms",
-        peers.len(),
-        timeout_ms
-    );
-
-    for peer in peers.iter().take(12) {
-        println!("connecting to {peer}:{port} ...");
-        match try_peer(peer, port, &network, version, timeout_ms).await {
-            Ok((wp, peak)) => {
-                let bytes = wp.to_bytes(version)?;
-                let hex_str = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-                std::fs::write(&out, &hex_str)?;
-                // Also drop the raw binary (half the size — better for a committed `include_bytes!` fixture).
-                let bin_out = out.strip_suffix(".hex").map(|s| format!("{s}.bin")).unwrap_or_else(|| format!("{out}.bin"));
-                std::fs::write(&bin_out, &bytes)?;
-                // Prove it round-trips before we call it a fixture.
-                let mut cur = Cursor::new(bytes.as_slice());
-                let back = WeightProof::from_bytes(&mut cur, version)
-                    .map_err(|e| Error::other(format!("fixture failed to round-trip: {e:?}")))?;
-                let reser = back.to_bytes(version)?;
-                assert_eq!(reser, bytes, "round-trip mismatch");
-                println!("\nSUCCESS");
-                println!("  network         : {network}");
-                println!("  peer            : {peer}:{port}");
-                println!("  tip             : {}", peak.header_hash);
-                println!("  height          : {}", peak.height);
-                println!("  weight          : {}", peak.weight);
-                println!("  sub_epochs      : {}", wp.sub_epochs.len());
-                println!("  sub_epoch_segs  : {}", wp.sub_epoch_segments.len());
-                println!("  recent_chain    : {}", wp.recent_chain_data.len());
-                println!("  wp bytes        : {}", bytes.len());
-                println!("  fixture (bin)   : {bin_out}  ({} bytes)", bytes.len());
-                println!("  fixture (hex)   : {out}  ({} chars)", hex_str.len());
-                println!("  round-trips     : yes (to_bytes → from_bytes → to_bytes identical)");
-                return Ok(());
-            }
-            Err(e) => {
-                println!("  peer failed: {e}");
-                continue;
-            }
-        }
-    }
-    Err(Error::other("no peer produced a weight proof"))
 }
