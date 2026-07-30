@@ -10,3 +10,6 @@ gui/src-tauri/gen/schemas
 flamegraph.svg
 perf.data
 perf.data.old
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
