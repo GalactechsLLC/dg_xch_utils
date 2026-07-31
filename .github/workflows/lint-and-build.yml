@@ -15,6 +15,18 @@ jobs:
         uses: actions/checkout@v4
       - name: Checkout submodules
         run: git submodule update --init --recursive
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            libayatana-appindicator3-dev \
+            libglib2.0-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
       - name: Run Format
         run: cargo fmt --all -- --check
       - name: Run Clippy
@@ -34,5 +46,17 @@ jobs:
         uses: actions/checkout@v4
       - name: Checkout submodules
         run: git submodule update --init --recursive
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            libayatana-appindicator3-dev \
+            libglib2.0-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
       - name: Build library
         run: cargo build --release
