@@ -1,8 +1,4 @@
-//! Independent gate on the dg_xch_vdf bug-2 fix. Part (a): 13-vector ACCEPT-PARITY.
-//!
-//! Every vdf13 case (compression-path + get_b-path, all recursion_witness_type=2) plus the original
-//! captured case must now VERIFY TRUE under dg_xch_vdf::verify_vdf — matching chiavdf, which independently
-//! returns True on the identical bytes (confirmed separately). Before the fix these all returned False.
+// VDF verification parity tests using captured vectors.
 
 use dg_xch_vdf::proof::verify_vdf;
 use std::path::PathBuf;

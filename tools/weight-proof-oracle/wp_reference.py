@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
 """
-Weight-proof validator differential oracle (reference half).
+Generates reference weight-proof fixtures with Chia's Python validator.
 
-Runs chia's *reference* Python weight-proof validation over the SAME bytes the Rust
-dg_xch_weight_proof validator consumes, and emits the golden JSON + ses-hash list committed under
-weight-proof/tests/fixtures/ that the Rust harness (weight-proof/tests/weight_proof_parity.rs) gates
-each phase against. It is the "running reference" half of a writer != verifier differential gate: the
-Rust port is the writer, chia's own implementation (via this script) is the independent verifier.
-
-WHY A SEPARATE PINNED-CONSTANTS STEP (verified the hard way):
-chia's in-code `DEFAULT_CONSTANTS.GENESIS_CHALLENGE` is the sha256("") PLACEHOLDER
-(e3b0c442...b7852b855), NOT mainnet's ccd5bb71...  Validating a real mainnet proof against the
-placeholder makes `_validate_sub_epoch_summaries` reconstruct the whole ses-hash chain from the wrong
-seed and SILENTLY REJECT (returns summaries=None) — it looks like "peer sent a bad proof". So pin
-GENESIS_CHALLENGE to the target chain explicitly, exactly as the Rust validator does.
+Pass the target chain's genesis challenge explicitly when regenerating fixtures.
 
 ENVIRONMENT (only needed to regenerate goldens):
     python3.12 -m venv .venv
-    .venv/bin/pip install "chia_rs>=0.42.1,<0.43" bitstring sortedcontainers chiabip158 \
+    .venv/bin/pip install bitstring sortedcontainers chiabip158 \
                           aiohttp chiapos chiavdf click
     # chia (2.7.x) importable on PYTHONPATH (or `pip install -e .`). Only the weight_proof import path
     # is needed, not a full node.
@@ -45,7 +34,6 @@ def main() -> int:
 
     import random
 
-    from chia_rs.sized_bytes import bytes32
     from chia.types.weight_proof import WeightProof
     from chia.full_node.weight_proof import (
         _validate_sub_epoch_summaries,
@@ -56,7 +44,7 @@ def main() -> int:
     )
     from chia.consensus.default_constants import DEFAULT_CONSTANTS
 
-    genesis = bytes32.fromhex(args.genesis)
+    genesis = type(DEFAULT_CONSTANTS.GENESIS_CHALLENGE).fromhex(args.genesis)
     # Pin per target chain — never trust chia's in-code sha256("") placeholder default.
     constants = DEFAULT_CONSTANTS.replace(
         GENESIS_CHALLENGE=genesis, AGG_SIG_ME_ADDITIONAL_DATA=genesis

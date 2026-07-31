@@ -1,30 +1,4 @@
-//! Differential-parity + tamper-reject harness for the weight-proof validator.
-//!
-//! Writer != verifier: the phase logic lives in the `dg_xch_weight_proof` crate; THIS file is the
-//! independent verifier. It gates each phase against chia's running Python reference via a committed
-//! golden produced by the reference oracle at `tools/weight-proof-oracle/wp_reference.py`.
-//!
-//! The accept-vector is a REAL mainnet weight proof fetched live
-//! (`fixtures/weight_proof_mainnet_9054698.bin`, tip height 9,054,698, weight 55,606,644,880).
-//!
-//! VERIFIED FACTS about the fixture (established by running the reference; see wp_reference.py header):
-//!   * chia streamable round-trips it byte-identically (dg_xch_utils serialization is faithful).
-//!   * chia's `_validate_sub_epoch_summaries` ACCEPTS it (23,579 summaries) ONLY when `GENESIS_CHALLENGE`
-//!     is pinned to mainnet `ccd5bb71…`. Against chia's in-code placeholder genesis (sha256("") =
-//!     e3b0c442…) the same proof is SILENTLY REJECTED. dg_xch's `MAINNET` const carries the correct
-//!     genesis, so validating with `&MAINNET` is correct here.
-//!   * 5-vs-6-field SubEpochSummary is SETTLED: chia_rs's 6th field `challenge_merkle_root`, when None
-//!     (as it is for all 23,579 here), serializes to ZERO extra bytes — the last summary is 67 bytes on
-//!     BOTH sides, byte-identical — so dg_xch's 5-field type yields identical ses hashes. No type change
-//!     needed for current mainnet. LATENT RISK: if a future Chia fork ever populates challenge_merkle_root
-//!     with Some(_), dg_xch's 5-field type would diverge and must gain the 6th field (core type change).
-//!
-//! GOLDEN (committed, reproducible via wp_reference.py):
-//!   * fixtures/weight_proof_mainnet_9054698.golden.json      — full metadata + fields
-//!   * fixtures/weight_proof_mainnet_9054698.golden.hashes.txt — 23,579 ses hashes, one hex per line
-//!
-//! GATE POLICY: a phase comes off fail-closed only when its accept-parity AND its targeted tamper-reject
-//! are both green against this golden.
+// Parity and tamper tests using a committed mainnet weight proof.
 
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -136,10 +110,7 @@ fn golden_hash_chain_is_wellformed() {
     }
 }
 
-/// PHASE 2 — INTERMEDIATE PARITY (the gate). Every one of the 23,579 reconstructed ses hashes must equal
-/// chia's reference `_map_sub_epoch_summaries` output, element by element. Matching the full chain (each
-/// link hashing the prior) also proves every `challenge_merkle_root` is None — otherwise dg_xch's 5-field
-/// type would diverge. GREEN => dg_xch hashing is byte-correct vs the reference across the whole chain.
+/// Reconstructed summary hashes match the reference fixture.
 #[test]
 fn phase2_full_chain_ses_hash_parity() {
     let wp = load_fixture();
@@ -156,22 +127,12 @@ fn phase2_full_chain_ses_hash_parity() {
     assert!(
         first_divergence.is_none(),
         "ses-hash divergence vs reference at {first_divergence:?} \
-         — dg_xch 5-field hashing differs from chia_rs (possible challenge_merkle_root=Some?)"
+         — dg_xch 5-field hashing differs from the reference format"
     );
 }
 
-/// PHASE 2 — ACCEPT PARITY. The reference ACCEPTS this proof at the summaries stage; the Rust validator
-/// must too. "Phase 2 accepted" is observable as the pipeline advancing PAST phase 2 (to whichever later
-/// phase remains unported). It must NOT be TooLarge (bound regressed) and must NOT be a Rejected (a false
-/// reject of a valid proof — which, given phase order, could only originate at phase 2 or a later ported
-/// phase; either way the real accept-vector must never be rejected).
-// NOTE: phase 4 is now live, so the full validator no longer stops at a PhaseUnimplemented marker past
-// this phase — it runs VDF verification and is currently REJECTED by the known dg_xch_vdf bug 2
-// (serialize_form/compress_ab t-sign), and is slow (~min of VDF work). Phase-1/2/3 correctness is
-// definitively covered by the fast intermediate-parity tests above; this whole-pipeline accept is gated
-// on bug 2. Un-ignore (should return Ok) once bug 2 is fixed.
 #[test]
-#[ignore = "whole-pipeline now reaches phase 4 (bug 2 fixed) and stops at phase-5 PhaseUnimplemented; kept ignored for runtime (~min of VDF work), covered by phase4_accepts_real_mainnet_proof + the fast intermediate-parity tests"]
+#[ignore = "full validation is slow; run in release with --ignored"]
 fn phase2_accepts_real_mainnet_proof() {
     let wp = load_fixture();
     match validate_weight_proof(&wp, &MAINNET) {
@@ -190,11 +151,7 @@ fn phase2_accepts_real_mainnet_proof() {
     }
 }
 
-/// PHASE 2 — TAMPER REJECT (the coordinator's vector). Corrupting a `SubEpochData.reward_chain_hash`
-/// changes that summary's hash, cascades through every downstream `prev_subepoch_summary_hash`, so the
-/// reconstructed last hash no longer matches the on-chain anchor -> phase 2 must REJECT. A validator that
-/// still advanced to phase 1 here would be FAIL-OPEN. (Verdict parity: re-serialize + run wp_reference.py
-/// on the mutated bytes — the reference must also reject.)
+/// A modified summary hash is rejected.
 #[test]
 fn tamper_phase2_corrupt_reward_chain_hash_rejects() {
     let mut wp = load_fixture();
@@ -204,7 +161,7 @@ fn tamper_phase2_corrupt_reward_chain_hash_rejects() {
     match validate_weight_proof(&wp, &MAINNET) {
         Err(WeightProofError::Rejected(_)) => { /* correctly caught by the anchor check */ }
         Err(WeightProofError::PhaseUnimplemented("sub_epoch_sampling")) => panic!(
-            "FAIL-OPEN: phase 2 accepted a proof with a corrupted reward_chain_hash \
+            "phase 2 accepted a proof with a corrupted reward_chain_hash \
              (it advanced to phase 1 instead of rejecting)"
         ),
         other => panic!("unexpected verdict on tampered proof: {other:?}"),
@@ -369,8 +326,6 @@ fn phase3_tamper_inflate_boundary_weight_rejects() {
     }
 }
 
-// ============================ FUTURE PHASE GATES (un-ignore as phases land) ============================
-
 /// PHASE 6 / COMPLETE VALIDATOR — the full six-phase pipeline returns Ok on the real proof (phase 6 is a
 /// documented no-op: the reference has no total-weight check beyond phase 3's `_validate_summaries_weight`).
 /// No `PhaseUnimplemented` is reachable; the validator is confirmed complete.
@@ -486,7 +441,7 @@ fn tamper_phase5_truncate_recent_chain_rejects() {
 }
 
 /// ENCODING-CONTRACT REGRESSION GUARD. Current mainnet's on-chain ses hash is over the 5-field summary,
-/// which serializes to exactly 67 bytes. chia_rs's newer 6th field `challenge_merkle_root` is NOT active
+/// which serializes to exactly 67 bytes. The newer 6th field `challenge_merkle_root` is not active
 /// on mainnet and emits 0 bytes for None there; adding it to dg_xch as a standard `Option` (None -> a
 /// trailing 0x00, 68 bytes) shifts every ses hash and false-rejects the real proof. This guard goes RED
 /// the moment the type grows past 67 bytes for an all-None summary — re-add the field only gated on the

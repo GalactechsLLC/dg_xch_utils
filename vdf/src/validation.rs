@@ -5,15 +5,8 @@ use dg_xch_core::blockchain::vdf_info::VdfInfo;
 use dg_xch_core::blockchain::vdf_proof::VdfProof;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 
-pub const DEFAULT_ELEMENT_BYTES: [u8; 100] = {
-    let mut bytes = [0u8; 100];
-    bytes[0] = 0x08;
-    bytes
-};
-
 #[must_use]
 pub fn default_classgroup_element() -> ClassgroupElement {
-    // Single source of truth for the identity element now lives on the model in dg_xch_core.
     ClassgroupElement::get_default_element()
 }
 

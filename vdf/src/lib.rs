@@ -8,7 +8,7 @@ pub use crate::discriminant::{create_discriminant, create_discriminant_bytes};
 pub use crate::error::{Error, Result};
 pub use crate::proof::{prove, verify_n_wesolowski, verify_vdf};
 pub use crate::validation::{
-    DEFAULT_ELEMENT_BYTES, default_classgroup_element, validate_vdf_info, validate_vdf_info_result,
+    default_classgroup_element, validate_vdf_info, validate_vdf_info_result,
     validate_vdf_with_normalization, validate_vdf_with_normalization_result,
 };
 

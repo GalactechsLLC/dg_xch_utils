@@ -22,7 +22,7 @@ Each script resolves the fixtures (which stay under `weight-proof/tests/fixtures
 ## Environment (only to regenerate goldens)
 ```
 python3.12 -m venv .venv
-.venv/bin/pip install "chia_rs>=0.42.1,<0.43" chiavdf chiapos bitstring sortedcontainers chiabip158 aiohttp click
+.venv/bin/pip install chiavdf chiapos bitstring sortedcontainers chiabip158 aiohttp click
 # chia (2.7.x) importable on PYTHONPATH for wp_reference.py
 ```
 

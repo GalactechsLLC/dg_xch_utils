@@ -1,10 +1,4 @@
-//! Differential fuzz of dg_xch_vdf `square`/`multiply` (compose) vs an independent BQF reference.
-//!
-//! Hunts the residual `gcd>1` composition edge cases (2 wt=2 arithmetic failures remain after the first
-//! square fix). Vectors in tests/fixtures/bqf_vectors.txt are (input(s) -> reduced product) computed by
-//! the Python reference in this repo, itself validated against known small class groups. Forms are built
-//! via the public struct literal (no from_abd reduction) so gcd(a,b)>1 inputs exercise the real path.
-//! If dg_xch diverges on any vector, that is a minimal reproducer of the residual bug.
+// Composition parity tests using independent BQF vectors.
 
 use dg_xch_vdf::form::Form;
 use num_bigint::BigInt;

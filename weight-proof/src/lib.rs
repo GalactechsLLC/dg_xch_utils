@@ -1,28 +1,4 @@
-//! Weight-proof validation — the verifying light client's trust anchor.
-//!
-//! This turns [`WeightProof`] from a deserializable struct into a *verified* claim about the heaviest
-//! chain, so a light client can establish the canonical chain from a succinct proof without a full
-//! sync. Everything downstream (a directory singleton's coin state, a beacon) is trusted only against a
-//! proof that returns `true` here.
-//!
-//! **Algorithm** is ported from `chia-blockchain/chia/full_node/weight_proof.py::validate_weight_proof`
-//! (Apache-2.0) — the reference is the specification; this is an original Rust implementation of the same
-//! six-phase algorithm, wiring the verifiers from the sibling crates: `dg_xch_vdf::verify_n_wesolowski` /
-//! `validate_vdf_info` for the VDFs and `dg_xch_pos::verify_and_get_quality_string` for proof of space.
-//!
-//! This validator lives in its own crate (`dg_xch_weight_proof`) rather than in `dg_xch_core`, because
-//! wiring those verifiers from core would be a dependency cycle (`dg_xch_vdf`/`dg_xch_pos` depend on
-//! core). The `WeightProof` wire type stays in `dg_xch_core`; only the validation lives here.
-//!
-//! **Safety posture: FAIL CLOSED.** A weight-proof validator that ever returns `true` for a forged
-//! chain is catastrophic — it yields a forged directory, hence an attacker choosing the mix relays. All
-//! six phases are now ported and each was brought off fail-closed only with (a) the ported logic, (b) a
-//! real accept-vector (the live mainnet proof), and (c) targeted tamper-reject vectors. The validator
-//! accepts the real mainnet proof end-to-end and rejects
-//! (never panics) on any structural, weight, VDF, PoSpace, signature, or reconstruction violation. Any
-//! future phase or check added here must clear the same three-part bar; never relax one to `Ok` without
-//! it. [`WeightProofError::PhaseUnimplemented`] remains as the fail-closed marker for any not-yet-ported
-//! surface.
+// Validation for Chia weight proofs.
 
 use dg_xch_core::blockchain::challenge_chain_subslot::ChallengeChainSubSlot;
 use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
@@ -43,32 +19,16 @@ use dg_xch_pos::verify_and_get_quality_string;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use dg_xch_vdf::{default_classgroup_element, validate_vdf_info};
 
-/// Server-side bounds so a hostile peer cannot exhaust CPU/memory with a giant or pathological proof.
-/// Validation must be O(sampled work), never O(chain history).
-///
-/// Sizing note (grounded in a real mainnet vector, tip height 9_054_698): the sub-epoch count grows
-/// ~linearly with tip height at ~1 per `sub_epoch_blocks` (=384) blocks, so a real mainnet proof already
-/// carries ~23,579 sub-epochs — a flat 10_000 cap (the original scaffold value) rejects the genuine chain
-/// before any consensus runs. Size to ~100M blocks of headroom (decades at ~18.75s/block) so the
-/// structural gate never rejects a legitimate proof, while still bounding pre-validation allocation.
-/// NOTE: this is a *secondary* allocation sanity gate — the primary DoS guard is the wire-layer message-
-/// size limit that bounds `WeightProof::from_bytes` (the port's transport lane). The sub-epoch count is
-/// additionally pinned by the summary hash-chain (phase 2) and the total-weight check (phase 6), so it
-/// cannot be inflated arbitrarily without failing consensus. Segments/recent-blocks — the sampled,
-/// attacker-cost-bounded parts — stay tightly capped (observed 236 / 722 on the real vector).
+/// Limits validation work for untrusted proofs.
 pub const MAX_SUB_EPOCHS: usize = 300_000;
 pub const MAX_SEGMENTS: usize = 20_000;
 pub const MAX_RECENT_BLOCKS: usize = 2_000;
 
-// Phase-4 (segment) DoS bounds on attacker-controlled lengths. A segment's sub-slots drive reverse scans
-// (`sub_slot_data_vdf_input`) so cap them; and cap the total VDFs verified so a hostile proof cannot force
-// unbounded Wesolowski work. Both are far above anything a real proof needs (observed: 236 segments, a few
-// hundred VDFs total on the mainnet vector) — they never trip on a legitimate proof.
+// Bounds attacker-controlled segment and VDF counts.
 const MAX_SUB_SLOTS_PER_SEGMENT: usize = 10_000;
 const MAX_VDFS_TO_VERIFY: usize = 200_000;
 
-// Phase-1 (sampling) constants, matching chia's `WeightProofHandler`. These are consensus-fixed; the
-// determinism they produce is the whole security property, so they are not tunable.
+// Sampling constants match Chia's `WeightProofHandler`.
 const SAMPLING_LAMBDA_L: f64 = 100.0; // security parameter (`LAMBDA_L`)
 const SAMPLING_C: f64 = 0.5; // adversary-advantage base (`C`)
 const MAX_SAMPLES: usize = 20; // cap on distinct sampled sub-epochs
@@ -109,6 +69,17 @@ pub fn validate_weight_proof(
     wp: &WeightProof,
     constants: &ConsensusConstants,
 ) -> Result<(bool, Vec<SubEpochSummary>), WeightProofError> {
+    validate_weight_proof_with_progress(wp, constants, &mut |_| {})
+}
+
+fn validate_weight_proof_with_progress<F>(
+    wp: &WeightProof,
+    constants: &ConsensusConstants,
+    progress: &mut F,
+) -> Result<(bool, Vec<SubEpochSummary>), WeightProofError>
+where
+    F: FnMut(&'static str),
+{
     // --- Cheap structural + bounds gate (implemented; consensus-safe to check up front) ---
     if wp.sub_epochs.is_empty() {
         return Err(WeightProofError::Malformed("no sub-epochs"));
@@ -119,6 +90,7 @@ pub fn validate_weight_proof(
     if wp.sub_epoch_segments.len() > MAX_SEGMENTS {
         return Err(WeightProofError::TooLarge("sub_epoch_segments"));
     }
+    validate_segment_order(&wp.sub_epoch_segments)?;
     if wp.recent_chain_data.is_empty() {
         return Err(WeightProofError::Malformed("no recent chain data"));
     }
@@ -129,13 +101,30 @@ pub fn validate_weight_proof(
     // --- The six phases, in order. Each is fail-closed until ported + verified. ---
     // Phase 2 also yields the total accumulated weight and the per-sub-epoch cumulative weight list,
     // consumed by phase 3 (total) and phase 1 (list).
+    progress("phase 2: validating sub-epoch summaries");
     let (summaries, total_weight, sub_epoch_weight_list) =
-        validate_sub_epoch_summaries(wp, constants)?; // phase 2
-    validate_sub_epoch_sampling(wp, &summaries, &sub_epoch_weight_list, constants)?; // phase 1
-    validate_summaries_weight(wp, &summaries, total_weight, constants)?; // phase 3
-    validate_sub_epoch_segments(wp, &summaries, constants)?; // phase 4 (VDF + PoSpace)
-    validate_recent_blocks(wp, &summaries, constants)?; // phase 5
-    validate_total_weight(wp, &summaries, constants)?; // phase 6
+        validate_sub_epoch_summaries(wp, constants)?;
+    progress("phase 2: complete");
+
+    progress("phase 1: validating sub-epoch sampling");
+    validate_sub_epoch_sampling(wp, &summaries, &sub_epoch_weight_list, constants)?;
+    progress("phase 1: complete");
+
+    progress("phase 3: validating summaries weight");
+    validate_summaries_weight(wp, &summaries, total_weight, constants)?;
+    progress("phase 3: complete");
+
+    progress("phase 4: validating sampled segments");
+    validate_sub_epoch_segments(wp, &summaries, constants)?;
+    progress("phase 4: complete");
+
+    progress("phase 5: validating recent blocks");
+    validate_recent_blocks(wp, &summaries, constants)?;
+    progress("phase 5: complete");
+
+    progress("phase 6: validating total weight");
+    validate_total_weight(wp, &summaries, constants)?;
+    progress("phase 6: complete");
 
     Ok((true, summaries))
 }
@@ -628,7 +617,7 @@ pub(crate) fn hash_of<T: ChiaSerialize>(x: &T) -> Result<Bytes32, WeightProofErr
     Ok(Bytes32::from(hash_256(bytes)))
 }
 
-// `SubSlotData` predicates (chia_rs methods): a challenge block carries a proof of space; an end-of-slot
+// `SubSlotData` predicates: a challenge block carries a proof of space; an end-of-slot
 // entry carries a challenge-chain slot-end proof.
 fn ss_is_challenge(s: &SubSlotData) -> bool {
     s.proof_of_space.is_some()
@@ -665,8 +654,20 @@ fn max_sub_epoch_segments(c: &ConsensusConstants) -> usize {
     ((max_blocks - 1) / mbpcb + 1) as usize
 }
 
-/// Group segments by their (monotonically non-decreasing) `sub_epoch_n`, preserving order.
-/// (ref: `map_segments_by_sub_epoch`.)
+/// Rejects segments that are not ordered by `sub_epoch_n`.
+fn validate_segment_order(segments: &[SubEpochChallengeSegment]) -> Result<(), WeightProofError> {
+    if segments
+        .windows(2)
+        .any(|pair| pair[0].sub_epoch_n > pair[1].sub_epoch_n)
+    {
+        return Err(WeightProofError::Malformed(
+            "sub_epoch_segments are not ordered by sub_epoch_n",
+        ));
+    }
+    Ok(())
+}
+
+/// Groups ordered segments by `sub_epoch_n`.
 fn map_segments_by_sub_epoch(
     segments: &[SubEpochChallengeSegment],
 ) -> Vec<(u32, Vec<&SubEpochChallengeSegment>)> {
@@ -1434,6 +1435,19 @@ fn validate_total_weight(
 mod tests {
     use super::*;
 
+    #[test]
+    fn rejects_out_of_order_segments() {
+        let segment = |sub_epoch_n| SubEpochChallengeSegment {
+            sub_epoch_n,
+            sub_slots: vec![],
+            rc_slot_end_info: None,
+        };
+        assert!(matches!(
+            validate_segment_order(&[segment(1), segment(0)]),
+            Err(WeightProofError::Malformed(_))
+        ));
+    }
+
     /// Real-prod-data phase-2 accept path: a live-fetched MAINNET weight proof (tip height 9,054,698,
     /// weight 55,606,644,880). Reconstruct the summary chain from the proof's `SubEpochData` and prove
     /// its last summary's `ses_hash` equals the sub-epoch-summary hash actually committed on-chain (read
@@ -1514,8 +1528,10 @@ mod tests {
         let wp = WeightProof::from_bytes(&mut cur, ChiaProtocolVersion::default())
             .expect("real mainnet weight proof deserializes");
         let c = &dg_xch_core::consensus::constants::MAINNET;
-        let (valid, summaries) =
-            validate_weight_proof(&wp, c).expect("full validator accepts the real mainnet proof");
+        let (valid, summaries) = validate_weight_proof_with_progress(&wp, c, &mut |status| {
+            eprintln!("weight-proof: {status}");
+        })
+        .expect("full validator accepts the real mainnet proof");
         assert!(
             valid,
             "validator must return valid=true on the real mainnet proof"

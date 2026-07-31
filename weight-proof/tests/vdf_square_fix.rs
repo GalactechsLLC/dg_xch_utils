@@ -1,11 +1,4 @@
-//! Independent verification of the port's `Form::square` fix (VDF diagnosis, bug 1).
-//!
-//! The fix routes `square` through the general NUCOMP `compose`, correct for `gcd(a,b) > 1` (the old
-//! direct-doubling formula truncated `c / gcd(a,b)` and produced a degenerate form). These expected
-//! squares come from an INDEPENDENT Python BQF class-group reference, itself validated against known
-//! small class groups (D=-23 cyclic order 3: (2,1,3)^2=(2,-1,3), ^3=(1,1,6)). Forms are constructed via
-//! the public struct literal (NOT `from_abd`, which would reduce the input) so the `gcd(a,b)>1` inputs
-//! actually exercise the fixed path.
+// Regression tests for class-group form squaring.
 
 use dg_xch_vdf::form::Form;
 use num_bigint::BigInt;

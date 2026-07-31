@@ -9,9 +9,8 @@ pub struct VdfOutput {
     pub data: UnsizedBytes,
 }
 
-// A VDF input/output is a `ClassgroupElement` (fixed 100-byte `Bytes100`); `VdfOutput` is the
-// variable-length (`UnsizedBytes`) carrier used inside `BlockRecord`. In practice the carrier always
-// holds exactly the 100 bytes of the element, so these conversions round-trip losslessly.
+// A VDF input/output is a fixed-size `ClassgroupElement`; `VdfOutput` is its variable-size carrier in
+// `BlockRecord`.
 impl From<ClassgroupElement> for VdfOutput {
     fn from(value: ClassgroupElement) -> Self {
         VdfOutput {
@@ -20,10 +19,33 @@ impl From<ClassgroupElement> for VdfOutput {
     }
 }
 
-impl From<&VdfOutput> for ClassgroupElement {
-    fn from(value: &VdfOutput) -> Self {
-        ClassgroupElement {
-            data: Bytes100::from(value.data.as_slice().to_vec()),
-        }
+impl TryFrom<&VdfOutput> for ClassgroupElement {
+    type Error = std::io::Error;
+
+    fn try_from(value: &VdfOutput) -> Result<Self, Self::Error> {
+        let data: [u8; 100] = value.data.as_slice().try_into().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid VDF output length")
+        })?;
+        Ok(Self {
+            data: Bytes100::from(data),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_vdf_output_with_invalid_length() {
+        let short = VdfOutput {
+            data: UnsizedBytes::new(vec![0; 99]),
+        };
+        let long = VdfOutput {
+            data: UnsizedBytes::new(vec![0; 101]),
+        };
+
+        assert!(ClassgroupElement::try_from(&short).is_err());
+        assert!(ClassgroupElement::try_from(&long).is_err());
     }
 }

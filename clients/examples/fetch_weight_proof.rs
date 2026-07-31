@@ -1,16 +1,4 @@
-//! Fetch a REAL weight proof from a live Chia full node over the P2P protocol and export it as a
-//! ChiaSerialize fixture (hex) for the `weight_proof_validate` accept-vector test (feature 016).
-//!
-//! It resolves peers from the DNS seeder, connects with the Chia mTLS identity model (a per-run cert
-//! signed by the embedded mainnet CA, `NoCertificateVerification` on the server side — the network's
-//! model, not a bug), captures the peer's `NewPeak`, then `RequestProofOfWeight{tip, height}` and awaits
-//! `RespondProofOfWeight`. The `WeightProof` is written as hex (`wp.to_bytes(version)`), which
-//! `WeightProof::from_bytes` reads straight back.
-//!
-//! Run (from the dg_xch_utils workspace root):
-//!   cargo run -p dg_xch_clients --example fetch_weight_proof
-//! Defaults to the druid.garden full node. Override the peer with the standard env vars:
-//!   FULLNODE_HOST=<host>  FULLNODE_PORT=<port>  cargo run -p dg_xch_clients --example fetch_weight_proof
+// Fetches a live weight proof and writes it as a fixture.
 
 use dg_xch_clients::websocket::{WsClient, WsClientConfig, oneshot};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;

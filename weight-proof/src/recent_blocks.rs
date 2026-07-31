@@ -1,15 +1,4 @@
-//! Phase 5 foundational layer — the leaf consensus helpers the recent-chain header validator is built
-//! on. Every function here is a faithful port of a specific reference symbol (anchored in the doc line
-//! above it); the `BlockRecord` methods are ported near-verbatim from `chia_rs`
-//! `crates/chia-protocol/src/block_record.rs`. dg_xch has the wire types (`HeaderBlock`, `BlockRecord`,
-//! `EndOfSubSlotBundle`) and the pot-iterations / VDF / pos / BLS primitives, but none of this
-//! validation logic — so it is ported here, not wired.
-//!
-//! Fidelity note: dg_xch's `verify_and_get_quality_string` is the older 5-arg form (no
-//! `prev_transaction_block_height`); it predates the v2-plot / height-based quality path. The recent
-//! chain of the mainnet fixture is all v1 plots, for which that argument is inert — but the caller still
-//! computes and threads `pre_sp_tx_block_height` so the port matches the reference call graph exactly and
-//! stays correct if dg_xch's verifier is upgraded.
+// Consensus helpers for recent-chain validation.
 
 use std::collections::HashMap;
 
@@ -455,7 +444,8 @@ fn get_signage_point_vdf_info(
         if curr.total_iters < sp_total_iters {
             sp_vdf_iters = u64::try_from(sp_total_iters - curr.total_iters)
                 .map_err(|_| WeightProofError::Rejected("sp_vdf: iters"))?;
-            cc_vdf_input = ClassgroupElement::from(&curr.challenge_vdf_output);
+            cc_vdf_input = ClassgroupElement::try_from(&curr.challenge_vdf_output)
+                .map_err(|_| WeightProofError::Rejected("invalid challenge VDF output"))?;
             rc_vdf_challenge = curr.reward_infusion_new_challenge;
         } else {
             let hashes = curr
@@ -523,7 +513,8 @@ fn get_signage_point_vdf_info(
         if let Some(pre) = sp_pre_sb {
             sp_vdf_iters = u64::try_from(sp_total_iters - pre.total_iters)
                 .map_err(|_| WeightProofError::Rejected("sp_vdf: iters"))?;
-            cc_vdf_input = ClassgroupElement::from(&pre.challenge_vdf_output);
+            cc_vdf_input = ClassgroupElement::try_from(&pre.challenge_vdf_output)
+                .map_err(|_| WeightProofError::Rejected("invalid challenge VDF output"))?;
             rc_vdf_challenge = pre.reward_infusion_new_challenge;
         } else {
             sp_vdf_iters = sp_iters;
@@ -541,7 +532,8 @@ fn get_signage_point_vdf_info(
         if curr.total_iters < sp_total_iters {
             sp_vdf_iters = u64::try_from(sp_total_iters - curr.total_iters)
                 .map_err(|_| WeightProofError::Rejected("sp_vdf: iters"))?;
-            cc_vdf_input = ClassgroupElement::from(&curr.challenge_vdf_output);
+            cc_vdf_input = ClassgroupElement::try_from(&curr.challenge_vdf_output)
+                .map_err(|_| WeightProofError::Rejected("invalid challenge VDF output"))?;
             rc_vdf_challenge = curr.reward_infusion_new_challenge;
         } else {
             let hashes = curr
@@ -814,7 +806,9 @@ fn validate_unfinished_header_block(
                             icc_vdf_input = pb
                                 .infused_challenge_vdf_output
                                 .as_ref()
-                                .map(ClassgroupElement::from);
+                                .map(ClassgroupElement::try_from)
+                                .transpose()
+                                .map_err(|_| e("invalid infused challenge VDF output"))?;
                         }
                     } else if block.finished_sub_slots[n - 1].reward_chain.deficit
                         < c.min_blocks_per_challenge_block
@@ -942,7 +936,8 @@ fn validate_unfinished_header_block(
                     rc_eos_vdf_challenge = pb.reward_infusion_new_challenge;
                     eos_vdf_iters =
                         pb.sub_slot_iters - pb.ip_iters(c).map_err(|_| e("ip_iters"))?;
-                    cc_start_element = ClassgroupElement::from(&pb.challenge_vdf_output);
+                    cc_start_element = ClassgroupElement::try_from(&pb.challenge_vdf_output)
+                        .map_err(|_| e("invalid challenge VDF output"))?;
                 } else {
                     rc_eos_vdf_challenge = hash_of(&block.finished_sub_slots[n - 1].reward_chain)?;
                 }
@@ -1429,7 +1424,8 @@ fn validate_finished_header_block(
             rc_vdf_challenge = pb.reward_infusion_new_challenge;
             ip_vdf_iters =
                 u64::try_from(rcb.total_iters - pb.total_iters).map_err(|_| e("ip_vdf_iters"))?;
-            cc_vdf_output = ClassgroupElement::from(&pb.challenge_vdf_output);
+            cc_vdf_output = ClassgroupElement::try_from(&pb.challenge_vdf_output)
+                .map_err(|_| e("invalid challenge VDF output"))?;
         }
     }
 
@@ -1526,7 +1522,9 @@ fn validate_finished_header_block(
                     } else {
                         pb.infused_challenge_vdf_output
                             .as_ref()
-                            .map(ClassgroupElement::from)
+                            .map(ClassgroupElement::try_from)
+                            .transpose()
+                            .map_err(|_| e("invalid infused challenge VDF output"))?
                     };
                     let mut curr = pb;
                     while curr.finished_infused_challenge_slot_hashes.is_none()

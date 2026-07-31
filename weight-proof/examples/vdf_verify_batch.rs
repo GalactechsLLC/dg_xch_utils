@@ -1,8 +1,4 @@
-//! Batch dg_xch VDF verifier for the accept-invalid differential fuzz (bug 2 gate).
-//! Reads JSONL of {"id":..,"challenge":hex,"x_s_input":hex,"proof":hex,"discriminant_size_bits":n,
-//! "num_iterations":n,"recursion_witness_type":n} on stdin; writes JSONL {"id":..,"dg_xch":bool}.
-//! Pairs with fuzz_accept_invalid.py (chiavdf side) so a mutation dg_xch ACCEPTS but chiavdf REJECTS
-//! (the malleability/accept-invalid direction) is flagged as critical.
+// Batch VDF verifier for JSONL input.
 use std::io::{BufRead, Write};
 fn hx(s: &str) -> Vec<u8> {
     (0..s.len())
