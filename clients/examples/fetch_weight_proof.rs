@@ -12,7 +12,7 @@
 //! Defaults to the druid.garden full node. Override the peer with the standard env vars:
 //!   FULLNODE_HOST=<host>  FULLNODE_PORT=<port>  cargo run -p dg_xch_clients --example fetch_weight_proof
 
-use dg_xch_clients::websocket::{oneshot, WsClient, WsClientConfig};
+use dg_xch_clients::websocket::{WsClient, WsClientConfig, oneshot};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::weight_proof::WeightProof;
 use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
@@ -25,8 +25,8 @@ use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use rustls::crypto::ring::default_provider;
 use std::collections::HashMap;
 use std::io::{Cursor, Error};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -59,7 +59,12 @@ impl MessageHandler for PeakCatcher {
 struct Ignore;
 #[async_trait::async_trait]
 impl MessageHandler for Ignore {
-    async fn handle(&self, _m: Arc<ChiaMessage>, _p: Arc<Bytes32>, _s: PeerMap) -> Result<(), Error> {
+    async fn handle(
+        &self,
+        _m: Arc<ChiaMessage>,
+        _p: Arc<Bytes32>,
+        _s: PeerMap,
+    ) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -143,7 +148,12 @@ async fn try_peer(
         total_number_of_blocks: peak.height,
         tip: peak.header_hash,
     };
-    let msg = ChiaMessage::new(ProtocolMessageTypes::RequestProofOfWeight, version, &req, None)?;
+    let msg = ChiaMessage::new(
+        ProtocolMessageTypes::RequestProofOfWeight,
+        version,
+        &req,
+        None,
+    )?;
     let resp: RespondProofOfWeight = oneshot(
         client.connection.clone(),
         msg,

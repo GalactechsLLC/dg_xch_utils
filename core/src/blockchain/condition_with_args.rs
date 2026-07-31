@@ -1491,9 +1491,9 @@ pub fn op_code_with_args_from_sexp(sexp: &SExp) -> Result<(ConditionOpcode, Vec<
                 }
             }
             SExp::Pair(_pairbuf) => {
-                if opcode == ConditionOpcode::Remark {
-                    vars.push(sexp_to_bytes(arg)?.as_ref().to_vec());
-                } else if index == 3 && opcode == ConditionOpcode::CreateCoin {
+                if opcode == ConditionOpcode::Remark
+                    || (index == 3 && opcode == ConditionOpcode::CreateCoin)
+                {
                     vars.push(sexp_to_bytes(arg)?.as_ref().to_vec());
                 } else {
                     warn!("Got pair in opcode({opcode}) args: {arg:?}");

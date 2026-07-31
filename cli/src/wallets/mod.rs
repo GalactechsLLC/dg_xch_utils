@@ -240,7 +240,7 @@ pub trait WalletStore {
                     "No coins available to spend, you can not create a coin with an amount of 0, without already having coins.",
                 ));
             }
-            valid_spendable_coins.sort_by(|f, s| f.amount.cmp(&s.amount));
+            valid_spendable_coins.sort_by_key(|f| f.amount);
             if let Some(c) = check_for_exact_match(&valid_spendable_coins, amount) {
                 info!("Selected coin with an exact match: {c:?}");
                 Ok(HashSet::from([c]))

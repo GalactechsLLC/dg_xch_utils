@@ -5,7 +5,10 @@
 //! (the malleability/accept-invalid direction) is flagged as critical.
 use std::io::{BufRead, Write};
 fn hx(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 fn field<'a>(l: &'a str, k: &str) -> &'a str {
     let m = format!("\"{k}\":");
@@ -20,7 +23,9 @@ fn main() {
     let mut out = out.lock();
     for line in std::io::stdin().lock().lines() {
         let l = line.unwrap();
-        if l.trim().is_empty() { continue; }
+        if l.trim().is_empty() {
+            continue;
+        }
         let id = field(&l, "id");
         let c = hx(field(&l, "challenge"));
         let x = hx(field(&l, "x_s_input"));

@@ -11,7 +11,11 @@ use dg_xch_vdf::form::Form;
 use num_bigint::BigInt;
 
 fn f(a: i64, b: i64, c: i64) -> Form {
-    Form { a: BigInt::from(a), b: BigInt::from(b), c: BigInt::from(c) }
+    Form {
+        a: BigInt::from(a),
+        b: BigInt::from(b),
+        c: BigInt::from(c),
+    }
 }
 
 fn assert_square(input: (i64, i64, i64), expected: (i64, i64, i64)) {
@@ -21,7 +25,9 @@ fn assert_square(input: (i64, i64, i64), expected: (i64, i64, i64)) {
         (got.a.clone(), got.b.clone(), got.c.clone()),
         (BigInt::from(ea), BigInt::from(eb), BigInt::from(ec)),
         "square({input:?}) reference={expected:?} got=({},{},{})",
-        got.a, got.b, got.c
+        got.a,
+        got.b,
+        got.c
     );
 }
 

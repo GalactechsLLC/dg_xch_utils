@@ -32,10 +32,10 @@ use std::path::PathBuf;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes96};
 use dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary;
 use dg_xch_core::blockchain::weight_proof::WeightProof;
-use dg_xch_weight_proof::{validate_weight_proof, WeightProofError};
 use dg_xch_core::consensus::constants::MAINNET;
 use dg_xch_core::utils::hash_256;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
+use dg_xch_weight_proof::{WeightProofError, validate_weight_proof};
 
 // --- Golden scalars, verified against chia's reference (wp_reference.py, mainnet genesis pinned). ---
 const GOLDEN_SUB_EPOCHS: usize = 23_579;
@@ -61,13 +61,15 @@ fn load_fixture() -> WeightProof {
 /// The reference's `std_hash(ses)` is sha256 over the streamable bytes of the SubEpochSummary.
 fn ses_hash_hex(ses: &SubEpochSummary) -> String {
     hex::encode(hash_256(
-        ses.to_bytes(ChiaProtocolVersion::default()).expect("ses serializes"),
+        ses.to_bytes(ChiaProtocolVersion::default())
+            .expect("ses serializes"),
     ))
 }
 
 fn ses_hash_bytes(ses: &SubEpochSummary) -> Bytes32 {
     Bytes32::from(hash_256(
-        ses.to_bytes(ChiaProtocolVersion::default()).expect("ses serializes"),
+        ses.to_bytes(ChiaProtocolVersion::default())
+            .expect("ses serializes"),
     ))
 }
 
@@ -105,8 +107,16 @@ fn golden_hash_chain() -> Vec<String> {
 fn real_mainnet_proof_loads_with_reference_shape() {
     let wp = load_fixture();
     assert_eq!(wp.sub_epochs.len(), GOLDEN_SUB_EPOCHS, "sub_epochs count");
-    assert_eq!(wp.sub_epoch_segments.len(), GOLDEN_SEGMENTS, "segments count");
-    assert_eq!(wp.recent_chain_data.len(), GOLDEN_RECENT_BLOCKS, "recent count");
+    assert_eq!(
+        wp.sub_epoch_segments.len(),
+        GOLDEN_SEGMENTS,
+        "segments count"
+    );
+    assert_eq!(
+        wp.recent_chain_data.len(),
+        GOLDEN_RECENT_BLOCKS,
+        "recent count"
+    );
 }
 
 /// RUNNABLE. The committed golden is well-formed and matches the reference endpoints.
@@ -114,7 +124,11 @@ fn real_mainnet_proof_loads_with_reference_shape() {
 fn golden_hash_chain_is_wellformed() {
     let chain = golden_hash_chain();
     assert_eq!(chain.len(), GOLDEN_SUB_EPOCHS, "golden chain length");
-    assert_eq!(chain.first().unwrap(), GOLDEN_FIRST_SES_HASH, "first ses hash");
+    assert_eq!(
+        chain.first().unwrap(),
+        GOLDEN_FIRST_SES_HASH,
+        "first ses hash"
+    );
     assert_eq!(chain.last().unwrap(), GOLDEN_LAST_SES_HASH, "last ses hash");
     for (i, h) in chain.iter().enumerate() {
         assert_eq!(h.len(), 64, "ses hash {i} is 32 bytes hex");
@@ -223,7 +237,11 @@ const GOLDEN_SAMPLED_SUB_EPOCHS: [u32; 20] = [
 
 /// Distinct `sub_epoch_n` the prover backed with segments in the fixture.
 fn provided_segment_sub_epochs(wp: &WeightProof) -> Vec<u32> {
-    let mut v: Vec<u32> = wp.sub_epoch_segments.iter().map(|s| s.sub_epoch_n).collect();
+    let mut v: Vec<u32> = wp
+        .sub_epoch_segments
+        .iter()
+        .map(|s| s.sub_epoch_n)
+        .collect();
     v.sort_unstable();
     v.dedup();
     v
@@ -276,7 +294,8 @@ fn phase1_tamper_strip_each_sampled_subepoch_rejects() {
             "sub_epoch_n {target} should have had segments to strip"
         );
         match validate_weight_proof(&wp, &MAINNET) {
-            Err(WeightProofError::Rejected(_)) => { /* correctly rejected: uncovered sampled sub-epoch */ }
+            Err(WeightProofError::Rejected(_)) => { /* correctly rejected: uncovered sampled sub-epoch */
+            }
             Err(WeightProofError::PhaseUnimplemented("summaries_weight")) => panic!(
                 "UNDER-SAMPLING / FAIL-OPEN: stripping segments of sampled sub-epoch {target} did not \
                  cause phase 1 to reject — the validator did not require coverage of a sampled index"
@@ -343,9 +362,9 @@ fn phase3_tamper_inflate_boundary_weight_rejects() {
             msg.contains("summaries weight"),
             "expected the phase-3 weight-mismatch rejection, got: {msg}"
         ),
-        Err(WeightProofError::PhaseUnimplemented("sub_epoch_segments")) => panic!(
-            "FAIL-OPEN: phase 3 accepted a proof whose boundary weight was inflated by 1"
-        ),
+        Err(WeightProofError::PhaseUnimplemented("sub_epoch_segments")) => {
+            panic!("FAIL-OPEN: phase 3 accepted a proof whose boundary weight was inflated by 1")
+        }
         other => panic!("unexpected verdict on weight-inflated proof: {other:?}"),
     }
 }
@@ -360,8 +379,15 @@ fn phase3_tamper_inflate_boundary_weight_rejects() {
 fn phase6_full_validator_accepts_real_mainnet_proof() {
     let wp = load_fixture();
     let (valid, summaries) = validate_weight_proof(&wp, &MAINNET).expect("all six phases: Ok");
-    assert!(valid, "the complete validator must accept the real mainnet proof");
-    assert_eq!(summaries.len(), GOLDEN_SUB_EPOCHS, "returns all 23,579 verified summaries");
+    assert!(
+        valid,
+        "the complete validator must accept the real mainnet proof"
+    );
+    assert_eq!(
+        summaries.len(),
+        GOLDEN_SUB_EPOCHS,
+        "returns all 23,579 verified summaries"
+    );
 }
 
 /// END-TO-END parity via the public validator: all phases ported, `validate_weight_proof` returns Ok on
@@ -398,7 +424,9 @@ fn phase5_accepts_real_mainnet_proof() {
     match validate_weight_proof(&wp, &MAINNET) {
         Err(WeightProofError::PhaseUnimplemented("total_weight")) => {}
         Ok((true, _)) => {}
-        other => panic!("phase 5 should accept the real proof and advance to phase 6; got {other:?}"),
+        other => {
+            panic!("phase 5 should accept the real proof and advance to phase 6; got {other:?}")
+        }
     }
 }
 
@@ -414,7 +442,10 @@ fn phase5_tamper_vdf_witness_nonboundary_rejects() {
     let mut wp = load_fixture();
     let tip = GOLDEN_RECENT_BLOCKS - 1;
     for i in (tip - 40)..tip {
-        wp.recent_chain_data[i].challenge_chain_ip_proof.witness.bytes[0] ^= 0x01;
+        wp.recent_chain_data[i]
+            .challenge_chain_ip_proof
+            .witness
+            .bytes[0] ^= 0x01;
     }
     match validate_weight_proof(&wp, &MAINNET) {
         Err(WeightProofError::PhaseUnimplemented("total_weight")) => {

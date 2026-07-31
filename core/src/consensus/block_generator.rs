@@ -574,7 +574,7 @@ fn conditions_from_generator_output(
         }
         let cost_left = max_cost
             .checked_sub(conds.cost)
-            .ok_or_else(|| ClvmError::CostExceeded(max_cost, conds.cost))?;
+            .ok_or(ClvmError::CostExceeded(max_cost, conds.cost))?;
         let (puzzle_cost, puzzle_output) = puzzle_reveal.run(cost_left, clvm_flags, &solution)?;
         conds.cost = conds
             .cost

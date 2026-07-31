@@ -19,7 +19,13 @@ fn int_field(j: &str, key: &str) -> u64 {
     let k = format!("\"{key}\"");
     let i = j.find(&k).unwrap();
     let after = &j[i + k.len()..];
-    after.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap()
+    after
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap()
 }
 
 /// Verify one JSON case's (challenge, x_s, proof, iters, disc_bits, witness_type) via the public dg_xch API.
@@ -48,8 +54,12 @@ fn all_thirteen_vectors_now_accept() {
     }
 
     let dir = base.join("vdf13");
-    let mut entries: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
     entries.sort();
     for p in &entries {
         if verify_case(p) {
@@ -59,7 +69,10 @@ fn all_thirteen_vectors_now_accept() {
         }
     }
 
-    eprintln!("13-vector accept-parity: {checked} accepted, {} rejected", rejected.len());
+    eprintln!(
+        "13-vector accept-parity: {checked} accepted, {} rejected",
+        rejected.len()
+    );
     assert!(
         rejected.is_empty(),
         "post-fix, these vectors are still REJECTED by dg_xch (chiavdf accepts them): {rejected:?}"

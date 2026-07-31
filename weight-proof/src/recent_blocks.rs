@@ -35,7 +35,7 @@ use dg_xch_pos::verify_and_get_quality_string;
 use dg_xch_serialize::ChiaSerialize;
 use dg_xch_vdf::validate_vdf_info;
 
-use crate::{hash_of, WeightProofError};
+use crate::{WeightProofError, hash_of};
 
 // HeaderBlock accessors (`prev_header_hash`/`header_hash`/`height`/`weight`/`total_iters`/
 // `first_in_sub_slot`) now live as methods on `dg_xch_core::HeaderBlock`. The
@@ -102,9 +102,9 @@ impl BlockCache {
 
     /// Reference `blocks.block_record(h)` — asserts presence. Here: `Err` on miss (fail closed).
     pub(crate) fn block_record(&self, hash: Bytes32) -> Result<&BlockRecord, WeightProofError> {
-        self.by_hash
-            .get(&hash)
-            .ok_or(WeightProofError::Rejected("block_record: unknown prev hash"))
+        self.by_hash.get(&hash).ok_or(WeightProofError::Rejected(
+            "block_record: unknown prev hash",
+        ))
     }
 
     /// Reference `blocks.try_block_record(h)` — `None` on miss.
@@ -146,11 +146,7 @@ pub(crate) fn calculate_deficit(
         if num_finished_sub_slots == 0 {
             0
         } else if num_finished_sub_slots == 1 {
-            if overflow {
-                min
-            } else {
-                min - 1
-            }
+            if overflow { min } else { min - 1 }
         } else {
             min - 1
         }
@@ -195,7 +191,8 @@ fn pre_sp_tx_block<'a>(
         return Ok(None);
     }
     let mut curr = blocks.block_record(prev_b_hash)?;
-    let overflow = is_overflow_block(c, sp_index).map_err(|_| WeightProofError::Rejected("overflow"))?;
+    let overflow =
+        is_overflow_block(c, sp_index).map_err(|_| WeightProofError::Rejected("overflow"))?;
     let mut slots_crossed = finished_sub_slots;
     while curr.height > 0 {
         let before_sp = if overflow {
@@ -222,8 +219,10 @@ pub(crate) fn pre_sp_tx_block_height(
     sp_index: u8,
     finished_sub_slots: usize,
 ) -> Result<u32, WeightProofError> {
-    Ok(pre_sp_tx_block(c, blocks, prev_b_hash, sp_index, finished_sub_slots)?
-        .map_or(0, |b| b.height))
+    Ok(
+        pre_sp_tx_block(c, blocks, prev_b_hash, sp_index, finished_sub_slots)?
+            .map_or(0, |b| b.height),
+    )
 }
 
 /// `get_block_challenge` (ref `chia/consensus/get_block_challenge.py:53`) — the challenge-chain challenge
@@ -243,7 +242,9 @@ pub(crate) fn get_block_challenge(
             if skip_overflow_last_ss_validation {
                 hash_of(&last.challenge_chain)?
             } else {
-                last.challenge_chain.challenge_chain_end_of_slot_vdf.challenge
+                last.challenge_chain
+                    .challenge_chain_end_of_slot_vdf
+                    .challenge
             }
         } else {
             hash_of(&last.challenge_chain)?
@@ -262,20 +263,24 @@ pub(crate) fn get_block_challenge(
     let mut curr = blocks.block_record(header_block.foliage.prev_block_hash)?;
     while reversed_challenge_hashes.len() < challenges_to_look_for {
         if curr.first_in_sub_slot() {
-            let hashes = curr
-                .finished_challenge_slot_hashes
-                .as_ref()
-                .ok_or(WeightProofError::Rejected("no finished_challenge_slot_hashes"))?;
+            let hashes =
+                curr.finished_challenge_slot_hashes
+                    .as_ref()
+                    .ok_or(WeightProofError::Rejected(
+                        "no finished_challenge_slot_hashes",
+                    ))?;
             reversed_challenge_hashes.extend(hashes.iter().rev().copied());
             if reversed_challenge_hashes.len() >= challenges_to_look_for {
                 break;
             }
         }
         if curr.height == 0 {
-            let hashes = curr
-                .finished_challenge_slot_hashes
-                .as_ref()
-                .ok_or(WeightProofError::Rejected("genesis no finished_challenge_slot_hashes"))?;
+            let hashes =
+                curr.finished_challenge_slot_hashes
+                    .as_ref()
+                    .ok_or(WeightProofError::Rejected(
+                        "genesis no finished_challenge_slot_hashes",
+                    ))?;
             if hashes.is_empty() {
                 return Err(WeightProofError::Rejected("genesis empty challenge hashes"));
             }
@@ -286,7 +291,9 @@ pub(crate) fn get_block_challenge(
     reversed_challenge_hashes
         .get(challenges_to_look_for - 1)
         .copied()
-        .ok_or(WeightProofError::Rejected("get_block_challenge: not enough challenges"))
+        .ok_or(WeightProofError::Rejected(
+            "get_block_challenge: not enough challenges",
+        ))
 }
 
 /// `height_can_be_first_in_epoch` (ref `difficulty_adjustment.py:130`).
@@ -367,16 +374,19 @@ fn make_sub_epoch_summary(
         .sub_epoch_summary_included
         .as_ref()
         .ok_or(WeightProofError::Rejected("make_ses: no included ses"))?;
-    let reward_slot_hashes = prev_ses_block
-        .finished_reward_slot_hashes
-        .as_ref()
-        .ok_or(WeightProofError::Rejected("make_ses: no reward slot hashes"))?;
+    let reward_slot_hashes =
+        prev_ses_block
+            .finished_reward_slot_hashes
+            .as_ref()
+            .ok_or(WeightProofError::Rejected(
+                "make_ses: no reward slot hashes",
+            ))?;
     let prev_ses = hash_of(included)?;
     Ok(SubEpochSummary {
         prev_subepoch_summary_hash: prev_ses,
-        reward_chain_hash: *reward_slot_hashes
-            .last()
-            .ok_or(WeightProofError::Rejected("make_ses: empty reward slot hashes"))?,
+        reward_chain_hash: *reward_slot_hashes.last().ok_or(WeightProofError::Rejected(
+            "make_ses: empty reward slot hashes",
+        ))?,
         num_blocks_overflow: u8::try_from(prev_ses_block.height % c.sub_epoch_blocks)
             .map_err(|_| WeightProofError::Rejected("make_ses: overflow count"))?,
         new_difficulty,
@@ -396,7 +406,17 @@ fn get_signage_point_vdf_info(
     blocks: &BlockCache,
     sp_total_iters: u128,
     sp_iters: u64,
-) -> Result<(Bytes32, Bytes32, ClassgroupElement, ClassgroupElement, u64, u64), WeightProofError> {
+) -> Result<
+    (
+        Bytes32,
+        Bytes32,
+        ClassgroupElement,
+        ClassgroupElement,
+        u64,
+        u64,
+    ),
+    WeightProofError,
+> {
     let new_sub_slot = !finished_sub_slots.is_empty();
     let genesis_block = prev_b.is_none();
     let n = finished_sub_slots.len();
@@ -444,9 +464,9 @@ fn get_signage_point_vdf_info(
                 .ok_or(WeightProofError::Rejected("sp_vdf: no reward slot hashes"))?;
             sp_vdf_iters = sp_iters;
             cc_vdf_input = ClassgroupElement::get_default_element();
-            rc_vdf_challenge = *hashes
-                .last()
-                .ok_or(WeightProofError::Rejected("sp_vdf: empty reward slot hashes"))?;
+            rc_vdf_challenge = *hashes.last().ok_or(WeightProofError::Rejected(
+                "sp_vdf: empty reward slot hashes",
+            ))?;
         }
         while !curr.first_in_sub_slot() {
             curr = blocks.block_record(curr.prev_hash)?;
@@ -454,10 +474,12 @@ fn get_signage_point_vdf_info(
         let ch = curr
             .finished_challenge_slot_hashes
             .as_ref()
-            .ok_or(WeightProofError::Rejected("sp_vdf: no challenge slot hashes"))?;
-        cc_vdf_challenge = *ch
-            .last()
-            .ok_or(WeightProofError::Rejected("sp_vdf: empty challenge slot hashes"))?;
+            .ok_or(WeightProofError::Rejected(
+                "sp_vdf: no challenge slot hashes",
+            ))?;
+        cc_vdf_challenge = *ch.last().ok_or(WeightProofError::Rejected(
+            "sp_vdf: empty challenge slot hashes",
+        ))?;
     } else if !new_sub_slot && overflow {
         // Case 5.
         let prev = prev_b.ok_or(WeightProofError::Rejected("sp_vdf: prev_b"))?;
@@ -528,9 +550,9 @@ fn get_signage_point_vdf_info(
                 .ok_or(WeightProofError::Rejected("sp_vdf: no reward slot hashes"))?;
             sp_vdf_iters = sp_iters;
             cc_vdf_input = ClassgroupElement::get_default_element();
-            rc_vdf_challenge = *hashes
-                .last()
-                .ok_or(WeightProofError::Rejected("sp_vdf: empty reward slot hashes"))?;
+            rc_vdf_challenge = *hashes.last().ok_or(WeightProofError::Rejected(
+                "sp_vdf: empty reward slot hashes",
+            ))?;
         }
         while !curr.first_in_sub_slot() {
             curr = blocks.block_record(curr.prev_hash)?;
@@ -538,10 +560,12 @@ fn get_signage_point_vdf_info(
         let ch = curr
             .finished_challenge_slot_hashes
             .as_ref()
-            .ok_or(WeightProofError::Rejected("sp_vdf: no challenge slot hashes"))?;
-        cc_vdf_challenge = *ch
-            .last()
-            .ok_or(WeightProofError::Rejected("sp_vdf: empty challenge slot hashes"))?;
+            .ok_or(WeightProofError::Rejected(
+                "sp_vdf: no challenge slot hashes",
+            ))?;
+        cc_vdf_challenge = *ch.last().ok_or(WeightProofError::Rejected(
+            "sp_vdf: empty challenge slot hashes",
+        ))?;
     } else {
         return Err(WeightProofError::Rejected("sp_vdf: unreachable case"));
     }
@@ -609,15 +633,14 @@ fn header_block_to_sub_block_record(
         None => (None, None),
     };
     let (fees, reward_claims) = match &block.transactions_info {
-        Some(ti) => (
-            Some(ti.fees),
-            Some(ti.reward_claims_incorporated.clone()),
-        ),
+        Some(ti) => (Some(ti.fees), Some(ti.reward_claims_incorporated.clone())),
         None => (None, None),
     };
 
     Ok(BlockRecord {
-        header_hash: block.header_hash().map_err(|_| WeightProofError::Malformed("serialize"))?,
+        header_hash: block
+            .header_hash()
+            .map_err(|_| WeightProofError::Malformed("serialize"))?,
         prev_hash: block.prev_header_hash(),
         height: block.height(),
         weight: block.weight(),
@@ -772,8 +795,9 @@ fn validate_unfinished_header_block(
                         }
                         if curr.is_challenge_block(c.min_blocks_per_challenge_block) {
                             icc_challenge_hash = Some(curr.challenge_block_info_hash);
-                            icc_iters_committed =
-                                Some(pb.sub_slot_iters - curr.ip_iters(c).map_err(|_| e("ip_iters"))?);
+                            icc_iters_committed = Some(
+                                pb.sub_slot_iters - curr.ip_iters(c).map_err(|_| e("ip_iters"))?,
+                            );
                         } else {
                             let ficsh = curr
                                 .finished_infused_challenge_slot_hashes
@@ -782,12 +806,15 @@ fn validate_unfinished_header_block(
                             icc_challenge_hash = Some(*ficsh.last().ok_or(e("empty ficsh"))?);
                             icc_iters_committed = Some(pb.sub_slot_iters);
                         }
-                        icc_iters_proof = Some(pb.sub_slot_iters - pb.ip_iters(c).map_err(|_| e("ip_iters"))?);
+                        icc_iters_proof =
+                            Some(pb.sub_slot_iters - pb.ip_iters(c).map_err(|_| e("ip_iters"))?);
                         if pb.is_challenge_block(c.min_blocks_per_challenge_block) {
                             icc_vdf_input = Some(ClassgroupElement::get_default_element());
                         } else {
-                            icc_vdf_input =
-                                pb.infused_challenge_vdf_output.as_ref().map(ClassgroupElement::from);
+                            icc_vdf_input = pb
+                                .infused_challenge_vdf_output
+                                .as_ref()
+                                .map(ClassgroupElement::from);
                         }
                     } else if block.finished_sub_slots[n - 1].reward_chain.deficit
                         < c.min_blocks_per_challenge_block
@@ -811,7 +838,8 @@ fn validate_unfinished_header_block(
                 if let Some(icc) = &sub_slot.infused_challenge_chain {
                     let icc_vdf_input = icc_vdf_input.ok_or(e("icc_vdf_input"))?;
                     let icc_iters_proof = icc_iters_proof.ok_or(e("icc_iters_proof"))?;
-                    let icc_iters_committed = icc_iters_committed.ok_or(e("icc_iters_committed"))?;
+                    let icc_iters_committed =
+                        icc_iters_committed.ok_or(e("icc_iters_committed"))?;
                     let icc_challenge_hash = icc_challenge_hash.ok_or(e("icc_challenge_hash"))?;
                     let icc_proof = sub_slot
                         .proofs
@@ -830,7 +858,13 @@ fn validate_unfinished_header_block(
                         return Err(e("INVALID_ICC_EOS_VDF"));
                     }
                     if icc_proof.normalized_to_identity
-                        && !validate_vdf(c, &ClassgroupElement::get_default_element(), icc_eos, icc_proof, None)
+                        && !validate_vdf(
+                            c,
+                            &ClassgroupElement::get_default_element(),
+                            icc_eos,
+                            icc_proof,
+                            None,
+                        )
                     {
                         return Err(e("INVALID_ICC_EOS_VDF"));
                     }
@@ -900,23 +934,26 @@ fn validate_unfinished_header_block(
                     rc_eos_vdf_challenge = c.genesis_challenge;
                     cc_eos_vdf_challenge = c.genesis_challenge;
                 } else {
-                    rc_eos_vdf_challenge =
-                        hash_of(&block.finished_sub_slots[n - 1].reward_chain)?;
+                    rc_eos_vdf_challenge = hash_of(&block.finished_sub_slots[n - 1].reward_chain)?;
                 }
             } else {
                 let pb = prev_b.ok_or(e("prev_b"))?;
                 if n == 0 {
                     rc_eos_vdf_challenge = pb.reward_infusion_new_challenge;
-                    eos_vdf_iters = pb.sub_slot_iters - pb.ip_iters(c).map_err(|_| e("ip_iters"))?;
+                    eos_vdf_iters =
+                        pb.sub_slot_iters - pb.ip_iters(c).map_err(|_| e("ip_iters"))?;
                     cc_start_element = ClassgroupElement::from(&pb.challenge_vdf_output);
                 } else {
-                    rc_eos_vdf_challenge =
-                        hash_of(&block.finished_sub_slots[n - 1].reward_chain)?;
+                    rc_eos_vdf_challenge = hash_of(&block.finished_sub_slots[n - 1].reward_chain)?;
                 }
             }
 
             // 2p. end of reward slot VDF
-            let rc_target = vdf_info(rc_eos_vdf_challenge, eos_vdf_iters, rc.end_of_slot_vdf.output);
+            let rc_target = vdf_info(
+                rc_eos_vdf_challenge,
+                eos_vdf_iters,
+                rc.end_of_slot_vdf.output,
+            );
             if !validate_vdf(
                 c,
                 &ClassgroupElement::get_default_element(),
@@ -937,13 +974,10 @@ fn validate_unfinished_header_block(
                 c.sub_slot_iters_starting
             } else {
                 let pb = prev_b.ok_or(e("prev_b"))?;
-                if n == 0 {
-                    pb.sub_slot_iters
-                } else {
-                    vs.ssi
-                }
+                if n == 0 { pb.sub_slot_iters } else { vs.ssi }
             };
-            if cc.challenge_chain_end_of_slot_vdf != with_iters(&partial_cc, cc_eos_vdf_info_iters) {
+            if cc.challenge_chain_end_of_slot_vdf != with_iters(&partial_cc, cc_eos_vdf_info_iters)
+            {
                 return Err(e("INVALID_CC_EOS_VDF (data)"));
             }
             let cc_proof = &sub_slot.proofs.challenge_chain_slot_proof;
@@ -1068,7 +1102,8 @@ fn validate_unfinished_header_block(
     if (rcb.signage_point_index == 0) != rcb.reward_chain_sp_vdf.is_none() {
         return Err(e("INVALID_SP_INDEX (rc)"));
     }
-    let sp_iters = calculate_sp_iters(c, vs.ssi, rcb.signage_point_index).map_err(|_| e("sp_iters"))?;
+    let sp_iters =
+        calculate_sp_iters(c, vs.ssi, rcb.signage_point_index).map_err(|_| e("sp_iters"))?;
     let ip_iters = calculate_ip_iters(c, vs.ssi, rcb.signage_point_index, required_iters)
         .map_err(|_| e("ip_iters"))?;
     if rcb.challenge_chain_sp_vdf.is_none() && overflow {
@@ -1099,22 +1134,31 @@ fn validate_unfinished_header_block(
 
     let sp_total_iters = total_iters - u128::from(ip_iters) + u128::from(sp_iters)
         - if overflow { u128::from(vs.ssi) } else { 0 };
-    let (cc_vdf_challenge, rc_vdf_challenge, cc_vdf_input, rc_vdf_input, cc_vdf_iters, rc_vdf_iters) =
-        get_signage_point_vdf_info(
-            c,
-            &block.finished_sub_slots,
-            overflow,
-            prev_b,
-            blocks,
-            sp_total_iters,
-            sp_iters,
-        )?;
+    let (
+        cc_vdf_challenge,
+        rc_vdf_challenge,
+        cc_vdf_input,
+        rc_vdf_input,
+        cc_vdf_iters,
+        rc_vdf_iters,
+    ) = get_signage_point_vdf_info(
+        c,
+        &block.finished_sub_slots,
+        overflow,
+        prev_b,
+        blocks,
+        sp_total_iters,
+        sp_iters,
+    )?;
 
     // 11. reward chain sp proof + rc_sp_hash
     let rc_sp_hash: Bytes32;
     if sp_iters != 0 {
         let rc_sp_vdf = rcb.reward_chain_sp_vdf.as_ref().ok_or(e("no rc sp vdf"))?;
-        let rc_sp_proof = block.reward_chain_sp_proof.as_ref().ok_or(e("no rc sp proof"))?;
+        let rc_sp_proof = block
+            .reward_chain_sp_proof
+            .as_ref()
+            .ok_or(e("no rc sp proof"))?;
         let target = vdf_info(rc_vdf_challenge, rc_vdf_iters, rc_sp_vdf.output);
         if !validate_vdf(c, &rc_vdf_input, rc_sp_vdf, rc_sp_proof, Some(&target)) {
             return Err(e("INVALID_RC_SP_VDF"));
@@ -1135,7 +1179,10 @@ fn validate_unfinished_header_block(
             while !curr.first_in_sub_slot() {
                 curr = blocks.block_record(curr.prev_hash)?;
             }
-            let frsh = curr.finished_reward_slot_hashes.as_ref().ok_or(e("no frsh"))?;
+            let frsh = curr
+                .finished_reward_slot_hashes
+                .as_ref()
+                .ok_or(e("no frsh"))?;
             rc_sp_hash = *frsh.last().ok_or(e("empty frsh"))?;
         }
     }
@@ -1149,8 +1196,14 @@ fn validate_unfinished_header_block(
     }
     // 13. cc sp vdf
     if sp_iters != 0 {
-        let cc_sp_vdf = rcb.challenge_chain_sp_vdf.as_ref().ok_or(e("no cc sp vdf"))?;
-        let cc_sp_proof = block.challenge_chain_sp_proof.as_ref().ok_or(e("no cc sp proof"))?;
+        let cc_sp_vdf = rcb
+            .challenge_chain_sp_vdf
+            .as_ref()
+            .ok_or(e("no cc sp vdf"))?;
+        let cc_sp_proof = block
+            .challenge_chain_sp_proof
+            .as_ref()
+            .ok_or(e("no cc sp proof"))?;
         let target = vdf_info(cc_vdf_challenge, cc_vdf_iters, cc_sp_vdf.output);
         if *cc_sp_vdf != with_iters(&target, sp_iters) {
             return Err(e("INVALID_CC_SP_VDF (data)"));
@@ -1161,7 +1214,13 @@ fn validate_unfinished_header_block(
             return Err(e("INVALID_CC_SP_VDF"));
         }
         if cc_sp_proof.normalized_to_identity
-            && !validate_vdf(c, &ClassgroupElement::get_default_element(), cc_sp_vdf, cc_sp_proof, None)
+            && !validate_vdf(
+                c,
+                &ClassgroupElement::get_default_element(),
+                cc_sp_vdf,
+                cc_sp_proof,
+                None,
+            )
         {
             return Err(e("INVALID_CC_SP_VDF"));
         }
@@ -1315,7 +1374,8 @@ fn validate_finished_header_block(
 ) -> Result<u64, WeightProofError> {
     let e = WeightProofError::Rejected;
     let rcb = &block.reward_chain_block;
-    let required_iters = validate_unfinished_header_block(c, blocks, block, vs, check_sub_epoch_summary)?;
+    let required_iters =
+        validate_unfinished_header_block(c, blocks, block, vs, check_sub_epoch_summary)?;
 
     let genesis_block = block.height() == 0;
     let prev_b = if genesis_block {
@@ -1367,8 +1427,8 @@ fn validate_finished_header_block(
             cc_vdf_output = ClassgroupElement::get_default_element();
         } else {
             rc_vdf_challenge = pb.reward_infusion_new_challenge;
-            ip_vdf_iters = u64::try_from(rcb.total_iters - pb.total_iters)
-                .map_err(|_| e("ip_vdf_iters"))?;
+            ip_vdf_iters =
+                u64::try_from(rcb.total_iters - pb.total_iters).map_err(|_| e("ip_vdf_iters"))?;
             cc_vdf_output = ClassgroupElement::from(&pb.challenge_vdf_output);
         }
     }
@@ -1390,7 +1450,11 @@ fn validate_finished_header_block(
             .last()
             .ok_or(e("empty fcsh"))?
     };
-    let cc_target = vdf_info(cc_vdf_challenge, ip_vdf_iters, rcb.challenge_chain_ip_vdf.output);
+    let cc_target = vdf_info(
+        cc_vdf_challenge,
+        ip_vdf_iters,
+        rcb.challenge_chain_ip_vdf.output,
+    );
     if rcb.challenge_chain_ip_vdf != with_iters(&cc_target, ip_iters) {
         return Err(e("INVALID_CC_IP_VDF (data)"));
     }
@@ -1401,12 +1465,22 @@ fn validate_finished_header_block(
         return Err(e("INVALID_CC_IP_VDF"));
     }
     if cc_ip_proof.normalized_to_identity
-        && !validate_vdf(c, &ClassgroupElement::get_default_element(), &rcb.challenge_chain_ip_vdf, cc_ip_proof, None)
+        && !validate_vdf(
+            c,
+            &ClassgroupElement::get_default_element(),
+            &rcb.challenge_chain_ip_vdf,
+            cc_ip_proof,
+            None,
+        )
     {
         return Err(e("INVALID_CC_IP_VDF (norm)"));
     }
     // 30. RC IP VDF
-    let rc_target = vdf_info(rc_vdf_challenge, ip_vdf_iters, rcb.reward_chain_ip_vdf.output);
+    let rc_target = vdf_info(
+        rc_vdf_challenge,
+        ip_vdf_iters,
+        rcb.reward_chain_ip_vdf.output,
+    );
     if !validate_vdf(
         c,
         &ClassgroupElement::get_default_element(),
@@ -1435,38 +1509,43 @@ fn validate_finished_header_block(
             if deficit >= c.min_blocks_per_challenge_block - 1 {
                 return Err(e("INVALID_ICC_VDF (deficit>=min-1)"));
             }
-            let (icc_vdf_challenge, icc_vdf_input): (Bytes32, Option<ClassgroupElement>) = if new_sub_slot
-            {
-                let icc_ss = last
-                    .ok_or(e("no last ss"))?
-                    .infused_challenge_chain
-                    .as_ref()
-                    .ok_or(e("no last icc"))?;
-                (hash_of(icc_ss)?, Some(ClassgroupElement::get_default_element()))
-            } else {
-                let input = if pb.is_challenge_block(c.min_blocks_per_challenge_block) {
-                    Some(ClassgroupElement::get_default_element())
-                } else {
-                    pb.infused_challenge_vdf_output.as_ref().map(ClassgroupElement::from)
-                };
-                let mut curr = pb;
-                while curr.finished_infused_challenge_slot_hashes.is_none()
-                    && !curr.is_challenge_block(c.min_blocks_per_challenge_block)
-                {
-                    curr = blocks.block_record(curr.prev_hash)?;
-                }
-                let challenge = if curr.is_challenge_block(c.min_blocks_per_challenge_block) {
-                    curr.challenge_block_info_hash
-                } else {
-                    *curr
-                        .finished_infused_challenge_slot_hashes
+            let (icc_vdf_challenge, icc_vdf_input): (Bytes32, Option<ClassgroupElement>) =
+                if new_sub_slot {
+                    let icc_ss = last
+                        .ok_or(e("no last ss"))?
+                        .infused_challenge_chain
                         .as_ref()
-                        .ok_or(e("no ficsh"))?
-                        .last()
-                        .ok_or(e("empty ficsh"))?
+                        .ok_or(e("no last icc"))?;
+                    (
+                        hash_of(icc_ss)?,
+                        Some(ClassgroupElement::get_default_element()),
+                    )
+                } else {
+                    let input = if pb.is_challenge_block(c.min_blocks_per_challenge_block) {
+                        Some(ClassgroupElement::get_default_element())
+                    } else {
+                        pb.infused_challenge_vdf_output
+                            .as_ref()
+                            .map(ClassgroupElement::from)
+                    };
+                    let mut curr = pb;
+                    while curr.finished_infused_challenge_slot_hashes.is_none()
+                        && !curr.is_challenge_block(c.min_blocks_per_challenge_block)
+                    {
+                        curr = blocks.block_record(curr.prev_hash)?;
+                    }
+                    let challenge = if curr.is_challenge_block(c.min_blocks_per_challenge_block) {
+                        curr.challenge_block_info_hash
+                    } else {
+                        *curr
+                            .finished_infused_challenge_slot_hashes
+                            .as_ref()
+                            .ok_or(e("no ficsh"))?
+                            .last()
+                            .ok_or(e("empty ficsh"))?
+                    };
+                    (challenge, input)
                 };
-                (challenge, input)
-            };
             let icc_target = vdf_info(icc_vdf_challenge, ip_vdf_iters, icc_ip_vdf.output);
             let ok = match icc_vdf_input {
                 Some(input) => validate_vdf(c, &input, icc_ip_vdf, icc_ip_proof, Some(&icc_target)),
@@ -1550,7 +1629,8 @@ fn get_deficit(
 ) -> u8 {
     match prev_block {
         None => {
-            if curr_deficit >= 1 && !(overflow && curr_deficit == c.min_blocks_per_challenge_block) {
+            if curr_deficit >= 1 && !(overflow && curr_deficit == c.min_blocks_per_challenge_block)
+            {
                 curr_deficit - 1
             } else {
                 curr_deficit
@@ -1613,7 +1693,12 @@ pub(crate) fn validate_recent_blocks(
         let height = block.height();
 
         for sub_slot in &block.finished_sub_slots {
-            prev_challenge = Some(sub_slot.challenge_chain.challenge_chain_end_of_slot_vdf.challenge);
+            prev_challenge = Some(
+                sub_slot
+                    .challenge_chain
+                    .challenge_chain_end_of_slot_vdf
+                    .challenge,
+            );
             challenge = Some(hash_of(&sub_slot.challenge_chain)?);
             deficit = sub_slot.reward_chain.deficit;
             if let Some(seh) = sub_slot.challenge_chain.subepoch_summary_hash {
@@ -1634,7 +1719,8 @@ pub(crate) fn validate_recent_blocks(
 
         if let (Some(chal), Some(prev_chal)) = (challenge, prev_challenge) {
             if transaction_blocks > 2 {
-                overflow = is_overflow_block(c, rcb.signage_point_index).map_err(|_| e("overflow"))?;
+                overflow =
+                    is_overflow_block(c, rcb.signage_point_index).map_err(|_| e("overflow"))?;
                 if !adjusted {
                     let mut pbr = prev_block_record.clone().ok_or(e("prev_block_record"))?;
                     pbr.deficit = deficit % c.min_blocks_per_challenge_block;
@@ -1653,12 +1739,21 @@ pub(crate) fn validate_recent_blocks(
                     && transaction_blocks > 11
                     && (tip_height - height < last_blocks_to_validate)
                 {
-                    let vs = ValidationState { ssi, difficulty: diff };
+                    let vs = ValidationState {
+                        ssi,
+                        difficulty: diff,
+                    };
                     required_iters =
                         validate_finished_header_block(c, &sub_blocks, block, vs, ses_blocks > 2)?;
                 } else {
                     required_iters = validate_pospace_recent_chain(
-                        c, &sub_blocks, block, chal, diff, overflow, prev_chal,
+                        c,
+                        &sub_blocks,
+                        block,
+                        chal,
+                        diff,
+                        overflow,
+                        prev_chal,
                     )?;
                 }
                 validated_block_count += 1;
@@ -1666,7 +1761,11 @@ pub(crate) fn validate_recent_blocks(
         }
 
         let curr_block_ses = if ses {
-            Some(*summaries.get(ses_idx - 1).ok_or(e("curr_block_ses index"))?)
+            Some(
+                *summaries
+                    .get(ses_idx - 1)
+                    .ok_or(e("curr_block_ses index"))?,
+            )
         } else {
             None
         };

@@ -160,7 +160,11 @@ fn get_last_ses_hash(
 ) -> Option<(Bytes32, u32)> {
     for boundary_idx in (0..recent_chain.len()).rev() {
         let block = &recent_chain[boundary_idx];
-        if block.reward_chain_block.height.is_multiple_of(sub_epoch_blocks) {
+        if block
+            .reward_chain_block
+            .height
+            .is_multiple_of(sub_epoch_blocks)
+        {
             for curr in &recent_chain[boundary_idx..] {
                 for slot in &curr.finished_sub_slots {
                     if let Some(hash) = slot.challenge_chain.subepoch_summary_hash {
@@ -211,7 +215,11 @@ fn map_sub_epoch_summaries(
             // (`delta`, from idx 1 on) so overflow blocks are counted exactly once across the boundary.
             // For u8 overflow fields `sub_blocks_for_se (384) + next >= delta` always, so the subtraction
             // cannot underflow; `saturating_sub` makes that DoS-safe without diverging on valid input.
-            let delta = if idx > 0 { u128::from(data.num_blocks_overflow) } else { 0 };
+            let delta = if idx > 0 {
+                u128::from(data.num_blocks_overflow)
+            } else {
+                0
+            };
             sub_epoch_weight_list.push(total_weight + curr_difficulty);
             let next_overflow = u128::from(sub_epoch_data[idx + 1].num_blocks_overflow);
             let blocks = (u128::from(sub_blocks_for_se) + next_overflow).saturating_sub(delta);
@@ -248,8 +256,9 @@ fn validate_sub_epoch_summaries(
     c: &ConsensusConstants,
 ) -> Result<(Vec<SubEpochSummary>, u128, Vec<u128>), WeightProofError> {
     let (last_ses_hash, _last_ses_height) =
-        get_last_ses_hash(c.sub_epoch_blocks, &wp.recent_chain_data)
-            .ok_or(WeightProofError::Rejected("no sub-epoch-summary hash in recent chain"))?;
+        get_last_ses_hash(c.sub_epoch_blocks, &wp.recent_chain_data).ok_or(
+            WeightProofError::Rejected("no sub-epoch-summary hash in recent chain"),
+        )?;
 
     let (summaries, total_weight, sub_epoch_weight_list) = map_sub_epoch_summaries(
         c.sub_epoch_blocks,
@@ -262,7 +271,9 @@ fn validate_sub_epoch_summaries(
         .last()
         .ok_or(WeightProofError::Malformed("no sub-epochs to summarize"))?;
     if ses_hash(last)? != last_ses_hash {
-        return Err(WeightProofError::Rejected("last sub-epoch-summary hash mismatch"));
+        return Err(WeightProofError::Rejected(
+            "last sub-epoch-summary hash mismatch",
+        ));
     }
 
     Ok((summaries, total_weight, sub_epoch_weight_list))
@@ -437,7 +448,9 @@ fn get_weights_for_sampling(
     recent_chain: &[HeaderBlock],
 ) -> Result<Option<Vec<u128>>, WeightProofError> {
     let (Some(last), Some(first)) = (recent_chain.last(), recent_chain.first()) else {
-        return Err(WeightProofError::Malformed("empty recent chain in sampling"));
+        return Err(WeightProofError::Malformed(
+            "empty recent chain in sampling",
+        ));
     };
     if total_weight == 0 {
         return Err(WeightProofError::Rejected("zero total weight in sampling"));
@@ -511,7 +524,9 @@ fn validate_sub_epoch_sampling(
     _c: &ConsensusConstants,
 ) -> Result<(), WeightProofError> {
     if summaries.len() < 2 {
-        return Err(WeightProofError::Rejected("fewer than two sub-epoch summaries"));
+        return Err(WeightProofError::Rejected(
+            "fewer than two sub-epoch summaries",
+        ));
     }
     // Seed = the second-to-last summary's hash. Fixed by the (already-anchored) summary chain, so the
     // prover cannot steer which sub-epochs get sampled.
@@ -522,8 +537,11 @@ fn validate_sub_epoch_sampling(
         .recent_chain_data
         .last()
         .ok_or(WeightProofError::Malformed("no recent chain data"))?;
-    let weight_to_check =
-        get_weights_for_sampling(&mut rng, tip.reward_chain_block.weight, &wp.recent_chain_data)?;
+    let weight_to_check = get_weights_for_sampling(
+        &mut rng,
+        tip.reward_chain_block.weight,
+        &wp.recent_chain_data,
+    )?;
 
     // The sub-epochs the RNG selects (by index `idx-1`, matching the reference).
     let mut sampled: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
@@ -579,9 +597,8 @@ fn validate_summaries_weight(
         .ok_or(WeightProofError::Malformed("no summaries for weight check"))?
         .num_blocks_overflow;
     // Signed to mirror Python's integer arithmetic (a negative height just never matches a block).
-    let ses_end_height: i64 = (summaries.len() as i64 - 1) * i64::from(c.sub_epoch_blocks)
-        + i64::from(num_over)
-        - 1;
+    let ses_end_height: i64 =
+        (summaries.len() as i64 - 1) * i64::from(c.sub_epoch_blocks) + i64::from(num_over) - 1;
 
     // The reference scans the whole recent chain and keeps the LAST block at that height (heights are
     // unique, so this is the block at the sub-epoch boundary). No match → reject.
@@ -667,7 +684,11 @@ fn map_segments_by_sub_epoch(
 
 /// The current difficulty and sub-slot-iters entering sub-epoch `idx`: the most recent prior summary that
 /// declared new values, else the starting constants. (ref: `_get_curr_diff_ssi`.)
-fn get_curr_diff_ssi(c: &ConsensusConstants, idx: usize, summaries: &[SubEpochSummary]) -> (u64, u64) {
+fn get_curr_diff_ssi(
+    c: &ConsensusConstants,
+    idx: usize,
+    summaries: &[SubEpochSummary],
+) -> (u64, u64) {
     let mut curr_difficulty = c.difficulty_starting;
     let mut curr_ssi = c.sub_slot_iters_starting;
     let upto = idx.min(summaries.len());
@@ -694,20 +715,23 @@ fn get_sp_total_iters(
         .cc_ip_vdf_info
         .as_ref()
         .ok_or(WeightProofError::Rejected("cc_ip_vdf_info"))?;
-    let total_iters = ssd.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
+    let total_iters = ssd
+        .total_iters
+        .ok_or(WeightProofError::Rejected("total_iters"))?;
     let sp_index = ssd
         .signage_point_index
         .ok_or(WeightProofError::Rejected("signage_point_index"))?;
-    let sp_iters =
-        u128::from(calculate_sp_iters(c, ssi, sp_index).map_err(|_| WeightProofError::Rejected("sp_iters"))?);
+    let sp_iters = u128::from(
+        calculate_sp_iters(c, ssi, sp_index).map_err(|_| WeightProofError::Rejected("sp_iters"))?,
+    );
     let ip_iters = u128::from(cc_ip.number_of_iterations);
     let mut sp_sub_slot_total_iters = total_iters
         .checked_sub(ip_iters)
         .ok_or(WeightProofError::Rejected("sp_sub_slot_total_iters"))?;
     if is_overflow {
-        sp_sub_slot_total_iters = sp_sub_slot_total_iters
-            .checked_sub(u128::from(ssi))
-            .ok_or(WeightProofError::Rejected("sp_sub_slot_total_iters overflow"))?;
+        sp_sub_slot_total_iters = sp_sub_slot_total_iters.checked_sub(u128::from(ssi)).ok_or(
+            WeightProofError::Rejected("sp_sub_slot_total_iters overflow"),
+        )?;
     }
     Ok(sp_sub_slot_total_iters + sp_iters)
 }
@@ -736,18 +760,23 @@ fn sub_slot_data_vdf_input(
                     sel = Some(&sub_slots[i + 1]);
                     break;
                 }
-                let ti = cand.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
+                let ti = cand
+                    .total_iters
+                    .ok_or(WeightProofError::Rejected("total_iters"))?;
                 if ti <= sp_total_iters {
                     break;
                 }
             }
             if let Some(sel) = sel
-                && let Some(info) = &sel.cc_ip_vdf_info {
-                    let ti = sel.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
-                    if ti < sp_total_iters {
-                        cc_input = info.output;
-                    }
+                && let Some(info) = &sel.cc_ip_vdf_info
+            {
+                let ti = sel
+                    .total_iters
+                    .ok_or(WeightProofError::Rejected("total_iters"))?;
+                if ti < sp_total_iters {
+                    cc_input = info.output;
                 }
+            }
         }
         return Ok(cc_input);
     } else if !is_overflow && !new_sub_slot {
@@ -759,14 +788,18 @@ fn sub_slot_data_vdf_input(
                 sel = Some(&sub_slots[i + 1]);
                 break;
             }
-            let ti = cand.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
+            let ti = cand
+                .total_iters
+                .ok_or(WeightProofError::Rejected("total_iters"))?;
             if ti <= sp_total_iters {
                 break;
             }
         }
         let sel = sel.ok_or(WeightProofError::Rejected("no sub-slot for vdf input"))?;
         if let Some(info) = &sel.cc_ip_vdf_info {
-            let ti = sel.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
+            let ti = sel
+                .total_iters
+                .ok_or(WeightProofError::Rejected("total_iters"))?;
             if ti < sp_total_iters {
                 cc_input = info.output;
             }
@@ -785,7 +818,9 @@ fn sub_slot_data_vdf_input(
                 }
             }
             if cand.cc_slot_end_info.is_none() {
-                let ti = cand.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
+                let ti = cand
+                    .total_iters
+                    .ok_or(WeightProofError::Rejected("total_iters"))?;
                 if ti <= sp_total_iters {
                     break;
                 }
@@ -793,7 +828,9 @@ fn sub_slot_data_vdf_input(
         }
         let sel = sel.ok_or(WeightProofError::Rejected("no sub-slot for vdf input"))?;
         if let Some(info) = &sel.cc_ip_vdf_info {
-            let ti = sel.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
+            let ti = sel
+                .total_iters
+                .ok_or(WeightProofError::Rejected("total_iters"))?;
             if ti < sp_total_iters {
                 cc_input = info.output;
             }
@@ -870,7 +907,8 @@ fn get_rc_sub_slot(
     let slots = &segment.sub_slots;
 
     let mut slots_n: i64 = 1;
-    let overflow = is_overflow_block(c, first_sp_index).map_err(|_| WeightProofError::Rejected("overflow"))?;
+    let overflow =
+        is_overflow_block(c, first_sp_index).map_err(|_| WeightProofError::Rejected("overflow"))?;
     if overflow && first_idx >= 2 && slots[first_idx - 2].cc_slot_end.is_none() {
         slots_n = 2;
     }
@@ -1038,8 +1076,8 @@ fn validate_challenge_block_vdfs(
             .ok_or(WeightProofError::Rejected("signage_point_index"))?;
         let mut sp_input = default_classgroup_element();
         if !cc_sp.normalized_to_identity && sub_slot_idx >= 1 {
-            let is_overflow =
-                is_overflow_block(c, sp_index).map_err(|_| WeightProofError::Rejected("overflow"))?;
+            let is_overflow = is_overflow_block(c, sp_index)
+                .map_err(|_| WeightProofError::Rejected("overflow"))?;
             let prev_ssd = &sub_slots[sub_slot_idx - 1];
             sp_input = sub_slot_data_vdf_input(
                 c,
@@ -1071,13 +1109,16 @@ fn validate_challenge_block_vdfs(
                 .cc_ip_vdf_info
                 .as_ref()
                 .ok_or(WeightProofError::Rejected("prev cc_ip_vdf_info"))?;
-            let ti = ssd.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
+            let ti = ssd
+                .total_iters
+                .ok_or(WeightProofError::Rejected("total_iters"))?;
             let prev_ti = prev_ssd
                 .total_iters
                 .ok_or(WeightProofError::Rejected("prev total_iters"))?;
             ip_input = prev_cc_ip.output;
             let ip_vdf_iters =
-                ti.checked_sub(prev_ti).ok_or(WeightProofError::Rejected("ip_vdf_iters"))? as u64;
+                ti.checked_sub(prev_ti)
+                    .ok_or(WeightProofError::Rejected("ip_vdf_iters"))? as u64;
             cc_ip_info = VdfInfo {
                 challenge: cc_ip_info0.challenge,
                 number_of_iterations: ip_vdf_iters,
@@ -1108,9 +1149,10 @@ fn validate_sub_slot_data(
         if let Some(icc_slot_end) = &ssd.icc_slot_end {
             let mut input = default_classgroup_element();
             if !icc_slot_end.normalized_to_identity
-                && let Some(prev_icc) = &prev_ssd.icc_ip_vdf_info {
-                    input = prev_icc.output;
-                }
+                && let Some(prev_icc) = &prev_ssd.icc_ip_vdf_info
+            {
+                input = prev_icc.output;
+            }
             let icc_info = ssd
                 .icc_slot_end_info
                 .as_ref()
@@ -1154,9 +1196,10 @@ fn validate_sub_slot_data(
         if let (Some(icc_ip), Some(icc_info)) = (&ssd.icc_infusion_point, &ssd.icc_ip_vdf_info) {
             let mut input = default_classgroup_element();
             if !ss_is_challenge(prev_ssd)
-                && let Some(prev_icc) = &prev_ssd.icc_ip_vdf_info {
-                    input = prev_icc.output;
-                }
+                && let Some(prev_icc) = &prev_ssd.icc_ip_vdf_info
+            {
+                input = prev_icc.output;
+            }
             check_vdf(c, &input, icc_info, icc_ip, count)?;
         }
         let sp_index = ssd
@@ -1169,8 +1212,8 @@ fn validate_sub_slot_data(
                 .ok_or(WeightProofError::Rejected("cc_sp_vdf_info"))?;
             let mut input = default_classgroup_element();
             if !cc_sp.normalized_to_identity {
-                let is_overflow =
-                    is_overflow_block(c, sp_index).map_err(|_| WeightProofError::Rejected("overflow"))?;
+                let is_overflow = is_overflow_block(c, sp_index)
+                    .map_err(|_| WeightProofError::Rejected("overflow"))?;
                 input = sub_slot_data_vdf_input(
                     c,
                     ssd,
@@ -1199,12 +1242,15 @@ fn validate_sub_slot_data(
                 .as_ref()
                 .ok_or(WeightProofError::Rejected("prev cc_ip_vdf_info"))?;
             input = prev_cc_ip.output;
-            let ti = ssd.total_iters.ok_or(WeightProofError::Rejected("total_iters"))?;
+            let ti = ssd
+                .total_iters
+                .ok_or(WeightProofError::Rejected("total_iters"))?;
             let prev_ti = prev_ssd
                 .total_iters
                 .ok_or(WeightProofError::Rejected("prev total_iters"))?;
             let ip_vdf_iters =
-                ti.checked_sub(prev_ti).ok_or(WeightProofError::Rejected("ip_vdf_iters"))? as u64;
+                ti.checked_sub(prev_ti)
+                    .ok_or(WeightProofError::Rejected("ip_vdf_iters"))? as u64;
             cc_ip_info = VdfInfo {
                 challenge: cc_ip_info0.challenge,
                 number_of_iterations: ip_vdf_iters,
@@ -1239,11 +1285,18 @@ fn validate_segment(
         let ssd = &segment.sub_slots[idx];
         if sampled && ss_is_challenge(ssd) {
             after_challenge = true;
-            let required_iters =
-                match validate_pospace(c, segment, idx, curr_difficulty, ses, first_segment_in_se, height)? {
-                    Some(ri) => ri,
-                    None => return Ok(false),
-                };
+            let required_iters = match validate_pospace(
+                c,
+                segment,
+                idx,
+                curr_difficulty,
+                ses,
+                first_segment_in_se,
+                height,
+            )? {
+                Some(ri) => ri,
+                None => return Ok(false),
+            };
             let sp_index = ssd
                 .signage_point_index
                 .ok_or(WeightProofError::Rejected("signage_point_index"))?;
@@ -1270,7 +1323,9 @@ fn validate_sub_epoch_segments(
     c: &ConsensusConstants,
 ) -> Result<(), WeightProofError> {
     if summaries.len() < 2 {
-        return Err(WeightProofError::Rejected("fewer than two sub-epoch summaries"));
+        return Err(WeightProofError::Rejected(
+            "fewer than two sub-epoch summaries",
+        ));
     }
     // Continue the phase-1 RNG: re-seed from summaries[-2] and replay the sampling draws so `randbelow`
     // (chia's `rng.choice`) below starts from the exact state the reference's shared rng is in.
@@ -1281,7 +1336,11 @@ fn validate_sub_epoch_segments(
         .last()
         .ok_or(WeightProofError::Malformed("no recent chain data"))?;
     let height = tip.reward_chain_block.height;
-    let _ = get_weights_for_sampling(&mut rng, tip.reward_chain_block.weight, &wp.recent_chain_data)?;
+    let _ = get_weights_for_sampling(
+        &mut rng,
+        tip.reward_chain_block.weight,
+        &wp.recent_chain_data,
+    )?;
 
     let segments_by_sub_epoch = map_segments_by_sub_epoch(&wp.sub_epoch_segments);
     let max_seg = max_sub_epoch_segments(c);
@@ -1295,7 +1354,9 @@ fn validate_sub_epoch_segments(
             return Err(WeightProofError::TooLarge("segments per sub-epoch"));
         }
         if (sub_epoch_n as usize) >= summaries.len() {
-            return Err(WeightProofError::Rejected("segment sub_epoch_n out of range"));
+            return Err(WeightProofError::Rejected(
+                "segment sub_epoch_n out of range",
+            ));
         }
         // Recomputed per sub-epoch (matches the reference; the running `prev_ssi` it also derives is
         // passed to segment validation but never used there, so we omit it).
@@ -1305,8 +1366,9 @@ fn validate_sub_epoch_segments(
         let sampled_seg_index = rng.randbelow(segments.len() as u64) as usize;
 
         if sub_epoch_n > 0 {
-            let rc_sub_slot = get_rc_sub_slot(c, segments[0], summaries, curr_ssi)?
-                .ok_or(WeightProofError::Rejected("could not reconstruct rc sub slot"))?;
+            let rc_sub_slot = get_rc_sub_slot(c, segments[0], summaries, curr_ssi)?.ok_or(
+                WeightProofError::Rejected("could not reconstruct rc sub slot"),
+            )?;
             prev_ses = Some(&summaries[(sub_epoch_n - 1) as usize]);
             rc_sub_slot_hash = hash_of(&rc_sub_slot)?;
         }
@@ -1454,7 +1516,10 @@ mod tests {
         let c = &dg_xch_core::consensus::constants::MAINNET;
         let (valid, summaries) =
             validate_weight_proof(&wp, c).expect("full validator accepts the real mainnet proof");
-        assert!(valid, "validator must return valid=true on the real mainnet proof");
+        assert!(
+            valid,
+            "validator must return valid=true on the real mainnet proof"
+        );
         assert_eq!(summaries.len(), 23_579, "returned summary chain length");
     }
 
@@ -1466,9 +1531,31 @@ mod tests {
         // getrandbits sequence on one rng (seed 00..1f), then choice(range(n)) on fresh rng each.
         let seed: Vec<u8> = (0u8..32).collect();
         let mut r = py_random::PyRandom::new(&seed);
-        let got: Vec<u64> = [1u32, 4, 8, 15, 32, 33, 64].iter().map(|&k| r.getrandbits(k)).collect();
-        assert_eq!(got, vec![1, 5, 231, 1175, 2_810_937_230, 6_094_649_597, 11_238_162_993_324_450_277]);
-        for (n, want) in [(1u64, 0u64), (2, 1), (3, 1), (5, 2), (10, 5), (100, 40), (236, 81)] {
+        let got: Vec<u64> = [1u32, 4, 8, 15, 32, 33, 64]
+            .iter()
+            .map(|&k| r.getrandbits(k))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                1,
+                5,
+                231,
+                1175,
+                2_810_937_230,
+                6_094_649_597,
+                11_238_162_993_324_450_277
+            ]
+        );
+        for (n, want) in [
+            (1u64, 0u64),
+            (2, 1),
+            (3, 1),
+            (5, 2),
+            (10, 5),
+            (100, 40),
+            (236, 81),
+        ] {
             let mut rr = py_random::PyRandom::new(&seed);
             assert_eq!(rr.randbelow(n), want, "choice(range({n}))");
         }
@@ -1486,7 +1573,11 @@ mod tests {
             0.6092220395645366,
         ];
         for w in want {
-            assert_eq!(r.random().to_bits(), w.to_bits(), "random() must be bit-exact vs CPython");
+            assert_eq!(
+                r.random().to_bits(),
+                w.to_bits(),
+                "random() must be bit-exact vs CPython"
+            );
         }
 
         let seed2: Vec<u8> = vec![0u8, 0u8].into_iter().chain(0u8..30).collect();
@@ -1513,8 +1604,9 @@ mod tests {
         .expect("deserialize real mainnet weight proof");
         let c = &dg_xch_core::consensus::constants::MAINNET;
         let (summaries, _total, weights) = validate_sub_epoch_summaries(&wp, c).expect("phase 2");
-        validate_sub_epoch_sampling(&wp, &summaries, &weights, c)
-            .expect("phase 1 accepts the real mainnet proof (RNG sample set is covered by segments)");
+        validate_sub_epoch_sampling(&wp, &summaries, &weights, c).expect(
+            "phase 1 accepts the real mainnet proof (RNG sample set is covered by segments)",
+        );
     }
 
     /// Real-prod-data phase-3 accept path: phase 2's accumulated `total_weight` must equal the weight the
@@ -1565,7 +1657,8 @@ mod tests {
         let c = &dg_xch_core::consensus::constants::MAINNET;
         let (summaries, _t, _w) = validate_sub_epoch_summaries(&wp, c).expect("phase 2");
         // Phase 4 accepts: all sampled-segment proofs of space + VDFs verify against the real primitives.
-        validate_sub_epoch_segments(&wp, &summaries, c).expect("phase 4 accepts the real mainnet proof");
+        validate_sub_epoch_segments(&wp, &summaries, c)
+            .expect("phase 4 accepts the real mainnet proof");
     }
 
     #[test]

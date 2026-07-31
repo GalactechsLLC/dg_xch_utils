@@ -15,7 +15,11 @@ fn bi(s: &str) -> BigInt {
     BigInt::from_str(s).expect("bigint")
 }
 fn form_of(v: &[BigInt]) -> Form {
-    Form { a: v[0].clone(), b: v[1].clone(), c: v[2].clone() }
+    Form {
+        a: v[0].clone(),
+        b: v[1].clone(),
+        c: v[2].clone(),
+    }
 }
 fn triple(form: &Form) -> (BigInt, BigInt, BigInt) {
     (form.a.clone(), form.b.clone(), form.c.clone())
@@ -56,14 +60,27 @@ fn compose_matches_reference_over_battery() {
             if triple(&got) != expected {
                 failures.push(format!(
                     "MUL ({},{},{})x({},{},{}) ref=({},{},{}) got=({},{},{})",
-                    ins[0], ins[1], ins[2], ins[3], ins[4], ins[5], out[0], out[1], out[2],
-                    got.a, got.b, got.c
+                    ins[0],
+                    ins[1],
+                    ins[2],
+                    ins[3],
+                    ins[4],
+                    ins[5],
+                    out[0],
+                    out[1],
+                    out[2],
+                    got.a,
+                    got.b,
+                    got.c
                 ));
             }
         }
     }
 
-    eprintln!("compose fuzz: {sq} squares + {mul} multiplies checked; {} divergences", failures.len());
+    eprintln!(
+        "compose fuzz: {sq} squares + {mul} multiplies checked; {} divergences",
+        failures.len()
+    );
     assert!(
         failures.is_empty(),
         "dg_xch compose diverges from reference (residual gcd>1 bug reproducers):\n{}",
