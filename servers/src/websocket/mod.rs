@@ -70,15 +70,15 @@ impl WebsocketServer {
             (
                 load_certs(&format!(
                     "{}/{}",
-                    &ssl_info.root_path, &ssl_info.certs.private_crt
+                    ssl_info.root_path, ssl_info.certs.private_crt
                 ))?,
                 load_private_key(&format!(
                     "{}/{}",
-                    &ssl_info.root_path, &ssl_info.certs.private_key
+                    ssl_info.root_path, ssl_info.certs.private_key
                 ))?,
                 load_certs(&format!(
                     "{}/{}",
-                    &ssl_info.root_path, &ssl_info.ca.private_crt
+                    ssl_info.root_path, ssl_info.ca.private_crt
                 ))?,
             )
         } else {

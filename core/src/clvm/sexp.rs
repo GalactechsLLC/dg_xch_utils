@@ -720,11 +720,11 @@ impl<'a> Debug for PairBuf<'a> {
                     }
                     match current {
                         SExp::Pair(pair) => {
-                            buffer += &format!(" {:?}", &pair);
+                            buffer += &format!(" {:?}", pair);
                         }
                         SExp::Atom(atom) => {
                             if !atom.as_ref().is_empty() {
-                                buffer += &format!(" {:?}", &atom);
+                                buffer += &format!(" {:?}", atom);
                             }
                         }
                     }
@@ -744,13 +744,13 @@ impl<'a> Debug for PairBuf<'a> {
                             if p.rest().nullp() {
                                 buffer += &format!(" {:?}", p.first());
                             } else {
-                                buffer += &format!(" {:?}", &p);
+                                buffer += &format!(" {:?}", p);
                             }
                         }
                     }
                 }
                 SExp::Atom(_) => {
-                    buffer += &format!(" {:?} {:?}", cons_pair, &NULL_SEXP);
+                    buffer += &format!(" {:?} {:?}", cons_pair, NULL_SEXP);
                 }
             }
             buffer += ")";

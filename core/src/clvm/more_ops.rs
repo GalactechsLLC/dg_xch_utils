@@ -122,7 +122,7 @@ pub fn op_unknown<'a, D: Dialect>(
     if op.is_empty() || (op.len() >= 2 && op[0] == 0xff && op[1] == 0xff) {
         return Err(ClvmError::ReservedOperator(format!(
             "Reserved Operator: {:?}",
-            &op
+            op
         )));
     }
     let cost_function = (op[op.len() - 1] & 0b1100_0000) >> 6;
@@ -131,7 +131,7 @@ pub fn op_unknown<'a, D: Dialect>(
         None => {
             return Err(ClvmError::InvalidOperator(format!(
                 "Invalid Operator: {:?}",
-                &op
+                op
             )));
         }
     };

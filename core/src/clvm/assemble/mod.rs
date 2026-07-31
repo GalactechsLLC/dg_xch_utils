@@ -61,7 +61,7 @@ pub fn handle_cons(token: &'_ Token, tokens: &mut Reader) -> Result<SExp<'static
         } else {
             Err(ClvmError::UnexpectedEndOfValues(format!(
                 "Unexpected end of source while parsing cons at: {}",
-                &token.index
+                token.index
             )))
         }
     }

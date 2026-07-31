@@ -121,7 +121,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> MessageHandler for NewProofO
             } else {
                 warn!(
                     "Received response for a signage point that we do not have {}",
-                    &new_pos.sp_hash
+                    new_pos.sp_hash
                 );
             }
         } else {
@@ -456,7 +456,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
                         v.points_found_since_start += pool_dif;
                         v.points_found_24h.push((Instant::now(), pool_dif));
                     }
-                    debug!("POST /partial request {:?}", &post_request);
+                    debug!("POST /partial request {:?}", post_request);
                     match self
                         .pool_client
                         .post_partial(

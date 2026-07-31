@@ -758,7 +758,7 @@ impl ReadStream {
                                             if !matched{
                                                 error!("No Matches for Message: {msg_arc:?}");
                                             }
-                                            debug!("Processed Message: {:?}", &msg_arc.msg_type);
+                                            debug!("Processed Message: {:?}", msg_arc.msg_type);
                                         }
                                         Err(e) => {
                                             error!("Invalid Message: {e:?}");

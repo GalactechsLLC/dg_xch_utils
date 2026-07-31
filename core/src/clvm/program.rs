@@ -294,13 +294,13 @@ impl<'a> ChiaSerialize for Program<'a> {
 
 impl<'a> Display for Program<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", &*self.sexp)
+        write!(f, "{}", *self.sexp)
     }
 }
 
 impl<'a> Debug for Program<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", &*self.sexp)
+        write!(f, "{:?}", *self.sexp)
     }
 }
 

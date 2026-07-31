@@ -92,12 +92,12 @@ pub const ONE_SEXP: SExp = SExp::Atom(AtomBuf::Borrowed(&[1]));
 pub const NULL_PROGRAM: Program<'static> = Program::new_const(NULL_SEXP);
 
 //Assembler + Compiler
-pub const EOL_CHARS: [u8; 2] = [b'\r', b'\n'];
-pub const START_CONS_CHARS: [u8; 2] = [b'(', b'.'];
+pub const EOL_CHARS: [u8; 2] = *b"\r\n";
+pub const START_CONS_CHARS: [u8; 2] = *b"(.";
 pub const END_CONS_CHAR: u8 = b')';
-pub const CONS_CHARS: [u8; 3] = [b'(', b'.', b')'];
-pub const QUOTE_CHARS: [u8; 2] = [b'\'', b'"'];
-pub const SPACE_CHARS: [u8; 2] = [b' ', b'\t'];
+pub const CONS_CHARS: [u8; 3] = *b"(.)";
+pub const QUOTE_CHARS: [u8; 2] = *b"'\"";
+pub const SPACE_CHARS: [u8; 2] = *b" \t";
 pub const COMMENT_CHAR: u8 = b';';
 
 pub const START_CONS: Token = Token {

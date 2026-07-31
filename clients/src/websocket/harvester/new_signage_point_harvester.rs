@@ -59,7 +59,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
         };
         let mut cursor = Cursor::new(msg.data.as_slice());
         let harvester_point = NewSignagePointHarvester::from_bytes(&mut cursor, protocol_version)?;
-        trace!("{:#?}", &harvester_point);
+        trace!("{:#?}", harvester_point);
         let plot_counts = Arc::new(PlotCounts::default());
         let harvester_point = Arc::new(harvester_point);
         let constants = Arc::new(self.constants);
@@ -114,7 +114,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                         }
                     };
                     if !qualities.is_empty() {
-                        debug!("Plot: {} Qualities Found: {}", &path.file_name, qualities.len());
+                        debug!("Plot: {} Qualities Found: {}", path.file_name, qualities.len());
                         let mut dif = data_arc.difficulty;
                         let mut sub_slot_iters = data_arc.sub_slot_iters;
                         let mut is_partial = false;
@@ -151,7 +151,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for NewSignagePointHarves
                                             debug!(
                                                 "File: {:?} Plot ID: {}, challenge: {sp_challenge_hash}, Quality Str: {}, proof: {:?}",
                                                 path,
-                                                &plot_id,
+                            plot_id,
                                                 encode(quality.to_bytes(protocol_version)?),
                                                 encode(&proof_bytes)
                                             );

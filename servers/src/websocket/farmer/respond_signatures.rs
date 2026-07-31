@@ -57,7 +57,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
         let response = RespondSignatures::from_bytes(&mut cursor, protocol_version)?;
         if let Some(sps) = self.signage_points.read().await.get(&response.sp_hash) {
             if sps.is_empty() {
-                error!("Missing Signage Points for {}", &response.sp_hash);
+                error!("Missing Signage Points for {}", response.sp_hash);
             } else {
                 let sp_index = sps
                     .first()
@@ -86,7 +86,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                         }
                     }
                 } else {
-                    debug!("Failed to load farmer proofs for {}", &response.sp_hash);
+                    debug!("Failed to load farmer proofs for {}", response.sp_hash);
                     return Ok(());
                 }
                 if let Some(pospace) = pospace {
@@ -467,12 +467,12 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                         return Ok(());
                     }
                 } else {
-                    debug!("Failed to find Proof for {}", &response.sp_hash);
+                    debug!("Failed to find Proof for {}", response.sp_hash);
                     return Ok(());
                 }
             }
         } else {
-            error!("Do not have challenge hash {}", &response.challenge_hash);
+            error!("Do not have challenge hash {}", response.challenge_hash);
         }
         Ok(())
     }

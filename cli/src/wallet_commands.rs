@@ -37,7 +37,7 @@ pub fn create_cold_wallet(network: &ConsensusConstants) -> Result<(), Error> {
     let master_public_key = master_secret_key.sk_to_pk();
     let fp = fingerprint(&master_public_key);
     info!("Fingerprint: {fp}");
-    info!("Mnemonic Phrase: {}", &mnemonic.to_string());
+    info!("Mnemonic Phrase: {}", mnemonic);
     info!("Master SK: {}", Bytes32::new(master_secret_key.to_bytes()));
     info!(
         "Master public key (m): {}",
@@ -372,7 +372,7 @@ async fn create_and_validate_target_state(
     if plot_nft.pool_state == target_pool_state {
         let error_message = format!(
             "Current State equal to Target State: {:?}",
-            &target_pool_state
+            target_pool_state
         );
         error!("{error_message}");
         return Err(Error::new(ErrorKind::InvalidData, error_message));

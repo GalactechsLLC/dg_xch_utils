@@ -216,7 +216,7 @@ async fn send_request<
                 let text = resp.text().await.unwrap_or_default();
                 warn!(
                     "Failed to {method}, Bad Status Code: {:?}, {}",
-                    &status, &text
+                    status, text
                 );
                 Err(PoolError {
                     error_code: PoolErrorCode::RequestFailed as u8,

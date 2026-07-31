@@ -82,7 +82,7 @@ pub fn op_raise<'a, D: Dialect>(
             if pair.rest().nullp() {
                 Err(ClvmError::Raise(format!("{:?}", pair.first().atom()?)))
             } else {
-                Err(ClvmError::Raise(format!("{:?}", &pair.rest())))
+                Err(ClvmError::Raise(format!("{:?}", pair.rest())))
             }
         }
     }

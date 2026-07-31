@@ -1459,12 +1459,7 @@ impl TryFrom<&SExp<'_>> for Vec<ConditionWithArgs> {
         let mut results = Vec::new();
         for arg in sexp.iter() {
             let arg: Result<ConditionWithArgs, ClvmError> = arg.try_into();
-            match arg {
-                Ok(condition) => {
-                    results.push(condition);
-                }
-                Err(error) => return Err(error),
-            }
+            results.push(arg?);
         }
         Ok(results)
     }

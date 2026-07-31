@@ -101,10 +101,10 @@ impl MessageHandler for RequestSignedValuesHandle {
             self.recent_errors
                 .write()
                 .await
-                .add(format!("Do not have quality {}", &request.quality_string));
+                .add(format!("Do not have quality {}", request.quality_string));
             Err(Error::new(
                 ErrorKind::NotFound,
-                format!("Do not have quality {}", &request.quality_string),
+                format!("Do not have quality {}", request.quality_string),
             ))
         }
     }

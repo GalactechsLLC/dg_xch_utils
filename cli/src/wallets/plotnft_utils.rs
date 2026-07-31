@@ -435,13 +435,13 @@ pub async fn get_current_pool_state(
         Some(_) => {
             return Err(Error::new(
                 ErrorKind::InvalidData,
-                format!("Genesis coin {} not spent", &launcher_id.to_string()),
+                format!("Genesis coin {} not spent", launcher_id),
             ));
         }
         None => {
             return Err(Error::new(
                 ErrorKind::NotFound,
-                format!("Can not find genesis coin {}", &launcher_id),
+                format!("Can not find genesis coin {}", launcher_id),
             ));
         }
     }
