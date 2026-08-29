@@ -334,4 +334,3 @@ pub fn plan_block_solicitations(
         .filter(|req| ledger.admit(req, now))
         .collect()
 }
-

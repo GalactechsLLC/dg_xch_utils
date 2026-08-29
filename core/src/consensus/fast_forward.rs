@@ -11,11 +11,11 @@
 use crate::blockchain::coin::Coin;
 use crate::blockchain::coin_spend::CoinSpend;
 use crate::blockchain::sized_bytes::Bytes32;
+use crate::clvm::program::{Program, SerializedProgram};
+use crate::clvm::sexp::SExp;
 use crate::curry_and_treehash::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, shatree_atom, shatree_pair,
 };
-use crate::clvm::program::{Program, SerializedProgram};
-use crate::clvm::sexp::SExp;
 use crate::errors::ClvmError;
 use crate::traits::SizedBytes;
 use num_traits::ToPrimitive;
@@ -36,7 +36,10 @@ struct SingletonStruct {
 /// The full puzzle hash of the singleton top layer curried with `(SINGLETON_STRUCT inner_puzzle)`,
 /// given only the inner puzzle's hash. The mod-hash inside `SINGLETON_STRUCT` is the module's tree
 /// hash and is quoted directly, not re-hashed as an atom.
-fn singleton_puzzle_hash(inner_puzzle_hash: Bytes32, singleton_struct: &SingletonStruct) -> Bytes32 {
+fn singleton_puzzle_hash(
+    inner_puzzle_hash: Bytes32,
+    singleton_struct: &SingletonStruct,
+) -> Bytes32 {
     let singleton_struct_hash = shatree_pair(
         &shatree_atom(singleton_struct.mod_hash.bytes().as_slice()),
         &shatree_pair(

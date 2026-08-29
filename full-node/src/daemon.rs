@@ -2477,9 +2477,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             if let Some(tx_peak) = tx_peak
                 && iters.candidate_sp_total_iters <= tx_peak.total_iters
             {
-                debug!(
-                    "candidate: sp at/before the tx-peak window -> empty block"
-                );
+                debug!("candidate: sp at/before the tx-peak window -> empty block");
                 coerce_empty = true;
             }
         }
@@ -4115,10 +4113,7 @@ where
             };
             broadcast_new_peak_wallet(&self.net, &wallets, &announce).await;
         }
-        info!(
-            height,
-            "sync-end transition fired"
-        );
+        info!(height, "sync-end transition fired");
     }
 
     // The transaction block framing a peak: walk from the peak to the nearest record carrying a
@@ -6422,9 +6417,7 @@ async fn assemble_infusion_block<S: BlockStore + CoinStore + Send + Sync + 'stat
         .await
         .get_finished_sub_slots(challenge_in_chain, last_slot_cc_hash);
     let Some(finished_sub_slots) = finished_sub_slots else {
-        debug!(
-            "infusion point: finished sub-slots not connected"
-        );
+        debug!("infusion point: finished sub-slots not connected");
         return None;
     };
 

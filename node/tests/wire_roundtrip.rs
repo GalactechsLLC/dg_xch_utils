@@ -156,14 +156,15 @@ fn random_garbage_always_errors_never_panics() {
         let buf: Vec<u8> = (0..len).map(|_| (rng.next() & 0xff) as u8).collect();
         macro_rules! must_err {
             ($ty:ty) => {
-                let out =
-                    catch_unwind(AssertUnwindSafe(|| <$ty>::from_bytes_exact(&buf, version())))
-                        .unwrap_or_else(|_| {
-                            panic!(
-                                "{} PANICKED on garbage case {case} (len {len})",
-                                stringify!($ty)
-                            )
-                        });
+                let out = catch_unwind(AssertUnwindSafe(|| {
+                    <$ty>::from_bytes_exact(&buf, version())
+                }))
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "{} PANICKED on garbage case {case} (len {len})",
+                        stringify!($ty)
+                    )
+                });
                 assert!(
                     out.is_err(),
                     "{} decoded garbage case {case} (len {len}) as Ok",
