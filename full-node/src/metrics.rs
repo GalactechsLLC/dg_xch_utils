@@ -1217,6 +1217,7 @@ async fn serve<S: BlockStore + Send + Sync + 'static>(
     sources: MetricsSources<S>,
     run: Arc<AtomicBool>,
 ) {
+    #[cfg(feature = "profiling")]
     let profiling = Arc::new(AtomicBool::new(false));
     while run.load(Ordering::Relaxed) {
         let accept = tokio::time::timeout(ACCEPT_TICK, listener.accept()).await;

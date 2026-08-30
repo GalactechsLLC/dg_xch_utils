@@ -36,4 +36,7 @@ path = "src/bin/leak_probe.rs"
 required-features = ["postgres"]
 
 [features]
-postgres = ["dg_xch_stores/postgres"]
+default = ["sqlite"]
+sqlite = ["full-node/sqlite"]
+postgres = ["dg_xch_stores/postgres", "full-node/postgres"]
+mmap = ["dg_xch_stores/mmap", "full-node/mmap"]
