@@ -823,8 +823,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
             }
             debug!("Max send amount: {max_send}");
         }
-        let coins_set: HashSet<Coin>;
-        if coins.is_none() {
+        let coins_set: HashSet<Coin> = if coins.is_none() {
             if total_amount > total_balance {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -833,8 +832,7 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     ),
                 ));
             }
-            coins_set = self
-                .wallet_store()
+            self.wallet_store()
                 .lock()
                 .await
                 .select_coins(
@@ -850,15 +848,15 @@ pub trait Wallet<T: WalletStore + Send + Sync, C> {
                     ),
                     exclude_coin_amounts,
                 )
-                .await?;
+                .await?
         } else if exclude_coins.is_some() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 "Can't exclude coins when also specifically including coins",
             ));
         } else {
-            coins_set = HashSet::from_iter(coins.unwrap_or_default());
-        }
+            HashSet::from_iter(coins.unwrap_or_default())
+        };
         assert!(!coins_set.is_empty());
         info!("Found Coins to use: {:?}", coins_set);
         let spend_value: i128 = coins_set.iter().map(|v| i128::from(v.amount)).sum::<i128>();
