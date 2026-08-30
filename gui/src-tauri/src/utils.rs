@@ -98,7 +98,7 @@ pub fn lifehash(data: &'_ [u8]) -> Result<RgbaImage, String> {
                 }
             }
             2 => {
-                for ga_chunk in image.pixels.chunks_exact(2) {
+                for ga_chunk in image.pixels.as_chunks::<2>().0 {
                     let gray_value = ga_chunk[0];
                     let alpha_value = ga_chunk[1];
                     rgba_pixels.push(gray_value); // Red = Gray
@@ -108,7 +108,7 @@ pub fn lifehash(data: &'_ [u8]) -> Result<RgbaImage, String> {
                 }
             }
             3 => {
-                for rgb_chunk in image.pixels.chunks_exact(3) {
+                for rgb_chunk in image.pixels.as_chunks::<3>().0 {
                     rgba_pixels.push(rgb_chunk[0]); // Red
                     rgba_pixels.push(rgb_chunk[1]); // Green
                     rgba_pixels.push(rgb_chunk[2]); // Blue

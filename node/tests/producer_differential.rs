@@ -88,7 +88,7 @@ fn reconstruct_reward_claims(
         ));
     }
     let mut claims = Vec::with_capacity(reward_coins.len() / 2);
-    for pair in reward_coins.chunks_exact(2) {
+    for pair in reward_coins.as_chunks::<2>().0 {
         let (pool, farmer) = (&pair[0], &pair[1]);
         let pp = pool.parent_coin_info.bytes();
         let fp = farmer.parent_coin_info.bytes();

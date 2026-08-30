@@ -271,9 +271,9 @@ fn siphash24(k0: u64, k1: u64, data: &[u8]) -> u64 {
         };
     }
 
-    let mut chunks = data.chunks_exact(8);
-    for chunk in &mut chunks {
-        let m = u64::from_le_bytes(chunk.try_into().expect("chunks_exact(8) yields 8 bytes"));
+    let (blocks, rem) = data.as_chunks::<8>();
+    for chunk in blocks {
+        let m = u64::from_le_bytes(*chunk);
         v3 ^= m;
         sipround!();
         sipround!();
@@ -281,7 +281,6 @@ fn siphash24(k0: u64, k1: u64, data: &[u8]) -> u64 {
     }
 
     // Final block: remaining < 8 bytes, little-endian, with (len & 0xff) in the top byte.
-    let rem = chunks.remainder();
     let mut b: u64 = (data.len() as u64 & 0xff) << 56;
     for (i, &byte) in rem.iter().enumerate() {
         b |= u64::from(byte) << (8 * i);
