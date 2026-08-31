@@ -337,26 +337,109 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
         }
     }
 
-    /// Close the tip's sub-slot and farm the first block of the next one. This is what lets a chain
-    /// grow past the ~61 signage points of a single sub-slot: the end-of-sub-slot bundle finishes the
-    /// challenge/reward/infused-challenge VDFs, and the new block infuses against the fresh challenge.
+    /// Close the tip's sub-slot and farm the first block of the next one that yields an eligible
+    /// signage point. This is what lets a chain grow past the ~61 signage points of a single
+    /// sub-slot: the end-of-sub-slot bundle finishes the challenge/reward/infused-challenge VDFs,
+    /// and the new block infuses against the fresh challenge. When difficulty has outgrown the
+    /// plot set enough that a whole sub-slot yields no eligible proof, further sub-slots are
+    /// closed empty and carried in the same block's finished list — the chain's own shape for a
+    /// proof drought — up to a bound.
     pub async fn farm_next_slot(&mut self) -> Result<AddBlockOutcome, SimError> {
+        const MAX_EMPTY_SUB_SLOTS: usize = 32;
         let prev = self
             .tip_record()
             .cloned()
             .ok_or_else(|| SimError::Invariant("farm genesis before crossing".to_string()))?;
-        let (bundle, cc_challenge, rc_challenge, icc_challenge) =
+        let (bundle, mut cc_challenge, mut rc_challenge, mut icc_challenge) =
             self.build_end_of_sub_slot(&prev)?;
         let prev_ip = u128::from(prev.ip_iters(&self.constants).map_err(SimError::Io)?);
-        let base = (prev.total_iters - prev_ip) + u128::from(prev.sub_slot_iters);
-        let cross = CrossSlot {
-            finished: vec![bundle],
-            cc_challenge,
-            rc_challenge,
-            icc_challenge,
-            base,
+        let mut base = (prev.total_iters - prev_ip) + u128::from(prev.sub_slot_iters);
+        let mut finished = vec![bundle];
+        loop {
+            let cross = CrossSlot {
+                finished: finished.clone(),
+                cc_challenge,
+                rc_challenge,
+                icc_challenge,
+                base,
+            };
+            match self.farm_next_inner(None, None, Some(cross)).await {
+                Err(SimError::SubSlotExhausted) if finished.len() < MAX_EMPTY_SUB_SLOTS => {
+                    let (ssi, _) = self.retarget(&prev, true)?;
+                    let last = finished.last().expect("the closing bundle");
+                    let (bundle, cc, rc, icc) = self.build_empty_sub_slot(
+                        last,
+                        cc_challenge,
+                        rc_challenge,
+                        icc_challenge,
+                        ssi,
+                    )?;
+                    base += u128::from(ssi);
+                    finished.push(bundle);
+                    cc_challenge = cc;
+                    rc_challenge = rc;
+                    icc_challenge = icc;
+                }
+                other => return other,
+            }
+        }
+    }
+
+    /// Close an empty sub-slot on top of `prev_bundle`: every chain runs from the identity over
+    /// the whole slot, challenged by the previous bundle's hashes, and the deficit carries
+    /// unchanged — no block, no reset, no summary, no epoch values.
+    fn build_empty_sub_slot(
+        &self,
+        prev_bundle: &SubSlotBundle,
+        cc_challenge: Bytes32,
+        rc_challenge: Bytes32,
+        icc_challenge: Bytes32,
+        ssi: u64,
+    ) -> Result<(SubSlotBundle, Bytes32, Bytes32, Bytes32), SimError> {
+        let c = &self.constants;
+        let disc = c.discriminant_size_bits;
+        let identity = ClassgroupElement::get_default_element();
+        let deficit = prev_bundle.reward_chain.deficit;
+        let (cc_eos_vdf, cc_proof) = prove_vdf(cc_challenge, &identity, ssi, disc)?;
+        // The infused chain keeps running through an empty slot only while a challenge period is
+        // under way (deficit below the reset value).
+        let (icc, icc_hash, icc_proof) = if deficit < c.min_blocks_per_challenge_block {
+            let (icc_eos_vdf, icc_proof) = prove_vdf(icc_challenge, &identity, ssi, disc)?;
+            let icc = InfusedChallengeChainSubSlot {
+                infused_challenge_chain_end_of_slot_vdf: icc_eos_vdf,
+            };
+            let hash = icc.hash().map_err(SimError::Io)?;
+            (Some(icc), Some(hash), Some(icc_proof))
+        } else {
+            (None, None, None)
         };
-        self.farm_next_inner(None, None, Some(cross)).await
+        let cc = ChallengeChainSubSlot {
+            challenge_chain_end_of_slot_vdf: cc_eos_vdf,
+            infused_challenge_chain_sub_slot_hash: None,
+            subepoch_summary_hash: None,
+            new_sub_slot_iters: None,
+            new_difficulty: None,
+        };
+        let cc_hash = cc.hash().map_err(SimError::Io)?;
+        let (rc_eos_vdf, rc_proof) = prove_vdf(rc_challenge, &identity, ssi, disc)?;
+        let rc = RewardChainSubSlot {
+            end_of_slot_vdf: rc_eos_vdf,
+            challenge_chain_sub_slot_hash: cc_hash,
+            infused_challenge_chain_sub_slot_hash: icc_hash,
+            deficit,
+        };
+        let rc_hash = rc.hash().map_err(SimError::Io)?;
+        let bundle = SubSlotBundle {
+            challenge_chain: cc,
+            infused_challenge_chain: icc,
+            reward_chain: rc,
+            proofs: SubSlotProofs {
+                challenge_chain_slot_proof: cc_proof,
+                infused_challenge_chain_slot_proof: icc_proof,
+                reward_chain_slot_proof: rc_proof,
+            },
+        };
+        Ok((bundle, cc_hash, rc_hash, icc_hash.unwrap_or(icc_challenge)))
     }
 
     /// Build the end-of-sub-slot bundle that closes `prev`'s sub-slot, with the new challenge-chain,
@@ -843,7 +926,7 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
         let min = c.min_blocks_per_challenge_block;
         let overflow = is_overflow_block(c, sp_index).unwrap_or(false);
         let height = prev.height + 1;
-        let num_finished = usize::from(cross.is_some());
+        let num_finished = cross.map_or(0, |x| x.finished.len());
         let deficit = calculate_deficit(c, height, Some(prev), overflow, num_finished);
         let (icc_ip_vdf, icc_ip_proof) = if deficit < min - 1 {
             if let Some(x) = cross {
@@ -1074,6 +1157,65 @@ mod tests {
         assert_eq!(
             height, 9,
             "expected four crossings each followed by a successor"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Difficulty can outgrow the plot set until whole sub-slots pass with no eligible signage
+    // point. The chain's shape for that drought is empty finished sub-slots carried by the next
+    // block; a farm that only ever closes one slot per attempt wedges on the second barren slot
+    // (a long-running simulator did, once its difficulty had ratcheted for a day). Difficulty 65
+    // with plot campaign 37 is a pinned fixture: genesis lands, and the drought hits within the
+    // farmed span.
+    #[tokio::test]
+    async fn a_difficulty_drought_farms_through_empty_sub_slots() {
+        let dir = std::env::temp_dir().join("dgxch_sim_drought");
+        let _ = std::fs::remove_dir_all(&dir);
+        let c = apply_overrides(
+            constants(),
+            &ConsensusOverrides {
+                difficulty_starting: Some(65),
+                ..Default::default()
+            },
+        );
+        let plots = PlotSet::setup(&dir, 37, 12, K, STRENGTH, false).expect("plots");
+        let mut chain = ChainBuilder::new(store().await, c, plots, Bytes32::from([0xAB; 32]));
+        chain.farm_genesis().await.expect("genesis");
+        let mut widest = 0usize;
+        let mut after_drought = 0u32;
+        for next in 1..=24u32 {
+            let outcome = match chain.farm_next().await {
+                Err(SimError::SubSlotExhausted) => chain.farm_next_slot().await,
+                other => other,
+            }
+            .unwrap_or_else(|e| panic!("block {next} wedged the farm: {e}"));
+            let height = match outcome {
+                AddBlockOutcome::NewPeak { height } | AddBlockOutcome::Extended { height } => {
+                    height
+                }
+                other => panic!("block {next} was not confirmed onto the peak: {other:?}"),
+            };
+            assert_eq!(height, next, "block confirmed at the wrong height");
+            let crossed = chain
+                .blocks()
+                .last()
+                .expect("confirmed block")
+                .finished_sub_slots
+                .len();
+            widest = widest.max(crossed);
+            // The point is made once a multi-slot block confirmed and the chain kept growing
+            // past it; stop there rather than paying for the full span every run.
+            if widest >= 2 {
+                after_drought += 1;
+                if after_drought >= 3 {
+                    break;
+                }
+            }
+        }
+        assert!(
+            widest >= 2,
+            "no block carried an empty sub-slot (widest crossing {widest}); the fixture no \
+             longer exercises the drought"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
