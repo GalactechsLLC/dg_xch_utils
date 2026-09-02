@@ -1128,6 +1128,7 @@ where
         &self,
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
     ) -> Vec<u32> {
+        let cap = self.engine.constants().max_generator_ref_list_size as usize;
         let in_span: std::collections::HashSet<u32> = blocks
             .iter()
             .filter(|b| b.transactions_generator.is_some())
@@ -1135,6 +1136,11 @@ where
             .collect();
         let mut missing = std::collections::BTreeSet::new();
         for block in blocks {
+            // An over-cap list is consensus-invalid: seed nothing for it (validation rejects
+            // the block before any ref is needed).
+            if block.transactions_generator_ref_list.len() > cap {
+                continue;
+            }
             for r in &block.transactions_generator_ref_list {
                 if in_span.contains(r)
                     || missing.contains(r)
@@ -1162,6 +1168,7 @@ where
         &self,
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
     ) -> std::collections::HashMap<u32, dg_xch_core::clvm::program::SerializedProgram> {
+        let cap = self.engine.constants().max_generator_ref_list_size as usize;
         let in_span: std::collections::HashSet<u32> = blocks
             .iter()
             .filter(|b| b.transactions_generator.is_some())
@@ -1169,6 +1176,10 @@ where
             .collect();
         let mut out = std::collections::HashMap::new();
         for block in blocks {
+            // An over-cap list is consensus-invalid: resolve nothing for it.
+            if block.transactions_generator_ref_list.len() > cap {
+                continue;
+            }
             for r in &block.transactions_generator_ref_list {
                 if in_span.contains(r) || out.contains_key(r) {
                     continue;
@@ -1213,8 +1224,8 @@ where
     /// [`Self::follow_blocks_reporting`] with window bodies the caller precomputed while the
     /// PREVIOUS window validated (the cross-window body pipeline). `provided` entries skip the
     /// inline precompute; tx blocks not covered take the inline path unchanged, and the engine's
-    /// stage-time flag-key check still guards every precompute, so a stale entry degrades to an
-    /// inline recompute, never to a wrong verdict.
+    /// stage-time refs-digest check still guards every precompute, so a stale entry degrades to
+    /// an inline recompute, never to a wrong verdict.
     ///
     /// Serial composition of the stage-ahead pipeline halves ([`Self::stage_window_pre`], the pure
     /// [`drain_staged_window`], [`Self::confirm_window_pre`]) — behavior-identical to the
@@ -1237,7 +1248,11 @@ where
             let constants = *self.engine.constants();
             drain_staged_window(primitives, &constants, input)
         };
-        self.confirm_window_pre(window, verdict).await
+        let confirmed = self.confirm_window_pre(window, verdict).await?;
+        if let Some(e) = confirmed.rejection {
+            return Err(e);
+        }
+        Ok((confirmed.peak, confirmed.deltas))
     }
 
     /// Stage a whole window into the engine's overlay WITHOUT touching the writer or running the
@@ -1289,6 +1304,12 @@ where
                     continue;
                 }
                 tx_total += 1;
+                if block.transactions_generator_ref_list.len()
+                    > self.engine.constants().max_generator_ref_list_size as usize
+                {
+                    // Consensus-invalid list: leave it for the inline path's rejection.
+                    continue;
+                }
                 if provided
                     .as_ref()
                     .is_some_and(|m| m.contains_key(&block.height()))
@@ -1439,7 +1460,7 @@ where
         &mut self,
         window: StagedWindow,
         verdict: WindowVerdict,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         self.metrics
             .window_vdf_micros
             .store(verdict.vdf_micros, Ordering::Relaxed);
@@ -1456,35 +1477,50 @@ where
         let confirm_upto = verdict.confirm_upto.min(staged.len());
         let vdf_err = verdict.err;
         let confirm_started = std::time::Instant::now();
-        // Deferred archive persistence: EVERY staged row lands (the confirmed prefix plus any
-        // rejected tail's candidates — matching the batch the staging loop used to carry), before
-        // coins + set_peak in the same transaction.
-        let mut window_batch: Option<dg_xch_stores::BatchHandle> = None;
-        if !archive_written && !staged.is_empty() {
-            let mut batch = self.engine.store().begin().await?;
-            let rows: Vec<(&FullBlock, &BlockDelta)> = staged
-                .iter()
-                .map(|(delta, _, _, bi)| (&blocks[*bi], delta))
-                .collect();
-            self.engine
-                .persist_archive_window(&rows, &mut batch)
+        let confirmed: Result<_, SyncError> = async {
+            // Deferred archive persistence: ONLY the confirmed prefix lands, before its coins +
+            // set_peak in the same transaction. A row past the confirm boundary failed its
+            // deferred verification — persisting it would stamp a validated status on a block
+            // no gate passed; the rejected tail re-fetches and re-stages wholesale instead.
+            let mut window_batch: Option<dg_xch_stores::BatchHandle> = None;
+            if !archive_written && confirm_upto > 0 {
+                let mut batch = self.engine.store().begin().await?;
+                let rows: Vec<(&FullBlock, &BlockDelta)> = staged[..confirm_upto]
+                    .iter()
+                    .map(|(delta, _, _, bi)| (&blocks[*bi], delta))
+                    .collect();
+                self.engine
+                    .persist_archive_window(&rows, &mut batch)
+                    .await?;
+                window_batch = Some(batch);
+            }
+            // One store batch confirms the whole window; the engine falls back to per-block fork
+            // choice the moment a delta isn't a plain extension.
+            let to_confirm: Vec<BlockDelta> =
+                staged.drain(..confirm_upto).map(|(d, _, _, _)| d).collect();
+            let reported: Vec<BlockDelta> = to_confirm.clone();
+            // A stale reorg report from a non-reporting confirm path must never mis-attach to
+            // this window's outcomes: only reports pushed by the batch below are consumed by the
+            // expansion.
+            self.engine.clear_reorg_reports();
+            log::debug!("window.confirm blocks={}", to_confirm.len());
+            let outcomes = self
+                .engine
+                .confirm_staged_batch_in(to_confirm, window_batch.take())
                 .await?;
-            window_batch = Some(batch);
+            Ok((outcomes, reported))
         }
-        // One store batch confirms the whole window; the engine falls back to per-block fork
-        // choice the moment a delta isn't a plain extension.
-        let to_confirm: Vec<BlockDelta> =
-            staged.drain(..confirm_upto).map(|(d, _, _, _)| d).collect();
-        let reported: Vec<BlockDelta> = to_confirm.clone();
+        .await;
+        let (outcomes, reported) = match confirmed {
+            Ok(v) => v,
+            Err(e) => {
+                // A store failure mid-confirm strands whatever the batch had not yet applied:
+                // retract the whole overlay so the re-staged window reads no stale entries.
+                self.engine.clear_staged_overlay();
+                return Err(e);
+            }
+        };
         let mut deltas = Vec::new();
-        // A stale reorg report from a non-reporting confirm path must never mis-attach to this
-        // window's outcomes: only reports pushed by the batch below are consumed by the expansion.
-        self.engine.clear_reorg_reports();
-        log::debug!("window.confirm blocks={}", to_confirm.len());
-        let outcomes = self
-            .engine
-            .confirm_staged_batch_in(to_confirm, window_batch.take())
-            .await?;
         self.metrics.window_confirm_micros.store(
             confirm_started.elapsed().as_micros() as u64,
             Ordering::Relaxed,
@@ -1511,13 +1547,17 @@ where
             || self.engine.pop_reorg_report(),
             &mut deltas,
         );
-        if let Some(e) = vdf_err.or(stage_err) {
+        let rejection = vdf_err.or(stage_err);
+        if rejection.is_some() {
             // Unconfirmed staged blocks retry next tick and re-stage; their overlay entries
-            // must not linger meanwhile.
+            // must not linger meanwhile. The confirmed prefix's deltas still return.
             self.engine.clear_staged_overlay();
-            return Err(e);
         }
-        Ok((self.engine.store().get_peak().await?, deltas))
+        Ok(ConfirmedWindow {
+            peak: self.engine.store().get_peak().await?,
+            deltas,
+            rejection,
+        })
     }
 }
 
@@ -1867,6 +1907,17 @@ impl WindowVerdict {
     }
 }
 
+/// A confirmed window: the durable peak, the confirmed prefix's reported deltas, and — when
+/// the drain or staging rejected part of the window — the rejection the caller surfaces AFTER
+/// consuming the prefix's side effects (wallet coin-state, mempool revalidation). Losing those
+/// deltas with the error would skip the side effects for blocks that DID commit.
+#[derive(Debug)]
+pub struct ConfirmedWindow {
+    pub peak: Option<(Bytes32, u32)>,
+    pub deltas: Vec<ConfirmedDelta>,
+    pub rejection: Option<SyncError>,
+}
+
 /// Drain a staged window's deferred VDF and header-signature queues — pure CPU against the
 /// primitives, no engine or store access, so the daemon runs it on a blocking thread while the
 /// next window stages. Two-tier per queue: the whole-window batch first, then on a failure a
@@ -2006,6 +2057,11 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
                                     crate::engine::PrecomputedBody {
                                         conds,
                                         agg_sig_verified: verified,
+                                        refs_digest: crate::engine::precompute_refs_digest(
+                                            block.height(),
+                                            refs,
+                                            *verify_sig,
+                                        ),
                                     },
                                 )
                             })
@@ -2027,8 +2083,8 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
 /// body pipeline. Generator refs resolve from the window itself or from `extra` (the driver's
 /// confirmed-store snapshot, [`Chaser::confirmed_ref_generators`]); a block with a ref neither
 /// can serve is skipped here and takes the engine's inline path, and the engine's stage-time
-/// flag-key check still guards every entry — a mismatch degrades to an inline recompute, never
-/// to a changed verdict.
+/// refs-digest check still guards every entry — a mismatch degrades to an inline recompute,
+/// never to a changed verdict.
 #[must_use]
 pub fn precompute_window_bodies_standalone<P: crate::primitives::ConsensusPrimitives + Sync>(
     primitives: &P,
@@ -2046,6 +2102,11 @@ pub fn precompute_window_bodies_standalone<P: crate::primitives::ConsensusPrimit
     )> = Vec::new();
     for block in blocks {
         if !block.is_transaction_block() || block.transactions_generator.is_none() {
+            continue;
+        }
+        if block.transactions_generator_ref_list.len()
+            > constants.max_generator_ref_list_size as usize
+        {
             continue;
         }
         let mut refs = Vec::with_capacity(block.transactions_generator_ref_list.len());
@@ -2104,6 +2165,89 @@ mod tests {
     use super::tip_epoch_from;
     use dg_xch_core::blockchain::sized_bytes::Bytes32;
     use dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary;
+
+    // A PARTIALLY rejected window must persist archive rows only for its confirmed prefix: the
+    // batch that commits the prefix's coins and peak must not carry validated-stamped rows for
+    // the tail whose deferred verification failed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_rejected_tail_leaves_no_archive_rows() {
+        use crate::engine::Engine;
+        use crate::primitives::NativePrimitives;
+        use dg_xch_core::blockchain::full_block::FullBlock;
+        use dg_xch_core::consensus::constants::MAINNET;
+        use dg_xch_stores::{BlockStore, SqliteStore};
+        use std::sync::Arc;
+
+        let base: FullBlock =
+            serde_json::from_str(include_str!("../../tests/fixtures/full_block_5000000.json"))
+                .expect("fixture");
+        let mut prev = Bytes32::from([0xB6; 32]);
+        let mut chain = Vec::new();
+        for h in 100u32..108 {
+            let mut b = base.clone();
+            b.reward_chain_block.height = h;
+            b.reward_chain_block.weight = 1_000_000 + u128::from(h) * 10;
+            b.foliage.prev_block_hash = prev;
+            prev = b.header_hash().expect("hash");
+            chain.push(b);
+        }
+        let tail_hash = chain.last().unwrap().header_hash().unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "sync_tail_rows_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = Arc::new(SqliteStore::open(&dir).await.expect("store opens"));
+        store.set_near_tip(false);
+        let mut chaser = super::Chaser::new(
+            Engine::new(store, NativePrimitives, MAINNET),
+            super::SyncConfig {
+                peers: 1,
+                window: 32,
+                batch: 32,
+                request_timeout: std::time::Duration::from_secs(20),
+                assume_valid: 10_000_000,
+            },
+        );
+        let staged = chaser
+            .stage_window_pre(chain, None)
+            .await
+            .expect("window stages");
+        let verdict = super::WindowVerdict {
+            confirm_upto: 4,
+            err: Some(
+                crate::error::NodeError::Invalid("INVALID_VDF at height 104 (window drain)".into())
+                    .into(),
+            ),
+            vdf_micros: 0,
+            sig_micros: 0,
+        };
+        let confirmed = chaser
+            .confirm_window_pre(staged, verdict)
+            .await
+            .expect("the store path succeeds; the rejection rides the outcome");
+        assert!(confirmed.rejection.is_some(), "the rejection surfaces");
+        assert_eq!(
+            confirmed.deltas.len(),
+            4,
+            "the confirmed prefix's deltas are delivered with the rejection — losing them \
+             skips the wallet and mempool side effects for blocks that committed"
+        );
+        assert!(
+            chaser
+                .engine()
+                .store()
+                .get_block_record(&tail_hash)
+                .await
+                .expect("record read")
+                .is_none(),
+            "a drain-rejected tail block left a durable archive row"
+        );
+    }
 
     fn ses(new_difficulty: Option<u64>, new_sub_slot_iters: Option<u64>) -> SubEpochSummary {
         SubEpochSummary {

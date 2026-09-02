@@ -77,9 +77,17 @@ async fn staging_the_next_window_before_the_confirm_matches_the_serial_path() {
         .expect("w2 stages against w1's uncommitted overlay");
     let constants = MAINNET;
     let v1 = drain_staged_window(&NativePrimitives, &constants, s1.take_drain_input());
-    let (p1, _) = piped.confirm_window_pre(s1, v1).await.expect("w1 confirms");
+    let p1 = piped
+        .confirm_window_pre(s1, v1)
+        .await
+        .expect("w1 confirms")
+        .peak;
     let v2 = drain_staged_window(&NativePrimitives, &constants, s2.take_drain_input());
-    let (p2, _) = piped.confirm_window_pre(s2, v2).await.expect("w2 confirms");
+    let p2 = piped
+        .confirm_window_pre(s2, v2)
+        .await
+        .expect("w2 confirms")
+        .peak;
 
     assert_eq!(p1, serial_p1, "window 1's confirmed peak diverges");
     assert_eq!(p2, serial_p2, "window 2's confirmed peak diverges");
@@ -162,5 +170,81 @@ async fn an_abandoned_dry_staged_window_leaves_no_trace_and_replays() {
         peak,
         Some((chain.last().unwrap().header_hash().unwrap(), 107)),
         "the abandoned window replays to its tip"
+    );
+}
+
+// A provided precompute must never widen what validation accepts: a block whose committed ref
+// list names a height with no generator anywhere on the chain is invalid inline, and must stay
+// invalid when a precompute (built without that ref) is handed in — the engine's refs-digest
+// check drops the mismatched precompute and the inline path rejects.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_precompute_cannot_smuggle_past_an_unresolvable_ref() {
+    use dg_xch_core::consensus::block_generator::transactions_generator_refs_root;
+    use dg_xch_node::engine::{PrecomputedBody, precompute_refs_digest, run_body_expensive};
+
+    let base = common::load_full_block(5_000_000);
+    let mut chain = build_chain(&base, 100, 107, common::synth_hash(0xad, 99));
+    let victim_height = 107;
+    {
+        let victim = chain.last_mut().unwrap();
+        victim.transactions_generator_ref_list = vec![99];
+        victim
+            .transactions_info
+            .as_mut()
+            .expect("fixture tx block carries transactions_info")
+            .generator_refs_root = transactions_generator_refs_root(&[99]).expect("refs root");
+    }
+    let victim = chain.last().unwrap().clone();
+    let (conds, verified) =
+        run_body_expensive(&NativePrimitives, &MAINNET, &victim, &[], false).expect("body runs");
+    let pre = PrecomputedBody {
+        conds,
+        agg_sig_verified: verified,
+        refs_digest: precompute_refs_digest(victim_height, &[], false),
+    };
+    let provided = std::collections::HashMap::from([(victim_height, pre)]);
+
+    let store = Arc::new(common::new_store().await);
+    store.set_near_tip(false);
+    let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
+    let err = chaser
+        .follow_blocks_reporting_pre(&chain, Some(provided))
+        .await
+        .expect_err("a ref to a generator-less height is invalid, precompute or not");
+    assert!(
+        format!("{err:?}").contains("GeneratorRefHasNoGenerator"),
+        "wrong rejection: {err:?}"
+    );
+}
+
+// A store failure inside the confirm must retract the staged overlay on its way out: the
+// unconfirmed window re-stages wholesale after the queue reset, and a stale height-keyed
+// overlay entry from the abandoned attempt must not shadow anything that stages later.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_confirm_store_failure_retracts_the_staged_overlay() {
+    use common::fault::FaultStore;
+    use dg_xch_node::sync::drain_staged_window;
+
+    let base = common::load_full_block(5_000_000);
+    let chain = build_chain(&base, 100, 107, common::synth_hash(0xae, 99));
+
+    let (store, fail_apply, _fail_set_peak) = FaultStore::new(common::new_store().await);
+    let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
+    let mut staged = chaser
+        .stage_window_pre(chain, None)
+        .await
+        .expect("window stages");
+    let constants = MAINNET;
+    let verdict = drain_staged_window(&NativePrimitives, &constants, staged.take_drain_input());
+
+    fail_apply.store(true, Ordering::Relaxed);
+    chaser
+        .confirm_window_pre(staged, verdict)
+        .await
+        .expect_err("the injected store fault surfaces");
+    let (_, _, overlay) = chaser.engine().collection_sizes();
+    assert_eq!(
+        overlay, 0,
+        "a confirm that failed in the store left {overlay} staged overlay entries resident"
     );
 }

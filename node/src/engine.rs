@@ -54,12 +54,32 @@ use std::collections::{HashMap, HashSet};
 // mid-window, walling the node with GeneratorRefHasNoGenerator; the per-window clear cannot.)
 
 /// The expensive PURE half of body validation (CLVM generator run + BLS aggregate verify),
-/// precomputed off-thread by the window pipeline. The CLVM flag ladder keys on the block's OWN
-/// height — fully known at precompute time — so a precomputation is always valid and never
-/// discarded.
+/// precomputed off-thread by the window pipeline. `refs_digest` binds the precompute to the
+/// exact inputs it ran with — height, signature decision, and every resolved ref generator's
+/// bytes — and the engine recomputes it against its OWN resolution at stage time: a mismatch
+/// drops the precompute and runs inline, so a stale one degrades, never changes a verdict.
 pub struct PrecomputedBody {
     pub conds: SpendBundleConditions,
     pub agg_sig_verified: bool,
+    pub refs_digest: Bytes32,
+}
+
+/// The binding digest for a body precompute: the block height, the signature-verification
+/// decision, and each resolved ref's (height, generator-bytes hash) in list order.
+#[must_use]
+pub fn precompute_refs_digest(
+    height: u32,
+    refs: &[GeneratorReference],
+    verify_sig: bool,
+) -> Bytes32 {
+    let mut buf = Vec::with_capacity(5 + refs.len() * 36);
+    buf.extend_from_slice(&height.to_le_bytes());
+    buf.push(u8::from(verify_sig));
+    for r in refs {
+        buf.extend_from_slice(&r.height.to_le_bytes());
+        buf.extend_from_slice(&hash_256(r.generator.to_bytes()));
+    }
+    Bytes32::new(hash_256(buf))
 }
 
 /// Run the pure expensive body ops for one transaction block: build the generator input exactly as
@@ -957,12 +977,9 @@ where
         // identity keys on the raw ref-list HEIGHTS, not the resolved generators). Re-resolving
         // here would re-read every referenced generator body from the store per staged block —
         // dead sequential reads on the sync hot path.
-        let generator_refs = if pre.is_some() {
-            Vec::new()
-        } else {
-            self.resolve_generator_refs(&block.transactions_generator_ref_list)
-                .await?
-        };
+        let generator_refs = self
+            .resolve_generator_refs(&block.transactions_generator_ref_list)
+            .await?;
         // Previous-TRANSACTION-block context for the time-lock conditions: ASSERT_HEIGHT/SECONDS
         // validate against the previous transaction block's height/timestamp, never this block's
         // own.
@@ -1207,6 +1224,11 @@ where
         &self,
         ref_list: &[u32],
     ) -> Result<Vec<GeneratorReference>, NodeError> {
+        // The consensus cap gates the list BEFORE any per-entry resolution: the list is
+        // peer-controlled, and each entry below costs a store point-read.
+        if ref_list.len() > self.constants.max_generator_ref_list_size as usize {
+            return Err(ChiaError::TooManyGeneratorRefs.into());
+        }
         let mut refs = Vec::with_capacity(ref_list.len());
         for (index, &height) in ref_list.iter().enumerate() {
             // Overlay first (`staged_generator` = in-window staged block, THEN the out-of-span seed
@@ -1336,9 +1358,14 @@ where
         if sf9 && !block.transactions_generator_ref_list.is_empty() {
             return Err(ChiaError::TooManyGeneratorRefs.into());
         }
-        // The expensive pure half — either handed in by the window pipeline's parallel precompute
-        // (always valid: the flag ladder keys on the block's own height) or run
-        // inline via the same shared function.
+        // The expensive pure half — handed in by the window pipeline's parallel precompute when
+        // its binding digest matches the refs THIS staging just resolved, run inline otherwise.
+        // A precompute built against different ref bytes (a snapshot the chain moved under) can
+        // therefore only degrade to a recompute, never change the verdict.
+        let verify_sig = block.height() >= self.assume_valid;
+        let pre = pre.filter(|p| {
+            p.refs_digest == precompute_refs_digest(block.height(), generator_refs, verify_sig)
+        });
         let (conds, sig_already_verified) = match pre {
             Some(p) => (p.conds, p.agg_sig_verified),
             None => run_body_expensive(

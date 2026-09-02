@@ -3216,17 +3216,25 @@ where
     }
 
     // Confirm half: the drain's verdict lands the window (archive + coins + peak, one
-    // transaction) and the per-peak side effects fire exactly as in the serial step.
+    // transaction) and the per-peak side effects fire exactly as in the serial step — for the
+    // confirmed prefix even when the tail was rejected; the rejection surfaces after, driving
+    // the same queue reset as before.
     async fn confirm_step_window(
         &self,
         window: dg_xch_node::sync::StagedWindow,
         verdict: dg_xch_node::sync::WindowVerdict,
     ) -> Result<Option<(Bytes32, u32)>, SyncError> {
-        let (peak, deltas) = {
+        let confirmed = {
             let mut chaser = self.chaser.lock().await;
             chaser.confirm_window_pre(window, verdict).await?
         };
-        self.finish_follow_step(peak, &deltas).await
+        let peak = self
+            .finish_follow_step(confirmed.peak, &confirmed.deltas)
+            .await?;
+        match confirmed.rejection {
+            Some(e) => Err(e),
+            None => Ok(peak),
+        }
     }
 
     /// The mirrored `short_sync_backtrack` step, driven when a follow
@@ -3719,58 +3727,6 @@ where
         let Some(validated) = self.validated_proof(&peers).await? else {
             return Ok(false);
         };
-        let start = h.saturating_sub(64);
-        let end = h.saturating_add(31);
-        // Peers reject RequestBlocks spans wider than 32, so the anchor span is fetched in
-        // 32-block chunks; a peer that fails any chunk is abandoned for the next peer.
-        let mut fetched = None;
-        'peers: for peer in &peers {
-            let source = OutboundPeerSource::new(peer.clone(), REQUEST_TIMEOUT);
-            let mut span = Vec::new();
-            let mut lo = start;
-            while lo <= end {
-                let hi = end.min(lo + 31);
-                match source.fetch_range(lo, hi).await {
-                    Ok(blocks) if !blocks.is_empty() => span.extend(blocks),
-                    Ok(_) | Err(_) => continue 'peers,
-                }
-                lo = hi + 1;
-            }
-            fetched = Some(span);
-            break;
-        }
-        let Some(mut blocks) = fetched else {
-            warn!(
-                "sync-from anchor: no peer served the anchor span; retrying start={} end={} peers={}",
-                start,
-                end,
-                peers.len()
-            );
-            return Ok(false);
-        };
-        blocks.sort_by_key(dg_xch_core::blockchain::full_block::FullBlock::height);
-        let headers: Vec<_> = blocks
-            .iter()
-            .map(dg_xch_node::header_block_from_full_block)
-            .collect();
-        let mut chaser = self.chaser.lock().await;
-        let schedule = chaser.epoch_schedule(&validated.summaries);
-        chaser
-            .sync_headers(&headers, &schedule, &validated.summaries)
-            .await
-            .map_err(|e| Error::other(e.to_string()))?;
-        // The proof's summary chain outlives the anchor span: the first included-SES block ABOVE
-        // the span has neither local ancestry nor a headers-first candidate to serve its summary
-        // — the engine falls back to this chain, hash-gated as ever.
-        chaser.seed_summary_chain(validated.summaries.to_vec());
-        // The anchor span alone cannot serve the FIRST epoch retarget the follow hits: its
-        // `get_second_to_last_transaction_block_in_previous_epoch` walk reads records back past
-        // the previous epoch surpass — up to a full epoch below the span (the 4,575,744-boundary
-        // wall: --sync-from=4575000 seeded [4574936, 4575031], staging 4,575,758 walked to
-        // 4,571,135 and died on "block record not found"). Backfill those records headers-first
-        // now, exactly as the from-zero bulk sync does after its weight-proof landing. Fail
-        // closed: without them the follow WILL wall at the boundary, so retry the anchor next
-        // tick rather than establish a known-incomplete one.
         let sources: Vec<Arc<dyn BlockRangeSource>> = peers
             .iter()
             .map(|p| {
@@ -3778,25 +3734,89 @@ where
                     as Arc<dyn BlockRangeSource>
             })
             .collect();
-        match chaser
-            .backfill_epoch_depth(&sources, &validated.summaries, start)
-            .await
-        {
-            Ok(n) => info!("sync-from epoch-depth backfill complete records={}", n),
-            Err(e) => {
+        self.anchor_with_sources(&sources, &validated, h).await
+    }
+
+    // The source-driven half of the anchor: every candidate peer gets one shot per attempt —
+    // a span the header pass rejects burns only its serving peer, and the NEXT peer is tried in
+    // the same call, so one bad-but-fast peer can never hold the anchor un-established.
+    async fn anchor_with_sources(
+        &self,
+        sources: &[Arc<dyn BlockRangeSource>],
+        validated: &ValidatedTip,
+        h: u32,
+    ) -> Result<bool, Error> {
+        let start = h.saturating_sub(64);
+        let end = h.saturating_add(31);
+        // Peers reject RequestBlocks spans wider than 32, so the anchor span is fetched in
+        // 32-block chunks; a peer that fails any chunk is abandoned for the next peer.
+        'sources: for source in sources {
+            let mut span = Vec::new();
+            let mut lo = start;
+            while lo <= end {
+                let hi = end.min(lo + 31);
+                match source.fetch_range(lo, hi).await {
+                    Ok(blocks) if !blocks.is_empty() => span.extend(blocks),
+                    Ok(_) | Err(_) => continue 'sources,
+                }
+                lo = hi + 1;
+            }
+            span.sort_by_key(dg_xch_core::blockchain::full_block::FullBlock::height);
+            let headers: Vec<_> = span
+                .iter()
+                .map(dg_xch_node::header_block_from_full_block)
+                .collect();
+            let mut chaser = self.chaser.lock().await;
+            let schedule = chaser.epoch_schedule(&validated.summaries);
+            if let Err(e) = chaser
+                .sync_headers(&headers, &schedule, &validated.summaries)
+                .await
+            {
                 warn!(
-                    "sync-from epoch-depth backfill failed; retrying anchor next tick error={}",
+                    "sync-from anchor: header pass rejected the span from peer {}; trying the next peer error={}",
+                    source.peer_id(),
                     e
                 );
-                return Ok(false);
+                continue 'sources;
             }
+            // The proof's summary chain outlives the anchor span: the first included-SES block ABOVE
+            // the span has neither local ancestry nor a headers-first candidate to serve its summary
+            // — the engine falls back to this chain, hash-gated as ever.
+            chaser.seed_summary_chain(validated.summaries.to_vec());
+            // The anchor span alone cannot serve the FIRST epoch retarget the follow hits: its
+            // `get_second_to_last_transaction_block_in_previous_epoch` walk reads records back past
+            // the previous epoch surpass — up to a full epoch below the span. Backfill those
+            // records headers-first now, exactly as the from-zero bulk sync does after its
+            // weight-proof landing. Fail closed: without them the follow WILL wall at the
+            // boundary, so retry the anchor next tick rather than establish a known-incomplete
+            // one.
+            match chaser
+                .backfill_epoch_depth(sources, &validated.summaries, start)
+                .await
+            {
+                Ok(n) => info!("sync-from epoch-depth backfill complete records={}", n),
+                Err(e) => {
+                    warn!(
+                        "sync-from epoch-depth backfill failed; retrying anchor next tick error={}",
+                        e
+                    );
+                    return Ok(false);
+                }
+            }
+            if let Err(e) = chaser.warm_engine_cache().await {
+                warn!("sync-from cache warm failed error={}", e);
+            }
+            *self.sync_from_anchor.write().await = Some(start);
+            info!("sync-from anchor established anchor={} target={}", start, h);
+            return Ok(true);
         }
-        if let Err(e) = chaser.warm_engine_cache().await {
-            warn!("sync-from cache warm failed error={}", e);
-        }
-        *self.sync_from_anchor.write().await = Some(start);
-        info!("sync-from anchor established anchor={} target={}", start, h);
-        Ok(true)
+        warn!(
+            "sync-from anchor: no peer served a valid anchor span; retrying start={} end={} peers={}",
+            start,
+            end,
+            sources.len()
+        );
+        Ok(false)
     }
 
     async fn local_peak_weight(&self) -> Option<u128> {
@@ -4590,9 +4610,30 @@ async fn recovery_source(
     )
 }
 
+// A served out-of-span ref block yields its generator only when the bytes hash to the
+// generator root the block's own transactions_info committed to — a serving peer cannot
+// substitute a generator without re-committing the block.
+fn verified_seed_generator(
+    block: &dg_xch_core::blockchain::full_block::FullBlock,
+    height: u32,
+) -> Option<(Bytes32, dg_xch_core::clvm::program::SerializedProgram)> {
+    if block.height() != height {
+        return None;
+    }
+    let ti = block.transactions_info.as_ref()?;
+    let generator = block.transactions_generator.clone()?;
+    if dg_xch_core::consensus::block_generator::transactions_generator_root(&generator)
+        != ti.generator_root
+    {
+        return None;
+    }
+    block.header_hash().ok().map(|hash| (hash, generator))
+}
+
 async fn fetch_seed_refs<S: BlockStore + CoinStore + Send + Sync + 'static>(
     node: &Arc<Node<S>>,
     source: &Arc<dyn BlockRangeSource>,
+    witness: Option<&Arc<dyn BlockRangeSource>>,
     heights: &[u32],
 ) -> Vec<(u32, dg_xch_core::clvm::program::SerializedProgram)> {
     let mut out = Vec::with_capacity(heights.len());
@@ -4613,17 +4654,49 @@ async fn fetch_seed_refs<S: BlockStore + CoinStore + Send + Sync + 'static>(
                     warn!("recovery peer failed to serve ref block height={}", h);
                     continue;
                 };
-                let Some(generator) = fetched
-                    .into_iter()
-                    .find(|b| b.height() == h)
-                    .and_then(|b| b.transactions_generator)
+                let Some((header_hash, generator)) =
+                    fetched.iter().find_map(|b| verified_seed_generator(b, h))
                 else {
                     warn!(
-                        "recovery peer served no generator for ref block height={}",
+                        "recovery peer served no committed generator for ref block height={}",
                         h
                     );
                     continue;
                 };
+                // Bind the served block to the chain where a record exists (the epoch-depth
+                // backfill covers the anchor's neighborhood); below every record, require a
+                // second peer to serve the identical generator.
+                match node.store.get_block_record_by_height(h).await {
+                    Ok(Some(record)) => {
+                        if record.header_hash != header_hash {
+                            warn!("recovery peer served an off-chain ref block height={}", h);
+                            continue;
+                        }
+                    }
+                    _ => {
+                        if let Some(witness) = witness {
+                            let corroborated = match witness.fetch_range(h, h).await {
+                                Ok(blocks) => blocks
+                                    .iter()
+                                    .find_map(|b| verified_seed_generator(b, h))
+                                    .is_some_and(|(_, g)| g == generator),
+                                Err(_) => false,
+                            };
+                            if !corroborated {
+                                warn!(
+                                    "recovery peers disagree on ref block height={}; dropping",
+                                    h
+                                );
+                                continue;
+                            }
+                        } else {
+                            warn!(
+                                "single-peer ref block height={} accepted without a witness",
+                                h
+                            );
+                        }
+                    }
+                }
                 info!(
                     "fetched out-of-span generator ref for the consumer height={}",
                     h
@@ -4664,7 +4737,12 @@ async fn handle_recovery<S: BlockStore + CoinStore + Send + Sync + 'static>(
     match req {
         RecoveryRequest::SeedRefs { heights, reply } => {
             let generators = match recovery_source(registry, rotation).await {
-                Some(source) => fetch_seed_refs(node, &source, &heights).await,
+                Some(source) => {
+                    let witness = recovery_source(registry, rotation)
+                        .await
+                        .filter(|w| w.peer_id() != source.peer_id());
+                    fetch_seed_refs(node, &source, witness.as_ref(), &heights).await
+                }
                 None => Vec::new(),
             };
             let _ = reply.send(generators);
@@ -4780,7 +4858,7 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
     // Cross-window body pipeline: while window N runs its stage/vdf/sig/confirm phases, window
     // N+1's body precompute (pure CPU over blocks already resident in the queue) runs here in a
     // blocking task. Keyed by the window's first height so a rebase/reorg between spawn and use
-    // discards it (worst case: wasted compute, never a stale verdict — the engine's flag-key
+    // discards it (worst case: wasted compute, never a stale verdict — the engine's refs-digest
     // guard re-verifies every precompute at stage time).
     let (pipe_constants, pipe_assume_valid, pipe_metrics) = {
         let chaser = node.chaser.lock().await;
@@ -5002,6 +5080,7 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
                     }
                 }
                 Err(e) if e.is_orphan() => {
+                    node.seed_ref_cache.lock().await.clear();
                     warn!(
                         "consumer window orphaned; delegating backtrack to the driver from={} to={} error={}",
                         sfrom, sto, e
@@ -5030,6 +5109,9 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
                     }
                 }
                 Err(e) => {
+                    // A failed window may have validated against a poisoned seed ref: drop the
+                    // cache so the retry re-fetches from the next rotation peer.
+                    node.seed_ref_cache.lock().await.clear();
                     warn!(
                         "consumer follow step failed; requesting a queue reset from={} to={} error={}",
                         sfrom, sto, e
@@ -7770,6 +7852,226 @@ mod tests {
     use super::*;
     use dg_xch_core::blockchain::coin_record::CoinRecord;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn seed_fixture_block() -> dg_xch_core::blockchain::full_block::FullBlock {
+        serde_json::from_str(include_str!(
+            "../../node/tests/fixtures/full_block_5000000.json"
+        ))
+        .expect("full block fixture")
+    }
+
+    struct ServedBlocks(Vec<dg_xch_core::blockchain::full_block::FullBlock>);
+
+    #[async_trait::async_trait]
+    impl BlockRangeSource for ServedBlocks {
+        fn peer_id(&self) -> u64 {
+            1
+        }
+        fn is_closed(&self) -> bool {
+            false
+        }
+        async fn fetch_range(
+            &self,
+            start: u32,
+            end: u32,
+        ) -> Result<Vec<dg_xch_core::blockchain::full_block::FullBlock>, SyncError> {
+            Ok(self
+                .0
+                .iter()
+                .filter(|b| b.height() >= start && b.height() <= end)
+                .cloned()
+                .collect())
+        }
+    }
+
+    async fn seed_test_node() -> Arc<Node<SqliteStore>> {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let db =
+            std::env::temp_dir().join(format!("fn_seedref_{}_{nanos}.sqlite", std::process::id()));
+        Arc::new(
+            Node::boot(Config {
+                p2p: P2pSettings::default(),
+                listen: "127.0.0.1:0".parse().unwrap(),
+                rpc: "127.0.0.1:0".parse().unwrap(),
+                introducer: None,
+                manual_peers: Vec::new(),
+                advertise: None,
+                backend: Backend::Sqlite(db),
+                network_id: "mainnet".to_string(),
+                metrics: None,
+                capture_dir: None,
+                genesis_sync: false,
+                sync_from: 4_999_000,
+                uncompact: false,
+                prefetch_memory_mb: None,
+                prefetch_max_inflight: None,
+                trusted_peers: Vec::new(),
+                trusted_cidrs: Vec::new(),
+                rpc_tls: crate::config::RpcTlsMode::Local,
+                debug_endpoints: false,
+            })
+            .await
+            .expect("boot"),
+        )
+    }
+
+    struct CountingSource {
+        blocks: Vec<dg_xch_core::blockchain::full_block::FullBlock>,
+        calls: std::sync::atomic::AtomicUsize,
+        id: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl BlockRangeSource for CountingSource {
+        fn peer_id(&self) -> u64 {
+            self.id
+        }
+        fn is_closed(&self) -> bool {
+            false
+        }
+        async fn fetch_range(
+            &self,
+            start: u32,
+            end: u32,
+        ) -> Result<Vec<dg_xch_core::blockchain::full_block::FullBlock>, SyncError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(self
+                .blocks
+                .iter()
+                .filter(|b| b.height() >= start && b.height() <= end)
+                .cloned()
+                .collect())
+        }
+    }
+
+    // One peer serving a span the header pass rejects must not exhaust the anchor attempt:
+    // the next peer's span is tried in the same call.
+    #[tokio::test]
+    async fn a_rejected_anchor_span_moves_to_the_next_peer_in_the_same_attempt() {
+        use dg_xch_core::blockchain::challenge_chain_subslot::ChallengeChainSubSlot;
+        use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
+        use dg_xch_core::blockchain::end_of_subslot_bundle::EndOfSubSlotBundle;
+        use dg_xch_core::blockchain::reward_chain_subslot::RewardChainSubSlot;
+        use dg_xch_core::blockchain::subslot_proofs::SubSlotProofs;
+        use dg_xch_core::blockchain::vdf_info::VdfInfo;
+        use dg_xch_core::blockchain::vdf_proof::VdfProof;
+
+        let node = seed_test_node().await;
+        let h = 220_000u32;
+        let base = seed_fixture_block();
+        let span = |declare_ses: bool| -> Vec<dg_xch_core::blockchain::full_block::FullBlock> {
+            let mut blocks: Vec<_> = (h - 64..=h + 31)
+                .map(|height| {
+                    let mut b = base.clone();
+                    b.reward_chain_block.height = height;
+                    b
+                })
+                .collect();
+            if declare_ses {
+                let vdf = VdfInfo {
+                    challenge: Bytes32::default(),
+                    number_of_iterations: 1,
+                    output: ClassgroupElement::get_default_element(),
+                };
+                let proof = VdfProof {
+                    witness_type: 0,
+                    witness: dg_xch_core::blockchain::unsized_bytes::UnsizedBytes::default(),
+                    normalized_to_identity: false,
+                };
+                blocks[0].finished_sub_slots = vec![EndOfSubSlotBundle {
+                    challenge_chain: ChallengeChainSubSlot {
+                        challenge_chain_end_of_slot_vdf: vdf,
+                        infused_challenge_chain_sub_slot_hash: None,
+                        subepoch_summary_hash: Some(Bytes32::from([0x5e; 32])),
+                        new_sub_slot_iters: None,
+                        new_difficulty: None,
+                    },
+                    infused_challenge_chain: None,
+                    reward_chain: RewardChainSubSlot {
+                        end_of_slot_vdf: vdf,
+                        challenge_chain_sub_slot_hash: Bytes32::default(),
+                        infused_challenge_chain_sub_slot_hash: None,
+                        deficit: 16,
+                    },
+                    proofs: SubSlotProofs {
+                        challenge_chain_slot_proof: proof.clone(),
+                        infused_challenge_chain_slot_proof: None,
+                        reward_chain_slot_proof: proof,
+                    },
+                }];
+            }
+            blocks
+        };
+        // Peer 1's first block declares a sub-epoch summary the weight proof does not carry —
+        // the header pass rejects that span outright; peer 2's span is merely unanchorable
+        // (nothing below it to backfill).
+        let first = Arc::new(CountingSource {
+            blocks: span(true),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            id: 1,
+        });
+        let second = Arc::new(CountingSource {
+            blocks: span(false),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            id: 2,
+        });
+        let sources: Vec<Arc<dyn BlockRangeSource>> = vec![
+            first.clone() as Arc<dyn BlockRangeSource>,
+            second.clone() as _,
+        ];
+        let validated = ValidatedTip {
+            tip: Bytes32::default(),
+            wp: Arc::new(WeightProof {
+                sub_epochs: Vec::new(),
+                sub_epoch_segments: Vec::new(),
+                recent_chain_data: Vec::new(),
+            }),
+            summaries: Arc::new(Vec::new()),
+        };
+        let anchored = node
+            .anchor_with_sources(&sources, &validated, h)
+            .await
+            .expect("a rejected span fails over instead of failing the attempt");
+        assert!(!anchored, "junk spans cannot anchor");
+        assert!(
+            second.calls.load(Ordering::Relaxed) > 0,
+            "a span the header pass rejected must burn only its peer — the second peer's span \
+             is tried in the same attempt"
+        );
+    }
+
+    // A recovery peer must not be able to substitute the generator of an out-of-span ref
+    // block: the served bytes are accepted only when they hash to the generator root the
+    // block's own transactions_info committed to.
+    #[tokio::test]
+    async fn seed_ref_fetch_rejects_a_substituted_generator() {
+        let node = seed_test_node().await;
+        let good = seed_fixture_block();
+        let h = good.height();
+        let mut tampered = good.clone();
+        tampered.transactions_generator =
+            Some(dg_xch_core::clvm::program::SerializedProgram::from(vec![
+                0x01, 0x02, 0x03,
+            ]));
+        let source: Arc<dyn BlockRangeSource> = Arc::new(ServedBlocks(vec![tampered]));
+        let out = fetch_seed_refs(&node, &source, None, &[h]).await;
+        assert!(
+            out.is_empty(),
+            "a generator that does not match the block's committed root must be refused"
+        );
+        assert!(
+            node.seed_ref_cache.lock().await.is_empty(),
+            "a refused generator must not enter the seed cache"
+        );
+
+        let source: Arc<dyn BlockRangeSource> = Arc::new(ServedBlocks(vec![good.clone()]));
+        let out = fetch_seed_refs(&node, &source, None, &[h]).await;
+        assert_eq!(out.len(), 1, "the committed generator is accepted");
+        assert_eq!(out[0].0, h);
+    }
 
     // A subscribed coin spent on branch A must read UNSPENT again after a reorg to branch B where
     // the spend never happened, which means delivering the POST-ROLLBACK records to subscribers.
