@@ -322,6 +322,14 @@ pub struct SyncMetrics {
     // (window.body runs only the generator blocks).
     pub window_blocks: AtomicU64,
     pub window_tx_blocks: AtomicU64,
+    // How many of the last window's bodies arrived precomputed from the driver's cross-window
+    // pipeline (the rest ran inline in window.body), and how long the driver waited joining that
+    // precompute before it could start the window.
+    pub window_body_provided: AtomicU64,
+    pub window_pre_wait_micros: AtomicU64,
+    // How long the driver's confirm waited on the previous window's spawned drain — the
+    // stage-ahead pipeline's backpressure signal (wall time is drain-bound when this is large).
+    pub window_drain_wait_micros: AtomicU64,
     // Depth of the most recent reorg (peak height minus fork height; 0 = none yet).
     pub last_reorg_depth: AtomicU64,
     // Engine collection sizes sampled each follow window.
@@ -503,6 +511,24 @@ where
     #[must_use]
     pub fn constants(&self) -> dg_xch_core::consensus::constants::ConsensusConstants {
         *self.engine.constants()
+    }
+    /// Whether the store is in the near-tip band — the daemon's stage-ahead pipeline drains and
+    /// falls back to the serial per-block path there (farming latency beats throughput at tip).
+    #[must_use]
+    pub fn near_tip(&self) -> bool {
+        self.engine.store().near_tip()
+    }
+
+    /// Seed the engine's weight-proof-attested summary chain — the mid-chain anchor's
+    /// last-resort source for an included SES whose sub-epoch lies below the anchor span.
+    pub fn seed_summary_chain(&mut self, summaries: Vec<SubEpochSummary>) {
+        self.engine.seed_summary_chain(summaries);
+    }
+
+    /// Retract every staged-but-unconfirmed overlay entry — the pipeline's teardown after a
+    /// stage failure (the failing window re-stages wholesale after the queue reset).
+    pub fn clear_staged_overlay(&mut self) {
+        self.engine.clear_staged_overlay();
     }
 
     #[must_use]
@@ -1128,6 +1154,33 @@ where
         missing.into_iter().collect()
     }
 
+    /// Confirmed-store generators for `blocks`' out-of-span back-refs — the window pipeline
+    /// resolves compression refs below the validating window from the confirmed chain (final in
+    /// a forward sync). Refs the store cannot serve yet (e.g. into the window currently
+    /// validating) are omitted; those blocks take the engine's inline path.
+    pub async fn confirmed_ref_generators(
+        &self,
+        blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
+    ) -> std::collections::HashMap<u32, dg_xch_core::clvm::program::SerializedProgram> {
+        let in_span: std::collections::HashSet<u32> = blocks
+            .iter()
+            .filter(|b| b.transactions_generator.is_some())
+            .map(FullBlock::height)
+            .collect();
+        let mut out = std::collections::HashMap::new();
+        for block in blocks {
+            for r in &block.transactions_generator_ref_list {
+                if in_span.contains(r) || out.contains_key(r) {
+                    continue;
+                }
+                if let Ok(Some(g)) = self.engine.store().get_generator_at_height(*r).await {
+                    out.insert(*r, g);
+                }
+            }
+        }
+        out
+    }
+
     /// Seed an out-of-span generator ref into the engine's staged overlay — see
     /// [`Self::missing_ref_heights`].
     pub fn seed_ref_generator(
@@ -1157,11 +1210,55 @@ where
         self.follow_blocks_reporting_pre(blocks, None).await
     }
 
+    /// [`Self::follow_blocks_reporting`] with window bodies the caller precomputed while the
+    /// PREVIOUS window validated (the cross-window body pipeline). `provided` entries skip the
+    /// inline precompute; tx blocks not covered take the inline path unchanged, and the engine's
+    /// stage-time flag-key check still guards every precompute, so a stale entry degrades to an
+    /// inline recompute, never to a wrong verdict.
+    ///
+    /// Serial composition of the stage-ahead pipeline halves ([`Self::stage_window_pre`], the pure
+    /// [`drain_staged_window`], [`Self::confirm_window_pre`]) — behavior-identical to the
+    /// serial path for every caller that does not pipeline.
     pub async fn follow_blocks_reporting_pre(
         &mut self,
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
         provided: Option<std::collections::HashMap<u32, crate::engine::PrecomputedBody>>,
     ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+        let mut window = match self.stage_window_pre(blocks.to_vec(), provided).await {
+            Ok(w) => w,
+            Err(e) => {
+                self.engine.clear_staged_overlay();
+                return Err(e);
+            }
+        };
+        let input = window.take_drain_input();
+        let verdict = {
+            let primitives = self.engine.primitives();
+            let constants = *self.engine.constants();
+            drain_staged_window(primitives, &constants, input)
+        };
+        self.confirm_window_pre(window, verdict).await
+    }
+
+    /// Stage a whole window into the engine's overlay WITHOUT touching the writer or running the
+    /// deferred drains — the first third of the follow step, separable so the daemon can stage
+    /// window N+1 while window N's drain still owns the CPU and window N's confirm still owns the
+    /// writer. Near the tip the per-block staging path (its own archive commit per block) runs
+    /// instead and the returned window is marked `archive_written`.
+    ///
+    /// A mid-window stage rejection is carried IN the returned window (`stage_err`) — the staged
+    /// prefix still confirms. An `Err` here (a poisoned sink, a preload/store failure) leaves the
+    /// overlay for the CALLER to clear: the pipeline must confirm its in-flight predecessor
+    /// before retracting shared staged state.
+    ///
+    /// # Errors
+    /// Returns [`SyncError`] on a store failure or a poisoned staging sink (fail closed: a lost
+    /// sink could otherwise confirm blocks with their VDF verification silently skipped).
+    pub async fn stage_window_pre(
+        &mut self,
+        blocks: Vec<dg_xch_core::blockchain::full_block::FullBlock>,
+        provided: Option<std::collections::HashMap<u32, crate::engine::PrecomputedBody>>,
+    ) -> Result<StagedWindow, SyncError> {
         {
             let (cache, pending, staged) = self.engine.collection_sizes();
             self.metrics
@@ -1187,7 +1284,7 @@ where
                 bool,
             )> = Vec::new();
             let mut tx_total = 0u64;
-            for block in blocks {
+            for block in &blocks {
                 if !block.is_transaction_block() || block.transactions_generator.is_none() {
                     continue;
                 }
@@ -1198,7 +1295,7 @@ where
                 {
                     continue;
                 }
-                // Refs: in-window first, confirmed store second; unresolvable → skip precompute
+                // Refs: in-window first, confirmed store second; unresolvable -> skip precompute
                 // (the engine's inline path reports the real error).
                 let mut refs = Vec::with_capacity(block.transactions_generator_ref_list.len());
                 let mut ok = true;
@@ -1245,6 +1342,10 @@ where
             self.metrics
                 .window_tx_blocks
                 .store(tx_total, Ordering::Relaxed);
+            self.metrics.window_body_provided.store(
+                provided.as_ref().map_or(0, std::collections::HashMap::len) as u64,
+                Ordering::Relaxed,
+            );
             if jobs.is_empty() {
                 self.metrics.window_body_micros.store(0, Ordering::Relaxed);
                 std::collections::HashMap::new()
@@ -1271,32 +1372,29 @@ where
         // Each staged block carries its two window-queue high-water marks: the VDF-proof mark and
         // the header-signature mark. On a drain failure the per-block slice `[start..hi]` is exactly
         // that block's deferred work, so the batch attributes the failing height precisely.
-        let mut staged: Vec<(BlockDelta, usize, usize)> = Vec::new();
+        let mut staged: Vec<(BlockDelta, usize, usize, usize)> = Vec::new();
         let mut stage_err: Option<SyncError> = None;
-        // Phase-aware staging commit granularity: near the tip each staged block commits its own
-        // archive transaction; during bulk catch-up the whole window's archive rows accumulate
-        // into one transaction, committed once below. The batch opens lazily at the first block
-        // that actually stages.
+        // Phase-aware staging: near the tip each staged block commits its own archive transaction
+        // (unchanged); during bulk catch-up NO archive row is written here — the confirm persists
+        // them inside its single window transaction, so a concurrently-open confirm never contends
+        // this staging for the writer.
         let per_block_staging = self.engine.store().near_tip();
-        let mut window_batch: Option<dg_xch_stores::BatchHandle> = None;
         let stage_started = std::time::Instant::now();
         // Batch the loop's per-block store reads for the whole window (one candidate multi-get +
         // one peak read) so the staging loop awaits no per-block point reads.
-        self.engine.preload_stage_context(blocks).await?;
-        for block in blocks {
+        self.engine.preload_stage_context(&blocks).await?;
+        for (bi, block) in blocks.iter().enumerate() {
             let pre = pre_bodies.remove(&block.height());
             let outcome = if per_block_staging {
                 self.engine.stage_block_pre(block, &sink, pre).await
             } else {
-                self.engine
-                    .stage_block_pre_in(block, &sink, pre, &mut window_batch)
-                    .await
+                self.engine.stage_block_pre_dry(block, &sink, pre).await
             };
             match outcome {
                 Ok(Some(delta)) => {
                     let vdf_mark = sink.vdf.lock().map(|q| q.len()).unwrap_or(0);
                     let sig_mark = sink.sig.lock().map(|q| q.len()).unwrap_or(0);
-                    staged.push((delta, vdf_mark, sig_mark));
+                    staged.push((delta, vdf_mark, sig_mark, bi));
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -1305,12 +1403,6 @@ where
                 }
             }
         }
-        // The window staging transaction is not committed here: it is carried (still open) into
-        // `confirm_staged_batch_in`, which folds coins + set_peak into the same transaction —
-        // one fsync per window, with archive-before-peak ordering satisfied inside it. On any
-        // error path before the confirm the batch is dropped and `begin()`'s rollback guard
-        // clears it; the window re-stages wholesale next tick.
-        //
         // The staging loop is the read context's only consumer: drop it here so no later path
         // can consult this window's snapshot.
         self.engine.clear_stage_preload();
@@ -1322,111 +1414,73 @@ where
         // A poisoned sink (a panicked staging thread) must fail the window, never yield an empty
         // queue — that would confirm every staged block with its VDF verification silently
         // skipped. Fail closed; the unconfirmed window re-stages next tick.
-        let (queue, sig_queue) = match drain_header_sink(sink) {
-            Ok(q) => q,
-            Err(e) => {
-                self.engine.clear_staged_overlay();
-                return Err(e);
-            }
-        };
-        let mut confirm_upto = staged.len();
-        let mut vdf_err: Option<SyncError> = None;
-        if !queue.is_empty() {
-            log::debug!("window.vdf proofs={} blocks={}", queue.len(), staged.len());
-            {
-                let vdf_started = std::time::Instant::now();
-                if !self.engine.verify_vdf_window(queue.clone()) {
-                    let mut start = 0usize;
-                    confirm_upto = 0;
-                    for (i, (delta, hi, _)) in staged.iter().enumerate() {
-                        if !self.engine.verify_vdf_window(queue[start..*hi].to_vec()) {
-                            confirm_upto = i;
-                            vdf_err = Some(
-                                crate::error::NodeError::Invalid(format!(
-                                    "INVALID_VDF at height {} (window drain)",
-                                    delta.height
-                                ))
-                                .into(),
-                            );
-                            break;
-                        }
-                        start = *hi;
-                    }
-                    if vdf_err.is_none() {
-                        vdf_err = Some(
-                            crate::error::NodeError::Invalid(
-                                "INVALID_VDF in window drain (unattributed)".to_string(),
-                            )
-                            .into(),
-                        );
-                    }
-                }
-                self.metrics
-                    .window_vdf_micros
-                    .store(vdf_started.elapsed().as_micros() as u64, Ordering::Relaxed);
-            }
-        }
+        let (queue, sig_queue) = drain_header_sink(sink)?;
+        let from = blocks.first().map_or(0, FullBlock::height);
+        let to = blocks.last().map_or(0, FullBlock::height);
+        Ok(StagedWindow {
+            from,
+            to,
+            blocks,
+            staged,
+            queue,
+            sig_queue,
+            stage_err,
+            archive_written: per_block_staging,
+        })
+    }
 
-        let mut sig_err: Option<SyncError> = None;
-        if !sig_queue.is_empty() {
-            log::debug!(
-                "window.sig sigs={} blocks={}",
-                sig_queue.len(),
-                staged.len()
-            );
-            {
-                let sig_started = std::time::Instant::now();
-                if !self.engine.verify_sig_window(&sig_queue) {
-                    let mut start = 0usize;
-                    let mut sig_confirm_upto = 0usize;
-                    for (i, (delta, _, hi)) in staged.iter().enumerate() {
-                        if let Some(tag) = crate::header::first_failing_sig(&sig_queue[start..*hi])
-                        {
-                            sig_confirm_upto = i;
-                            sig_err = Some(
-                                crate::error::NodeError::Invalid(format!(
-                                    "{} at height {} (window drain)",
-                                    tag.rejection(),
-                                    delta.height
-                                ))
-                                .into(),
-                            );
-                            break;
-                        }
-                        start = *hi;
-                    }
-                    if sig_err.is_none() {
-                        sig_err = Some(
-                            crate::error::NodeError::Invalid(
-                                "INVALID_HEADER_SIGNATURE in window drain (unattributed)"
-                                    .to_string(),
-                            )
-                            .into(),
-                        );
-                    }
-                    // A sig failure lowers the confirm boundary only if it is earlier than the
-                    // VDF-determined one.
-                    if sig_confirm_upto < confirm_upto {
-                        confirm_upto = sig_confirm_upto;
-                        vdf_err = sig_err.take();
-                    }
-                }
-                self.metrics
-                    .window_sig_micros
-                    .store(sig_started.elapsed().as_micros() as u64, Ordering::Relaxed);
-            }
+    /// The confirm third of the follow step: persist the dry-staged archive rows and the window's
+    /// coins + peak in ONE transaction, gated by the drain's verdict. Behavior (fork choice,
+    /// error precedence, reported deltas) matches the serial path byte for byte.
+    ///
+    /// # Errors
+    /// Returns [`SyncError`] if a block failed validation in stage or drain, or the store errors.
+    pub async fn confirm_window_pre(
+        &mut self,
+        window: StagedWindow,
+        verdict: WindowVerdict,
+    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+        self.metrics
+            .window_vdf_micros
+            .store(verdict.vdf_micros, Ordering::Relaxed);
+        self.metrics
+            .window_sig_micros
+            .store(verdict.sig_micros, Ordering::Relaxed);
+        let StagedWindow {
+            blocks,
+            mut staged,
+            stage_err,
+            archive_written,
+            ..
+        } = window;
+        let confirm_upto = verdict.confirm_upto.min(staged.len());
+        let vdf_err = verdict.err;
+        let confirm_started = std::time::Instant::now();
+        // Deferred archive persistence: EVERY staged row lands (the confirmed prefix plus any
+        // rejected tail's candidates — matching the batch the staging loop used to carry), before
+        // coins + set_peak in the same transaction.
+        let mut window_batch: Option<dg_xch_stores::BatchHandle> = None;
+        if !archive_written && !staged.is_empty() {
+            let mut batch = self.engine.store().begin().await?;
+            let rows: Vec<(&FullBlock, &BlockDelta)> = staged
+                .iter()
+                .map(|(delta, _, _, bi)| (&blocks[*bi], delta))
+                .collect();
+            self.engine
+                .persist_archive_window(&rows, &mut batch)
+                .await?;
+            window_batch = Some(batch);
         }
-
         // One store batch confirms the whole window; the engine falls back to per-block fork
         // choice the moment a delta isn't a plain extension.
-        let to_confirm: Vec<BlockDelta> = staged.drain(..confirm_upto).map(|(d, _, _)| d).collect();
+        let to_confirm: Vec<BlockDelta> =
+            staged.drain(..confirm_upto).map(|(d, _, _, _)| d).collect();
         let reported: Vec<BlockDelta> = to_confirm.clone();
         let mut deltas = Vec::new();
         // A stale reorg report from a non-reporting confirm path must never mis-attach to this
         // window's outcomes: only reports pushed by the batch below are consumed by the expansion.
         self.engine.clear_reorg_reports();
         log::debug!("window.confirm blocks={}", to_confirm.len());
-        let confirm_started = std::time::Instant::now();
         let outcomes = self
             .engine
             .confirm_staged_batch_in(to_confirm, window_batch.take())
@@ -1741,6 +1795,179 @@ pub fn drain_header_sink(
 /// Workers are bounded by the core count, not the job count: each generator run holds its own
 /// large CLVM heap, so a thread per transaction block would oversubscribe the CPUs and multiply
 /// peak memory by the window size.
+/// A window staged into the engine's overlay but not yet drained or confirmed — the unit the
+/// daemon's stage-ahead pipeline carries between iterations. During bulk catch-up its archive
+/// rows are NOT yet persisted (they land inside the confirm transaction), so a crash loses the
+/// window wholly and resume re-fetches from the durable peak.
+pub struct StagedWindow {
+    from: u32,
+    to: u32,
+    blocks: Vec<dg_xch_core::blockchain::full_block::FullBlock>,
+    // (delta, vdf high-water mark, sig high-water mark, index into `blocks`)
+    staged: Vec<(BlockDelta, usize, usize, usize)>,
+    queue: Vec<crate::header::QueuedVdf>,
+    sig_queue: Vec<crate::header::QueuedSig>,
+    stage_err: Option<SyncError>,
+    archive_written: bool,
+}
+
+impl StagedWindow {
+    /// The window's first and last block heights (the daemon's post-step handling keys on them).
+    #[must_use]
+    pub fn bounds(&self) -> (u32, u32) {
+        (self.from, self.to)
+    }
+
+    /// Move the deferred verification work out for [`drain_staged_window`] — the queues plus the
+    /// per-block (height, vdf mark, sig mark) attribution table.
+    pub fn take_drain_input(&mut self) -> DrainInput {
+        DrainInput {
+            queue: std::mem::take(&mut self.queue),
+            sig_queue: std::mem::take(&mut self.sig_queue),
+            marks: self
+                .staged
+                .iter()
+                .map(|(d, v, g, _)| (d.height, *v, *g))
+                .collect(),
+        }
+    }
+}
+
+/// The pure CPU half of a staged window: its deferred VDF and header-signature queues plus the
+/// per-block high-water marks that attribute a batch failure to an exact height.
+pub struct DrainInput {
+    queue: Vec<crate::header::QueuedVdf>,
+    sig_queue: Vec<crate::header::QueuedSig>,
+    marks: Vec<(u32, usize, usize)>,
+}
+
+/// What [`drain_staged_window`] decided: how many staged blocks may confirm, the first-fault
+/// error if any, and the drain wall times for the window gauges.
+pub struct WindowVerdict {
+    confirm_upto: usize,
+    err: Option<SyncError>,
+    vdf_micros: u64,
+    sig_micros: u64,
+}
+
+impl WindowVerdict {
+    /// The fail-closed verdict for a drain that never returned (a panicked worker): confirm
+    /// nothing, surface an error — the window re-stages after the queue reset.
+    #[must_use]
+    pub fn failed_closed() -> Self {
+        Self {
+            confirm_upto: 0,
+            err: Some(
+                crate::error::NodeError::Invalid("window drain panicked (fail closed)".to_string())
+                    .into(),
+            ),
+            vdf_micros: 0,
+            sig_micros: 0,
+        }
+    }
+}
+
+/// Drain a staged window's deferred VDF and header-signature queues — pure CPU against the
+/// primitives, no engine or store access, so the daemon runs it on a blocking thread while the
+/// next window stages. Two-tier per queue: the whole-window batch first, then on a failure a
+/// per-block slice replay that attributes the exact failing height. The confirm boundary is the
+/// minimum of the VDF- and sig-determined boundaries; the reported error is whichever fails at
+/// the lower height.
+#[must_use]
+pub fn drain_staged_window<P: crate::primitives::ConsensusPrimitives + Sync>(
+    primitives: &P,
+    constants: &dg_xch_core::consensus::constants::ConsensusConstants,
+    input: DrainInput,
+) -> WindowVerdict {
+    let DrainInput {
+        queue,
+        sig_queue,
+        marks,
+    } = input;
+    let mut confirm_upto = marks.len();
+    let mut vdf_err: Option<SyncError> = None;
+    let mut vdf_micros = 0u64;
+    let mut sig_micros = 0u64;
+    if !queue.is_empty() {
+        log::debug!("window.vdf proofs={} blocks={}", queue.len(), marks.len());
+        let vdf_started = std::time::Instant::now();
+        if !crate::header::verify_vdf_batch(primitives, constants, queue.clone()) {
+            let mut start = 0usize;
+            confirm_upto = 0;
+            for (i, (height, hi, _)) in marks.iter().enumerate() {
+                if !crate::header::verify_vdf_batch(
+                    primitives,
+                    constants,
+                    queue[start..*hi].to_vec(),
+                ) {
+                    confirm_upto = i;
+                    vdf_err = Some(
+                        crate::error::NodeError::Invalid(format!(
+                            "INVALID_VDF at height {height} (window drain)"
+                        ))
+                        .into(),
+                    );
+                    break;
+                }
+                start = *hi;
+            }
+            if vdf_err.is_none() {
+                vdf_err = Some(
+                    crate::error::NodeError::Invalid(
+                        "INVALID_VDF in window drain (unattributed)".to_string(),
+                    )
+                    .into(),
+                );
+            }
+        }
+        vdf_micros = u64::try_from(vdf_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    }
+    if !sig_queue.is_empty() {
+        log::debug!("window.sig sigs={} blocks={}", sig_queue.len(), marks.len());
+        let sig_started = std::time::Instant::now();
+        if !crate::header::verify_sig_batch(&sig_queue) {
+            let mut start = 0usize;
+            let mut sig_confirm_upto = 0usize;
+            let mut sig_err: Option<SyncError> = None;
+            for (i, (height, _, hi)) in marks.iter().enumerate() {
+                if let Some(tag) = crate::header::first_failing_sig(&sig_queue[start..*hi]) {
+                    sig_confirm_upto = i;
+                    sig_err = Some(
+                        crate::error::NodeError::Invalid(format!(
+                            "{} at height {height} (window drain)",
+                            tag.rejection()
+                        ))
+                        .into(),
+                    );
+                    break;
+                }
+                start = *hi;
+            }
+            if sig_err.is_none() {
+                sig_err = Some(
+                    crate::error::NodeError::Invalid(
+                        "INVALID_HEADER_SIGNATURE in window drain (unattributed)".to_string(),
+                    )
+                    .into(),
+                );
+            }
+            // A sig failure lowers the confirm boundary only if it is earlier than the
+            // VDF-determined one.
+            if sig_confirm_upto < confirm_upto {
+                confirm_upto = sig_confirm_upto;
+                vdf_err = sig_err;
+            }
+        }
+        sig_micros = u64::try_from(sig_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    }
+    WindowVerdict {
+        confirm_upto,
+        err: vdf_err,
+        vdf_micros,
+        sig_micros,
+    }
+}
+
 fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
     primitives: &P,
     constants: &dg_xch_core::consensus::constants::ConsensusConstants,
@@ -1795,12 +2022,20 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
     })
 }
 
+/// The expensive pure half of body validation for a window (CLVM generator run + BLS aggregate
+/// verify), precomputable by the DRIVER while the previous window validates — the cross-window
+/// body pipeline. Generator refs resolve from the window itself or from `extra` (the driver's
+/// confirmed-store snapshot, [`Chaser::confirmed_ref_generators`]); a block with a ref neither
+/// can serve is skipped here and takes the engine's inline path, and the engine's stage-time
+/// flag-key check still guards every entry — a mismatch degrades to an inline recompute, never
+/// to a changed verdict.
 #[must_use]
 pub fn precompute_window_bodies_standalone<P: crate::primitives::ConsensusPrimitives + Sync>(
     primitives: &P,
     constants: &dg_xch_core::consensus::constants::ConsensusConstants,
     assume_valid: u32,
     blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
+    extra: &std::collections::HashMap<u32, dg_xch_core::clvm::program::SerializedProgram>,
 ) -> std::collections::HashMap<u32, crate::engine::PrecomputedBody> {
     let by_height: std::collections::HashMap<u32, &dg_xch_core::blockchain::full_block::FullBlock> =
         blocks.iter().map(|b| (b.height(), b)).collect();
@@ -1819,6 +2054,7 @@ pub fn precompute_window_bodies_standalone<P: crate::primitives::ConsensusPrimit
             match by_height
                 .get(r)
                 .and_then(|b| b.transactions_generator.clone())
+                .or_else(|| extra.get(r).cloned())
             {
                 Some(g) => refs.push(
                     dg_xch_core::consensus::block_generator::GeneratorReference {

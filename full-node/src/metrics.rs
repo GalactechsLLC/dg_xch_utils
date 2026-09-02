@@ -359,6 +359,7 @@ pub struct MetricsSnapshot {
     // session count — the second-retainer witness: a monotonic climb here names the leak.
     pub inbound_connections: u64,
     pub window_vdf_micros: u64,
+    pub window_sig_micros: u64,
     pub window_body_micros: u64,
     // The sequential staging-loop wall (per-block store reads + record derivation) — the
     // phase between body precompute and VDF drain.
@@ -366,6 +367,12 @@ pub struct MetricsSnapshot {
     pub window_confirm_micros: u64,
     pub window_blocks: u64,
     pub window_tx_blocks: u64,
+    // Cross-window body pipeline: bodies the driver handed in precomputed, and the driver's
+    // join wait on that precompute before the window could start.
+    pub window_body_provided: u64,
+    pub window_pre_wait_micros: u64,
+    // Stage-ahead pipeline: how long the confirm waited on the previous window's spawned drain.
+    pub window_drain_wait_micros: u64,
     // jemalloc's own view: `allocated` = live bytes the program holds; `resident` =
     // pages jemalloc keeps from the OS. resident >> allocated = allocator holdback;
     // allocated climbing = true retention. All 0 when jemalloc isn't the global allocator.
@@ -508,11 +515,15 @@ impl<S: BlockStore + Send + Sync> MetricsSources<S> {
             inbound_peers: self.registry.inbound_count().await as u64,
             inbound_connections: self.inbound_peers.read().await.len() as u64,
             window_vdf_micros: m.window_vdf_micros.load(Ordering::Relaxed),
+            window_sig_micros: m.window_sig_micros.load(Ordering::Relaxed),
             window_body_micros: m.window_body_micros.load(Ordering::Relaxed),
             window_stage_micros: m.window_stage_micros.load(Ordering::Relaxed),
             window_confirm_micros: m.window_confirm_micros.load(Ordering::Relaxed),
             window_blocks: m.window_blocks.load(Ordering::Relaxed),
             window_tx_blocks: m.window_tx_blocks.load(Ordering::Relaxed),
+            window_body_provided: m.window_body_provided.load(Ordering::Relaxed),
+            window_pre_wait_micros: m.window_pre_wait_micros.load(Ordering::Relaxed),
+            window_drain_wait_micros: m.window_drain_wait_micros.load(Ordering::Relaxed),
             alloc_allocated: jemalloc_stat_allocated(),
             alloc_active: jemalloc_stat_active(),
             alloc_resident: jemalloc_stat_resident(),
@@ -776,6 +787,34 @@ pub fn render_metrics(s: &MetricsSnapshot) -> String {
         "Last sync window VDF-drain wall time in microseconds.",
         "gauge",
         s.window_vdf_micros,
+    );
+    g(
+        &mut out,
+        "fullnode_window_sig_micros",
+        "Last sync window header-signature-drain wall time in microseconds.",
+        "gauge",
+        s.window_sig_micros,
+    );
+    g(
+        &mut out,
+        "fullnode_window_body_provided",
+        "Bodies of the last sync window handed in precomputed by the driver's cross-window pipeline (the rest ran inline in window.body).",
+        "gauge",
+        s.window_body_provided,
+    );
+    g(
+        &mut out,
+        "fullnode_window_pre_wait_micros",
+        "Microseconds the driver waited joining the previous window's body precompute before starting the last window (0 = precompute finished in time or none ran).",
+        "gauge",
+        s.window_pre_wait_micros,
+    );
+    g(
+        &mut out,
+        "fullnode_window_drain_wait_micros",
+        "Microseconds the confirm waited on the previous window's spawned vdf/sig drain (the stage-ahead pipeline's backpressure signal).",
+        "gauge",
+        s.window_drain_wait_micros,
     );
     g(
         &mut out,
@@ -1506,11 +1545,15 @@ mod tests {
             inbound_peers: 5,
             inbound_connections: 37,
             window_vdf_micros: 2_660_000,
+            window_sig_micros: 44_000,
             window_body_micros: 120_000,
             window_stage_micros: 1_900_000,
             window_confirm_micros: 9_500,
             window_blocks: 32,
             window_tx_blocks: 13,
+            window_body_provided: 11,
+            window_pre_wait_micros: 71_000,
+            window_drain_wait_micros: 380_000,
             alloc_allocated: 900_000_000,
             alloc_active: 950_000_000,
             alloc_resident: 1_100_000_000,
@@ -1562,11 +1605,15 @@ mod tests {
         assert!(text.contains("fullnode_process_resident_bytes 123456789"));
         assert!(text.contains("fullnode_outbound_peers 8"));
         assert!(text.contains("fullnode_window_vdf_micros 2660000"));
+        assert!(text.contains("fullnode_window_sig_micros 44000"));
         assert!(text.contains("fullnode_window_body_micros 120000"));
         assert!(text.contains("fullnode_window_stage_micros 1900000"));
         assert!(text.contains("fullnode_window_confirm_micros 9500"));
         assert!(text.contains("fullnode_window_blocks 32"));
         assert!(text.contains("fullnode_window_tx_blocks 13"));
+        assert!(text.contains("fullnode_window_body_provided 11"));
+        assert!(text.contains("fullnode_window_pre_wait_micros 71000"));
+        assert!(text.contains("fullnode_window_drain_wait_micros 380000"));
         assert!(text.contains("fullnode_alloc_allocated_bytes 900000000"));
         assert!(text.contains("fullnode_alloc_resident_bytes 1100000000"));
         assert!(text.contains("fullnode_engine_cache_records 4096"));

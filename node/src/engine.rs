@@ -290,6 +290,11 @@ pub struct Engine<S, P> {
     // overlay for in-window generator back-references. Inserted at stage, drained at confirm;
     // bounded by the window size.
     staged_generators: HashMap<u32, dg_xch_core::clvm::program::SerializedProgram>,
+    // Weight-proof-attested sub-epoch summary chain (index = sub-epoch), seeded by a mid-chain
+    // anchor: the LAST-RESORT source for an included SES whose sub-epoch lies below the anchor
+    // span — the declared subepoch_summary_hash (authenticated by the challenge-chain VDFs)
+    // still gates every use, so a wrong entry can only reject, never mis-validate.
+    summary_chain: Vec<dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary>,
     // Out-of-span generator seeds (`--sync-from` compression refs below the anchor). Unlike
     // `staged_generators` these heights never confirm, so the cache is capacity-bounded FIFO to
     // keep sync-length-independent retention — see [`SEED_GENERATOR_CACHE_CAP`].
@@ -335,6 +340,7 @@ where
             constants,
             pending: HashMap::new(),
             staged_generators: HashMap::new(),
+            summary_chain: Vec::new(),
             seed_generators: HashMap::new(),
             staged_deltas: HashMap::new(),
             stage_preload: None,
@@ -503,6 +509,50 @@ where
             Ok(Some(self.finish_stage(block, delta)))
         }
         .await
+    }
+
+    /// [`Engine::stage_block_pre`] with the archive writes DEFERRED entirely — no batch opens and
+    /// no writer is touched; the caller persists the archive rows later (inside the confirm
+    /// transaction, via [`Engine::persist_archive_window`]). This is the staging half the
+    /// stage-ahead pipeline uses: window N+1 stages against the overlay while window N's drain
+    /// still owns the CPU and window N's confirm still owns the writer. The overlay inserts
+    /// ([`Engine::finish_stage`]'s walk-cache/staged-delta entries) happen exactly as in the
+    /// writing variants, so in-window and cross-window staged reads are unchanged.
+    ///
+    /// # Errors
+    /// As [`Engine::stage_block_pre`].
+    pub async fn stage_block_pre_dry(
+        &mut self,
+        block: &FullBlock,
+        vdf_sink: &crate::header::HeaderSink,
+        pre: Option<PrecomputedBody>,
+    ) -> Result<Option<BlockDelta>, NodeError> {
+        // Await-safe instrumentation: see `stage_block_pre`.
+        log::debug!("block.stage height={}", block.height());
+        async move {
+            let Some(delta) = self.prepare_delta(block, Some(vdf_sink), pre).await? else {
+                return Ok(None);
+            };
+            Ok(Some(self.finish_stage(block, delta)))
+        }
+        .await
+    }
+
+    /// Persist the archive rows for a dry-staged window into an OPEN batch — the deferred half of
+    /// [`Engine::stage_block_pre_dry`], called from the confirm with its transaction so archive
+    /// rows still land before `set_peak` inside the same commit.
+    ///
+    /// # Errors
+    /// Returns [`NodeError::Store`] on a persistence failure.
+    pub async fn persist_archive_window(
+        &self,
+        rows: &[(&FullBlock, &BlockDelta)],
+        batch: &mut BatchHandle,
+    ) -> Result<(), NodeError> {
+        for (block, delta) in rows {
+            self.persist_archive_in(block, delta, batch).await?;
+        }
+        Ok(())
     }
 
     /// [`Engine::stage_block_pre`] with the archive writes threaded into a caller-owned WINDOW
@@ -724,6 +774,15 @@ where
     /// window drain or a mid-window stage rejection) — the retry re-stages and re-inserts them.
     /// Also drops the out-of-span seed cache: the retry's `missing_ref_heights` scan re-detects
     /// and re-seeds whatever the next attempt actually needs.
+    /// Seed the weight-proof-attested summary chain (see the `summary_chain` field) — called
+    /// once by the mid-chain anchor after the proof validates.
+    pub fn seed_summary_chain(
+        &mut self,
+        summaries: Vec<dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary>,
+    ) {
+        self.summary_chain = summaries;
+    }
+
     pub fn clear_staged_overlay(&mut self) {
         self.staged_generators.clear();
         self.seed_generators.clear();
@@ -2203,10 +2262,21 @@ where
                         )
                         .ok()
                     });
+                // Third source, after local construction and the headers-first candidate: the
+                // anchor's weight-proof summary chain. Summary i is included at the start of
+                // sub-epoch i+1, so the entry for this boundary is at sub_epoch - 1; the
+                // declared-hash check below still decides.
+                let attested = || {
+                    let sub_epoch = header.height() / self.constants.sub_epoch_blocks;
+                    sub_epoch
+                        .checked_sub(1)
+                        .and_then(|i| self.summary_chain.get(i as usize).cloned())
+                };
                 let ses = match constructed {
                     Some(s) => s,
                     None => candidate
                         .and_then(|r| r.sub_epoch_summary_included)
+                        .or_else(attested)
                         .ok_or_else(|| {
                             NodeError::Invalid(format!(
                                 "cannot derive the included sub-epoch summary at height {} \

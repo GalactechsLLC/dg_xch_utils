@@ -3202,6 +3202,44 @@ where
         self.finish_follow_step(peak, &deltas).await
     }
 
+    // Stage half of the stage-ahead pipeline: window into the overlay, no writer, no drains —
+    // callable while the PREVIOUS window's spawned drain still owns the CPU. An `Err` here has
+    // NOT cleared the overlay (see `Chaser::stage_window_pre`); the caller confirms its pending
+    // window first, then clears.
+    async fn stage_step_window(
+        &self,
+        blocks: Vec<dg_xch_core::blockchain::full_block::FullBlock>,
+        pre: Option<std::collections::HashMap<u32, dg_xch_node::engine::PrecomputedBody>>,
+    ) -> Result<dg_xch_node::sync::StagedWindow, SyncError> {
+        let mut chaser = self.chaser.lock().await;
+        chaser.stage_window_pre(blocks, pre).await
+    }
+
+    // Confirm half: the drain's verdict lands the window (archive + coins + peak, one
+    // transaction) and the per-peak side effects fire exactly as in the serial step.
+    async fn confirm_step_window(
+        &self,
+        window: dg_xch_node::sync::StagedWindow,
+        verdict: dg_xch_node::sync::WindowVerdict,
+    ) -> Result<Option<(Bytes32, u32)>, SyncError> {
+        let (peak, deltas) = {
+            let mut chaser = self.chaser.lock().await;
+            chaser.confirm_window_pre(window, verdict).await?
+        };
+        self.finish_follow_step(peak, &deltas).await
+    }
+
+    /// The mirrored `short_sync_backtrack` step, driven when a follow
+    /// window fails with the unknown-parent orphan: the chain reorged at/below our stored tip, so
+    /// the fork point is fetched backward from the same peer and the collected branch resubmitted
+    /// through the ordinary follow pipeline (the engine's existing fork choice performs the reorg).
+    /// The per-peak side effects (wallet coin-state + mempool revalidation) fire for every newly
+    /// confirmed block exactly as in [`Node::sync_follow`].
+    ///
+    /// # Errors
+    /// [`SyncError::DeepFork`] when the fork is deeper than the backtrack cap — the caller must fall
+    /// back to the weight-proof long sync instead of retrying; any
+    /// fetch/validation/store error otherwise.
     pub async fn sync_backtrack(
         &self,
         source: &Arc<dyn BlockRangeSource>,
@@ -3721,6 +3759,10 @@ where
             .sync_headers(&headers, &schedule, &validated.summaries)
             .await
             .map_err(|e| Error::other(e.to_string()))?;
+        // The proof's summary chain outlives the anchor span: the first included-SES block ABOVE
+        // the span has neither local ancestry nor a headers-first candidate to serve its summary
+        // — the engine falls back to this chain, hash-gated as ever.
+        chaser.seed_summary_chain(validated.summaries.to_vec());
         // The anchor span alone cannot serve the FIRST epoch retarget the follow hits: its
         // `get_second_to_last_transaction_block_in_previous_epoch` walk reads records back past
         // the previous epoch surpass — up to a full epoch below the span (the 4,575,744-boundary
@@ -4735,9 +4777,18 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
     recovery_tx: mpsc::Sender<RecoveryRequest>,
     peak_tx: mpsc::Sender<ConfirmedPeak>,
 ) {
-    let (pipe_constants, pipe_assume_valid) = {
+    // Cross-window body pipeline: while window N runs its stage/vdf/sig/confirm phases, window
+    // N+1's body precompute (pure CPU over blocks already resident in the queue) runs here in a
+    // blocking task. Keyed by the window's first height so a rebase/reorg between spawn and use
+    // discards it (worst case: wasted compute, never a stale verdict — the engine's flag-key
+    // guard re-verifies every precompute at stage time).
+    let (pipe_constants, pipe_assume_valid, pipe_metrics) = {
         let chaser = node.chaser.lock().await;
-        (chaser.constants(), chaser.assume_valid())
+        (
+            chaser.constants(),
+            chaser.assume_valid(),
+            chaser.metrics().clone(),
+        )
     };
     let mut pre_task: Option<(
         u32,
@@ -4745,7 +4796,14 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
             std::collections::HashMap<u32, dg_xch_node::engine::PrecomputedBody>,
         >,
     )> = None;
-    while node.run.load(Ordering::Relaxed) {
+    // Stage-ahead pipeline (depth 1): the previous window, staged with its vdf/sig drain running
+    // on a blocking thread. Confirmed at the top of the NEXT iteration, after this iteration's
+    // stage has overlapped the drain. Depth 1 is enough — the drain dominates the serial residue.
+    let mut pipeline: Option<(
+        dg_xch_node::sync::StagedWindow,
+        tokio::task::JoinHandle<dg_xch_node::sync::WindowVerdict>,
+    )> = None;
+    'consumer: while node.run.load(Ordering::Relaxed) {
         // Park until the head height is present; the idle tick is only a shutdown backstop.
         tokio::select! {
             () = queue.wait_ready() => {}
@@ -4761,7 +4819,7 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
         node.follow_inflight_since
             .store(unix_secs(), Ordering::Relaxed);
         let window = queue.drain_ready_window(FOLLOW_BATCH);
-        if window.is_empty() {
+        if window.is_empty() && pipeline.is_none() {
             node.follow_inflight_since.store(0, Ordering::Relaxed);
             continue;
         }
@@ -4800,8 +4858,18 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
         }
         // Join the precompute spawned while the PREVIOUS window validated; a height mismatch
         // (rebase, reorg, partial advance) discards it.
+        pipe_metrics
+            .window_pre_wait_micros
+            .store(0, Ordering::Relaxed);
         let pre = match pre_task.take() {
-            Some((h, handle)) if h == from => handle.await.ok(),
+            Some((h, handle)) if h == from => {
+                let join_started = std::time::Instant::now();
+                let joined = handle.await.ok();
+                pipe_metrics
+                    .window_pre_wait_micros
+                    .store(join_started.elapsed().as_micros() as u64, Ordering::Relaxed);
+                joined
+            }
             Some((_, handle)) => {
                 handle.abort();
                 None
@@ -4809,12 +4877,18 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
             None => None,
         };
         // Spawn the NEXT window's precompute before validating this one, so the two overlap.
+        // Out-of-window compression refs resolve from the confirmed store up front (final in a
+        // forward sync); the ones the store cannot serve yet fall to the engine's inline path.
         let next = queue.peek_ready_window(FOLLOW_BATCH);
         if let Some(next_from) = next.first().map(FullBlock::height)
             && next
                 .iter()
                 .any(|b| b.is_transaction_block() && b.transactions_generator.is_some())
         {
+            let extra = {
+                let chaser = node.chaser.lock().await;
+                chaser.confirmed_ref_generators(&next).await
+            };
             let constants = pipe_constants;
             pre_task = Some((
                 next_from,
@@ -4824,75 +4898,145 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
                         &constants,
                         pipe_assume_valid,
                         &next,
+                        &extra,
                     )
                 }),
             ));
         }
-        let step = node.follow_step_blocks_pre(&window, pre).await;
-        node.follow_inflight_since.store(0, Ordering::Relaxed);
-        match step {
-            Ok(Some((hash, height))) => {
-                // Height-monotone SPSC feed to the announcer. NON-BLOCKING: a stalled announcer must
-                // never stall the confirm consumer, which would back-pressure it off the BlockQueue
-                // and stall the whole pipeline. `emit_confirmed_peak` drops a best-effort
-                // announcement under a full buffer and only reports failure when the announcer is gone.
-                if !emit_confirmed_peak(&peak_tx, ConfirmedPeak { hash, height }) {
-                    break;
-                }
-                // The window fully advanced the peak iff the confirmed height reached the drained top;
-                // in that case `low_water == height + 1` already holds. A partial advance (a tail
-                // that staged as a side-branch candidate without outweighing) left `low_water` ahead of
-                // the peak, so realign by rebasing to `peak + 1` — the driver drops the drained-but-
-                // unconfirmed tail and the producer re-fetches it.
-                if height < to
-                    && !await_reset(&recovery_tx, |reply| RecoveryRequest::Reset { reply }).await
-                {
-                    break;
-                }
+        // Confirm results to consume this iteration, each with the bounds of the window it
+        // belongs to (the pipeline lags announcement by one window).
+        let mut steps: Vec<(u32, u32, StepOutcome)> = Vec::new();
+        let near_tip = { node.chaser.lock().await.near_tip() };
+        if near_tip || window.is_empty() {
+            // Near the tip (or on a drain-only tick) the pipeline empties first: the per-block
+            // path must own the writer and the overlay alone.
+            if let Some((prev, handle)) = pipeline.take() {
+                let (pfrom, pto) = prev.bounds();
+                let verdict = join_drain(handle, &pipe_metrics).await;
+                steps.push((pfrom, pto, node.confirm_step_window(prev, verdict).await));
             }
-            // No peak advance: the whole window staged as candidates below the peak (a known-parent side
-            // branch). `low_water` advanced on drain but the peak did not, so realign to `peak + 1`. The
-            // engine keeps the staged candidates, so weight still accumulates toward an eventual reorg.
-            Ok(None) => {
-                if !await_reset(&recovery_tx, |reply| RecoveryRequest::Reset { reply }).await {
-                    break;
-                }
+            if !window.is_empty() && steps.iter().all(|(_, _, s)| s.is_ok()) {
+                steps.push((from, to, node.follow_step_blocks_pre(&window, pre).await));
             }
-            Err(e) if e.is_orphan() => {
-                warn!(
-                    "consumer window orphaned; delegating backtrack to the driver from={} to={} error={}",
-                    from, to, e
-                );
-                if !await_reset(&recovery_tx, |reply| RecoveryRequest::Orphan {
-                    from,
-                    to,
-                    reply,
-                })
-                .await
-                {
-                    break;
+        } else {
+            // Stage THIS window first — it overlaps the previous window's in-flight drain —
+            // then confirm the predecessor, then hand this window's drain to a blocking thread.
+            let staged = node.stage_step_window(window, pre).await;
+            // Spawn THIS window's drain before confirming the predecessor: the drain (pure CPU
+            // on already-built queues) then also overlaps that confirm and the next iteration's
+            // driver work — otherwise that residue runs with the verification cores idle.
+            let mut stage_failed: Option<SyncError> = None;
+            let mut spawned: Option<(
+                dg_xch_node::sync::StagedWindow,
+                tokio::task::JoinHandle<dg_xch_node::sync::WindowVerdict>,
+            )> = None;
+            match staged {
+                Ok(mut staged_window) => {
+                    let input = staged_window.take_drain_input();
+                    let constants = pipe_constants;
+                    spawned = Some((
+                        staged_window,
+                        tokio::task::spawn_blocking(move || {
+                            dg_xch_node::sync::drain_staged_window(
+                                &NativePrimitives,
+                                &constants,
+                                input,
+                            )
+                        }),
+                    ));
                 }
+                Err(e) => stage_failed = Some(e),
             }
-            Err(e) if e.is_missing_record() => {
-                warn!(
-                    "consumer needs records below the floor; delegating repair from={} to={} error={}",
-                    from, to, e
-                );
-                if !await_reset(&recovery_tx, |reply| RecoveryRequest::MissingRecord {
-                    reply,
-                })
-                .await
-                {
-                    break;
+            if let Some((prev, handle)) = pipeline.take() {
+                let (pfrom, pto) = prev.bounds();
+                let verdict = join_drain(handle, &pipe_metrics).await;
+                steps.push((pfrom, pto, node.confirm_step_window(prev, verdict).await));
+            }
+            if let Some(e) = stage_failed {
+                // Stage failure leaves the overlay for us (the predecessor's confirm had to
+                // land first); clear it now that it has.
+                node.chaser.lock().await.clear_staged_overlay();
+                steps.push((from, to, Err(e)));
+            }
+            if steps.iter().all(|(_, _, s)| s.is_ok()) {
+                pipeline = spawned;
+            } else if let Some((_, handle)) = spawned.take() {
+                // A failed confirm (or stage) retracted the overlay this window staged
+                // against: abort its drain and drop it — the queue reset re-fetches both
+                // spans. The extra clear is idempotent and covers the confirm-failure path.
+                handle.abort();
+                node.chaser.lock().await.clear_staged_overlay();
+            }
+        }
+        if pipeline.is_none() {
+            node.follow_inflight_since.store(0, Ordering::Relaxed);
+        }
+        for (sfrom, sto, step) in steps {
+            match step {
+                Ok(Some((hash, height))) => {
+                    // Height-monotone SPSC feed to the announcer. NON-BLOCKING: a stalled announcer must
+                    // never stall the confirm consumer, which would back-pressure it off the BlockQueue
+                    // and stall the whole pipeline. `emit_confirmed_peak` drops a best-effort
+                    // announcement under a full buffer and only reports failure when the announcer is gone.
+                    if !emit_confirmed_peak(&peak_tx, ConfirmedPeak { hash, height }) {
+                        break 'consumer;
+                    }
+                    // The window fully advanced the peak iff the confirmed height reached the drained top;
+                    // in that case `low_water == height + 1` already holds. A partial advance (a tail
+                    // that staged as a side-branch candidate without outweighing) left `low_water` ahead of
+                    // the peak, so realign by rebasing to `peak + 1` — the driver drops the drained-but-
+                    // unconfirmed tail and the producer re-fetches it.
+                    if height < sto
+                        && !await_reset(&recovery_tx, |reply| RecoveryRequest::Reset { reply })
+                            .await
+                    {
+                        break 'consumer;
+                    }
                 }
-            }
-            Err(e) => {
-                warn!(
-                    "consumer follow step failed; requesting a queue reset from={} to={} error={}",
-                    from, to, e
-                );
-                if !await_reset(&recovery_tx, |reply| RecoveryRequest::Reset { reply }).await {
-                    break;
+                // No peak advance: the whole window staged as candidates below the peak (a known-parent side
+                // branch). `low_water` advanced on drain but the peak did not, so realign to `peak + 1`. The
+                // engine keeps the staged candidates, so weight still accumulates toward an eventual reorg.
+                Ok(None) => {
+                    if !await_reset(&recovery_tx, |reply| RecoveryRequest::Reset { reply }).await {
+                        break 'consumer;
+                    }
+                }
+                Err(e) if e.is_orphan() => {
+                    warn!(
+                        "consumer window orphaned; delegating backtrack to the driver from={} to={} error={}",
+                        sfrom, sto, e
+                    );
+                    if !await_reset(&recovery_tx, |reply| RecoveryRequest::Orphan {
+                        from: sfrom,
+                        to: sto,
+                        reply,
+                    })
+                    .await
+                    {
+                        break 'consumer;
+                    }
+                }
+                Err(e) if e.is_missing_record() => {
+                    warn!(
+                        "consumer needs records below the floor; delegating repair from={} to={} error={}",
+                        sfrom, sto, e
+                    );
+                    if !await_reset(&recovery_tx, |reply| RecoveryRequest::MissingRecord {
+                        reply,
+                    })
+                    .await
+                    {
+                        break 'consumer;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "consumer follow step failed; requesting a queue reset from={} to={} error={}",
+                        sfrom, sto, e
+                    );
+                    if !await_reset(&recovery_tx, |reply| RecoveryRequest::Reset { reply }).await {
+                        break 'consumer;
+                    }
                 }
             }
         }
@@ -4900,6 +5044,29 @@ async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 'static>(
     if let Some((_, handle)) = pre_task.take() {
         handle.abort();
     }
+    // A staged-unconfirmed window at shutdown vanishes wholly (crash class A): abort its drain;
+    // resume re-fetches from the durable peak.
+    if let Some((_, handle)) = pipeline.take() {
+        handle.abort();
+    }
+}
+
+// One confirmed-or-failed follow step awaiting consumption, keyed by its window bounds.
+type StepOutcome = Result<Option<(Bytes32, u32)>, SyncError>;
+
+// Join a spawned window drain, recording how long the confirm actually waited on it (the
+// stage-ahead pipeline's backpressure gauge). A panicked drain fails closed: nothing confirms
+// and the window re-stages after the queue reset.
+async fn join_drain(
+    handle: tokio::task::JoinHandle<dg_xch_node::sync::WindowVerdict>,
+    metrics: &std::sync::Arc<dg_xch_node::sync::SyncMetrics>,
+) -> dg_xch_node::sync::WindowVerdict {
+    let waited = std::time::Instant::now();
+    let verdict = handle.await;
+    metrics
+        .window_drain_wait_micros
+        .store(waited.elapsed().as_micros() as u64, Ordering::Relaxed);
+    verdict.unwrap_or_else(|_| dg_xch_node::sync::WindowVerdict::failed_closed())
 }
 
 // Send a `()`-reply recovery request and park on its completion (called only after the Chaser lock
