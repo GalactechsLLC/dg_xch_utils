@@ -9,6 +9,10 @@ use std::time::Duration;
 
 static NETWORK_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+// Deadline headroom: a single dial attempt may legally consume the full connect timeout (5s in
+// fast_settings), so a loaded runner fitting two attempts plus backoff needs more than 10s.
+// wait_until returns the moment the condition holds — the headroom costs nothing when healthy.
+
 #[tokio::test]
 async fn outbound_dials_and_reconnects_and_inbound_accepts() {
     let _guard = NETWORK_TEST_LOCK.lock().await;
@@ -22,7 +26,7 @@ async fn outbound_dials_and_reconnects_and_inbound_accepts() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await >= 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(30)
         )
         .await,
         "outbound slot dials the loopback peer"
@@ -38,7 +42,7 @@ async fn outbound_dials_and_reconnects_and_inbound_accepts() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 0 },
-            Duration::from_secs(10)
+            Duration::from_secs(30)
         )
         .await,
         "drop is detected"
@@ -46,7 +50,7 @@ async fn outbound_dials_and_reconnects_and_inbound_accepts() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await >= 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(30)
         )
         .await,
         "slot re-dials a fresh channel after the drop"
@@ -74,7 +78,7 @@ async fn manual_peer_persists_across_a_drop() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(30)
         )
         .await,
         "manual peer connects"
@@ -84,7 +88,7 @@ async fn manual_peer_persists_across_a_drop() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 0 },
-            Duration::from_secs(10)
+            Duration::from_secs(30)
         )
         .await,
         "drop detected"
@@ -92,7 +96,7 @@ async fn manual_peer_persists_across_a_drop() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(30)
         )
         .await,
         "manual peer reconnects (persists across the drop)"

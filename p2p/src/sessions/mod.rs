@@ -12,6 +12,7 @@ use dg_xch_serialize::ChiaProtocolVersion;
 use std::io::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -71,6 +72,13 @@ async fn hold(peer: &OutboundPeer, run: &Arc<AtomicBool>, settings: &P2pSettings
     }
 }
 
+// A session that survives at least this long counts as a real connection: the slot's backoff
+// resets and its address reclaims without a cooldown. Anything shorter is a churner — a peer
+// at capacity accepting-then-closing, or one that cut us off — and sits out SHORT_SESSION_COOLDOWN
+// before it can be dialed again.
+const SHORT_SESSION_HOLD: Duration = Duration::from_secs(30);
+const SHORT_SESSION_COOLDOWN: Duration = Duration::from_secs(300);
+
 // session_outbound slot: take a random address, dial, hold, and on ANY stop reclaim the
 // address and re-dial from the top — the reconnection loop lives OUTSIDE the dead channel.
 async fn outbound_slot(
@@ -103,7 +111,6 @@ async fn outbound_slot(
         .await
         {
             Ok(client) => {
-                attempt = 0;
                 let peer = Arc::new(OutboundPeer {
                     endpoint: endpoint.clone(),
                     client,
@@ -114,10 +121,22 @@ async fn outbound_slot(
                 if let Some(hook) = &on_connect {
                     hook(peer.clone()).await;
                 }
+                let held = std::time::Instant::now();
                 hold(&peer, &run, &settings).await;
                 peer.stop();
                 registry.release_outbound(&endpoint).await;
-                book.lock().await.reclaim(&addr, false);
+                if held.elapsed() >= SHORT_SESSION_HOLD {
+                    book.lock().await.reclaim(&addr, false);
+                } else {
+                    // The ADDRESS was the problem (a peer at capacity, or one that cut us
+                    // off), not the slot: cool the address and move straight on to the next
+                    // candidate. Growing the slot backoff here would slow the bootstrap
+                    // burn-through that finds the healthy peers in the first place.
+                    book.lock()
+                        .await
+                        .reclaim_after(&addr, SHORT_SESSION_COOLDOWN);
+                }
+                attempt = 0;
             }
             Err(_) => {
                 registry.release_outbound(&endpoint).await;

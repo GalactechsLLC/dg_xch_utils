@@ -643,11 +643,28 @@ pub struct PendingRequests {
     inner: std::sync::Mutex<PendingInner>,
 }
 
+/// How long a cancelled request's id excuses its late reply. A reply older than this is
+/// genuinely suspect and takes the handler scan (and its unsolicited-reply ban) as before.
+const LATE_REPLY_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
+
 #[derive(Default)]
 struct PendingInner {
     /// Last id handed out; the next allocation is `wrapping_add(1)`, skipping `0` and any live id.
     last_id: u16,
     waiters: HashMap<u16, tokio::sync::oneshot::Sender<Arc<ChiaMessage>>>,
+    /// Tombstones for cancelled requests (timeout / failed send): the reply may still arrive,
+    /// and it is OURS — the read loop consumes it instead of handler-scanning it, which would
+    /// ban an honest-but-slow peer for our own timeout. Ids here are not re-allocated while
+    /// fresh, so a tombstone can never swallow a new request's reply.
+    expired: HashMap<u16, std::time::Instant>,
+}
+
+impl PendingInner {
+    fn prune_expired(&mut self) {
+        let now = std::time::Instant::now();
+        self.expired
+            .retain(|_, cancelled| now.duration_since(*cancelled) < LATE_REPLY_GRACE);
+    }
 }
 
 impl PendingRequests {
@@ -660,10 +677,12 @@ impl PendingRequests {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.prune_expired();
         let id = loop {
             let cand = guard.last_id.wrapping_add(1);
             guard.last_id = cand;
-            if cand != 0 && !guard.waiters.contains_key(&cand) {
+            if cand != 0 && !guard.waiters.contains_key(&cand) && !guard.expired.contains_key(&cand)
+            {
                 break cand;
             }
         };
@@ -672,14 +691,17 @@ impl PendingRequests {
     }
 
     /// Drop a waiter without delivery (its request timed out or the send failed) so the table never
-    /// leaks an entry for a request no reply will ever satisfy.
+    /// leaks an entry for a request no reply will ever satisfy. The id is tombstoned for
+    /// [`LATE_REPLY_GRACE`] so the reply, should it still arrive, is consumed rather than
+    /// handler-scanned as unsolicited.
     pub fn cancel(&self, id: u16) {
-        let _ = self
+        let mut guard = self
             .inner
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .waiters
-            .remove(&id);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = guard.waiters.remove(&id);
+        guard.prune_expired();
+        guard.expired.insert(id, std::time::Instant::now());
     }
 
     /// Route `msg` to the single waiter that owns `id`. Returns `true` when a waiter was found (the
@@ -687,17 +709,27 @@ impl PendingRequests {
     /// an inbound request we must answer, or a stale/duplicate reply after the waiter already left.
     #[must_use]
     pub fn deliver(&self, id: u16, msg: Arc<ChiaMessage>) -> bool {
-        let waiter = {
+        let (waiter, late) = {
             let mut guard = self
                 .inner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.waiters.remove(&id)
+            guard.prune_expired();
+            let waiter = guard.waiters.remove(&id);
+            let late = waiter.is_none() && guard.expired.remove(&id).is_some();
+            (waiter, late)
         };
         if let Some(tx) = waiter {
             // The receiver may already be gone (its own timeout won the race); dropping the send is
             // then correct — the caller has moved on.
             let _ = tx.send(msg);
+            true
+        } else if late {
+            // A reply to our own cancelled request: consumed and discarded — never scanned.
+            debug!(
+                "late reply for cancelled request id={id} type={:?}",
+                msg.msg_type
+            );
             true
         } else {
             false
@@ -1170,7 +1202,7 @@ impl ReadStream {
                                     }
                                 }
                                 Message::Close(e) => {
-                                    info!("Got Close Message: {e:?}");
+                                    debug!("Got Close Message: {e:?}");
                                     return;
                                 },
                                 _ => {
@@ -1342,6 +1374,41 @@ mod pending_request_tests {
         assert!(a != b && b != c && a != c, "live ids {a},{b},{c} collided");
     }
 
+    // A reply that arrives AFTER its request timed out is still OURS: the read loop must consume
+    // it (deliver returns true) instead of letting it fall to the handler scan, where the
+    // unsolicited-reply arm closes and bans the peer — banning an honest-but-slow peer for our
+    // own timeout, and burning the peer pool down under load.
+    #[tokio::test]
+    async fn a_late_reply_for_a_cancelled_request_is_consumed_not_scanned() {
+        let pending = PendingRequests::default();
+        let (id, rx) = pending.register();
+        drop(rx);
+        pending.cancel(id);
+        assert!(
+            pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
+            "a late reply to our own timed-out request fell through to the handler scan"
+        );
+    }
+
+    // A cancelled id must not be re-handed while its tombstone is fresh: a new request allocated
+    // the same id would have its reply swallowed by the late-reply grace.
+    #[tokio::test]
+    async fn a_fresh_tombstone_blocks_id_reuse() {
+        let pending = PendingRequests::default();
+        let (id, rx) = pending.register();
+        drop(rx);
+        pending.cancel(id);
+        let mut _keep = Vec::new();
+        for _ in 0..u32::from(u16::MAX) {
+            let (fresh, rx) = pending.register();
+            assert_ne!(fresh, id, "a fresh tombstone's id was re-allocated");
+            _keep.push(rx);
+            if _keep.len() >= 65_000 {
+                break;
+            }
+        }
+    }
+
     // A reply is routed to the ONE waiter that owns its id, and only that waiter — the other waiter's
     // receiver is untouched. This is the demux invariant: no fan-out to every matching handler.
     #[tokio::test]
@@ -1385,13 +1452,22 @@ mod pending_request_tests {
         assert!(rx.await.is_ok(), "the one delivery reached the waiter");
     }
 
-    // Cancel (timeout / send failure) frees the slot so the table never leaks, and a reply that then
-    // shows up is treated as unowned.
+    // Cancel (timeout / send failure) frees the waiter slot so the table never leaks; the reply
+    // that then shows up is consumed once through the tombstone (never re-delivered after that,
+    // and never fanned out to a waiter).
     #[tokio::test]
     async fn cancel_frees_the_slot() {
         let pending = PendingRequests::default();
-        let (id, _rx) = pending.register();
+        let (id, rx) = pending.register();
         pending.cancel(id);
-        assert!(!pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)));
+        assert!(
+            pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
+            "the late reply is consumed"
+        );
+        assert!(rx.await.is_err(), "the cancelled waiter receives nothing");
+        assert!(
+            !pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
+            "a tombstone excuses exactly one late reply"
+        );
     }
 }

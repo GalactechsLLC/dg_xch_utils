@@ -17,6 +17,10 @@ pub struct AddressBook {
     pooled: HashSet<Endpoint>,
     reserved: HashSet<Endpoint>,
     selfs: HashSet<Endpoint>,
+    // Addresses sitting out a re-dial cooldown (a session that died young: a peer at capacity
+    // accepting-then-closing, or one rejecting fetches). Consulted by `take`; expired entries
+    // are pruned there. On a fully-cooling pool `take` still serves — never a wedge.
+    cooling: std::collections::HashMap<Endpoint, std::time::Instant>,
     capacity: usize,
     address_lower: usize,
     address_upper: usize,
@@ -30,6 +34,7 @@ impl AddressBook {
             pooled: HashSet::new(),
             reserved: HashSet::new(),
             selfs: HashSet::new(),
+            cooling: std::collections::HashMap::new(),
             capacity: settings.host_pool_capacity,
             address_lower: settings.address_lower,
             address_upper: settings.address_upper,
@@ -78,17 +83,38 @@ impl AddressBook {
         accepted
     }
 
-    // Random dial candidate; moved to the reserved (connected) set.
+    // Random dial candidate; moved to the reserved (connected) set. Cooling addresses are
+    // passed over while any non-cooling candidate exists; a fully-cooling pool still serves
+    // (availability over politeness when starved).
     pub fn take(&mut self) -> Option<TimestampedPeerInfo> {
         if self.pool.is_empty() {
             return None;
         }
-        let idx = rand::random_range(0..self.pool.len());
+        let now = std::time::Instant::now();
+        self.cooling.retain(|_, until| *until > now);
+        let eligible: Vec<usize> = (0..self.pool.len())
+            .filter(|i| {
+                self.pool
+                    .get(*i)
+                    .is_some_and(|p| !self.cooling.contains_key(&endpoint(p)))
+            })
+            .collect();
+        let idx = match eligible.as_slice() {
+            [] => rand::random_range(0..self.pool.len()),
+            some => *some.choose(&mut rand::rng())?,
+        };
         let picked = self.pool.remove(idx)?;
         let ep = endpoint(&picked);
         self.pooled.remove(&ep);
         self.reserved.insert(ep);
         Some(picked)
+    }
+
+    // Reclaim with a re-dial cooldown — for a session that died young.
+    pub fn reclaim_after(&mut self, peer: &TimestampedPeerInfo, cooldown: std::time::Duration) {
+        self.cooling
+            .insert(endpoint(peer), std::time::Instant::now() + cooldown);
+        self.reclaim(peer, false);
     }
 
     // On channel stop: drop the reservation; a non-violating peer is returned to the
@@ -234,6 +260,41 @@ mod tests {
         assert_eq!(book.insert_many(&[peer("1.1.1.1", 8444, 20)]), 0);
         book.reclaim(&taken, false);
         assert_eq!(book.len(), 1, "clean disconnect returns to pool");
+    }
+
+    // An address whose session ended almost immediately (a peer at capacity accepting and
+    // closing, or rejecting our fetches) must sit out a cooldown instead of going straight
+    // back into the random pick — on a small pool the hot re-dial loop burns every slot on
+    // the same closers.
+    #[test]
+    fn a_cooled_address_is_not_the_next_candidate() {
+        let mut book = AddressBook::new(&P2pSettings::default());
+        book.insert_many(&[peer("1.1.1.1", 8444, 10), peer("2.2.2.2", 8444, 10)]);
+        let churner = book.take().expect("a candidate");
+        book.reclaim_after(&churner, std::time::Duration::from_secs(60));
+        for _ in 0..8 {
+            let picked = book.take().expect("the healthy address is available");
+            assert_ne!(
+                (picked.host.as_str(), picked.port),
+                (churner.host.as_str(), churner.port),
+                "a cooling address must not be re-dialed"
+            );
+            book.reclaim(&picked, false);
+        }
+    }
+
+    // Cooldowns must never wedge the dialer: when every pooled address is cooling, take()
+    // still serves one (availability over politeness on a starved pool).
+    #[test]
+    fn an_all_cooling_pool_still_serves_a_candidate() {
+        let mut book = AddressBook::new(&P2pSettings::default());
+        book.insert_many(&[peer("1.1.1.1", 8444, 10)]);
+        let only = book.take().expect("a candidate");
+        book.reclaim_after(&only, std::time::Duration::from_secs(60));
+        assert!(
+            book.take().is_some(),
+            "a starved pool serves a cooling address rather than nothing"
+        );
     }
 
     #[test]
