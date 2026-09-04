@@ -1,7 +1,7 @@
 use crate::server::ActiveNode;
 use portfu::prelude::{Message, PortfuError, State, WebSocket, websocket};
 
-#[websocket("/ws/status")]
+#[websocket("/ws/status", client_trust = "rpc-clients")]
 pub async fn status_stream(
     socket: WebSocket,
     active: State<ActiveNode>,

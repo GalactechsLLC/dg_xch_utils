@@ -15,6 +15,15 @@ fn follow_step_timer_records_consumer_cycle_time() {
     );
 }
 
+#[test]
+fn follow_prefetch_uses_both_v3_slots_per_configured_peer() {
+    let cfg = prefetch_config(32, None, None);
+    assert_eq!(cfg.max_inflight, 64);
+    assert_eq!(cfg.max_depth, 64);
+    assert_eq!(cfg.per_peer, 2);
+    assert_eq!(cfg.byte_budget, dg_xch_node::sync::READAHEAD_BYTE_BUDGET);
+}
+
 // A subscribed coin spent on branch A must read UNSPENT again after a reorg to branch B where
 // the spend never happened, which means delivering the POST-ROLLBACK records to subscribers.
 // Reporting only the reorg tip's own delta would leave the subscriber hearing nothing about

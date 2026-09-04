@@ -4,8 +4,10 @@
 
 mod common;
 
-use dg_full_node::{Backend, Config, FullNode};
+use dg_full_node::server::{ActiveNode, BackendHandle};
+use dg_full_node::{Backend, Config, FullNode, build_portfu_rpc_tls_context};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use portfu::prelude::ServerBuilder;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -60,12 +62,7 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
 
     // ---- boot the server (empty store) ----
     let listen = free_addr();
-    let rpc_addr = free_addr();
-    let node = Arc::new(
-        FullNode::boot(config(listen, rpc_addr))
-            .await
-            .expect("boot"),
-    );
+    let node = Arc::new(FullNode::boot(config(listen, listen)).await.expect("boot"));
 
     // A wallet subscribes to a puzzle hash present in block 5000000's additions, before the sync.
     let adds = common::additions();
@@ -110,10 +107,27 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
         "subscribed puzzle hash received its created coin"
     );
 
-    // ---- serve a RequestBlock(s) to a peer: our own peer server hands block 5000000 to a dialer ----
-    let (server, serve_run, inbound_peers) = node.build_peer_server().expect("peer server");
-    let listener_run = serve_run.clone();
-    tokio::spawn(async move { server.run(listener_run).await });
+    // ---- one Portfu listener serves both Chia peer traffic and HTTP RPC ----
+    let tls = build_portfu_rpc_tls_context(&node.config.rpc_tls, listen).expect("Portfu TLS");
+    node.attach_rpc_live(tls.node_id);
+    let services = Arc::new(node.start_services().await.expect("services"));
+    let inbound_peers = services.inbound_peers.clone();
+    let sources = Arc::new(node.metrics_sources(&services));
+    let active = Arc::new(ActiveNode::Sqlite(BackendHandle {
+        node: node.clone(),
+        sources,
+    }));
+    let server = ServerBuilder::new()
+        .host(listen.ip().to_string())
+        .port(listen.port())
+        .tls(tls.tls_config)
+        .shutdown_grace_period(Duration::from_millis(100))
+        .global_state::<ActiveNode>(active.clone())
+        .global_state::<dg_full_node::server::NodeServices>(services.clone())
+        .global_state::<dg_full_node::Node>(node.state.clone())
+        .build();
+    let server_handle = server.handle();
+    let server_task = tokio::spawn(async move { server.run().await });
     tokio::time::sleep(Duration::from_millis(150)).await;
     let puller = common::dial_source("127.0.0.1", listen.port()).await;
     let served = puller
@@ -135,9 +149,8 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
         block.header_hash().unwrap()
     );
 
-    // ---- answer get_blockchain_state over the real Portfu TLS server ----
-    let rpc_server = common::spawn_portfu_rpc(&node, rpc_addr).await;
-    let envelope = rpc_get_blockchain_state(rpc_addr).await;
+    // ---- answer get_blockchain_state on that exact same socket ----
+    let envelope = rpc_get_blockchain_state(listen).await;
     assert_eq!(
         envelope["success"].as_bool(),
         Some(true),
@@ -152,8 +165,10 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     assert_eq!(state["sync"]["synced"].as_bool(), Some(false));
 
     // ---- drain ----
-    serve_run.store(false, Ordering::Relaxed);
-    rpc_server.shutdown();
+    server_handle.shutdown();
+    let _ = server_task.await;
+    active.shutdown().await;
+    services.drain().await;
     peer_run.store(false, Ordering::Relaxed);
 }
 

@@ -44,9 +44,9 @@ pub use source::{BlockRangeSource, OutboundPeerSource, request_weight_proof};
 pub use watchdog::StallWatchdog;
 pub use window::{Claim, Reservation, ReservationWindow};
 
-// Reservation-window width and outbound-slot target are one cross-crate contract: W == P ==
-// `dg_xch_p2p::P2pSettings::target_outbound` (8). Over-provisioning past W wastes connections; under-
-// provisioning starves the window.
+// Baseline reservation-window width and outbound-slot target. The full-node follow pipeline derives
+// its live fan-out from `P2pSettings::target_outbound`; this remains the default for standalone
+// `SyncConfig` users and the minimum aggressive readahead ceiling.
 pub const TARGET_OUTBOUND: usize = 8;
 
 /// How far below the confirmed peak the short-sync backtrack searches for the fork point before

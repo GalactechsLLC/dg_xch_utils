@@ -1,11 +1,11 @@
-// The HTTP RPC envelope and the 8555 TLS posture.
+// The HTTP RPC envelope and unified Portfu TLS posture.
 //
 // Envelope: every response is `{"<named_key>": ..., "success": true}` and every application
 // error is an HTTP-200 `{"success": false, "error": ...}`. The
 // envelope tests exercise the Portfu routes and deserialize through dg_xch_clients' REAL
 // response wrappers (the exact structs a Rust RPC client parses).
 //
-// TLS: Portfu serves the 8555 posture with a private-CA trust store.
+// TLS: Portfu selects a private-CA trust store on each RPC route.
 // The end-to-end tests run the real Portfu accept loop and connect with the real
 // `FullnodeClient` (client certs + https + envelope parse); the negative
 // tests prove a no-cert client and a wrong-CA client are refused at the handshake.
@@ -22,7 +22,9 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::consensus::constants::MAINNET;
 use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
-use dg_xch_core::ssl::generate_ca_signed_cert_data;
+use dg_xch_core::ssl::{
+    generate_ca_signed_cert_data, load_certs_from_bytes, load_private_key_from_bytes,
+};
 use dg_xch_node::Mempool;
 use http::StatusCode;
 use portfu::prelude::{ServerBuilder, ServerHandle};
@@ -53,12 +55,18 @@ async fn call(port: u16, path: &str, body: Value) -> (StatusCode, Value) {
 }
 
 async fn call_raw(port: u16, path: &str, body: Vec<u8>) -> (StatusCode, Value) {
+    let (crt, key) = generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
+        .expect("local RPC client cert");
     let verifier = Arc::new(dg_xch_core::protocols::shared::NoCertificateVerification);
     let config = Arc::new(
         rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(verifier)
-            .with_no_client_auth(),
+            .with_client_auth_cert(
+                load_certs_from_bytes(&crt).expect("client certs"),
+                load_private_key_from_bytes(&key).expect("client key"),
+            )
+            .expect("client auth"),
     );
     let connector = tokio_rustls::TlsConnector::from(config);
     let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -437,10 +445,10 @@ async fn tls_e2e_chia_client_four_endpoints() {
     run.shutdown();
 }
 
-// Route policy is PrivateCa | Loopback, so a loopback client does not need a certificate even when
-// the listener also trusts private-CA clients from remote addresses.
+// Listener-level presentation is optional for public routes, but protected RPC still requires the
+// route's private-CA trust store even from loopback.
 #[tokio::test]
-async fn tls_no_client_cert_is_allowed_from_loopback() {
+async fn tls_no_client_cert_is_rejected_by_rpc_route() {
     let (port, run, _mp, _rpc) = spawn_tls_server().await;
     let verifier = Arc::new(dg_xch_core::protocols::shared::NoCertificateVerification);
     let cfg = rustls::ClientConfig::builder()
@@ -448,10 +456,7 @@ async fn tls_no_client_cert_is_allowed_from_loopback() {
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
     let failed = raw_request_fails(port, Arc::new(cfg)).await;
-    assert!(
-        !failed,
-        "a loopback client must be accepted without a certificate"
-    );
+    assert!(failed, "a protected RPC route must require a certificate");
     run.shutdown();
 }
 
@@ -577,9 +582,9 @@ async fn tls_private_ca_client_is_accepted() {
     run.shutdown();
 }
 
-// `--rpc-tls local` on a loopback bind requires no client cert.
+// Local mode uses the Chia CA as its development-only RPC trust store.
 #[tokio::test]
-async fn tls_local_mode_allows_no_client_cert_on_loopback() {
+async fn tls_local_mode_requires_client_cert_on_loopback() {
     let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
     let verifier = Arc::new(dg_xch_core::protocols::shared::NoCertificateVerification);
     let cfg = rustls::ClientConfig::builder()
@@ -588,14 +593,13 @@ async fn tls_local_mode_allows_no_client_cert_on_loopback() {
         .with_no_client_auth();
     let refused = raw_request_fails(port, Arc::new(cfg)).await;
     assert!(
-        !refused,
-        "local mode on loopback must serve a cert-less client"
+        refused,
+        "local mode must still authenticate protected routes"
     );
     run.shutdown();
 }
 
-// `--rpc-tls local` is unauthenticated, so it must refuse to build on a routable (non-loopback)
-// bind: an unauthenticated RPC can never be exposed to the network.
+// `--rpc-tls local` trusts the public Chia CA for RPC, so it must refuse a routable bind.
 #[test]
 fn tls_local_mode_refuses_non_loopback_bind() {
     let bind: SocketAddr = "0.0.0.0:8555".parse().expect("addr");

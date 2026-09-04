@@ -11,7 +11,7 @@ use processing::{block_processor, peak_announcer};
 use recovery::{follow_head, handle_recovery};
 
 #[cfg(test)]
-pub(super) use fetch::{follow_fill_claimed, frozen_frontier_is_wedge};
+pub(super) use fetch::{follow_fill_claimed, frozen_frontier_is_wedge, prefetch_config};
 #[cfg(test)]
 pub(super) use processing::{FollowStepTimer, await_reset, emit_confirmed_peak};
 pub(crate) async fn reap_wallet_subscriptions_once<
@@ -195,7 +195,7 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
         inbound_peers.clone(),
         peak_rx,
     ));
-    pipeline_tasks.spawn(fetch_scheduler(
+    let mut fetch_task = tokio::spawn(fetch_scheduler(
         node.clone(),
         registry.clone(),
         queue.clone(),
@@ -211,6 +211,21 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
     );
     while node.run.load(Ordering::Relaxed) {
         tokio::time::sleep(DRIVER_TICK).await;
+        // A producer panic/early exit must not silently strand an empty queue. Reap it here and
+        // construct a fresh producer with fresh peer-source instances; persisted chain state is
+        // untouched and the generation guard rejects any completion from the retired epoch.
+        if fetch_task.is_finished() {
+            match (&mut fetch_task).await {
+                Ok(()) => warn!("fetch scheduler exited unexpectedly; restarting"),
+                Err(e) => warn!("fetch scheduler failed; restarting error={e}"),
+            }
+            queue.rebase(follow_head(&node).await);
+            fetch_task = tokio::spawn(fetch_scheduler(
+                node.clone(),
+                registry.clone(),
+                queue.clone(),
+            ));
+        }
         // Service any recovery the peer-free consumer delegated (orphan backtrack / --sync-from ref
         // fetch / missing-record repair / transient reset), running the UNMOVED recovery routines with
         // the driver's peer while the consumer is parked holding nothing. Each handler rebases the
@@ -296,6 +311,17 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
                     claimed,
                     node.peak_book.outbound_tip()
                 );
+                // A generation bump can interrupt well-behaved fetch waits, but the watchdog is the
+                // last-resort boundary for arbitrary task/lock failure. Recreate the producer so its
+                // readahead and cached websocket sources cannot survive the recovery epoch.
+                fetch_task.abort();
+                let _ = (&mut fetch_task).await;
+                fetch_task = tokio::spawn(fetch_scheduler(
+                    node.clone(),
+                    registry.clone(),
+                    queue.clone(),
+                ));
+                info!("fetch scheduler restarted after stall reclaim");
             }
         }
         // Caught up = no claim strictly heavier than our confirmed peak — a height comparison
@@ -404,6 +430,8 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
     }
     // Drain-on-shutdown: the run flag is already clear, so the sub-tasks are winding down on their own
     // idle backstops; abort makes the teardown prompt and leaks no task past the driver.
+    fetch_task.abort();
+    let _ = fetch_task.await;
     pipeline_tasks.abort_all();
     while pipeline_tasks.join_next().await.is_some() {}
 }

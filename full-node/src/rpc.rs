@@ -11,13 +11,11 @@ use dg_xch_core::consensus::block_generator::{
     coin_spend_from_generator,
 };
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use dg_xch_core::constants::CHIA_CA_CRT;
+use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::PeerMap;
 pub use dg_xch_core::protocols::full_node::CoinQueryWindow;
 use dg_xch_core::protocols::full_node::NewTransaction;
-use dg_xch_core::ssl::{
-    generate_ca_signed_cert_data, load_certs_from_bytes, make_ca_cert, make_ca_cert_data,
-};
+use dg_xch_core::ssl::{generate_ca_signed_cert_data, load_certs_from_bytes, make_ca_cert};
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_core::utils::hash_256;
 use dg_xch_node::slots::SlotState;
@@ -334,12 +332,16 @@ pub struct PortfuRpcTlsContext {
     pub node_id: Bytes32,
 }
 
-/// Build TLS for the Portfu listener while preserving the selected RPC trust policy.
+/// Build TLS for the unified Portfu listener.
+///
+/// Certificate presentation is optional at the TLS layer so public health and metrics routes
+/// remain usable. Protected routes select one of these named stores and require a matching cert:
+/// `chia-peers` for the Chia protocol and `rpc-clients` for administrative APIs.
 pub fn build_portfu_rpc_tls_context(
     mode: &RpcTlsMode,
     bind: SocketAddr,
 ) -> Result<PortfuRpcTlsContext, IoError> {
-    let (ca_crt, ca_key, client_auth) = match mode {
+    let rpc_ca = match mode {
         RpcTlsMode::PrivateCa { ssl_dir } => {
             let (ca_crt, ca_key) = resolve_private_ca(ssl_dir)?;
             if ca_crt == CHIA_CA_CRT.as_bytes() {
@@ -347,23 +349,27 @@ pub fn build_portfu_rpc_tls_context(
                     "refusing to root RPC client-auth at the public network CA; supply a private CA",
                 ));
             }
-            let auth = ClientAuthConfig {
-                presentation: ClientCertificateMode::Optional,
-                trust_stores: vec![TrustStore::new("chia-rpc", &ca_crt)],
-            };
-            (ca_crt, ca_key, auth)
+            let _ = ca_key;
+            ca_crt
         }
         RpcTlsMode::Local => {
             if !bind.ip().is_loopback() {
                 return Err(IoError::other(format!(
-                    "--rpc-tls local is unauthenticated and only allowed on loopback; got {bind}"
+                    "--rpc-tls local is only allowed on loopback; got {bind}"
                 )));
             }
-            let (ca_crt, ca_key) = make_ca_cert_data()?;
-            (ca_crt, ca_key, ClientAuthConfig::default())
+            CHIA_CA_CRT.as_bytes().to_vec()
         }
     };
-    let (cert_bytes, key_bytes) = generate_ca_signed_cert_data(&ca_crt, &ca_key)?;
+    let client_auth = ClientAuthConfig {
+        presentation: ClientCertificateMode::Optional,
+        trust_stores: vec![
+            TrustStore::new("chia-peers", CHIA_CA_CRT.as_bytes()),
+            TrustStore::new("rpc-clients", &rpc_ca),
+        ],
+    };
+    let (cert_bytes, key_bytes) =
+        generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())?;
     let certs = load_certs_from_bytes(&cert_bytes)?;
     let node_id = Bytes32::new(hash_256(
         certs.first().map(AsRef::as_ref).unwrap_or_default(),

@@ -5,7 +5,7 @@ use portfu::prelude::http::StatusCode;
 use portfu::prelude::{PortfuError, Response, State, get};
 use std::sync::atomic::Ordering;
 
-#[get("/debug/flamegraph")]
+#[get("/debug/flamegraph", client_trust = "rpc-clients")]
 pub async fn debug_flamegraph(active: State<ActiveNode>) -> Result<Response, PortfuError> {
     if !active.0.debug_endpoints() {
         return Ok(Response::from_status_and_message(

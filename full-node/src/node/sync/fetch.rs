@@ -1,24 +1,29 @@
 use super::*;
 
-// The readahead/queue byte budget + fan-out config: the shipped default, or the aggressive
-// large-RAM profile when `--prefetch-memory-mb`/`--prefetch-max-inflight` is set. Shared by the queue
-// (its byte ceiling) and the fetch scheduler (its lookahead depth + per-peer fan-out).
+// The readahead/queue byte budget + fan-out config. Concurrency follows the outbound-peer target;
+// the explicit memory/in-flight knobs override its bounded defaults. Shared by the queue (its byte
+// ceiling) and the fetch scheduler (its lookahead depth + per-peer fan-out).
 pub(super) fn prefetch_config_for<S: BlockStore + CoinStore + Send + Sync + 'static>(
     node: &Arc<FullNode<S>>,
 ) -> dg_xch_node::sync::PrefetchConfig {
-    if node.config.prefetch_memory_mb.is_some() || node.config.prefetch_max_inflight.is_some() {
-        let mb = node
-            .config
-            .prefetch_memory_mb
-            .unwrap_or(dg_xch_node::sync::READAHEAD_BYTE_BUDGET / (1024 * 1024));
-        dg_xch_node::sync::PrefetchConfig::aggressive(
-            mb,
-            node.config.prefetch_max_inflight,
-            dg_xch_node::sync::TARGET_OUTBOUND,
-        )
-    } else {
-        dg_xch_node::sync::PrefetchConfig::default()
-    }
+    prefetch_config(
+        node.config.p2p.target_outbound,
+        node.config.prefetch_memory_mb,
+        node.config.prefetch_max_inflight,
+    )
+}
+
+pub(in crate::node) fn prefetch_config(
+    target_outbound: usize,
+    memory_mb: Option<u64>,
+    max_inflight: Option<usize>,
+) -> dg_xch_node::sync::PrefetchConfig {
+    let peers = target_outbound.max(1);
+    let mb = memory_mb.unwrap_or(dg_xch_node::sync::READAHEAD_BYTE_BUDGET / (1024 * 1024));
+    // A standard V3 connection admits two concurrent RequestBlocks. Use both by default so a slow
+    // range on one peer does not leave its other protocol slot (and validation cores) idle.
+    let max_inflight = max_inflight.or_else(|| Some(peers.saturating_mul(2)));
+    dg_xch_node::sync::PrefetchConfig::aggressive(mb, max_inflight, peers)
 }
 
 pub(in crate::node) async fn follow_fill_claimed<
@@ -71,7 +76,7 @@ pub(in crate::node) fn frozen_frontier_is_wedge(from: u32, claimed: u32) -> bool
 }
 
 /// The detached fetch producer. Owns the readahead engine and the peer
-/// sources (rebuilt ONLY when the live set changes),
+/// sources (rebuilt when the live connection instances change),
 /// and keeps the [`BlockQueue`] filled to its byte budget across peers, biased to over-fill so the
 /// detached consumer is never starved. It touches neither the `Chaser` nor the recovery/announce
 /// paths — it only fetches and `complete`s into the queue.
@@ -96,7 +101,7 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
     let mut rotation = 0usize;
     let mut last_gen = queue.current_gen();
     let mut peer_sources: Vec<Arc<dyn BlockRangeSource>> = Vec::new();
-    let mut source_sig: Vec<(String, u16)> = Vec::new();
+    let mut source_peers: Vec<Arc<OutboundPeer>> = Vec::new();
     // Sync-stall diagnostics: track the fetch frontier across ticks to catch the decoupled-prefetch wedge
     // (the frontier freezes while the confirm cursor / claimed tip keeps moving).
     let mut last_from = 0u32;
@@ -161,17 +166,20 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
             continue;
         }
         let to = claimed.min(from.saturating_add(FOLLOW_BATCH - 1));
-        // Refresh sources only when the live peer set changed — retires the per-tick rebuild.
+        // Refresh sources when a connection instance changes, even if it reconnected to the same
+        // endpoint. Retaining an OutboundPeerSource by endpoint alone pins the dead websocket forever.
         let peers = registry.live_peers().await;
         if peers.is_empty() {
             tokio::time::sleep(DRIVER_TICK).await;
             continue;
         }
-        let sig: Vec<(String, u16)> = peers
-            .iter()
-            .map(|p| (p.endpoint.0.clone(), p.endpoint.1))
-            .collect();
-        if sig != source_sig {
+        let same_connections = peers.len() == source_peers.len()
+            && peers
+                .iter()
+                .zip(&source_peers)
+                .all(|(current, cached)| Arc::ptr_eq(current, cached));
+        if !same_connections {
+            readahead.abort_all();
             peer_sources = peers
                 .iter()
                 .map(|p| {
@@ -179,18 +187,24 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
                         as Arc<dyn BlockRangeSource>
                 })
                 .collect();
-            source_sig = sig;
+            source_peers = peers.clone();
         }
         let rotation_start = rotation % peer_sources.len();
         rotation = rotation.wrapping_add(1);
-        // The direct-fetch fallback peer: rotation-ordered, preferring one WITHOUT an in-flight readahead
-        // window (so two ranges never collide on one connection under per_peer==1).
+        // The direct-fetch fallback peer: rotation-ordered, preferring one without an in-flight
+        // readahead window so spare connections are used before a second V3 slot on a busy peer.
         let source = (0..peer_sources.len())
             .map(|i| &peer_sources[(rotation_start + i) % peer_sources.len()])
             .find(|s| !readahead.busy_peer(s.peer_id()))
             .cloned()
             .unwrap_or_else(|| peer_sources[rotation_start % peer_sources.len()].clone());
-        let prefetched = readahead.take(from, to).await;
+        let prefetched = tokio::select! {
+            result = readahead.take(from, to) => result,
+            () = queue.wait_replan(dispatch_gen) => {
+                readahead.abort_all();
+                continue;
+            }
+        };
         if to < claimed {
             readahead.fill(&peer_sources, to.saturating_add(1), claimed, FOLLOW_BATCH);
         }
@@ -198,7 +212,20 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
             Some(blocks) => Some(blocks),
             None => {
                 let started = std::time::Instant::now();
-                let direct = source.fetch_range(from, to).await;
+                // Bound the whole operation, including websocket-lock acquisition and send. The
+                // guarded request ticket makes cancelling this future release correlation/V3 state.
+                let direct = tokio::select! {
+                    result = tokio::time::timeout(REQUEST_TIMEOUT, source.fetch_range(from, to)) => {
+                        match result {
+                            Ok(result) => result,
+                            Err(_) => Err(SyncError::PeerStalled(source.peer_id())),
+                        }
+                    }
+                    () = queue.wait_replan(dispatch_gen) => {
+                        readahead.abort_all();
+                        continue;
+                    }
+                };
                 readahead
                     .metrics()
                     .follow_fetch_wait_micros

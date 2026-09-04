@@ -4,7 +4,7 @@ use portfu::prelude::{Message, Path, PortfuError, State, WebSocket, websocket};
 use std::str::FromStr;
 
 /// Stream log events at or above `{level}` as JSON, one message per event.
-#[websocket("/ws/logs/{level}")]
+#[websocket("/ws/logs/{level}", client_trust = "rpc-clients")]
 pub async fn log_stream(
     socket: WebSocket,
     level: Path,

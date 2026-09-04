@@ -80,8 +80,8 @@ impl RpcTlsMode {
     }
 }
 
-// The server's runtime configuration, honoring the documented CLI flags: --listen (P2P peer server), --rpc
-// (local RPC), --introducer (seed bootstrap), --advertise (WAN address for gossip behind NAT), --db (backend).
+// The server's runtime configuration. The full node requires `listen == rpc` because Portfu owns
+// one unified listener; `rpc` remains in this shared config for simulator compatibility.
 #[derive(Clone, Debug)]
 pub struct Config {
     pub listen: SocketAddr,
@@ -112,19 +112,15 @@ pub struct Config {
     // RespondCompactProofOfTime through the same validate/swap/re-gossip path as compact-VDF
     // gossip. With no timelord peer the scan runs and sends nothing.
     pub uncompact: bool,
-    // `--prefetch-memory-mb <N>`: RAM budget (MiB) for the window readahead's resident block bodies.
-    // `None` = the shipped default (256 MiB, adaptive depth ≤ 8, one window per peer) — no change
-    // for existing deployments. `Some(N)` opts a large-RAM, fetch-starved node into aggressive
-    // prefetch: the budget becomes a HARD resident ceiling that drives a deeper lookahead K (allowed
-    // past 8) AND raises the aggregate in-flight fetch concurrency (spread across peers) so the buffer
-    // refills as fast as the validator drains it. OOM-safe: at huge block sizes the byte budget still
-    // collapses depth toward one window.
+    // `--prefetch-memory-mb <N>`: RAM budget (MiB) for resident sync-window block bodies.
+    // `None` = 256 MiB. The full-node fetch width defaults to two requests per configured outbound
+    // peer; `Some(N)` raises only the resident ceiling so a fetch-starved, large-RAM node can sustain
+    // a deeper lookahead. At huge block sizes the byte budget collapses depth toward one window.
     pub prefetch_memory_mb: Option<u64>,
     // `--prefetch-max-inflight <N>`: optional cap on the AGGREGATE outstanding block-range requests
-    // (the concurrency knob, a COUNT — distinct from the byte budget above). `None` = derive from the
-    // anti-flood ceiling (`peers × per-peer cap`). Spread across peers as `ceil(N / peers)` per
-    // connection, never flooding one. Only takes effect alongside `--prefetch-memory-mb` (or on its
-    // own, on the default budget).
+    // (the concurrency knob, a COUNT — distinct from the byte budget above). `None` = two requests
+    // per configured outbound peer. Explicit values are spread across peers as `ceil(N / peers)`,
+    // within the hard aggregate and per-peer ceilings.
     pub prefetch_max_inflight: Option<usize>,
     pub p2p: P2pSettings,
     // `--trusted-peer <node-id-hex>` (repeatable): the cert-hash node ids granted the trusted tier —

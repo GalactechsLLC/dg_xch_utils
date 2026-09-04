@@ -1,5 +1,6 @@
-use super::{ChiaMessage, PendingRequests, ProtocolMessageTypes};
+use super::{ChiaMessage, PendingRequest, PendingRequests, ProtocolMessageTypes};
 use crate::blockchain::unsized_bytes::UnsizedBytes;
+use crate::protocols::rate_limits_v3::{V3Link, configure_message, settings_from_configure};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -92,4 +93,46 @@ async fn cancel_frees_the_slot() {
     let (id, _rx) = pending.register();
     pending.cancel(id);
     assert!(!pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)));
+}
+
+// An enclosing timeout drops the request future rather than calling an async cleanup path. The
+// guarded request must synchronously free both its correlation waiter and its negotiated V3 slot.
+#[test]
+fn guarded_request_drop_releases_pending_and_v3_slots() {
+    let pending = Arc::new(PendingRequests::default());
+    let v3 = Arc::new(V3Link::default());
+    v3.activate(settings_from_configure(&configure_message()).expect("valid local settings"));
+
+    let first = PendingRequest::new(pending.clone(), v3.clone());
+    let second = PendingRequest::new(pending.clone(), v3.clone());
+    assert_eq!(
+        v3.out_acquire(ProtocolMessageTypes::RequestBlocks, first.id()),
+        Ok(true)
+    );
+    assert_eq!(
+        v3.out_acquire(ProtocolMessageTypes::RequestBlocks, second.id()),
+        Ok(true)
+    );
+
+    let third = PendingRequest::new(pending.clone(), v3.clone());
+    assert_eq!(
+        v3.out_acquire(ProtocolMessageTypes::RequestBlocks, third.id()),
+        Err(()),
+        "the negotiated two-request window starts full"
+    );
+    let released_id = first.id();
+    drop(first);
+
+    assert!(
+        !pending.deliver(
+            released_id,
+            msg(Some(released_id), ProtocolMessageTypes::RespondBlocks)
+        ),
+        "dropping the request removes its correlation waiter"
+    );
+    assert_eq!(
+        v3.out_acquire(ProtocolMessageTypes::RequestBlocks, third.id()),
+        Ok(true),
+        "dropping the request immediately releases its V3 slot"
+    );
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-#[portfu::prelude::post("/farm_block")]
+#[portfu::prelude::post("/farm_block", client_trust = "rpc-clients")]
 pub async fn route(
     node: State<Node>,
     connection: ConnectionInfo,

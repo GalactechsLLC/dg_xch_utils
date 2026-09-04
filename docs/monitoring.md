@@ -1,7 +1,7 @@
 # Monitoring a dg_xch Full Node (Prometheus + Grafana)
 
 Every node exposes Prometheus text metrics at `/metrics` on the shared Portfu HTTPS listener
-(`--rpc`, default `127.0.0.1:8555`).
+(`--listen`, default `0.0.0.0:8444`).
 
 ## The metrics
 
@@ -48,7 +48,7 @@ and `window.confirm` is where a slow store shows up (watch it on the mmap/Pi pro
 scrape_configs:
   - job_name: dg-xch-node
     static_configs:
-      - targets: ["<node-host>:8555"]
+      - targets: ["<node-host>:8444"]
     scheme: https
     tls_config:
       insecure_skip_verify: true # or configure ca_file for private-CA mode
@@ -64,8 +64,7 @@ Service must expose the shared server port, and one ServiceMonitor covers the na
 ```yaml
 # on each node Service
 ports:
-  - { name: p2p, port: 8444, protocol: TCP }
-  - { name: server, port: 8555, protocol: TCP }
+  - { name: server, port: 8444, protocol: TCP }
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -99,7 +98,7 @@ The JSON in `grafana/` is the source of truth — edit there and re-import.
 ## Sanity check without Grafana
 
 ```bash
-curl -ks https://localhost:8555/metrics | grep -E 'fullnode_(peak_height|blocks_confirmed_total|window_)'
+curl -ks https://localhost:8444/metrics | grep -E 'fullnode_(peak_height|blocks_confirmed_total|window_)'
 ```
 
 If `fullnode_blocks_confirmed_total` is climbing, the node is syncing; everything

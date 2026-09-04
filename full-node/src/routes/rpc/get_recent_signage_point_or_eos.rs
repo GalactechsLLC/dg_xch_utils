@@ -1,7 +1,7 @@
 use super::*;
 
 pub const PATH: &str = "/get_recent_signage_point_or_eos";
-#[portfu::prelude::post("/get_recent_signage_point_or_eos")]
+#[portfu::prelude::post("/get_recent_signage_point_or_eos", client_trust = "rpc-clients")]
 pub async fn route(
     node: State<Node>,
     connection: ConnectionInfo,

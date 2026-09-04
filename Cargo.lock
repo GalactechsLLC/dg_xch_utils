@@ -1253,6 +1253,7 @@ dependencies = [
  "dg_xch_servers",
  "dg_xch_stores",
  "dg_xch_weight_proof",
+ "futures-util",
  "hex",
  "http",
  "ipnet",

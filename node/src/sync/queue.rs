@@ -69,6 +69,8 @@ pub struct BlockQueue {
     space: Notify,
     /// Consumer wakeup: fired when the slot at `low_water` becomes `Present`.
     ready: Notify,
+    /// Producer cancellation: fired whenever a rebase invalidates the current fetch plan.
+    replan: Notify,
     metrics: Arc<SyncMetrics>,
 }
 
@@ -88,6 +90,7 @@ impl BlockQueue {
             resident_bytes: AtomicU64::new(0),
             space: Notify::new(),
             ready: Notify::new(),
+            replan: Notify::new(),
             metrics,
         }
     }
@@ -278,6 +281,7 @@ impl BlockQueue {
         self.publish_gauges(&inner);
         drop(inner);
         self.space.notify_waiters();
+        self.replan.notify_waiters();
     }
 
     /// Release an `InFlight` claim (the scheduler's stall reclaim): the height returns to
@@ -345,6 +349,19 @@ impl BlockQueue {
         loop {
             let notified = self.space.notified();
             if self.can_admit() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Wait until `generation` is no longer current. Fetchers select this beside network waits so a
+    /// watchdog/reorg rebase cancels the stale operation immediately rather than waiting for it to
+    /// return before observing the generation bump.
+    pub async fn wait_replan(&self, generation: u64) {
+        loop {
+            let notified = self.replan.notified();
+            if self.current_gen() != generation {
                 return;
             }
             notified.await;

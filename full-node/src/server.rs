@@ -148,22 +148,12 @@ pub struct NodeServices {
     pub peer_registry: Arc<dg_xch_p2p::PeerRegistry>,
     pub inbound_peers: PeerMap,
     pub peer_run: Arc<AtomicBool>,
-    pub peer_server: tokio::sync::Mutex<Option<WebsocketServer>>,
+    pub peer_server: Arc<WebsocketServer>,
     pub introducer: Option<(String, u16)>,
     pub supervisor: tokio::sync::Mutex<Option<Supervisor>>,
 }
 
 impl NodeServices {
-    pub async fn run_peer_listener(&self) -> Result<(), std::io::Error> {
-        let server = self.peer_server.lock().await.take().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "peer listener already started",
-            )
-        })?;
-        server.run(self.peer_run.clone()).await
-    }
-
     pub async fn run_peer_supervisor(&self) {
         {
             let mut supervisor = self.supervisor.lock().await;
@@ -206,12 +196,16 @@ pub async fn run(
     config: Config,
     logger: Arc<DruidGardenLogger>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (server_bind, downgraded) = config.rpc_tls.resolve_bind(config.rpc);
-    if downgraded {
-        log::warn!(
-            "--rpc-tls local requires loopback; configured={} effective={server_bind}",
-            config.rpc
-        );
+    let server_bind = config.listen;
+    if config.rpc != server_bind {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "the unified Portfu server has one bind; configured --listen={server_bind} but --rpc={}",
+                config.rpc
+            ),
+        )
+        .into());
     }
     let tls = crate::build_portfu_rpc_tls_context(&config.rpc_tls, server_bind)?;
     let node_id = tls.node_id;
@@ -278,7 +272,7 @@ pub async fn run(
     let host = server_bind.ip().to_string();
     let port = server_bind.port();
     log::info!(
-        "portfu server hosting RPC/metrics/health/sockets/tasks backend={} bind={host}:{port}",
+        "portfu server hosting Chia peers/RPC/metrics/health/sockets/tasks backend={} bind={host}:{port}",
         active.backend_name()
     );
     let active = Arc::new(active);

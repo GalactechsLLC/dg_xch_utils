@@ -17,8 +17,8 @@ where
         });
     }
 
-    /// Build the P2P peer server (`--listen`) for the Portfu listener task.
-    /// Returns the server, its run flag, and the shared inbound peer map.
+    /// Build the Chia session state consumed by Portfu's `/ws` route.
+    /// Returns the state, its run flag, and the shared inbound peer map.
     ///
     /// # Errors
     /// Returns an I/O error if the TLS config or socket cannot be initialized.

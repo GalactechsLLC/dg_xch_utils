@@ -1,6 +1,5 @@
 //! Background work registered with Portfu.
 
-mod peer_listener;
 mod peer_supervisor;
 mod shutdown;
 mod sync_driver;

@@ -412,7 +412,6 @@ async fn acquire_v3_out_window(
             Ok(_) => return Ok(()),
             Err(()) => {
                 if waited >= WAIT_CAP_MS {
-                    connection.read().await.cancel_request(id);
                     return Err(Error::new(
                         ErrorKind::TimedOut,
                         format!(
@@ -435,26 +434,25 @@ pub async fn oneshot_message(
     _msg_id: Option<u16>,
     timeout: Option<u64>,
 ) -> Result<Arc<ChiaMessage>, Error> {
-    let (id, rx) = connection.read().await.register_request();
+    let mut request = connection.read().await.register_guarded_request();
+    let id = request.id();
     msg.id = Some(id);
     acquire_v3_out_window(&connection, &msg, id).await?;
     if let Err(e) = connection.write().await.send(msg.into()).await {
-        connection.read().await.cancel_request(id);
         return Err(Error::new(
             ErrorKind::InvalidData,
             format!("Failed to send data: {e:?}"),
         ));
     }
-    match tokio::time::timeout(Duration::from_millis(timeout.unwrap_or(15000)), rx).await {
+    match tokio::time::timeout(
+        Duration::from_millis(timeout.unwrap_or(15000)),
+        request.recv(),
+    )
+    .await
+    {
         Ok(Ok(reply)) => Ok(reply),
-        Ok(Err(_)) => {
-            connection.read().await.cancel_request(id);
-            Err(Error::other("Channel Closed before response received"))
-        }
-        Err(_) => {
-            connection.read().await.cancel_request(id);
-            Err(Error::other("Timeout before oneshot_message completed"))
-        }
+        Ok(Err(_)) => Err(Error::other("Channel Closed before response received")),
+        Err(_) => Err(Error::other("Timeout before oneshot_message completed")),
     }
 }
 
@@ -470,17 +468,21 @@ pub async fn oneshot<R: ChiaSerialize>(
     // fix). The id-less case (the Handshake verack, which correlates by type and happens once, before
     // any concurrent traffic exists) keeps the legacy type-filtered handler path below.
     if msg_id.is_some() || msg.id.is_some() {
-        let (id, rx) = connection.read().await.register_request();
+        let mut request = connection.read().await.register_guarded_request();
+        let id = request.id();
         msg.id = Some(id);
         acquire_v3_out_window(&connection, &msg, id).await?;
         if let Err(e) = connection.write().await.send(msg.into()).await {
-            connection.read().await.cancel_request(id);
             return Err(Error::new(
                 ErrorKind::InvalidData,
                 format!("Failed to parse send data: {e:?}"),
             ));
         }
-        return match tokio::time::timeout(Duration::from_millis(timeout.unwrap_or(15000)), rx).await
+        return match tokio::time::timeout(
+            Duration::from_millis(timeout.unwrap_or(15000)),
+            request.recv(),
+        )
+        .await
         {
             Ok(Ok(reply)) => {
                 let mut cursor = Cursor::new(reply.data.bytes.as_slice());
@@ -491,14 +493,8 @@ pub async fn oneshot<R: ChiaSerialize>(
                     )
                 })
             }
-            Ok(Err(_)) => {
-                connection.read().await.cancel_request(id);
-                Err(Error::other("Channel Closed before response received"))
-            }
-            Err(_) => {
-                connection.read().await.cancel_request(id);
-                Err(Error::other("Timeout before oneshot completed"))
-            }
+            Ok(Err(_)) => Err(Error::other("Channel Closed before response received")),
+            Err(_) => Err(Error::other("Timeout before oneshot completed")),
         };
     }
     let handle_uuid = Uuid::new_v4();

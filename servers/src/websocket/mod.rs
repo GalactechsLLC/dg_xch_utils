@@ -21,7 +21,7 @@ use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1::Builder;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
-use hyper_tungstenite::{HyperWebsocket, is_upgrade_request, upgrade};
+use hyper_tungstenite::{is_upgrade_request, upgrade};
 use hyper_util::rt::TokioIo;
 use log::{debug, error, warn};
 #[cfg(feature = "metrics")]
@@ -252,6 +252,30 @@ impl WebsocketServer {
         Ok(())
     }
 
+    /// Run the Chia peer session over a websocket upgraded by an embedding server.
+    pub async fn handle_stream(
+        &self,
+        peer_addr: SocketAddr,
+        peer_id: Bytes32,
+        websocket: WebsocketMsgStream,
+        run: Arc<AtomicBool>,
+    ) -> Result<(), tungstenite::error::Error> {
+        if self.bans.is_banned(&peer_addr.ip()) {
+            return Err(tungstenite::error::Error::ConnectionClosed);
+        }
+        handle_connection(
+            peer_addr,
+            Arc::new(peer_id),
+            websocket,
+            self.peers.clone(),
+            self.message_handlers.clone(),
+            run,
+            self.rate_limited,
+            self.bans.clone(),
+        )
+        .await
+    }
+
     pub fn init(
         certs: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
@@ -369,6 +393,16 @@ fn connection_handler(
             gauge.add(1);
         }
         tokio::spawn(async move {
+            let websocket = match websocket.await {
+                Ok(websocket) => WebsocketMsgStream::TokioIo(Box::new(websocket)),
+                Err(error) => {
+                    log_connection_error(
+                        "Error upgrading websocket connection",
+                        &error.to_string(),
+                    );
+                    return;
+                }
+            };
             if let Err(e) = handle_connection(
                 addr,
                 peer_id,
@@ -402,7 +436,7 @@ fn connection_handler(
 async fn handle_connection(
     peer_addr: SocketAddr,
     peer_id: Arc<Bytes32>,
-    websocket: HyperWebsocket,
+    websocket: WebsocketMsgStream,
     peers: PeerMap,
     message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     run: Arc<AtomicBool>,
@@ -424,7 +458,7 @@ async fn handle_connection(
         None
     };
     let (websocket, mut stream) = WebsocketConnection::new(
-        WebsocketMsgStream::TokioIo(Box::new(websocket.await?)),
+        websocket,
         message_handlers,
         peer_id.clone(),
         peers.clone(),

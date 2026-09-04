@@ -1,7 +1,7 @@
 use super::*;
 
 pub const PATH: &str = "/get_connections";
-#[portfu::prelude::post("/get_connections")]
+#[portfu::prelude::post("/get_connections", client_trust = "rpc-clients")]
 pub async fn route(
     node: State<Node>,
     connection: ConnectionInfo,

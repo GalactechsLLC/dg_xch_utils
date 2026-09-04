@@ -9,7 +9,7 @@ fn full_node_is_a_dg_subcommand() {
         "--listen",
         "127.0.0.1:8444",
         "--rpc",
-        "127.0.0.1:8555",
+        "127.0.0.1:8444",
         "--db",
         "sqlite:///tmp/chain.db",
         "--peer",

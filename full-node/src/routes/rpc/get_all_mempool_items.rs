@@ -1,7 +1,7 @@
 use super::*;
 
 pub const PATH: &str = "/get_all_mempool_items";
-#[portfu::prelude::post("/get_all_mempool_items")]
+#[portfu::prelude::post("/get_all_mempool_items", client_trust = "rpc-clients")]
 pub async fn route(
     node: State<Node>,
     connection: ConnectionInfo,

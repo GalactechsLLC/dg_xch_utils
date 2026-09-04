@@ -644,6 +644,48 @@ pub struct PendingRequests {
     inner: std::sync::Mutex<PendingInner>,
 }
 
+/// Cancellation-safe ownership of one outbound request correlation slot.
+///
+/// Dropping the future that is waiting for a reply must also remove the pending
+/// waiter and release any RATE_LIMITS_V3 window slot. Keeping that cleanup in
+/// `Drop` makes enclosing timeouts and task aborts safe.
+pub struct PendingRequest {
+    id: u16,
+    receiver: tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>,
+    pending: Arc<PendingRequests>,
+    v3: Arc<rate_limits_v3::V3Link>,
+}
+
+impl PendingRequest {
+    fn new(pending: Arc<PendingRequests>, v3: Arc<rate_limits_v3::V3Link>) -> Self {
+        let (id, receiver) = pending.register();
+        Self {
+            id,
+            receiver,
+            pending,
+            v3,
+        }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> u16 {
+        self.id
+    }
+
+    pub async fn recv(
+        &mut self,
+    ) -> Result<Arc<ChiaMessage>, tokio::sync::oneshot::error::RecvError> {
+        (&mut self.receiver).await
+    }
+}
+
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        self.pending.cancel(self.id);
+        self.v3.out_release(self.id);
+    }
+}
+
 #[derive(Default)]
 struct PendingInner {
     /// Last id handed out; the next allocation is `wrapping_add(1)`, skipping `0` and any live id.
@@ -764,9 +806,29 @@ impl SocketPeer {
     }
 }
 
+pub trait WebsocketIo:
+    Stream<Item = Result<Message, tokio_tungstenite::tungstenite::error::Error>>
+    + Sink<Message, Error = tokio_tungstenite::tungstenite::error::Error>
+    + FusedStream
+    + Unpin
+    + Send
+{
+}
+
+impl<T> WebsocketIo for T where
+    T: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::error::Error>>
+        + Sink<Message, Error = tokio_tungstenite::tungstenite::error::Error>
+        + FusedStream
+        + Unpin
+        + Send
+{
+}
+
 pub enum WebsocketMsgStream {
     TokioIo(Box<WebSocketStream<TokioIo<Upgraded>>>),
     Tls(Box<WebSocketStream<MaybeTlsStream<TcpStream>>>),
+    /// An upgraded websocket owned by an embedding server such as Portfu.
+    Boxed(Box<dyn WebsocketIo>),
 }
 impl Stream for WebsocketMsgStream {
     type Item = Result<Message, tokio_tungstenite::tungstenite::error::Error>;
@@ -774,6 +836,7 @@ impl Stream for WebsocketMsgStream {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).poll_next(cx),
             WebsocketMsgStream::Tls(s) => Pin::new(s).poll_next(cx),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).poll_next(cx),
         }
     }
 }
@@ -782,6 +845,7 @@ impl FusedStream for WebsocketMsgStream {
         match self {
             WebsocketMsgStream::TokioIo(s) => s.is_terminated(),
             WebsocketMsgStream::Tls(s) => s.is_terminated(),
+            WebsocketMsgStream::Boxed(s) => s.is_terminated(),
         }
     }
 }
@@ -791,24 +855,28 @@ impl Sink<Message> for WebsocketMsgStream {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).poll_ready(cx),
             WebsocketMsgStream::Tls(s) => Pin::new(s).poll_ready(cx),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).poll_ready(cx),
         }
     }
     fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).start_send(item),
             WebsocketMsgStream::Tls(s) => Pin::new(s).start_send(item),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).start_send(item),
         }
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).poll_flush(cx),
             WebsocketMsgStream::Tls(s) => Pin::new(s).poll_flush(cx),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).poll_flush(cx),
         }
     }
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).poll_close(cx),
             WebsocketMsgStream::Tls(s) => Pin::new(s).poll_close(cx),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).poll_close(cx),
         }
     }
 }
@@ -889,6 +957,13 @@ impl WebsocketConnection {
     #[must_use]
     pub fn register_request(&self) -> (u16, tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>) {
         self.pending.register()
+    }
+
+    /// Register a request whose correlation and V3 window state are released
+    /// even when its waiting future is cancelled by an outer timeout or abort.
+    #[must_use]
+    pub fn register_guarded_request(&self) -> PendingRequest {
+        PendingRequest::new(self.pending.clone(), self.v3.clone())
     }
 
     /// Release a reserved correlation id whose reply never arrived (timeout / send failure).

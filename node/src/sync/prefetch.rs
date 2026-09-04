@@ -45,11 +45,12 @@ pub const READAHEAD_ABS_MAX_DEPTH: usize = 256;
 pub const READAHEAD_MAX_PER_PEER: usize = 16;
 
 /// The RAM budget and concurrency bounds a [`WindowReadahead`] runs under.
-/// [`PrefetchConfig::default`] is the shipped default (256 MiB budget, depth/aggregate-in-flight
-/// ≤ 8, one window per peer); [`PrefetchConfig::aggressive`] derives the `--prefetch-memory-mb` /
-/// `--prefetch-max-inflight` knobs. The two bounds clamp in different units: `byte_budget` is the
-/// OOM ceiling on resident bodies, while `max_inflight` / `per_peer` cap the outstanding fetch
-/// fan-out (at small blocks a byte budget alone would admit a very high window count).
+/// [`PrefetchConfig::default`] is the standalone baseline (256 MiB budget,
+/// depth/aggregate-in-flight ≤ 8, one window per peer); the full node uses
+/// [`PrefetchConfig::aggressive`] to derive its fan-out from `--target-outbound` and the optional
+/// `--prefetch-memory-mb` / `--prefetch-max-inflight` knobs. The bounds clamp in different units:
+/// `byte_budget` is the OOM ceiling on resident bodies, while `max_inflight` / `per_peer` cap the
+/// outstanding fetch fan-out (at small blocks a byte budget alone would admit a high window count).
 #[derive(Clone, Copy, Debug)]
 pub struct PrefetchConfig {
     /// HARD ceiling on resident (fetched-but-not-yet-taken) window bytes — the OOM bound.
@@ -418,6 +419,7 @@ impl Drop for WindowReadahead {
         for w in self.inflight.drain(..) {
             w.handle.abort();
         }
+        self.publish_gauges();
     }
 }
 

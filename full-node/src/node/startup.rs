@@ -242,7 +242,7 @@ where
             peer_registry,
             inbound_peers,
             peer_run,
-            peer_server: tokio::sync::Mutex::new(Some(peer_server)),
+            peer_server: Arc::new(peer_server),
             introducer: self.config.introducer.clone(),
             supervisor: tokio::sync::Mutex::new(Some(supervisor)),
         })

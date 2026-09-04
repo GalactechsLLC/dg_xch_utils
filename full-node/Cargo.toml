@@ -31,6 +31,7 @@ zstd = "0.13.2"
 dg_xch_weight_proof = { path = "../weight-proof", version = "3.0.0" }
 dg_xch_servers = { path = "../servers", version = "3.0.0" }
 async-trait = "0.1.89"
+futures-util = "0.3.32"
 # CIDR matching for trusted peer configuration.
 ipnet = "2.12"
 uuid = { version = "1.24.0", features = ["v4"] }

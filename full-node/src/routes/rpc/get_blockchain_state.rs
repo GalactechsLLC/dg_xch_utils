@@ -4,7 +4,7 @@ const BLOCKCHAIN_STATE_LOOKBACK: u32 = 4608;
 const MAX_TX_BLOCK_WALK: u32 = 128;
 
 pub const PATH: &str = "/get_blockchain_state";
-#[portfu::prelude::post("/get_blockchain_state")]
+#[portfu::prelude::post("/get_blockchain_state", client_trust = "rpc-clients")]
 pub async fn route(
     node: State<Node>,
     connection: ConnectionInfo,

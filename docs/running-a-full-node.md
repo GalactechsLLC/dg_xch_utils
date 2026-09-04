@@ -16,16 +16,23 @@ The binary is written to `target/release/dg`.
 mkdir -p "$HOME/dg-xch-data"
 ./target/release/dg full-node \
   --listen 0.0.0.0:8444 \
-  --rpc 127.0.0.1:8555 \
   --db "sqlite://$HOME/dg-xch-data/chain.db" \
   --network mainnet
 ```
 
 Use one or more `--peer host:port` options or an `--introducer host:port` to establish outbound connections. Use `--advertise ip:port` only when the listener is reachable from the public network.
 
-## RPC TLS
+## Unified Portfu TLS
 
-The `--rpc` address is the shared Portfu HTTPS listener for RPC, `/health`, `/metrics`, and operational WebSockets. The default `--rpc-tls local` mode requires a loopback address. Use `--rpc-tls private-ca --ssl-dir <directory>` for authenticated remote RPC. The directory must contain `ca/private_ca.crt` and `ca/private_ca.key`; public network certificates are not accepted as RPC client-authentication roots.
+Portfu owns the single `--listen` socket and serves the Chia peer WebSocket, RPC, health,
+metrics, and operational WebSockets on it. Peer clients connect to `/ws` with a certificate rooted
+at the Chia network CA. RPC and operational routes require a certificate rooted at the private CA
+under `<ssl-dir>/ca`; it is generated on first start when missing. `/health` and `/metrics` remain
+public. The deprecated `--rpc` flag does not create a second listener and, when supplied, must equal
+`--listen`.
+
+The default `--rpc-tls private-ca` mode is appropriate for a public peer listener. For loopback-only
+development, `--rpc-tls local` accepts Chia-CA client certificates for protected routes.
 
 ## Peer Settings
 
@@ -38,6 +45,15 @@ The `dg full-node` command exposes every `P2pSettings` value:
 - `--jitter-floor`
 
 Invalid combinations are rejected during startup. In particular, outbound peers cannot exceed total peers, address bounds must fit within the host pool, durations must be nonzero, and jitter must be between `0.0` and `1.0`.
+
+The follow-sync fetch width now uses both standard V3 request slots for each
+`--target-outbound` connection; raising the outbound target therefore raises useful network
+concurrency instead of leaving extra connections idle. For a high-core-count machine, start with
+`--target-outbound 32 --target-peer-count 80` (up to 64 concurrent range fetches). Increase
+`--prefetch-memory-mb` if `/metrics` shows the queue repeatedly reaching its byte ceiling, and use
+`--prefetch-max-inflight` only when an explicit cap is needed. More fetch concurrency cannot make
+the serial chain-confirm boundary parallel, so CPU usage below 100% can still be normal when storage
+or ordered validation is the limiting stage.
 
 ## Storage
 
@@ -57,4 +73,4 @@ The mmap directory must be writable by the node process.
 
 ## Monitoring
 
-Prometheus metrics are served at `https://<rpc-address>/metrics`. See [monitoring.md](monitoring.md) for the metric names and scrape configuration.
+Prometheus metrics are served at `https://<listen-address>/metrics`. See [monitoring.md](monitoring.md) for the metric names and scrape configuration.

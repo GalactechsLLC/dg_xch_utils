@@ -10,10 +10,10 @@ use std::time::Duration;
 pub struct FullNodeArgs {
     #[arg(long, default_value = "0.0.0.0:8444")]
     listen: String,
-    /// Shared Portfu RPC, metrics, health, and WebSocket address.
-    #[arg(long, default_value = "127.0.0.1:8555")]
-    rpc: String,
-    #[arg(long = "rpc-tls", default_value = "local")]
+    /// Deprecated: Portfu serves peers and RPC on `--listen`; if supplied this must match it.
+    #[arg(long)]
+    rpc: Option<String>,
+    #[arg(long = "rpc-tls", default_value = "private-ca")]
     rpc_tls: String,
     /// Directory containing the private RPC CA when `--rpc-tls private-ca` is used.
     #[arg(long = "ssl-dir", default_value = "ssl")]
@@ -101,9 +101,10 @@ impl FullNodeArgs {
             recent_peer_threshold: Duration::from_secs(self.recent_peer_threshold_secs),
             jitter_floor: self.jitter_floor,
         };
+        let rpc = self.rpc.as_deref().unwrap_or(&self.listen);
         let mut config = Config::build(
             &self.listen,
-            &self.rpc,
+            rpc,
             self.introducer.as_deref(),
             &self.peer,
             self.advertise.as_deref(),
@@ -120,6 +121,12 @@ impl FullNodeArgs {
             &self.trusted_cidr,
         )
         .map_err(Error::other)?;
+        if config.rpc != config.listen {
+            return Err(Error::other(format!(
+                "--rpc no longer opens a second listener; omit it or set it to --listen ({})",
+                config.listen
+            )));
+        }
         config.rpc_tls =
             dg_full_node::RpcTlsMode::parse(&self.rpc_tls, &self.ssl_dir).map_err(Error::other)?;
         config.debug_endpoints = self.debug_endpoints;

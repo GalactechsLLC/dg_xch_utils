@@ -206,6 +206,21 @@ async fn wait_ready_wakes_on_head_complete() {
     assert_eq!(got, Some(0));
 }
 
+#[tokio::test]
+async fn wait_replan_wakes_on_generation_change() {
+    let q = Arc::new(queue(100, 1 << 30));
+    let generation = q.current_gen();
+    let q2 = q.clone();
+    let waiter = tokio::spawn(async move { q2.wait_replan(generation).await });
+    tokio::task::yield_now().await;
+
+    q.rebase(100);
+    tokio::time::timeout(Duration::from_secs(5), waiter)
+        .await
+        .expect("rebase interrupts a stale fetch promptly")
+        .expect("waiter task ok");
+}
+
 // drain_ready_window pulls the maximal contiguous PRESENT run from low_water in one call (the
 // consumer's batch pull that keeps the frozen core's window-precompute intact), stops at the first
 // gap, and is capped by `max`.

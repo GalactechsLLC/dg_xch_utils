@@ -127,7 +127,7 @@ pub use startup::open_backend;
 #[cfg(test)]
 use sync::{
     ConfirmedPeak, RECOVERY_CHANNEL_CAP, RESET_REPLY_TIMEOUT, RecoveryRequest, await_reset,
-    emit_confirmed_peak, follow_fill_claimed, frozen_frontier_is_wedge,
+    emit_confirmed_peak, follow_fill_claimed, frozen_frontier_is_wedge, prefetch_config,
 };
 pub(crate) use sync::{reap_wallet_subscriptions_once, sync_driver, tip_follower};
 use workers::*;
