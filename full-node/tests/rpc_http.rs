@@ -29,7 +29,6 @@ use dg_xch_node::Mempool;
 use http::StatusCode;
 use portfu::prelude::{ServerBuilder, ServerHandle};
 use serde_json::{Value, json};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -374,8 +373,7 @@ async fn spawn_tls_server_mode(
     let _ = rustls::crypto::ring::default_provider().install_default();
     let (rpc, mempool) = seeded_rpc().await;
     let port = free_port();
-    let bind: SocketAddr = format!("127.0.0.1:{port}").parse().expect("bind addr");
-    let tls = build_portfu_rpc_tls_context(&mode, bind).expect("tls context");
+    let tls = build_portfu_rpc_tls_context(&mode).expect("tls context");
     let server = ServerBuilder::new()
         .host("127.0.0.1")
         .port(port)
@@ -597,42 +595,4 @@ async fn tls_local_mode_requires_client_cert_on_loopback() {
         "local mode must still authenticate protected routes"
     );
     run.shutdown();
-}
-
-// `--rpc-tls local` trusts the public Chia CA for RPC, so it must refuse a routable bind.
-#[test]
-fn tls_local_mode_refuses_non_loopback_bind() {
-    let bind: SocketAddr = "0.0.0.0:8555".parse().expect("addr");
-    match build_portfu_rpc_tls_context(&dg_full_node::RpcTlsMode::Local, bind) {
-        Ok(_) => panic!("local mode on a 0.0.0.0 bind must fail closed"),
-        Err(err) => assert!(
-            err.to_string().contains("loopback"),
-            "the error must name the loopback requirement, got: {err}"
-        ),
-    }
-}
-
-#[test]
-fn local_mode_downgrades_routable_bind_to_loopback() {
-    use dg_full_node::RpcTlsMode;
-    let routable: SocketAddr = "0.0.0.0:8555".parse().unwrap();
-    let (bind, downgraded) = RpcTlsMode::Local.resolve_bind(routable);
-    assert!(
-        downgraded,
-        "a routable local-mode bind must be flagged downgraded"
-    );
-    assert!(bind.ip().is_loopback(), "downgraded bind must be loopback");
-    assert_eq!(bind.port(), 8555, "port is preserved");
-    // A loopback bind is left untouched.
-    let loop_in: SocketAddr = "127.0.0.1:8555".parse().unwrap();
-    let (b2, d2) = RpcTlsMode::Local.resolve_bind(loop_in);
-    assert!(!d2 && b2 == loop_in, "loopback local bind is untouched");
-    let (b3, d3) = RpcTlsMode::PrivateCa {
-        ssl_dir: std::path::PathBuf::from("ssl"),
-    }
-    .resolve_bind(routable);
-    assert!(
-        !d3 && b3 == routable,
-        "private CA binds exactly as configured"
-    );
 }

@@ -51,7 +51,7 @@ scrape_configs:
       - targets: ["<node-host>:8444"]
     scheme: https
     tls_config:
-      insecure_skip_verify: true # or configure ca_file for private-CA mode
+      insecure_skip_verify: true # or configure ca_file with the Chia network CA
 ```
 
 The dashboards key on the `job` label — name the job after the node

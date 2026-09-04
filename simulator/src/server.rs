@@ -174,8 +174,8 @@ impl SimulatorServer {
         )
         .map_err(SimError::Invariant)?;
         let rpc_bind = config.rpc;
-        let tls = dg_full_node::build_portfu_rpc_tls_context(&config.rpc_tls, rpc_bind)
-            .map_err(SimError::Io)?;
+        let tls =
+            dg_full_node::build_portfu_rpc_tls_context(&config.rpc_tls).map_err(SimError::Io)?;
         let node = Arc::new(
             FullNode::boot_with_store_constants(config, store.clone(), constants)
                 .map_err(SimError::Io)?,

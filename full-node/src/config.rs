@@ -59,27 +59,6 @@ impl RpcTlsMode {
     }
 }
 
-impl RpcTlsMode {
-    /// The effective RPC socket bind for this mode. `Local` is UNAUTHENTICATED, so a routable
-    /// configured bind is DOWNGRADED to loopback (returning `true`) rather than exposing an
-    /// unauthenticated RPC to the network; the caller logs a loud warning and the operator opts
-    /// into `--rpc-tls private-ca` for an authenticated network RPC. `PrivateCa` binds
-    /// exactly as configured.
-    #[must_use]
-    pub fn resolve_bind(&self, configured: SocketAddr) -> (SocketAddr, bool) {
-        match self {
-            RpcTlsMode::Local if !configured.ip().is_loopback() => (
-                SocketAddr::new(
-                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-                    configured.port(),
-                ),
-                true,
-            ),
-            _ => (configured, false),
-        }
-    }
-}
-
 // The server's runtime configuration. The full node requires `listen == rpc` because Portfu owns
 // one unified listener; `rpc` remains in this shared config for simulator compatibility.
 #[derive(Clone, Debug)]

@@ -62,8 +62,8 @@ pub async fn spawn_portfu_rpc(
     node: &std::sync::Arc<FullNode<SqliteStore>>,
     bind: std::net::SocketAddr,
 ) -> ServerHandle {
-    let tls = dg_full_node::build_portfu_rpc_tls_context(&node.config.rpc_tls, bind)
-        .expect("Portfu RPC TLS");
+    let tls =
+        dg_full_node::build_portfu_rpc_tls_context(&node.config.rpc_tls).expect("Portfu RPC TLS");
     node.attach_rpc_live(tls.node_id);
     let server = ServerBuilder::new()
         .host(bind.ip().to_string())

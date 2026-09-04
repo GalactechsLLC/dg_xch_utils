@@ -61,7 +61,9 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     let (peer_port, peer_run) = common::spawn_serving_node(peer_api).await;
 
     // ---- boot the server (empty store) ----
-    let listen = free_addr();
+    let port = free_addr().port();
+    let listen = SocketAddr::from(([0, 0, 0, 0], port));
+    let client_addr = SocketAddr::from(([127, 0, 0, 1], port));
     let node = Arc::new(FullNode::boot(config(listen, listen)).await.expect("boot"));
 
     // A wallet subscribes to a puzzle hash present in block 5000000's additions, before the sync.
@@ -108,7 +110,7 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     );
 
     // ---- one Portfu listener serves both Chia peer traffic and HTTP RPC ----
-    let tls = build_portfu_rpc_tls_context(&node.config.rpc_tls, listen).expect("Portfu TLS");
+    let tls = build_portfu_rpc_tls_context(&node.config.rpc_tls).expect("Portfu TLS");
     node.attach_rpc_live(tls.node_id);
     let services = Arc::new(node.start_services().await.expect("services"));
     let inbound_peers = services.inbound_peers.clone();
@@ -129,6 +131,15 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     let server_handle = server.handle();
     let server_task = tokio::spawn(async move { server.run().await });
     tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let health = public_get(client_addr, "/health").await;
+    assert!(health.starts_with("HTTP/1.1 200"), "health is public");
+    let metrics = public_get(client_addr, "/metrics").await;
+    assert!(
+        metrics.starts_with("HTTP/1.1 200") && metrics.contains("fullnode_peak_height"),
+        "metrics are public on the externally bound Portfu listener"
+    );
+
     let puller = common::dial_source("127.0.0.1", listen.port()).await;
     let served = puller
         .fetch_range(common::PEAK_HEIGHT, common::PEAK_HEIGHT)
@@ -150,7 +161,7 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     );
 
     // ---- answer get_blockchain_state on that exact same socket ----
-    let envelope = rpc_get_blockchain_state(listen).await;
+    let envelope = rpc_get_blockchain_state(client_addr).await;
     assert_eq!(
         envelope["success"].as_bool(),
         Some(true),
@@ -170,6 +181,33 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     active.shutdown().await;
     services.drain().await;
     peer_run.store(false, Ordering::Relaxed);
+}
+
+async fn public_get(addr: SocketAddr, path: &str) -> String {
+    use tokio_rustls::TlsConnector;
+
+    let verifier = Arc::new(dg_xch_core::protocols::shared::NoCertificateVerification);
+    let config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    let connector = TlsConnector::from(Arc::new(config));
+    let tcp = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let server_name = rustls::pki_types::ServerName::try_from("localhost").expect("server name");
+    let mut tls = connector.connect(server_name, tcp).await.expect("tls");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    tls.write_all(request.as_bytes()).await.expect("write");
+
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        match tls.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Err(_) => break,
+        }
+    }
+    String::from_utf8(response).expect("HTTP response")
 }
 
 async fn rpc_get_blockchain_state(addr: SocketAddr) -> serde_json::Value {

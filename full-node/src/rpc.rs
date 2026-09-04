@@ -28,7 +28,6 @@ use portfu::prelude::{
 use std::error::Error;
 use std::fmt;
 use std::io::Error as IoError;
-use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, OnceLock};
@@ -337,10 +336,7 @@ pub struct PortfuRpcTlsContext {
 /// Certificate presentation is optional at the TLS layer so public health and metrics routes
 /// remain usable. Protected routes select one of these named stores and require a matching cert:
 /// `chia-peers` for the Chia protocol and `rpc-clients` for administrative APIs.
-pub fn build_portfu_rpc_tls_context(
-    mode: &RpcTlsMode,
-    bind: SocketAddr,
-) -> Result<PortfuRpcTlsContext, IoError> {
+pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsContext, IoError> {
     let rpc_ca = match mode {
         RpcTlsMode::PrivateCa { ssl_dir } => {
             let (ca_crt, ca_key) = resolve_private_ca(ssl_dir)?;
@@ -352,14 +348,7 @@ pub fn build_portfu_rpc_tls_context(
             let _ = ca_key;
             ca_crt
         }
-        RpcTlsMode::Local => {
-            if !bind.ip().is_loopback() {
-                return Err(IoError::other(format!(
-                    "--rpc-tls local is only allowed on loopback; got {bind}"
-                )));
-            }
-            CHIA_CA_CRT.as_bytes().to_vec()
-        }
+        RpcTlsMode::Local => CHIA_CA_CRT.as_bytes().to_vec(),
     };
     let client_auth = ClientAuthConfig {
         presentation: ClientCertificateMode::Optional,

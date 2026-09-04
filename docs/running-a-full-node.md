@@ -31,8 +31,10 @@ under `<ssl-dir>/ca`; it is generated on first start when missing. `/health` and
 public. The deprecated `--rpc` flag does not create a second listener and, when supplied, must equal
 `--listen`.
 
-The default `--rpc-tls private-ca` mode is appropriate for a public peer listener. For loopback-only
-development, `--rpc-tls local` accepts Chia-CA client certificates for protected routes.
+The configured `--listen` address is always honored; Portfu never rewrites it to loopback. The
+default `--rpc-tls private-ca` mode is appropriate for a public listener. Development mode
+`--rpc-tls local` accepts Chia-CA client certificates for protected routes and therefore does not
+provide private administrative isolation.
 
 ## Peer Settings
 

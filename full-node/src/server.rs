@@ -207,7 +207,7 @@ pub async fn run(
         )
         .into());
     }
-    let tls = crate::build_portfu_rpc_tls_context(&config.rpc_tls, server_bind)?;
+    let tls = crate::build_portfu_rpc_tls_context(&config.rpc_tls)?;
     let node_id = tls.node_id;
 
     macro_rules! activate {
