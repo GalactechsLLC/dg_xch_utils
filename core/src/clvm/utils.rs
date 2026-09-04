@@ -7,7 +7,6 @@ use std::io::{Error, ErrorKind};
 pub const NO_NEG_DIV: u32 = 0x0001;
 pub const NO_UNKNOWN_OPS: u32 = 0x0000_0002;
 pub const LIMIT_HEAP: u32 = 0x0000_0004;
-// pub const COND_CANON_INTS: u32 = 0x0001_0000;
 pub const DISABLE_SIGNATURE_VALIDATION: u32 = 0x0001_0000;
 pub const NO_UNKNOWN_CONDITIONS: u32 = 0x0002_0000;
 pub const COND_ARGS_NIL: u32 = 0x0004_0000;

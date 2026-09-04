@@ -1,6 +1,6 @@
 //! The stage-ahead pipeline's correctness pins.
 //!
-//! The daemon overlaps window N's vdf/sig drain (a spawned pure-CPU task) with window N+1's
+//! The server overlaps window N's vdf/sig drain (a spawned pure-CPU task) with window N+1's
 //! staging, confirming strictly in order. Two properties make that safe, and these tests pin
 //! both against the serial path on a real store:
 //!

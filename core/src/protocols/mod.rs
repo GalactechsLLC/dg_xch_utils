@@ -9,6 +9,7 @@ pub mod pool;
 pub mod rate_limits;
 pub mod rate_limits_v3;
 pub mod shared;
+pub mod simulator;
 pub mod timelord;
 pub mod wallet;
 
@@ -1241,157 +1242,9 @@ impl ReadStream {
 }
 
 #[cfg(test)]
-mod send_timeout_tests {
-    use super::{SEND_TIMEOUT, timeout_send};
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
-    use std::time::Duration;
-    use tokio_tungstenite::tungstenite::Message;
-
-    // A ready sink (a peer draining normally): the write completes and round-trips Ok.
-    #[tokio::test]
-    async fn send_round_trips_on_a_ready_sink() {
-        let mut sink = futures_util::sink::drain::<Message>();
-        let msg = Message::Binary(vec![1, 2, 3].into());
-        let out = timeout_send(&mut sink, msg, SEND_TIMEOUT).await;
-        assert!(out.is_ok(), "a draining sink must accept the write");
-    }
-
-    // A never-ready sink models a peer whose TCP receive window is full — the exact backpressure that
-    // used to wedge the sender under the connection write lock. The bounded write must resolve to a
-    // timeout error, never hang.
-    #[tokio::test]
-    async fn send_times_out_on_a_stalled_sink() {
-        struct StalledSink;
-        impl futures_util::Sink<Message> for StalledSink {
-            type Error = std::io::Error;
-            fn poll_ready(
-                self: Pin<&mut Self>,
-                _: &mut Context<'_>,
-            ) -> Poll<Result<(), Self::Error>> {
-                Poll::Pending
-            }
-            fn start_send(self: Pin<&mut Self>, _: Message) -> Result<(), Self::Error> {
-                Ok(())
-            }
-            fn poll_flush(
-                self: Pin<&mut Self>,
-                _: &mut Context<'_>,
-            ) -> Poll<Result<(), Self::Error>> {
-                Poll::Pending
-            }
-            fn poll_close(
-                self: Pin<&mut Self>,
-                _: &mut Context<'_>,
-            ) -> Poll<Result<(), Self::Error>> {
-                Poll::Pending
-            }
-        }
-        let mut sink = StalledSink;
-        let msg = Message::Binary(vec![].into());
-        let out = timeout_send(&mut sink, msg, Duration::from_millis(50)).await;
-        assert!(
-            out.is_err(),
-            "a stalled sink must time out, not hang the sender"
-        );
-    }
-}
+#[path = "../../tests/unit/protocols/mod/send_timeout_tests.rs"]
+mod send_timeout_tests;
 
 #[cfg(test)]
-mod pending_request_tests {
-    use super::{ChiaMessage, PendingRequests, ProtocolMessageTypes};
-    use crate::blockchain::unsized_bytes::UnsizedBytes;
-    use std::collections::HashSet;
-    use std::sync::Arc;
-
-    fn msg(id: Option<u16>, t: ProtocolMessageTypes) -> Arc<ChiaMessage> {
-        Arc::new(ChiaMessage {
-            msg_type: t,
-            id,
-            data: UnsizedBytes::new(vec![]),
-        })
-    }
-
-    // Allocation is connection-unique and non-zero: a run of registrations (all still in flight)
-    // hands out strictly distinct, non-zero ids. This is the property whose *absence* — the per-source
-    // counter reset to 1 — let two concurrent requests share id 1 and produced the 27 s stall.
-    #[tokio::test]
-    async fn register_hands_out_distinct_nonzero_ids() {
-        let pending = PendingRequests::default();
-        let mut ids = HashSet::new();
-        let mut _keep = Vec::new();
-        for _ in 0..1000 {
-            let (id, rx) = pending.register();
-            assert_ne!(id, 0, "id 0 is reserved (id-less gossip / handshake)");
-            assert!(
-                ids.insert(id),
-                "id {id} was handed out twice while still in flight"
-            );
-            _keep.push(rx); // hold the receivers so their ids stay live and cannot be reused
-        }
-    }
-
-    // A live id is never re-handed even as the u16 counter advances: with two waiters outstanding, a
-    // third allocation differs from both.
-    #[tokio::test]
-    async fn register_skips_live_ids() {
-        let pending = PendingRequests::default();
-        let (a, _ra) = pending.register();
-        let (b, _rb) = pending.register();
-        let (c, _rc) = pending.register();
-        assert!(a != b && b != c && a != c, "live ids {a},{b},{c} collided");
-    }
-
-    // A reply is routed to the ONE waiter that owns its id, and only that waiter — the other waiter's
-    // receiver is untouched. This is the demux invariant: no fan-out to every matching handler.
-    #[tokio::test]
-    async fn deliver_routes_to_exactly_the_owning_waiter() {
-        let pending = PendingRequests::default();
-        let (id_a, rx_a) = pending.register();
-        let (id_b, rx_b) = pending.register();
-
-        // Deliver B first, then A — out-of-order, as concurrent replies arrive.
-        assert!(pending.deliver(id_b, msg(Some(id_b), ProtocolMessageTypes::RespondBlocks)));
-        assert!(pending.deliver(id_a, msg(Some(id_a), ProtocolMessageTypes::RejectBlocks)));
-
-        let got_a = rx_a.await.expect("waiter A received its reply");
-        let got_b = rx_b.await.expect("waiter B received its reply");
-        assert_eq!(got_a.id, Some(id_a), "waiter A got another request's reply");
-        assert_eq!(got_a.msg_type, ProtocolMessageTypes::RejectBlocks);
-        assert_eq!(got_b.id, Some(id_b), "waiter B got another request's reply");
-        assert_eq!(got_b.msg_type, ProtocolMessageTypes::RespondBlocks);
-    }
-
-    // An id nobody is waiting on (an inbound request to answer, or a stale/late reply) reports
-    // `false`, so the read loop falls through to the gossip/handler scan instead of dropping it.
-    #[tokio::test]
-    async fn deliver_unknown_id_is_not_consumed() {
-        let pending = PendingRequests::default();
-        assert!(!pending.deliver(4242, msg(Some(4242), ProtocolMessageTypes::NewPeak)));
-    }
-
-    // Delivery consumes the waiter: a duplicate/late second reply for the same id is dropped (returns
-    // `false`), never routed into an already-satisfied — and now closed — channel. That closed-channel
-    // re-delivery was precisely how the true reply got lost under id aliasing.
-    #[tokio::test]
-    async fn deliver_is_idempotent_after_the_first() {
-        let pending = PendingRequests::default();
-        let (id, rx) = pending.register();
-        assert!(pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)));
-        assert!(
-            !pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
-            "a second reply for a consumed id must not be re-delivered"
-        );
-        assert!(rx.await.is_ok(), "the one delivery reached the waiter");
-    }
-
-    // Cancel (timeout / send failure) frees the slot so the table never leaks, and a reply that then
-    // shows up is treated as unowned.
-    #[tokio::test]
-    async fn cancel_frees_the_slot() {
-        let pending = PendingRequests::default();
-        let (id, _rx) = pending.register();
-        pending.cancel(id);
-        assert!(!pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)));
-    }
-}
+#[path = "../../tests/unit/protocols/mod/pending_request_tests.rs"]
+mod pending_request_tests;

@@ -1,11 +1,11 @@
-// In-process capstone. Boot the daemon against a fixture-seeded loopback peer, sync a range,
-// serve a RequestBlock(s) to a peer, answer get_blockchain_state over the real TLS RPC server, and deliver a
+// In-process capstone. Boot the server against a fixture-seeded loopback peer, sync a range,
+// serve a RequestBlock(s) to a peer, answer get_blockchain_state over the real Portfu TLS server, and deliver a
 // wallet CoinStateUpdate — the whole node wired together, minus the live-mainnet run (the production deploy).
 
 mod common;
 
+use dg_full_node::{Backend, Config, FullNode};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use full_node::{Backend, Config, Node};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ static DBN: AtomicU64 = AtomicU64::new(0);
 fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
     let n = DBN.fetch_add(1, Ordering::Relaxed);
     let db = std::env::temp_dir().join(format!(
-        "full_node_daemon_{}_{n}.sqlite",
+        "full_node_server_{}_{n}.sqlite",
         std::process::id()
     ));
     Config {
@@ -31,7 +31,6 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         advertise: None,
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
-        metrics: None,
         capture_dir: None,
         genesis_sync: false,
         sync_from: 0,
@@ -40,7 +39,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         prefetch_max_inflight: None,
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
-        rpc_tls: full_node::RpcTlsMode::Local,
+        rpc_tls: dg_full_node::RpcTlsMode::Local,
         debug_endpoints: false,
     }
 }
@@ -51,7 +50,7 @@ fn free_addr() -> SocketAddr {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn daemon_boots_syncs_serves_and_answers_rpc_and_wallet() {
+async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     // ---- a loopback peer serving real mainnet block 5000000 ----
     let block = common::full_block();
     let peer_api = Arc::new(common::MapApi {
@@ -59,10 +58,14 @@ async fn daemon_boots_syncs_serves_and_answers_rpc_and_wallet() {
     });
     let (peer_port, peer_run) = common::spawn_serving_node(peer_api).await;
 
-    // ---- boot the daemon (empty store) ----
+    // ---- boot the server (empty store) ----
     let listen = free_addr();
     let rpc_addr = free_addr();
-    let node = Arc::new(Node::boot(config(listen, rpc_addr)).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, rpc_addr))
+            .await
+            .expect("boot"),
+    );
 
     // A wallet subscribes to a puzzle hash present in block 5000000's additions, before the sync.
     let adds = common::additions();
@@ -89,7 +92,7 @@ async fn daemon_boots_syncs_serves_and_answers_rpc_and_wallet() {
     assert_eq!(
         peak,
         Some((block.header_hash().unwrap(), common::PEAK_HEIGHT)),
-        "daemon synced to the correct peak"
+        "server synced to the correct peak"
     );
 
     // ---- wallet CoinStateUpdate delivered for the subscribed puzzle hash ----
@@ -108,7 +111,9 @@ async fn daemon_boots_syncs_serves_and_answers_rpc_and_wallet() {
     );
 
     // ---- serve a RequestBlock(s) to a peer: our own peer server hands block 5000000 to a dialer ----
-    let (serve_run, inbound_peers) = node.spawn_peer_server().expect("peer server");
+    let (server, serve_run, inbound_peers) = node.build_peer_server().expect("peer server");
+    let listener_run = serve_run.clone();
+    tokio::spawn(async move { server.run(listener_run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
     let puller = common::dial_source("127.0.0.1", listen.port()).await;
     let served = puller
@@ -130,9 +135,8 @@ async fn daemon_boots_syncs_serves_and_answers_rpc_and_wallet() {
         block.header_hash().unwrap()
     );
 
-    // ---- answer get_blockchain_state over the real TLS RPC server ----
-    let rpc_run = node.spawn_rpc_server().expect("rpc server");
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    // ---- answer get_blockchain_state over the real Portfu TLS server ----
+    let rpc_server = common::spawn_portfu_rpc(&node, rpc_addr).await;
     let envelope = rpc_get_blockchain_state(rpc_addr).await;
     assert_eq!(
         envelope["success"].as_bool(),
@@ -149,7 +153,7 @@ async fn daemon_boots_syncs_serves_and_answers_rpc_and_wallet() {
 
     // ---- drain ----
     serve_run.store(false, Ordering::Relaxed);
-    rpc_run.store(false, Ordering::Relaxed);
+    rpc_server.shutdown();
     peer_run.store(false, Ordering::Relaxed);
 }
 
@@ -176,7 +180,7 @@ async fn rpc_get_blockchain_state(addr: SocketAddr) -> serde_json::Value {
     let server_name = rustls::pki_types::ServerName::try_from("localhost").expect("server name");
     let mut tls = connector.connect(server_name, tcp).await.expect("tls");
 
-    let req = "GET /get_blockchain_state HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    let req = "POST /get_blockchain_state HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
     tls.write_all(req.as_bytes()).await.expect("write");
 
     // Read to close (Connection: close); tolerate an abrupt EOF without a TLS close_notify.

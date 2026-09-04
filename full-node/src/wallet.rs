@@ -130,7 +130,7 @@ impl Registry {
 // The wallet coin-state subscription server. A wallet peer registers interest in puzzle hashes /
 // coin ids; on every new peak the node emits a `CoinStateUpdate` carrying the matching coins that were
 // created or spent. Keyed on the peer id (the cert-hash identity in production). Delivery is a bounded
-// per-peer channel the daemon's wire task forwards to the socket — a slow wallet drops updates, never
+// per-peer channel the server's wire task forwards to the socket - a slow wallet drops updates, never
 // backs pressure into the peak path.
 pub struct WalletNotifier {
     inner: RwLock<Registry>,
@@ -295,7 +295,7 @@ impl WalletNotifier {
     }
 
     // Create the bounded delivery channel for a peer on its first registration, returning the receiver the
-    // daemon forwards to the socket. A no-op (None) if the peer already has a channel.
+    // server forwards to the socket. A no-op (None) if the peer already has a channel.
     async fn ensure_channel(
         &self,
         peer: Bytes32,
@@ -320,7 +320,7 @@ impl WalletNotifier {
     }
 
     /// Register a peer's interest in `puzzle_hashes` (`RegisterForPhUpdates`). Returns the
-    /// delivery receiver on the peer's first registration (the daemon forwards it to the socket,
+    /// delivery receiver on the peer's first registration (the server forwards it to the socket,
     /// `None` thereafter) AND the puzzle hashes actually subscribed by THIS call — the
     /// newly-added set with duplicates (in-request and already-subscribed) and the cap overflow
     /// filtered out; only that set feeds the initial-state query.
@@ -401,7 +401,7 @@ impl WalletNotifier {
     }
 
     /// Reconcile the registry against the live inbound peer set — drop every subscriber whose
-    /// connection is gone. The daemon runs this periodically against its inbound `PeerMap`; it is the
+    /// connection is gone. The server runs this periodically against its inbound `PeerMap`; it is the
     /// disconnect hook (the `WebsocketServer` has no per-peer teardown callback). Dropping a subscriber
     /// drops its channel `Sender`, so the per-peer delivery task's `recv()` returns `None` and the
     /// forwarder task exits — no leaked task, no unbounded registry growth on a public listener.

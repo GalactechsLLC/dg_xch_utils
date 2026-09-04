@@ -3,6 +3,7 @@
 mod common;
 
 use async_trait::async_trait;
+use dg_full_node::{Backend, Config, FullNode, WalletUpdate};
 use dg_xch_clients::websocket::{WsClient, WsClientConfig, oneshot_message};
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
@@ -21,7 +22,6 @@ use dg_xch_core::protocols::{
 };
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use dg_xch_stores::CoinStore;
-use full_node::{Backend, Config, Node, WalletUpdate};
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -41,7 +41,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         std::process::id()
     ));
     Config {
-        rpc_tls: full_node::RpcTlsMode::Local,
+        rpc_tls: dg_full_node::RpcTlsMode::Local,
         debug_endpoints: false,
         p2p: Default::default(),
         listen,
@@ -51,7 +51,6 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         advertise: None,
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
-        metrics: None,
         capture_dir: None,
         genesis_sync: false,
         sync_from: 0,
@@ -138,13 +137,18 @@ async fn dial_wallet(port: u16, handlers: HandlerMap) -> WsClient {
 
 // A node at the mainnet-fixture peak serving the production handler stack, plus a dialed-in
 // wallet-type client with a push-capture channel.
-async fn rig(synced: bool) -> (Arc<Node>, WsClient, mpsc::Receiver<Arc<ChiaMessage>>) {
+async fn rig(synced: bool) -> (Arc<FullNode>, WsClient, mpsc::Receiver<Arc<ChiaMessage>>) {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     node.synced.store(synced, Ordering::Relaxed);
-    let (_run, _peers) = node.spawn_peer_server().expect("peer server");
+    let (server, run, _peers) = node.build_peer_server().expect("peer server");
+    tokio::spawn(async move { server.run(run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
     let (handlers, rx) = push_capture_handlers();
     let client = dial_wallet(listen.port(), handlers).await;
@@ -475,8 +479,13 @@ async fn peak_advance_broadcasts_new_peak_wallet_to_wallet_peers() {
 
     // The node under test: EMPTY store (no on-connect peak greeting), peer server up.
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
-    let (_run, _peers) = node.spawn_peer_server().expect("peer server");
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
+    let (server, run, _peers) = node.build_peer_server().expect("peer server");
+    tokio::spawn(async move { server.run(run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     // A wallet-type peer and a full-node-type peer, both connected inbound.
@@ -748,7 +757,7 @@ async fn sage_sync_sequence_end_to_end() {
 }
 
 // (The over-cap ExceededSubscriptionLimit reject and the paging/filter matrix are proven at the
-// api level in `daemon.rs`'s test module, where the 100k response budget and 200k subscription
+// API level in `node/test_suites.rs`, where the 100k response budget and 200k subscription
 // cap are injectable because seeding 200k live subscriptions over the wire is impractical.
 // additionally truncates the request LISTS at parse time via its `list_limits` decorator
 // (→ parse_list_limited); our handlers apply the identical

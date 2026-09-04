@@ -37,6 +37,7 @@ use std::sync::Arc;
 
 pub mod cli;
 pub mod commands;
+pub mod full_node;
 pub mod simulator;
 pub mod wallet_commands;
 pub mod wallets;
@@ -45,9 +46,13 @@ pub mod wallets;
 #[allow(clippy::cast_sign_loss)]
 pub async fn run_cli() -> Result<(), Error> {
     let cli = Cli::parse();
-    let _logger = DruidGardenLogger::build()
+    let level = env::var("RUST_LOG")
+        .ok()
+        .and_then(|value| value.parse::<Level>().ok())
+        .unwrap_or(Level::Info);
+    let logger = DruidGardenLogger::build()
         .use_colors(true)
-        .current_level(Level::Info)
+        .current_level(level)
         .init()
         .map_err(|e| Error::other(format!("{e:?}")))?;
     let host = cli
@@ -70,6 +75,7 @@ pub async fn run_cli() -> Result<(), Error> {
         MAINNET
     };
     match cli.action {
+        RootCommands::FullNode(args) => full_node::run(*args, logger).await?,
         RootCommands::PrintPlottingInfo { launcher_id } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None)?);
             let master_key = key_from_mnemonic(&prompt_for_mnemonic()?)?;

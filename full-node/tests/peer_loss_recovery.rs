@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use dg_full_node::{Backend, Config, FullNode, outbound_on_connect};
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
@@ -6,7 +7,6 @@ use dg_xch_core::protocols::PeerMap;
 use dg_xch_core::protocols::full_node::NewPeak;
 use dg_xch_p2p::{FullNodeApi, OutboundPeer, P2pSettings, dial, full_node_handlers};
 use dg_xch_servers::websocket::{WebsocketServer, WebsocketServerConfig};
-use full_node::{Backend, Config, Node, outbound_on_connect};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         std::process::id()
     ));
     Config {
-        rpc_tls: full_node::RpcTlsMode::Local,
+        rpc_tls: dg_full_node::RpcTlsMode::Local,
         debug_endpoints: false,
         p2p: Default::default(),
         listen,
@@ -38,7 +38,6 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         advertise: None,
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
-        metrics: None,
         capture_dir: None,
         genesis_sync: false,
         sync_from: 0,
@@ -114,19 +113,18 @@ async fn spawn_greeting_peer() -> (u16, Arc<AtomicBool>) {
     (port, run)
 }
 
-async fn observed_claimed(node: &Arc<Node>) -> u32 {
-    node.rpc
-        .get_blockchain_state()
-        .await
-        .expect("blockchain state")
-        .state
-        .sync
-        .sync_tip_height
+async fn observed_claimed(node: &Arc<FullNode>) -> u32 {
+    node.state
+        .live
+        .get()
+        .expect("live node state")
+        .claimed_peak
+        .load(Ordering::Relaxed)
 }
 
 // Poll `claimed_peak` for `want` up to `timeout` (bounded, no unbounded sleep racing the socket).
 // Returns the last observed value — equal to `want` on success, otherwise whatever it settled at.
-async fn wait_claimed(node: &Arc<Node>, want: u32, timeout: Duration) -> u32 {
+async fn wait_claimed(node: &Arc<FullNode>, want: u32, timeout: Duration) -> u32 {
     let start = Instant::now();
     let mut last = observed_claimed(node).await;
     while start.elapsed() < timeout {
@@ -143,7 +141,7 @@ async fn wait_claimed(node: &Arc<Node>, want: u32, timeout: Duration) -> u32 {
 // ClaimGuard) over a real mTLS socket. Returns (client, handlers-map, run-flag) so the caller can
 // tear the connection down deterministically (drop the guard) later.
 async fn dial_as_outbound_slot(
-    node: &Arc<Node>,
+    node: &Arc<FullNode>,
     peer_port: u16,
     settings: &P2pSettings,
 ) -> (
@@ -172,17 +170,15 @@ async fn claimed_peak_recovers_after_a_peer_drop_and_redial() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let (peer_port, peer_run) = spawn_greeting_peer().await;
 
-    // The production node: EMPTY store (no local peak), unsynced, RPC live attached so the raw
+    // The production node: EMPTY store (no local peak), unsynced, RPC live state attached so the raw
     // claimed_peak gauge is observable.
     let node = Arc::new(
-        Node::boot(config(free_addr(), free_addr()))
+        FullNode::boot(config(free_addr(), free_addr()))
             .await
             .expect("boot"),
     );
     node.synced.store(false, Ordering::Relaxed);
-    let _rpc_run = node
-        .spawn_rpc_server()
-        .expect("rpc server (attaches claimed_peak to live)");
+    node.attach_rpc_live(Bytes32::default());
 
     let settings = P2pSettings::default();
 

@@ -16,13 +16,11 @@ members = [
     "parser_macro",
     "proof_of_space",
     "puzzles",
-    "roots",
     "serialize",
     "servers",
     "simulator",
     "stores",
-    "tools/dev-tools",
-    "tests",
+    "tools",
     "vdf",
     "weight-proof"
 ]

@@ -4,13 +4,13 @@
 
 mod common;
 
+use dg_full_node::trust::TrustPolicy;
+use dg_full_node::{LimitedSemaphore, WalletNotifier, WalletUpdate};
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_stores::CoinStore;
-use full_node::trust::TrustPolicy;
-use full_node::{LimitedSemaphore, WalletNotifier, WalletUpdate};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;

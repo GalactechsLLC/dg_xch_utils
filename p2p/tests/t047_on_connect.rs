@@ -21,8 +21,7 @@ use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
-// A store-blind api with canned on-connect greetings — the loopback stand-in for the daemon's
-// StoreApi overrides.
+// A store-blind API with canned on-connect greetings, used as the loopback server stand-in.
 struct GreetingApi {
     inner: Arc<MemApi>,
     peak: Option<NewPeak>,
@@ -64,7 +63,7 @@ fn canned_peak() -> NewPeak {
 
 fn canned_timelord_peak() -> Box<NewPeakTimelord> {
     // Field values are opaque to the dispatch layer — arrival + byte-faithful decode is the
-    // contract under test, not consensus contents (the daemon's builder owns those).
+    // contract under test, not consensus contents (the server's builder owns those).
     let block = common::load_full_block(5_000_000);
     Box::new(NewPeakTimelord {
         reward_chain_block: block.reward_chain_block,

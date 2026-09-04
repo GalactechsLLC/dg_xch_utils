@@ -73,13 +73,13 @@ pub trait FullNodeApi: Send + Sync {
         height: u32,
     ) -> Option<Box<dg_xch_core::blockchain::full_block::FullBlock>>;
     // The RequestBlocks serving cap. The range check is over inclusive ends with the size compared
-    // before the +1 bump, so a conforming node serves at most cap+1 = 33 blocks. The daemon
+    // before the +1 bump, so a conforming node serves at most cap+1 = 33 blocks. The server
     // overrides this with its network constants.
     fn max_block_count_per_requests(&self) -> u32 {
         32
     }
     // The per-peer combined subscription cap. The store-blind default is the UNTRUSTED
-    // config default (200,000); the daemon overrides it with the trusted-tier policy (200,000
+    // config default (200,000); the server overrides it with the trusted-tier policy (200,000
     // untrusted / 2,000,000 trusted). The cap is applied DURING decode of the two register arms,
     // so it must be resolvable before the message body is parsed.
     fn max_subscriptions(&self, _peer: &Bytes32, _host: Option<IpAddr>) -> u32 {
@@ -91,7 +91,7 @@ pub trait FullNodeApi: Send + Sync {
         100_000
     }
     // An inbound TIMELORD connection is accepted only from localhost or an exempt peer network.
-    // The exempt network set ships empty, so this default is localhost only; the daemon widens
+    // The exempt network set ships empty, so this default is localhost only; the server widens
     // it with the trusted-CIDR list. An unresolved host cannot be localhost — refuse.
     fn accept_inbound_timelord(&self, host: Option<IpAddr>) -> bool {
         matches!(host, Some(h) if h.is_loopback())
@@ -566,7 +566,7 @@ pub enum CoinStateReply {
     Reject(RejectStateReason),
 }
 
-// Peer-link traffic counters, shared by every handler map and the daemon's broadcast paths (one
+// Peer-link traffic counters, shared by every handler map and the server's broadcast paths (one
 // per node). Message counts are per-type; byte totals cover the whole link. Mutex-per-count is
 // fine at protocol rates.
 #[derive(Default)]
@@ -797,7 +797,7 @@ pub struct FullNodeHandler {
     // initiated the handshake via WsClient::perform_handshake — receiving the peer's reply must record
     // the negotiated version but NOT emit a second handshake (which the peer would reject/close on).
     pub respond_handshake: bool,
-    // Per-link traffic counters; the daemon shares one instance across every handler map so
+    // Per-link traffic counters; the server shares one instance across every handler map so
     // /metrics sees the whole node's I/O.
     pub counters: Arc<NetCounters>,
 }
@@ -2082,7 +2082,7 @@ pub fn full_node_handlers(
     build_handlers(api, network_id, server_port, true, Arc::default())
 }
 
-// Server-role handlers sharing the node's traffic counters (the daemon's constructor; the
+// Server-role handlers sharing the node's traffic counters (the server constructor; the
 // plain variant keeps a private instance for tests/tools).
 #[must_use]
 pub fn full_node_handlers_counted(
@@ -2117,59 +2117,5 @@ pub fn full_node_handlers_client_counted(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::served;
-    use dg_xch_core::protocols::ProtocolMessageTypes;
-
-    // The dispatch filter must MATCH tip announcements, block requests, the pure-gossip
-    // broadcasts (so they graceful-ignore instead of logging "No Matches"), AND the four block
-    // replies (a solicited one is consumed by the read loop's correlation-id fast path before the
-    // handler scan, so a match here is by definition unsolicited/late → the close arm).
-    // RespondProofOfWeight stays oneshot-owned and unmatched — it falls to the read loop's
-    // no-match drop.
-    #[test]
-    fn filter_matches_gossip_but_not_oneshot_responses() {
-        for t in [
-            ProtocolMessageTypes::Handshake,
-            ProtocolMessageTypes::NewPeak,
-            ProtocolMessageTypes::RequestBlock,
-            ProtocolMessageTypes::RequestBlocks,
-            ProtocolMessageTypes::RespondBlock,
-            ProtocolMessageTypes::RespondBlocks,
-            ProtocolMessageTypes::RejectBlock,
-            ProtocolMessageTypes::RejectBlocks,
-            ProtocolMessageTypes::NewCompactVdf,
-            ProtocolMessageTypes::NewSignagePointOrEndOfSubSlot,
-            ProtocolMessageTypes::NewUnfinishedBlock2,
-            ProtocolMessageTypes::RequestMempoolTransactions,
-            ProtocolMessageTypes::RequestProofOfWeight,
-            ProtocolMessageTypes::NewInfusionPointVdf,
-            ProtocolMessageTypes::NewSignagePointVdf,
-            ProtocolMessageTypes::NewEndOfSubSlotVdf,
-            ProtocolMessageTypes::SendTransaction,
-            ProtocolMessageTypes::RequestPuzzleSolution,
-            ProtocolMessageTypes::RequestBlockHeader,
-            ProtocolMessageTypes::RequestHeaderBlocks,
-            ProtocolMessageTypes::RequestBlockHeaders,
-            ProtocolMessageTypes::RequestAdditions,
-            ProtocolMessageTypes::RequestRemovals,
-            ProtocolMessageTypes::RequestChildren,
-            ProtocolMessageTypes::RegisterInterestInPuzzleHash,
-            ProtocolMessageTypes::RegisterInterestInCoin,
-            ProtocolMessageTypes::RequestPuzzleState,
-            ProtocolMessageTypes::RequestCoinState,
-            ProtocolMessageTypes::RequestRemovePuzzleSubscriptions,
-            ProtocolMessageTypes::RequestRemoveCoinSubscriptions,
-            ProtocolMessageTypes::RequestFeeEstimates,
-        ] {
-            assert!(
-                served(t),
-                "{t:?} must be handled (dispatched or graceful-ignored)"
-            );
-        }
-        assert!(
-            !served(ProtocolMessageTypes::RespondProofOfWeight),
-            "RespondProofOfWeight is oneshot-owned and must not match the dispatch filter"
-        );
-    }
-}
+#[path = "../tests/unit/handlers/tests.rs"]
+mod tests;

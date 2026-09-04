@@ -65,7 +65,6 @@ struct ValidationState {
     pub asserted_coin_announcements: Vec<Bytes32>,
     pub asserted_concurrent_spend: Vec<Bytes32>,
     pub asserted_concurrent_puzzle: Vec<Bytes32>,
-    // pub asserted_not_ephemeral: Vec<Bytes32>,
     pub agg_sig_me: Vec<(Bytes48, Message)>,
     pub agg_sig_parents: Vec<(Bytes48, Message)>,
     pub agg_sig_puzzles: Vec<(Bytes48, Message)>,

@@ -279,10 +279,10 @@ pub struct Supervisor {
     pub book: Arc<Mutex<AddressBook>>,
     settings: P2pSettings,
     tasks: JoinSet<()>,
-    // Per-connection handler map factory applied to every outbound/manual dial (the daemon's
+    // Per-connection handler map factory applied to every outbound/manual dial (the server's
     // full_node_handlers_client). None → bare connections (empty handler map).
     handlers: Option<HandlerFactory>,
-    // Fired after each successful outbound/manual dial registers (the daemon's on-connect
+    // Fired after each successful outbound/manual dial registers (the server's on-connect
     // greetings). None → no greeting.
     on_connect: Option<OnConnectHook>,
 }

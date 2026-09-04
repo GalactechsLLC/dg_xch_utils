@@ -241,9 +241,9 @@ impl Default for SyncConfig {
     }
 }
 
-/// One confirmed block the reporting follow paths hand the daemon for the per-peak side effects
+/// One confirmed block the reporting follow paths hand the server for per-peak side effects
 /// (wallet coin-state push + mempool revalidation). `reorg` is `Some` exactly on the first delta
-/// of a reorg's re-applied branch — the daemon pushes the rolled-back states (with the true fork
+/// of a reorg's re-applied branch. The server pushes the rolled-back states (with the true fork
 /// height) before the branch's own coin deltas.
 #[derive(Debug)]
 pub struct ConfirmedDelta {
@@ -309,6 +309,8 @@ pub struct SyncMetrics {
     pub blocks_confirmed: AtomicU64,
     pub reclaimed: AtomicU64,
     pub peak_window: AtomicUsize,
+    // Peak blocks held by the headers-first body downloader. The decoupled follow pipeline reports
+    // its independent residency through queue_len and queue_resident_bytes.
     pub peak_inflight_blocks: AtomicUsize,
     // Last-window phase wall times in microseconds.
     pub window_vdf_micros: AtomicU64,
@@ -336,12 +338,12 @@ pub struct SyncMetrics {
     pub engine_cache_records: AtomicU64,
     pub engine_pending_orphans: AtomicU64,
     pub engine_staged_generators: AtomicU64,
-    // How many records the daemon's consensus-walk maps took from the in-memory record window vs
+    // How many records the server's consensus-walk maps took from the in-memory record window vs
     // re-read from the store.
     pub difficulty_window_cache_hits: AtomicU64,
     pub difficulty_window_store_reads: AtomicU64,
-    // Cumulative µs the follow driver waited on the network for its next window, and cumulative
-    // µs of whole follow steps. Validator idle fraction = rate(fetch_wait) / rate(step).
+    // Cumulative producer-side network wait and consumer-cycle wall time. These can overlap in the
+    // decoupled pipeline and must not be divided to infer validator idle time.
     pub follow_fetch_wait_micros: AtomicU64,
     pub follow_step_micros: AtomicU64,
     // Window readahead: current adaptive depth K, windows in flight, and hit/miss counters.
@@ -512,7 +514,7 @@ where
     pub fn constants(&self) -> dg_xch_core::consensus::constants::ConsensusConstants {
         *self.engine.constants()
     }
-    /// Whether the store is in the near-tip band — the daemon's stage-ahead pipeline drains and
+    /// Whether the store is in the near-tip band. The server's stage-ahead pipeline drains and
     /// falls back to the serial per-block path there (farming latency beats throughput at tip).
     #[must_use]
     pub fn near_tip(&self) -> bool {
@@ -930,7 +932,7 @@ where
         Ok(self.follow_blocks_reporting(blocks).await?.0)
     }
 
-    /// Short sync that also returns the per-block deltas of newly confirmed blocks — the daemon feeds
+    /// Short sync that also returns the per-block deltas of newly confirmed blocks. The server feeds
     /// these to the wallet coin-state subscription server and the mempool's new-peak revalidation. Deltas are
     /// returned in height order; `AlreadyHave` and orphan outcomes contribute none.
     ///
@@ -1122,7 +1124,7 @@ where
 
     /// Generator back-ref heights in `blocks` that neither the span itself, the staged
     /// overlay, nor the confirmed store can resolve. A mid-chain anchor (`--sync-from`) hits
-    /// these when a compression ref points below the anchor span; the daemon fetches each from
+    /// these when a compression ref points below the anchor span; the server fetches each from
     /// a peer and seeds it via [`Self::seed_ref_generator`] before following the window.
     pub async fn missing_ref_heights(
         &self,
@@ -1191,7 +1193,7 @@ where
         self.engine.seed_generator(height, generator);
     }
 
-    /// Wipe the out-of-span seed cache — the daemon calls this at the start of each
+    /// Wipe the out-of-span seed cache. The server calls this at the start of each
     /// `seed_missing_refs` pass so the cache carries only the current window's refs (bounded,
     /// eviction-free). See [`crate::engine::Engine::clear_seed_generators`].
     pub fn clear_seed_generators(&mut self) {
@@ -1241,7 +1243,7 @@ where
     }
 
     /// Stage a whole window into the engine's overlay WITHOUT touching the writer or running the
-    /// deferred drains — the first third of the follow step, separable so the daemon can stage
+    /// deferred drains: the first third of the follow step, separable so the server can stage
     /// window N+1 while window N's drain still owns the CPU and window N's confirm still owns the
     /// writer. Near the tip the per-block staging path (its own archive commit per block) runs
     /// instead and the returned window is marked `archive_written`.
@@ -1796,7 +1798,7 @@ pub fn drain_header_sink(
 /// large CLVM heap, so a thread per transaction block would oversubscribe the CPUs and multiply
 /// peak memory by the window size.
 /// A window staged into the engine's overlay but not yet drained or confirmed — the unit the
-/// daemon's stage-ahead pipeline carries between iterations. During bulk catch-up its archive
+/// server's stage-ahead pipeline carries between iterations. During bulk catch-up its archive
 /// rows are NOT yet persisted (they land inside the confirm transaction), so a crash loses the
 /// window wholly and resume re-fetches from the durable peak.
 pub struct StagedWindow {
@@ -1812,7 +1814,7 @@ pub struct StagedWindow {
 }
 
 impl StagedWindow {
-    /// The window's first and last block heights (the daemon's post-step handling keys on them).
+    /// The window's first and last block heights (the server's post-step handling keys on them).
     #[must_use]
     pub fn bounds(&self) -> (u32, u32) {
         (self.from, self.to)
@@ -1868,7 +1870,7 @@ impl WindowVerdict {
 }
 
 /// Drain a staged window's deferred VDF and header-signature queues — pure CPU against the
-/// primitives, no engine or store access, so the daemon runs it on a blocking thread while the
+/// primitives, no engine or store access, so the server runs it on a blocking thread while the
 /// next window stages. Two-tier per queue: the whole-window batch first, then on a failure a
 /// per-block slice replay that attributes the exact failing height. The confirm boundary is the
 /// minimum of the VDF- and sig-determined boundaries; the reported error is whichever fails at
@@ -2100,118 +2102,5 @@ impl dg_xch_core::errors::ErrorCode for SyncError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::tip_epoch_from;
-    use dg_xch_core::blockchain::sized_bytes::Bytes32;
-    use dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary;
-
-    fn ses(new_difficulty: Option<u64>, new_sub_slot_iters: Option<u64>) -> SubEpochSummary {
-        SubEpochSummary {
-            prev_subepoch_summary_hash: Bytes32::default(),
-            reward_chain_hash: Bytes32::default(),
-            num_blocks_overflow: 0,
-            new_difficulty,
-            new_sub_slot_iters,
-        }
-    }
-
-    #[test]
-    fn empty_summaries_fall_back_to_genesis_constants() {
-        assert_eq!(tip_epoch_from(&[], 128, 7), (128, 7));
-    }
-
-    #[test]
-    fn tip_epoch_takes_the_last_declared_values() {
-        let s = [
-            ses(Some(7), Some(128)),
-            ses(Some(9), None),
-            ses(None, Some(1024)),
-        ];
-        // last new_difficulty is 9 (third has None), last new_sub_slot_iters is 1024
-        assert_eq!(tip_epoch_from(&s, 64, 3), (1024, 9));
-    }
-
-    #[test]
-    fn undeclared_fields_hold_the_starting_value() {
-        let s = [ses(None, None), ses(None, None)];
-        assert_eq!(tip_epoch_from(&s, 64, 3), (64, 3));
-    }
-
-    // Pending-boundary depth math, pinned to mainnet constants (epoch_blocks = 4608,
-    // sub_epoch_blocks = 384, boundary 4,575,744, previous surpass 4,571,136): every position that
-    // can still trigger the 4,575,744 retarget must demand records down to 4,571,008.
-    #[test]
-    fn epoch_backfill_low_covers_the_pending_boundary_retarget() {
-        use super::epoch_backfill_low;
-        let (e, s) = (4608u32, 384u32);
-        // Mid-epoch anchor base (a sync leg's --sync-from=4575000 span base H-64): the next
-        // boundary IS the pending boundary; old and new formulas agree.
-        assert_eq!(epoch_backfill_low(4_574_936, e, s), 4_571_008);
-        // Peak just past the boundary, retarget trigger still ahead: naive next-boundary rounding
-        // would demand only 4,575,616 — one full epoch short.
-        assert_eq!(epoch_backfill_low(4_575_757, e, s), 4_571_008);
-        // The boundary block itself and the last height inside the trigger window.
-        assert_eq!(epoch_backfill_low(4_575_744, e, s), 4_571_008);
-        assert_eq!(epoch_backfill_low(4_576_127, e, s), 4_571_008);
-        // Past the trigger window: the 4,575,744 retarget must have fired; only the NEXT
-        // boundary (4,580,352) remains pending, whose surpass depth is 4,575,616.
-        assert_eq!(epoch_backfill_low(4_576_128, e, s), 4_575_616);
-        // Genesis-side saturation: never underflows.
-        assert_eq!(epoch_backfill_low(0, e, s), 0);
-        assert_eq!(epoch_backfill_low(383, e, s), 0);
-    }
-
-    #[test]
-    fn is_missing_record_matches_only_the_notfound_walk_error() {
-        use super::SyncError;
-        use crate::error::NodeError;
-        let missing = SyncError::Node(NodeError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "block record not found: 0xdead",
-        )));
-        assert!(missing.is_missing_record());
-        assert!(!missing.is_orphan());
-        let invalid = SyncError::Node(NodeError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "INVALID_VDF",
-        )));
-        assert!(!invalid.is_missing_record());
-        let orphan = SyncError::Node(NodeError::Orphan("h".into()));
-        assert!(!orphan.is_missing_record());
-        let io = SyncError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "socket"));
-        assert!(!io.is_missing_record());
-    }
-
-    #[test]
-    fn epoch_schedule_resolves_per_height_and_matches_the_tip_anchor() {
-        use super::EpochSchedule;
-        let sub_epoch_blocks = 64u32;
-        // sub-epoch 0 summary declares (d=9, ssi=1024) -> active from sub-epoch 1;
-        // sub-epoch 2 summary declares (d=11, ssi=2048) -> active from sub-epoch 3.
-        let s = [
-            ses(Some(9), Some(1024)),
-            ses(None, None),
-            ses(Some(11), Some(2048)),
-            ses(None, None),
-        ];
-        let sched = EpochSchedule::from_summaries(&s, sub_epoch_blocks, 128, 7);
-        assert_eq!(
-            sched.at(0),
-            (128, 7),
-            "before any activation: starting values"
-        );
-        assert_eq!(sched.at(63), (128, 7), "last block of sub-epoch 0");
-        assert_eq!(
-            sched.at(64),
-            (1024, 9),
-            "first block of sub-epoch 1: summary 0 active"
-        );
-        assert_eq!(sched.at(191), (1024, 9), "held through sub-epoch 2");
-        assert_eq!(sched.at(192), (2048, 11), "sub-epoch 3: summary 2 active");
-        assert_eq!(
-            sched.at(64 * 10),
-            tip_epoch_from(&s, 128, 7),
-            "at the tip the schedule equals the tip anchor"
-        );
-    }
-}
+#[path = "../../tests/unit/sync/mod/tests.rs"]
+mod tests;

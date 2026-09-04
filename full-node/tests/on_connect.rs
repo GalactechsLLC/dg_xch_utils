@@ -1,5 +1,5 @@
 // On-connect greetings, node side (`on_connect` :967-1010): the PRODUCTION node
-// (Node::boot + spawn_peer_server, StoreApi over the real store/mempool) must greet a freshly
+// (FullNode::boot + build_peer_server, StoreApi over the real store/mempool) must greet a freshly
 // handshaken FULL_NODE peer with
 //   - NewPeak of the current peak (:991-998, fork_point_with_previous_peak = the peak height), and
 //   - when synced, RequestMempoolTransactions carrying the BIP158 filter over OUR mempool ids
@@ -13,6 +13,7 @@
 mod common;
 
 use async_trait::async_trait;
+use dg_full_node::{Backend, Config, FullNode};
 use dg_xch_clients::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
@@ -22,7 +23,6 @@ use dg_xch_core::protocols::{
     ProtocolMessageTypes,
 };
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
-use full_node::{Backend, Config, Node};
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -42,7 +42,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         std::process::id()
     ));
     Config {
-        rpc_tls: full_node::RpcTlsMode::Local,
+        rpc_tls: dg_full_node::RpcTlsMode::Local,
         debug_endpoints: false,
         p2p: Default::default(),
         listen,
@@ -52,7 +52,6 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         advertise: None,
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
-        metrics: None,
         capture_dir: None,
         genesis_sync: false,
         sync_from: 0,
@@ -137,13 +136,18 @@ async fn dial_full_node(port: u16, handlers: HandlerMap) -> WsClient {
 
 // The production node at the mainnet-fixture peak, peer server up, plus a dialed-in FULL_NODE
 // peer with the greeting capture.
-async fn rig(synced: bool) -> (Arc<Node>, WsClient, mpsc::Receiver<Arc<ChiaMessage>>) {
+async fn rig(synced: bool) -> (Arc<FullNode>, WsClient, mpsc::Receiver<Arc<ChiaMessage>>) {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     node.synced.store(synced, Ordering::Relaxed);
-    let (_run, _peers) = node.spawn_peer_server().expect("peer server");
+    let (server, run, _peers) = node.build_peer_server().expect("peer server");
+    tokio::spawn(async move { server.run(run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
     let (handlers, rx) = capture_handlers();
     let client = dial_full_node(listen.port(), handlers).await;
@@ -222,7 +226,7 @@ async fn synced_node_requests_mempool_sync_from_a_new_full_node_peer() {
 // on_connect fires for connections in BOTH directions (after the outgoing handshake too) —
 // a node that only
 // greets inbound peers never mempool-syncs from the peers IT dials, which on a fresh node is all
-// of them. The daemon's supervisor on-connect hook runs `outbound_on_connect` against every
+// of them. The server's supervisor on-connect hook runs `outbound_on_connect` against every
 // outbound dial; this proves the sends against a recording mock peer.
 
 // Spawn a mock full-node peer server that records the on-connect pushes it receives.
@@ -313,7 +317,11 @@ async fn outbound_dial_greets_the_peer_and_requests_its_mempool() {
     let (peer_port, peer_run, new_peaks, mempool_filters) = spawn_recording_peer().await;
 
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     node.synced.store(true, Ordering::Relaxed);
 
@@ -335,7 +343,7 @@ async fn outbound_dial_greets_the_peer_and_requests_its_mempool() {
         run: Arc::new(AtomicBool::new(true)),
     });
 
-    full_node::outbound_on_connect(&node, &peer).await;
+    dg_full_node::outbound_on_connect(&node, &peer).await;
 
     assert!(
         wait_until(
@@ -372,7 +380,11 @@ async fn unsynced_outbound_dial_sends_no_mempool_request() {
     let (peer_port, peer_run, new_peaks, mempool_filters) = spawn_recording_peer().await;
 
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     node.synced.store(false, Ordering::Relaxed);
 
@@ -393,7 +405,7 @@ async fn unsynced_outbound_dial_sends_no_mempool_request() {
         run: Arc::new(AtomicBool::new(true)),
     });
 
-    full_node::outbound_on_connect(&node, &peer).await;
+    dg_full_node::outbound_on_connect(&node, &peer).await;
 
     assert!(
         wait_until(

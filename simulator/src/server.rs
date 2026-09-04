@@ -2,9 +2,9 @@
 //! `set_auto_farming`, `get_auto_farming`) from the simulator's own chain, so a wallet dials the
 //! simulator as it would a full node.
 //!
-//! The simulator boots [`full_node::Node`] over its own store ([`Node::boot_with_store_constants`])
-//! and reuses [`Node::spawn_peer_server`] + [`Node::spawn_rpc_server`]; the simulator endpoints are
-//! the node's RPC surface plus a [`SimControl`] hook the node calls back into. [`Node::run`] is
+//! The simulator boots [`dg_full_node::FullNode`] over its own store ([`FullNode::boot_with_store_constants`])
+//! and reuses the full-node Portfu routes and protocol services; the simulator endpoints are
+//! the node's RPC surface plus a [`SimControl`] hook the node calls back into. [`FullNode::run`] is
 //! never started: the [`ChainBuilder`] is the sole block producer, driven by `farm_block` or the
 //! auto-farm loop.
 
@@ -12,16 +12,19 @@ use crate::chain::ChainBuilder;
 use crate::error::SimError;
 use crate::pos2::PlotSet;
 use async_trait::async_trait;
+use dg_full_node::server::{ActiveNode, BackendHandle, NodeServices};
+use dg_full_node::{Config, FullNode, SimControl};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_keys::decode_puzzle_hash;
 use dg_xch_stores::SqliteStore;
-use full_node::{Config, Node, SimControl};
+use portfu::prelude::{ServerBuilder, ServerHandle};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 /// The consensus constants a served simulator runs under: the `SIMULATOR` base (pos2 active from
 /// height 0) with a small plot size, a permissive plot filter, and a 16-bit-discriminant VDF over a
@@ -49,11 +52,18 @@ pub fn simulator_constants() -> ConsensusConstants {
 
 pub(crate) type SharedChain = Arc<Mutex<ChainBuilder<Arc<SqliteStore>>>>;
 
+pub(crate) struct AutoFarmTaskState {
+    pub(crate) chain: SharedChain,
+    pub(crate) node: Arc<FullNode<SqliteStore>>,
+    pub(crate) enabled: Arc<AtomicBool>,
+    pub(crate) interval: Duration,
+}
+
 /// Farm `blocks` blocks whose rewards pay `ph`, sealing any wallet-submitted transactions, and push
 /// each new peak to wallet peers.
 pub(crate) async fn farm_reward_blocks(
     chain: &SharedChain,
-    node: &Node<SqliteStore>,
+    node: &FullNode<SqliteStore>,
     ph: Bytes32,
     blocks: u32,
 ) -> Result<(), SimError> {
@@ -76,7 +86,7 @@ pub(crate) async fn farm_reward_blocks(
 /// `get_auto_farming`. Holds a weak node handle to avoid the node → rpc → control → node cycle.
 struct SimControlImpl {
     chain: SharedChain,
-    node: Weak<Node<SqliteStore>>,
+    node: Weak<FullNode<SqliteStore>>,
     auto_farm: Arc<AtomicBool>,
 }
 
@@ -107,17 +117,16 @@ impl SimControl for SimControlImpl {
 
 /// A running simulator that serves the peer/wallet protocol and the simulator RPC from its chain.
 pub struct SimulatorServer {
-    node: Arc<Node<SqliteStore>>,
+    node: Arc<FullNode<SqliteStore>>,
     chain: SharedChain,
     auto_farm: Arc<AtomicBool>,
-    run: Arc<AtomicBool>,
-    peer_run: Arc<AtomicBool>,
-    rpc_run: Arc<AtomicBool>,
-    control_run: Arc<AtomicBool>,
+    services: Arc<NodeServices>,
+    server: ServerHandle,
+    server_task: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl SimulatorServer {
-    /// Boot the simulator behind a live peer server (for the wallet) and RPC server (for the harness).
+    /// Boot the simulator behind a live peer server and shared Portfu server.
     /// The genesis block is farmed and its peak published before either server accepts, so a wallet
     /// that connects immediately receives the `NewPeakWallet` greeting it requires. The auto-farm loop
     /// seals a block whenever a wallet has a pending transaction, but only while auto-farming is on
@@ -128,18 +137,16 @@ impl SimulatorServer {
     ///
     /// # Errors
     /// Propagates store-open, node-boot, farming, and server-start failures.
-    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         db_path: &Path,
         listen: &str,
         rpc: &str,
-        control: &str,
         network_id: &str,
         constants: ConsensusConstants,
         plots: PlotSet,
         interval: Duration,
     ) -> Result<Self, SimError> {
-        // rustls 0.23 needs a process-wide CryptoProvider before any TLS handshake; match the daemon
+        // rustls 0.23 needs a process-wide CryptoProvider before any TLS handshake; match the server
         // (ring). Idempotent — a second install is a no-op.
         let _ = rustls::crypto::ring::default_provider().install_default();
         let store = Arc::new(
@@ -155,20 +162,22 @@ impl SimulatorServer {
             None,
             "sqlite://simulator",
             network_id,
-            "off",
             None,
             false,
             0,
             false,
+            None,
+            None,
             Default::default(),
-            None,
-            None,
             &[],
             &[],
         )
         .map_err(SimError::Invariant)?;
+        let rpc_bind = config.rpc;
+        let tls = dg_full_node::build_portfu_rpc_tls_context(&config.rpc_tls, rpc_bind)
+            .map_err(SimError::Io)?;
         let node = Arc::new(
-            Node::boot_with_store_constants(config, store.clone(), constants)
+            FullNode::boot_with_store_constants(config, store.clone(), constants)
                 .map_err(SimError::Io)?,
         );
 
@@ -188,63 +197,50 @@ impl SimulatorServer {
         }
 
         let auto_farm = Arc::new(AtomicBool::new(false));
-        node.rpc.attach_sim(Arc::new(SimControlImpl {
+        node.state.attach_sim(Arc::new(SimControlImpl {
             chain: chain.clone(),
             node: Arc::downgrade(&node),
             auto_farm: auto_farm.clone(),
         }));
-
-        let (peer_run, _peers) = node.spawn_peer_server().map_err(SimError::Io)?;
-        let rpc_run = node.spawn_rpc_server().map_err(SimError::Io)?;
-        let control_addr = control
-            .parse()
-            .map_err(|e| SimError::Invariant(format!("bad control address {control}: {e}")))?;
-        let control_run = crate::control::spawn(control_addr, chain.clone(), node.clone());
-
-        let run = Arc::new(AtomicBool::new(true));
-        Self::spawn_auto_farm(
-            chain.clone(),
-            node.clone(),
-            auto_farm.clone(),
-            run.clone(),
-            interval,
-        );
+        node.attach_rpc_live(tls.node_id);
+        let services = Arc::new(node.start_services().await.map_err(SimError::Io)?);
+        let sources = Arc::new(node.metrics_sources(&services));
+        let active = Arc::new(ActiveNode::Sqlite(BackendHandle {
+            node: node.clone(),
+            sources,
+        }));
+        let state = active.state();
+        let portfu_server = ServerBuilder::new()
+            .host(rpc_bind.ip().to_string())
+            .port(rpc_bind.port())
+            .tls(tls.tls_config)
+            .global_state::<ActiveNode>(active)
+            .global_state::<NodeServices>(services.clone())
+            .global_state::<dg_full_node::Node>(state)
+            .scoped_state::<_, AutoFarmTaskState>(
+                "simulator",
+                Arc::new(AutoFarmTaskState {
+                    chain: chain.clone(),
+                    node: node.clone(),
+                    enabled: auto_farm.clone(),
+                    interval,
+                }),
+            )
+            .build();
+        let server = portfu_server.handle();
+        let server_task = tokio::spawn(async move {
+            if let Err(error) = portfu_server.run().await {
+                log::error!("simulator Portfu server failed: {error}");
+            }
+        });
         Ok(Self {
             node,
             chain,
             auto_farm,
-            run,
-            peer_run,
-            rpc_run,
-            control_run,
+            services,
+            server,
+            server_task: std::sync::Mutex::new(Some(server_task)),
         })
-    }
-
-    fn spawn_auto_farm(
-        chain: SharedChain,
-        node: Arc<Node<SqliteStore>>,
-        auto_farm: Arc<AtomicBool>,
-        run: Arc<AtomicBool>,
-        interval: Duration,
-    ) {
-        tokio::spawn(async move {
-            while run.load(Ordering::Relaxed) {
-                tokio::time::sleep(interval).await;
-                if !auto_farm.load(Ordering::Relaxed) {
-                    continue;
-                }
-                // Seal any pending wallet transactions and advance the peak every tick, so
-                // confirmations never race a stalled chain.
-                let mut c = chain.lock().await;
-                if c.farm_next_from_shared_mempool(&node.mempool, false)
-                    .await
-                    .is_ok()
-                    && let Some(delta) = c.take_last_delta()
-                {
-                    let _ = node.notify_new_peak(&delta, None).await;
-                }
-            }
-        });
     }
 
     /// Farm `blocks` blocks whose rewards pay `ph`, funding that address — the direct form of the
@@ -263,115 +259,23 @@ impl SimulatorServer {
 
     /// The served node, for tests that assert on its store or wallet notifier.
     #[must_use]
-    pub fn node(&self) -> &Arc<Node<SqliteStore>> {
+    pub fn node(&self) -> &Arc<FullNode<SqliteStore>> {
         &self.node
     }
 
-    /// Stop the peer server, RPC server, control server, and auto-farm loop.
-    pub fn stop(&self) {
-        self.run.store(false, Ordering::Relaxed);
-        self.peer_run.store(false, Ordering::Relaxed);
-        self.rpc_run.store(false, Ordering::Relaxed);
-        self.control_run.store(false, Ordering::Relaxed);
+    /// Stop the peer server, shared Portfu server, and auto-farm loop.
+    pub async fn stop(&self) {
+        self.node.run.store(false, Ordering::Relaxed);
+        self.services.begin_shutdown();
+        self.server.shutdown();
+        let task = self.server_task.lock().expect("server task lock").take();
+        if let Some(task) = task {
+            let _ = task.await;
+        }
+        self.services.drain().await;
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use dg_xch_core::clvm::program::Program;
-    use dg_xch_core::consensus::block_rewards::calculate_base_farmer_reward;
-    use dg_xch_core::consensus::coinbase::create_farmer_coin;
-    use dg_xch_stores::traits::{BlockStore, CoinStore};
-
-    async fn start_server(dir: &Path) -> SimulatorServer {
-        let db = dir.join("sim.sqlite");
-        let plots = PlotSet::setup(dir, 15, 12, 18, 2, false).expect("plots");
-        SimulatorServer::start(
-            &db,
-            "127.0.0.1:0",
-            "127.0.0.1:0",
-            "127.0.0.1:0",
-            "simulator0",
-            simulator_constants(),
-            plots,
-            Duration::from_millis(50),
-        )
-        .await
-        .expect("server starts")
-    }
-
-    #[tokio::test]
-    async fn farm_block_funds_an_address_through_the_shared_store() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let server = start_server(dir.path()).await;
-
-        // Genesis peak is live before anything else.
-        let (_, peak) = server
-            .node()
-            .store
-            .get_peak()
-            .await
-            .expect("peak")
-            .expect("has peak");
-        assert_eq!(peak, 0);
-
-        // Farm reward blocks to a wallet's puzzle hash; the height-1 reward is claimed by height 2,
-        // creating a spendable coin at that address, visible through the served store.
-        let wallet_ph = Program::to(1_u8).tree_hash();
-        server.farm_to(wallet_ph, 3).await.expect("farm to address");
-        let genesis = simulator_constants().genesis_challenge;
-        let funded = create_farmer_coin(1, wallet_ph, calculate_base_farmer_reward(1), genesis);
-        assert!(
-            server
-                .node()
-                .store
-                .get_coin_record(&funded.name())
-                .await
-                .expect("store")
-                .is_some_and(|r| !r.spent),
-            "farm_block did not fund the address"
-        );
-        server.stop();
-    }
-
-    #[tokio::test]
-    async fn farming_past_a_sub_slot_keeps_the_node_running() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let server = start_server(dir.path()).await;
-        let wallet_ph = Program::to(1_u8).tree_hash();
-        // Farm past one sub-slot's worth of signage points; the node must cross rather than stall.
-        server
-            .farm_to(wallet_ph, 70)
-            .await
-            .expect("farm across a sub-slot");
-        let (_, height) = server
-            .node()
-            .store
-            .get_peak()
-            .await
-            .expect("peak")
-            .expect("has peak");
-        assert_eq!(
-            height, 70,
-            "the node stalled instead of crossing a sub-slot"
-        );
-        let mut crossed = false;
-        for h in 1..=height {
-            if let Some(rec) = server
-                .node()
-                .store
-                .get_block_record_by_height(h)
-                .await
-                .expect("store")
-            {
-                if rec.first_in_sub_slot() {
-                    crossed = true;
-                    break;
-                }
-            }
-        }
-        assert!(crossed, "no sub-slot crossing occurred");
-        server.stop();
-    }
-}
+#[path = "../tests/unit/server/tests.rs"]
+mod tests;

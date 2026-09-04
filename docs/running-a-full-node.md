@@ -5,32 +5,31 @@
 Install stable Rust, `cmake`, a C compiler, and the system zstd development package. Then build the node:
 
 ```bash
-cargo build --release -p full-node --features sqlite,coin-index,hint
+cargo build --release -p dg_xch_cli --bin dg --features sqlite,coin-index,hint
 ```
 
-The binary is written to `target/release/full-node`.
+The binary is written to `target/release/dg`.
 
 ## Start
 
 ```bash
 mkdir -p "$HOME/dg-xch-data"
-./target/release/full-node \
+./target/release/dg full-node \
   --listen 0.0.0.0:8444 \
   --rpc 127.0.0.1:8555 \
   --db "sqlite://$HOME/dg-xch-data/chain.db" \
-  --network mainnet \
-  --metrics 127.0.0.1:9100
+  --network mainnet
 ```
 
 Use one or more `--peer host:port` options or an `--introducer host:port` to establish outbound connections. Use `--advertise ip:port` only when the listener is reachable from the public network.
 
 ## RPC TLS
 
-The default `--rpc-tls local` mode requires the RPC listener to use a loopback address. Use `--rpc-tls private-ca --ssl-dir <directory>` for authenticated remote RPC. The directory must contain `ca/private_ca.crt` and `ca/private_ca.key`; public network certificates are not accepted as RPC client-authentication roots.
+The `--rpc` address is the shared Portfu HTTPS listener for RPC, `/health`, `/metrics`, and operational WebSockets. The default `--rpc-tls local` mode requires a loopback address. Use `--rpc-tls private-ca --ssl-dir <directory>` for authenticated remote RPC. The directory must contain `ca/private_ca.crt` and `ca/private_ca.key`; public network certificates are not accepted as RPC client-authentication roots.
 
 ## Peer Settings
 
-The full-node command exposes every `P2pSettings` value:
+The `dg full-node` command exposes every `P2pSettings` value:
 
 - `--target-outbound` and `--target-peer-count`
 - `--host-pool-capacity`, `--address-lower`, and `--address-upper`
@@ -58,4 +57,4 @@ The mmap directory must be writable by the node process.
 
 ## Monitoring
 
-Set `--metrics host:port` to serve Prometheus metrics or `--metrics off` to disable them. See [monitoring.md](monitoring.md) for the metric names and scrape configuration.
+Prometheus metrics are served at `https://<rpc-address>/metrics`. See [monitoring.md](monitoring.md) for the metric names and scrape configuration.

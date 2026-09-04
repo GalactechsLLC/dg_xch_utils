@@ -1,6 +1,7 @@
 mod common;
 
 use async_trait::async_trait;
+use dg_full_node::{Backend, Config, FullNode};
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
@@ -9,7 +10,6 @@ use dg_xch_core::protocols::full_node::{NewTransaction, RespondTransaction};
 use dg_xch_core::protocols::{ChiaMessage, ProtocolMessageTypes};
 use dg_xch_p2p::{FullNodeApi, P2pSettings, full_node_handlers_client};
 use dg_xch_serialize::ChiaProtocolVersion;
-use full_node::{Backend, Config, Node};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -25,7 +25,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         std::process::id()
     ));
     Config {
-        rpc_tls: full_node::RpcTlsMode::Local,
+        rpc_tls: dg_full_node::RpcTlsMode::Local,
         debug_endpoints: false,
         p2p: Default::default(),
         listen,
@@ -35,7 +35,6 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         advertise: None,
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
-        metrics: None,
         capture_dir: None,
         genesis_sync: false,
         sync_from: 0,
@@ -77,7 +76,11 @@ async fn announced_transaction_is_pulled_validated_and_admitted() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     // ---- the node under test: seeded to the real mainnet peak + one easy-puzzle coin ----
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     let coin = common::seed_easy_coin(&node.store, 1_000).await;
     node.mempool.lock().await.set_peak(common::PEAK_HEIGHT, 0);
@@ -85,7 +88,11 @@ async fn announced_transaction_is_pulled_validated_and_admitted() {
     // ignore-while-syncing guard) — this test exercises the pull-validate-admit path of an
     // AT-TIP node, same pattern as announce_pull.rs.
     node.synced.store(true, Ordering::Relaxed);
-    let (serve_run, _inbound_peers) = node.spawn_peer_server().expect("peer server");
+    let validator = node.clone();
+    tokio::spawn(async move { validator.run_tx_validator().await });
+    let (server, serve_run, _inbound_peers) = node.build_peer_server().expect("peer server");
+    let listener_run = serve_run.clone();
+    tokio::spawn(async move { server.run(listener_run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     // ---- the announcing peer dials in on the production client handler stack ----
@@ -143,17 +150,24 @@ async fn announced_transaction_is_pulled_validated_and_admitted() {
 
     run.store(false, Ordering::Relaxed);
     serve_run.store(false, Ordering::Relaxed);
+    node.run.store(false, Ordering::Relaxed);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gossip_is_ignored_while_syncing() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     let coin = common::seed_easy_coin(&node.store, 1_000).await;
     node.mempool.lock().await.set_peak(common::PEAK_HEIGHT, 0);
-    let (serve_run, _inbound_peers) = node.spawn_peer_server().expect("peer server");
+    let (server, serve_run, _inbound_peers) = node.build_peer_server().expect("peer server");
+    let listener_run = serve_run.clone();
+    tokio::spawn(async move { server.run(listener_run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let bundle = common::easy_bundle(&coin, 1);
@@ -213,7 +227,7 @@ async fn gossip_is_ignored_while_syncing() {
 // `inbound_peers.read().await.len()` going 1 -> 0 is the observable that distinguishes a ban from
 // an ignore (both leave the mempool empty).
 struct Rig {
-    node: Arc<Node>,
+    node: Arc<FullNode>,
     coin: dg_xch_core::blockchain::coin::Coin,
     inbound_peers: dg_xch_core::protocols::PeerMap,
     serve_run: Arc<AtomicBool>,
@@ -221,15 +235,31 @@ struct Rig {
     client_run: Arc<AtomicBool>,
 }
 
+impl Drop for Rig {
+    fn drop(&mut self) {
+        self.client_run.store(false, Ordering::Relaxed);
+        self.serve_run.store(false, Ordering::Relaxed);
+        self.node.run.store(false, Ordering::Relaxed);
+    }
+}
+
 async fn stand_up_rig() -> Rig {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     let coin = common::seed_easy_coin(&node.store, 1_000).await;
     node.mempool.lock().await.set_peak(common::PEAK_HEIGHT, 0);
     node.synced.store(true, Ordering::Relaxed);
-    let (serve_run, inbound_peers) = node.spawn_peer_server().expect("peer server");
+    let validator = node.clone();
+    tokio::spawn(async move { validator.run_tx_validator().await });
+    let (server, serve_run, inbound_peers) = node.build_peer_server().expect("peer server");
+    let listener_run = serve_run.clone();
+    tokio::spawn(async move { server.run(listener_run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     // A blind announcer: no served bundle, no request hook — these tests drive raw messages.
@@ -428,7 +458,7 @@ impl FullNodeApi for CapturingApi {
 }
 
 struct CapturingRig {
-    node: Arc<Node>,
+    node: Arc<FullNode>,
     coin: dg_xch_core::blockchain::coin::Coin,
     inbound_peers: dg_xch_core::protocols::PeerMap,
     client: dg_xch_clients::websocket::WsClient,
@@ -438,15 +468,29 @@ struct CapturingRig {
     _client_run: Arc<AtomicBool>,
 }
 
+impl Drop for CapturingRig {
+    fn drop(&mut self) {
+        self._client_run.store(false, Ordering::Relaxed);
+        self._serve_run.store(false, Ordering::Relaxed);
+        self.node.run.store(false, Ordering::Relaxed);
+    }
+}
+
 async fn stand_up_capturing_rig() -> CapturingRig {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     let coin = common::seed_easy_coin(&node.store, 1_000).await;
     node.mempool.lock().await.set_peak(common::PEAK_HEIGHT, 0);
     node.synced.store(true, Ordering::Relaxed);
-    let (serve_run, inbound_peers) = node.spawn_peer_server().expect("peer server");
+    let (server, serve_run, inbound_peers) = node.build_peer_server().expect("peer server");
+    let listener_run = serve_run.clone();
+    tokio::spawn(async move { server.run(listener_run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let pulls = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -491,7 +535,7 @@ async fn stand_up_capturing_rig() -> CapturingRig {
 
 // Fill the node's mempool to its 110B ceiling with synthetic high-fee items so is_fee_enough has
 // to say no to weak fees (at_full_capacity + min-fee-rate).
-async fn fill_mempool_to_capacity(node: &Arc<Node>) {
+async fn fill_mempool_to_capacity(node: &Arc<FullNode>) {
     use dg_xch_core::blockchain::coin::Coin;
     use dg_xch_core::blockchain::coin_record::CoinRecord;
     use dg_xch_core::blockchain::spend::Spend;
@@ -633,7 +677,7 @@ async fn announce_drain_reaches_inbound_peers_and_excludes_origin() {
 
     struct NoOutbound;
     #[async_trait]
-    impl full_node::OutboundPeers for NoOutbound {
+    impl dg_full_node::OutboundPeers for NoOutbound {
         async fn first_live(&self) -> Option<Arc<dg_xch_p2p::OutboundPeer>> {
             None
         }
@@ -641,7 +685,7 @@ async fn announce_drain_reaches_inbound_peers_and_excludes_origin() {
             Vec::new()
         }
     }
-    let registry: Arc<dyn full_node::OutboundPeers> = Arc::new(NoOutbound);
+    let registry: Arc<dyn dg_full_node::OutboundPeers> = Arc::new(NoOutbound);
 
     // Not our transaction: the inbound peer must receive it.
     let x = Bytes32::from([0x77; 32]);

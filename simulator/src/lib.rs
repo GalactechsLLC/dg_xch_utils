@@ -1,8 +1,6 @@
 #[cfg(feature = "pos2")]
 pub mod chain;
 pub mod config;
-#[cfg(feature = "server")]
-pub(crate) mod control;
 pub mod error;
 #[cfg(feature = "pos2")]
 pub mod factory;
@@ -14,6 +12,8 @@ pub mod rpc;
 pub mod server;
 pub mod stats;
 pub mod step;
+#[cfg(feature = "server")]
+mod tasks;
 pub mod timelord;
 
 pub use config::{HarnessConfig, SimConfig};

@@ -240,7 +240,7 @@ pub async fn spawn_full_node(api: Arc<dyn FullNodeApi>) -> RunningServer {
 }
 
 // Same as `spawn_full_node` but with the per-connection inbound rate limiter active — the
-// production full-node listener posture (daemon sets `WebsocketServer::rate_limited = true`).
+// production full-node listener posture (the server sets `WebsocketServer::rate_limited = true`).
 pub async fn spawn_full_node_rate_limited(api: Arc<dyn FullNodeApi>) -> RunningServer {
     install_crypto();
     let port = free_port();

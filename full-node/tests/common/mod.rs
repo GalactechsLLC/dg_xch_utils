@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use dg_full_node::FullNode;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
@@ -11,6 +12,7 @@ use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::clvm::program::Program;
 use dg_xch_core::clvm::sexp::SExp;
 use dg_xch_stores::{BlockStore, CoinStore, SqliteStore};
+use portfu::prelude::{ServerBuilder, ServerHandle};
 use serde::Deserialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -54,6 +56,28 @@ pub async fn open_store() -> SqliteStore {
     let path =
         std::env::temp_dir().join(format!("full_node_test_{}_{n}.sqlite", std::process::id()));
     SqliteStore::open(&path).await.expect("open store")
+}
+
+pub async fn spawn_portfu_rpc(
+    node: &std::sync::Arc<FullNode<SqliteStore>>,
+    bind: std::net::SocketAddr,
+) -> ServerHandle {
+    let tls = dg_full_node::build_portfu_rpc_tls_context(&node.config.rpc_tls, bind)
+        .expect("Portfu RPC TLS");
+    node.attach_rpc_live(tls.node_id);
+    let server = ServerBuilder::new()
+        .host(bind.ip().to_string())
+        .port(bind.port())
+        .tls(tls.tls_config)
+        .shutdown_grace_period(std::time::Duration::from_millis(100))
+        .global_state::<dg_full_node::Node>(node.state.clone())
+        .build();
+    let handle = server.handle();
+    tokio::spawn(async move {
+        let _ = server.run().await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    handle
 }
 
 // Seed a store to the real mainnet block 5000000: candidate record + cold body + confirmed peak + the
@@ -110,7 +134,7 @@ pub fn easy_puzzle_hash() -> Bytes32 {
 
 // Seed an unspent coin locked by the easy puzzle at the peak height, so a bundle spending it is
 // mempool-admissible against the confirmed set.
-pub async fn seed_easy_coin(store: &SqliteStore, amount: u64) -> Coin {
+pub async fn seed_easy_coin<S: CoinStore + ?Sized>(store: &S, amount: u64) -> Coin {
     let coin = Coin {
         parent_coin_info: h(0xEC),
         puzzle_hash: easy_puzzle_hash(),

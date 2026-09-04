@@ -18,11 +18,10 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Simulator defaults: peer 58444, control 5050, handshake network `simulator0` over the
+    // Simulator defaults: peer 58444, RPC 8555, handshake network `simulator0` over the
     // mainnet genesis challenge.
     let mut listen = "0.0.0.0:58444".to_string();
     let mut rpc = "127.0.0.1:8555".to_string();
-    let mut control = "0.0.0.0:5050".to_string();
     let mut network = "simulator0".to_string();
     let mut db = PathBuf::from("sim-node.sqlite");
     let mut plots_dir = PathBuf::from("sim-plots");
@@ -40,7 +39,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match arg.as_str() {
             "--listen" => listen = next()?,
             "--rpc" => rpc = next()?,
-            "--control" => control = next()?,
             "--network" => network = next()?,
             "--db" => db = PathBuf::from(next()?),
             "--plots-dir" => plots_dir = PathBuf::from(next()?),
@@ -75,7 +73,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &db,
         &listen,
         &rpc,
-        &control,
         &network,
         constants,
         plots,
@@ -86,14 +83,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server.set_auto_farming(true);
     }
     println!(
-        "simulator node up: peer {listen}, rpc {rpc}, control {control} (network {network}); \
-         mint coins via POST {control}/farm_block {{\"address\": \"xch1...\"}}"
+        "simulator node up: peer {listen}, rpc {rpc} (network {network}); \
+         mint coins via curl -k https://{rpc}/farm_block -d '{{\"address\": \"xch1...\"}}'"
     );
 
     tokio::signal::ctrl_c().await?;
-    server.stop();
-    // Give the listeners a beat to observe the cleared run flag.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    server.stop().await;
     println!("stopped");
     Ok(())
 }

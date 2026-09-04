@@ -30,9 +30,9 @@ DruidGarden XCH Utils
 git clone https://github.com/GalactechsLLC/dg_xch_utils.git
 cd dg_xch_utils
 cargo build --release
-sudo cp target/release/dg_xch_cli /usr/local/bin/dg_xch_cli
+sudo cp target/release/dg /usr/local/bin/dg
 ```
 
 > [!TIP]
-> To Print all available commands ```dg_xch_cli --help``` <br>
-> To Print Command Help ```dg_xch_cli <COMMAND> --help```
+> To print all available commands, run `dg --help`. <br>
+> To print command help, run `dg <COMMAND> --help`.

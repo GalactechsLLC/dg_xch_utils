@@ -1,6 +1,7 @@
 mod common;
 
 use async_trait::async_trait;
+use dg_full_node::{Backend, Config, FullNode, OutboundPeers};
 use dg_xch_clients::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
@@ -14,7 +15,6 @@ use dg_xch_core::protocols::{
 };
 use dg_xch_p2p::{FullNodeApi, OutboundPeer};
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
-use full_node::{Backend, Config, Node, OutboundPeers};
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -33,7 +33,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         std::process::id()
     ));
     Config {
-        rpc_tls: full_node::RpcTlsMode::Local,
+        rpc_tls: dg_full_node::RpcTlsMode::Local,
         debug_endpoints: false,
         p2p: Default::default(),
         listen,
@@ -43,7 +43,6 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         advertise: None,
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
-        metrics: None,
         capture_dir: None,
         genesis_sync: false,
         sync_from: 0,
@@ -188,10 +187,15 @@ async fn finish_sync_transition_fires_mempool_and_peer_and_wallet_sends() {
 
     // The node at the mainnet-fixture peak, peer server up (populates its inbound map).
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     node.synced.store(true, Ordering::Relaxed);
-    let (_run, inbound_peers) = node.spawn_peer_server().expect("peer server");
+    let (server, run, inbound_peers) = node.build_peer_server().expect("peer server");
+    tokio::spawn(async move { server.run(run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     // A wallet peer dials in (lands in the node's inbound map); drain its on-connect NewPeakWallet

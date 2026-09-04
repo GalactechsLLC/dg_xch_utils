@@ -1,7 +1,7 @@
 # Monitoring a dg_xch Full Node (Prometheus + Grafana)
 
-Every node exposes Prometheus text metrics on `--metrics` (default `0.0.0.0:9100`,
-path `/metrics`).
+Every node exposes Prometheus text metrics at `/metrics` on the shared Portfu HTTPS listener
+(`--rpc`, default `127.0.0.1:8555`).
 
 ## The metrics
 
@@ -13,12 +13,14 @@ path `/metrics`).
 | `fullnode_blocks_confirmed_total` | counter | Blocks validated + confirmed into the store |
 | `fullnode_reservations_reclaimed_total` | counter | Reservation windows reclaimed from stalled peers |
 | `fullnode_peak_reservation_window` | gauge | Peak in-flight window identifiers (memory-bound proof) |
-| `fullnode_peak_inflight_blocks` | gauge | Peak simultaneously-resident downloaded blocks |
+| `fullnode_peak_inflight_blocks` | gauge | Peak blocks held by the headers-first body downloader; zero when genesis follow sync bypasses it |
 | `fullnode_process_resident_bytes` | gauge | Process RSS |
 | `fullnode_outbound_peers` / `fullnode_inbound_peers` | gauge | Live peer connections |
 | `fullnode_window_vdf_micros` | gauge | Last window's all-core VDF drain wall time |
 | `fullnode_window_body_micros` | gauge | Last window's parallel CLVM+BLS precompute wall time |
 | `fullnode_window_confirm_micros` | gauge | Last window's batched store confirm wall time |
+| `fullnode_follow_fetch_wait_micros_total` | counter | Producer-side network wait; may overlap consumer processing |
+| `fullnode_follow_step_micros_total` | counter | Follow consumer-cycle wall time, including queue wait and validation |
 | `fullnode_sync_from_height` | gauge | Configured `--sync-from` anchor (0 = genesis node) |
 | `fullnode_net_messages_in_total{msg=...}` | counter | Messages received, by protocol type — the gossip-health series |
 | `fullnode_net_messages_out_total{msg=...}` | counter | Messages sent, by protocol type |
@@ -46,7 +48,10 @@ and `window.confirm` is where a slow store shows up (watch it on the mmap/Pi pro
 scrape_configs:
   - job_name: dg-xch-node
     static_configs:
-      - targets: ["<node-host>:9100"]
+      - targets: ["<node-host>:8555"]
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true # or configure ca_file for private-CA mode
 ```
 
 The dashboards key on the `job` label — name the job after the node
@@ -54,13 +59,13 @@ The dashboards key on the `job` label — name the job after the node
 light up unchanged.
 
 **Kubernetes with the Prometheus operator**: each node's
-Service must expose the metrics port, and one ServiceMonitor covers the namespace:
+Service must expose the shared server port, and one ServiceMonitor covers the namespace:
 
 ```yaml
 # on each node Service
 ports:
   - { name: p2p, port: 8444, protocol: TCP }
-  - { name: metrics, port: 9100, protocol: TCP }
+  - { name: server, port: 8555, protocol: TCP }
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -68,7 +73,8 @@ metadata: { name: dg-xch-nodes, namespace: <your-ns> }
 spec:
   selector: { matchLabels: {} }          # every Service in the namespace
   namespaceSelector: { matchNames: [<your-ns>] }
-  endpoints: [{ port: metrics, path: /metrics, interval: 15s }]
+  endpoints:
+    - { port: server, path: /metrics, scheme: https, interval: 15s }
 ```
 
 With the operator, `job` = the Service name — which is exactly what the dashboards
@@ -76,7 +82,7 @@ expect (one job per node).
 
 ## The dashboards
 
-Checked in under [`deploy/grafana/`](../deploy/grafana/):
+Checked in under [`grafana/`](grafana/):
 
 | File | Page |
 |---|---|
@@ -88,12 +94,12 @@ Prometheus at import time. On kube-prometheus-stack, wrap the JSON in a
 ConfigMap labeled `grafana_dashboard: "1"` in the namespace the sidecar watches
 and it appears automatically.
 
-The JSON in `deploy/grafana/` is the source of truth — edit there and re-import.
+The JSON in `grafana/` is the source of truth — edit there and re-import.
 
 ## Sanity check without Grafana
 
 ```bash
-curl -s localhost:9100/metrics | grep -E 'fullnode_(peak_height|blocks_confirmed_total|window_)'
+curl -ks https://localhost:8555/metrics | grep -E 'fullnode_(peak_height|blocks_confirmed_total|window_)'
 ```
 
 If `fullnode_blocks_confirmed_total` is climbing, the node is syncing; everything

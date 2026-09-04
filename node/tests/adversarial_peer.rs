@@ -4,7 +4,7 @@
 // never-draining sink in core's `send_timeout_tests`), reject-all-ranges, stale-peak (honest but
 // behind), disconnect-mid-window. The misbehaving peer's reservations must be reclaimed (t051's
 // stall-reclaim generalized across modes), its failure budget must retire it, and the good peer
-// must finish the range; the daemon-shaped follow rotation must confirm the peak within a fixed
+// must finish the range; the server-shaped follow rotation must confirm the peak within a fixed
 // tick budget.
 
 mod common;
@@ -149,7 +149,7 @@ async fn confirmed_peak_advances_beside_every_misbehaving_peer() {
     }
 }
 
-// The daemon-shaped follow tick: rotate to the next peer each tick (the registry.live_peers +
+// The server-shaped follow tick: rotate to the next peer each tick (the registry.live_peers +
 // follow_rotation pattern — closed peers are skipped, a failed or timed-out tick rotates), each
 // tick bounded like the driver's request timeout. The confirmed peak must land within a fixed tick
 // budget for every mode — a misbehaving peer costs at most its own tick, never a wedge.

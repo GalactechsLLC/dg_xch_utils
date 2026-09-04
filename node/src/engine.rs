@@ -47,7 +47,7 @@ use std::collections::{HashMap, HashSet};
 // every `seed_missing_refs` pass, so it only ever holds the current window's out-of-span refs
 // (a handful) — bounded independent of sync length, with no capacity cap that could evict a ref
 // the current window still needs. A `--sync-from` window's compression back-references reach below
-// the anchor span; the daemon fetches each such generator from a peer and seeds it so the window's
+// the anchor span; the server fetches each such generator from a peer and seeds it so the window's
 // body validation (`resolve_generator_refs`, which consults this map) can resolve the ref. These
 // heights are never confirmed, so they have no confirm-time drain — the per-window clear is their
 // removal point. (A prior FIFO-cap design bounded retention but could evict a still-needed ref
@@ -819,7 +819,7 @@ where
         self.stage_preload = None;
     }
 
-    /// Wipe only the out-of-span seed cache (leaving in-window staged entries). The daemon calls
+    /// Wipe only the out-of-span seed cache (leaving in-window staged entries). The server calls
     /// this at the START of each `seed_missing_refs` pass so the cache holds exactly the current
     /// window's out-of-span refs — bounded independent of sync length, with no eviction that could
     /// drop a ref the window still needs.
@@ -2549,7 +2549,7 @@ fn coin_record(coin: Coin, height: u32, timestamp: u64, coinbase: bool) -> CoinR
 // Node-local FullBlock→HeaderBlock view for record computation. The two share every field the
 // record needs; the transactions_filter is unused by header_block_to_sub_block_record. The
 // filter default is the ENCODED-EMPTY filter b"\x00", never a zero-length byte string; the
-// daemon's wallet-facing header serving overrides it with the real per-block filter.
+// server's wallet-facing header serving overrides it with the real per-block filter.
 pub fn header_block_from_full_block(block: &FullBlock) -> HeaderBlock {
     HeaderBlock {
         finished_sub_slots: block
