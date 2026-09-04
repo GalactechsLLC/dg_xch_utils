@@ -1,0 +1,86 @@
+groups:
+  - name: dg-xch-full-node
+    rules:
+      - alert: DgXchNodeDown
+        expr: up{job=~"dg-xch-node.*|local_full_node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "dg-xch node {{ $labels.job }} is down"
+          description: "Prometheus has been unable to scrape {{ $labels.instance }} for two minutes."
+
+      - alert: DgXchNoOutboundPeers
+        expr: fullnode_outbound_peers{job=~"dg-xch-node.*|local_full_node"} < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "dg-xch node {{ $labels.job }} has no outbound peers"
+          description: "The node cannot discover or download new blocks without an outbound peer."
+
+      - alert: DgXchSyncStalled
+        expr: |
+          fullnode_tip_lag{job=~"dg-xch-node.*|local_full_node"} > 0
+          and on(job, instance)
+          rate(fullnode_blocks_confirmed_total{job=~"dg-xch-node.*|local_full_node"}[10m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "dg-xch node {{ $labels.job }} sync is stalled"
+          description: "The node remains behind the network tip but has not confirmed a block for ten minutes."
+
+      - alert: DgXchPrefetchBacklogGrowing
+        expr: |
+          clamp_min(
+            fullnode_blocks_downloaded_total{job=~"dg-xch-node.*|local_full_node"}
+            - fullnode_blocks_confirmed_total{job=~"dg-xch-node.*|local_full_node"},
+            0
+          ) > 2048
+          and on(job, instance)
+          deriv((
+            fullnode_blocks_downloaded_total{job=~"dg-xch-node.*|local_full_node"}
+            - fullnode_blocks_confirmed_total{job=~"dg-xch-node.*|local_full_node"}
+          )[15m:]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "dg-xch node {{ $labels.job }} prefetch backlog is growing"
+          description: "Downloaded blocks exceed confirmed blocks by more than 2,048 and the gap has continued to grow."
+
+      - alert: DgXchHighResidentMemory
+        expr: fullnode_process_resident_bytes{job=~"dg-xch-node.*|local_full_node"} > 3865470566
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "dg-xch node {{ $labels.job }} is above 90% of its 4 GiB memory envelope"
+          description: "Resident memory is {{ $value | humanize1024 }}B on {{ $labels.instance }}."
+
+      - alert: DgXchSqliteCheckpointError
+        expr: increase(fullnode_sqlite_checkpoint_errors_total{job=~"dg-xch-node.*|local_full_node"}[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "dg-xch node {{ $labels.job }} SQLite checkpoint failed"
+          description: "At least one SQLite WAL checkpoint failed in the last ten minutes."
+
+      - alert: DgXchSqliteCheckpointBusy
+        expr: increase(fullnode_sqlite_checkpoint_busy_total{job=~"dg-xch-node.*|local_full_node"}[15m]) > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "dg-xch node {{ $labels.job }} SQLite checkpoints are repeatedly busy"
+          description: "Persistent busy results can indicate that a reader is pinning the WAL."
+
+      - alert: DgXchSqliteWalLarge
+        expr: fullnode_sqlite_wal_bytes{job=~"dg-xch-node.*|local_full_node"} > 1073741824
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "dg-xch node {{ $labels.job }} SQLite WAL exceeds 1 GiB"
+          description: "The WAL has remained above 1 GiB for 15 minutes; inspect checkpoint and read-pool metrics."

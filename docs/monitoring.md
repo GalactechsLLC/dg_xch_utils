@@ -36,6 +36,15 @@ Every node exposes Prometheus text metrics at `/metrics` on the shared Portfu HT
 rate(fullnode_blocks_confirmed_total[5m]) * 60
 ```
 
+**The current prefetch depth — downloaded bodies waiting to be confirmed:**
+
+```promql
+clamp_min(fullnode_blocks_downloaded_total - fullnode_blocks_confirmed_total, 0)
+```
+
+Both inputs are process-lifetime counters. `clamp_min` suppresses a transient negative value if a
+counter reset is observed unevenly across scrapes.
+
 The three `window_*_micros` gauges are the per-backend differentiators: on a healthy
 node `window.vdf` dominates in old eras, `window.body` grows in transaction-dense eras,
 and `window.confirm` is where a slow store shows up (watch it on the mmap/Pi profile).
@@ -85,15 +94,34 @@ Checked in under [`grafana/`](grafana/):
 
 | File | Page |
 |---|---|
-| `dg-xch-sync-overview.json` | All nodes side by side — blocks/min, heights, tip distance, RSS, peers, reclaim rate |
+| `dg-xch-sync-overview.json` | Selectable nodes — sync rate/ETA, prefetch pipeline, memory, phase timings, SQLite health, and status indicators |
 
 Load it with a manual import (any Grafana): Dashboards → New → Import → upload
-the JSON. The dashboard has a `DS_PROMETHEUS` datasource variable — pick your
-Prometheus at import time. On kube-prometheus-stack, wrap the JSON in a
+the JSON. The dashboard has datasource, scrape-job, and node-instance selectors — pick your
+Prometheus at import time, then select the exact target instance to display. On kube-prometheus-stack, wrap the JSON in a
 ConfigMap labeled `grafana_dashboard: "1"` in the namespace the sidecar watches
 and it appears automatically.
 
 The JSON in `grafana/` is the source of truth — edit there and re-import.
+
+## Alert rules
+
+[`prometheus/dg-xch-alerts.yml`](prometheus/dg-xch-alerts.yml) contains rules for node-down,
+no outbound peers, stalled sync, a growing prefetch backlog, high RSS, and SQLite WAL/checkpoint
+failures. The shipped selectors cover both `dg-xch-node*` and `local_full_node` jobs; adjust them if
+your Prometheus job names use another convention. The backlog, 4 GiB memory envelope, and 1 GiB WAL
+thresholds are operator policy and should be tuned with the corresponding dashboard panels.
+
+Load the file through Prometheus's `rule_files` configuration and validate it before deployment:
+
+```yaml
+rule_files:
+  - /etc/prometheus/rules/dg-xch-alerts.yml
+```
+
+```bash
+promtool check rules /etc/prometheus/rules/dg-xch-alerts.yml
+```
 
 ## Sanity check without Grafana
 
