@@ -14,6 +14,14 @@ use std::sync::Arc;
 // wrapper — the single-writer/WAL-reader concurrency lives inside the backend, unchanged.
 #[async_trait]
 impl<T: CoinStore + Send + Sync> CoinStore for Arc<T> {
+    async fn apply_coin_window_in(
+        &self,
+        batch: &mut BatchHandle,
+        changes: &[crate::types::CoinChanges<'_>],
+    ) -> Result<(), StoreError> {
+        (**self).apply_coin_window_in(batch, changes).await
+    }
+
     async fn get_coin_record(&self, coin_name: &Bytes32) -> Result<Option<CoinRecord>, StoreError> {
         (**self).get_coin_record(coin_name).await
     }
@@ -134,6 +142,22 @@ impl<T: CoinStore + Send + Sync> CoinStore for Arc<T> {
 
 #[async_trait]
 impl<T: BlockStore + Send + Sync> BlockStore for Arc<T> {
+    async fn prepare_archive(
+        &self,
+        records: Vec<(BlockRecord, BlockStatus)>,
+        blocks: Vec<FullBlock>,
+    ) -> Result<crate::types::PreparedArchive, StoreError> {
+        (**self).prepare_archive(records, blocks).await
+    }
+
+    async fn persist_prepared_archive_in(
+        &self,
+        batch: &mut BatchHandle,
+        prepared: crate::types::PreparedArchive,
+    ) -> Result<(), StoreError> {
+        (**self).persist_prepared_archive_in(batch, prepared).await
+    }
+
     async fn get_block_record(&self, hh: &Bytes32) -> Result<Option<BlockRecord>, StoreError> {
         (**self).get_block_record(hh).await
     }
@@ -209,6 +233,14 @@ impl<T: BlockStore + Send + Sync> BlockStore for Arc<T> {
     ) -> Result<u64, StoreError> {
         (**self).set_peak_in(batch, new_peak).await
     }
+    async fn extend_peak_in(
+        &self,
+        batch: &mut BatchHandle,
+        extension: &[Bytes32],
+        new_height: u32,
+    ) -> Result<u64, StoreError> {
+        (**self).extend_peak_in(batch, extension, new_height).await
+    }
     async fn get_status(&self, hh: &Bytes32) -> Result<BlockStatus, StoreError> {
         (**self).get_status(hh).await
     }
@@ -222,6 +254,14 @@ impl<T: BlockStore + Send + Sync> BlockStore for Arc<T> {
         s: BlockStatus,
     ) -> Result<(), StoreError> {
         (**self).set_status_in(batch, hh, s).await
+    }
+    async fn set_status_many_in(
+        &self,
+        batch: &mut BatchHandle,
+        hashes: &[Bytes32],
+        status: BlockStatus,
+    ) -> Result<(), StoreError> {
+        (**self).set_status_many_in(batch, hashes, status).await
     }
     async fn savepoint(&self) -> Result<Savepoint, StoreError> {
         (**self).savepoint().await

@@ -165,7 +165,7 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
             tokio::time::sleep(DRIVER_TICK).await;
             continue;
         }
-        let to = claimed.min(from.saturating_add(FOLLOW_BATCH - 1));
+        let to = claimed.min(from.saturating_add(FETCH_BATCH - 1));
         // Refresh sources when a connection instance changes, even if it reconnected to the same
         // endpoint. Retaining an OutboundPeerSource by endpoint alone pins the dead websocket forever.
         let peers = registry.live_peers().await;
@@ -206,7 +206,7 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
             }
         };
         if to < claimed {
-            readahead.fill(&peer_sources, to.saturating_add(1), claimed, FOLLOW_BATCH);
+            readahead.fill(&peer_sources, to.saturating_add(1), claimed, FETCH_BATCH);
         }
         let fetched = match prefetched {
             Some(blocks) => Some(blocks),

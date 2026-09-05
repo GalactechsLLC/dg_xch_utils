@@ -31,9 +31,7 @@ fn cache_stays_bounded_and_eviction_rederives_identically() {
     }
 
     {
-        let cache = DISCRIMINANT_CACHE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let cache = discriminant_memo();
         assert!(
             cache.len() <= DISCRIMINANT_CACHE_CAPACITY,
             "cache exceeded its bound: {}",

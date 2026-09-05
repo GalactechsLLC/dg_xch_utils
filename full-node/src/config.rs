@@ -63,6 +63,7 @@ impl RpcTlsMode {
 // one unified listener; `rpc` remains in this shared config for simulator compatibility.
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub performance: PerformanceConfig,
     pub listen: SocketAddr,
     pub rpc: SocketAddr,
     pub rpc_tls: RpcTlsMode,
@@ -147,6 +148,7 @@ impl Config {
             .transpose()?;
         p2p.validate()?;
         Ok(Self {
+            performance: PerformanceConfig::default(),
             listen,
             rpc,
             introducer,
@@ -166,6 +168,62 @@ impl Config {
             rpc_tls: RpcTlsMode::default(),
             debug_endpoints: false,
         })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PerformanceConfig {
+    pub compute_workers: Option<usize>,
+    pub validation_window_blocks: Option<u32>,
+    pub validation_window_mb: u64,
+    pub confirm_transaction_blocks: Option<usize>,
+    pub sqlite_writer_cache_mb: Option<u64>,
+    pub coalesce_coin_writes: bool,
+}
+
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self {
+            compute_workers: None,
+            validation_window_blocks: None,
+            validation_window_mb: 128,
+            confirm_transaction_blocks: None,
+            sqlite_writer_cache_mb: None,
+            coalesce_coin_writes: false,
+        }
+    }
+}
+
+impl PerformanceConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self
+            .compute_workers
+            .is_some_and(|workers| workers == 0 || workers > 1024)
+        {
+            return Err("--compute-workers must be between 1 and 1024".into());
+        }
+        if self
+            .validation_window_blocks
+            .is_some_and(|blocks| !(1..=4096).contains(&blocks))
+        {
+            return Err("--validation-window-blocks must be between 1 and 4096".into());
+        }
+        if !(1..=65536).contains(&self.validation_window_mb) {
+            return Err("--validation-window-mb must be between 1 and 65536".into());
+        }
+        if self
+            .confirm_transaction_blocks
+            .is_some_and(|blocks| !(1..=4096).contains(&blocks))
+        {
+            return Err("--confirm-transaction-blocks must be between 1 and 4096".into());
+        }
+        if self
+            .sqlite_writer_cache_mb
+            .is_some_and(|size| !(1..=1048576).contains(&size))
+        {
+            return Err("--sqlite-writer-cache-mb must be between 1 and 1048576".into());
+        }
+        Ok(())
     }
 }
 

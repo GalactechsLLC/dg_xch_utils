@@ -123,6 +123,7 @@ async fn connect_synthetic_peer(
     let config = Arc::new(WsClientConfig {
         host: args.ws_host.clone(),
         port: args.ws_port,
+        server_port: 0,
         network_id: args.network.clone(),
         ssl_info: None,
         software_version: None,

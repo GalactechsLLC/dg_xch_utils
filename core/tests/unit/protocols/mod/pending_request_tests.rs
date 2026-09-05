@@ -1,4 +1,7 @@
-use super::{ChiaMessage, PendingRequest, PendingRequests, ProtocolMessageTypes};
+use super::{
+    ChiaMessage, PendingDelivery, PendingRequest, PendingRequests, ProtocolMessageTypes,
+    RETIRED_REQUEST_CAP,
+};
 use crate::blockchain::unsized_bytes::UnsizedBytes;
 use crate::protocols::rate_limits_v3::{V3Link, configure_message, settings_from_configure};
 use std::collections::HashSet;
@@ -51,8 +54,14 @@ async fn deliver_routes_to_exactly_the_owning_waiter() {
     let (id_b, rx_b) = pending.register();
 
     // Deliver B first, then A — out-of-order, as concurrent replies arrive.
-    assert!(pending.deliver(id_b, msg(Some(id_b), ProtocolMessageTypes::RespondBlocks)));
-    assert!(pending.deliver(id_a, msg(Some(id_a), ProtocolMessageTypes::RejectBlocks)));
+    assert_eq!(
+        pending.deliver(id_b, msg(Some(id_b), ProtocolMessageTypes::RespondBlocks)),
+        PendingDelivery::Delivered
+    );
+    assert_eq!(
+        pending.deliver(id_a, msg(Some(id_a), ProtocolMessageTypes::RejectBlocks)),
+        PendingDelivery::Delivered
+    );
 
     let got_a = rx_a.await.expect("waiter A received its reply");
     let got_b = rx_b.await.expect("waiter B received its reply");
@@ -67,32 +76,77 @@ async fn deliver_routes_to_exactly_the_owning_waiter() {
 #[tokio::test]
 async fn deliver_unknown_id_is_not_consumed() {
     let pending = PendingRequests::default();
-    assert!(!pending.deliver(4242, msg(Some(4242), ProtocolMessageTypes::NewPeak)));
+    assert_eq!(
+        pending.deliver(4242, msg(Some(4242), ProtocolMessageTypes::NewPeak)),
+        PendingDelivery::Unmatched
+    );
 }
 
-// Delivery consumes the waiter: a duplicate/late second reply for the same id is dropped (returns
-// `false`), never routed into an already-satisfied — and now closed — channel. That closed-channel
-// re-delivery was precisely how the true reply got lost under id aliasing.
+// Delivery consumes the waiter: a duplicate second reply for the same id is unmatched, never
+// routed into an already-satisfied — and now closed — channel. That closed-channel re-delivery was
+// precisely how the true reply got lost under id aliasing.
 #[tokio::test]
 async fn deliver_is_idempotent_after_the_first() {
     let pending = PendingRequests::default();
     let (id, rx) = pending.register();
-    assert!(pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)));
-    assert!(
-        !pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
+    assert_eq!(
+        pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
+        PendingDelivery::Delivered
+    );
+    assert_eq!(
+        pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
+        PendingDelivery::Unmatched,
         "a second reply for a consumed id must not be re-delivered"
     );
     assert!(rx.await.is_ok(), "the one delivery reached the waiter");
 }
 
-// Cancel (timeout / send failure) frees the slot so the table never leaks, and a reply that then
-// shows up is treated as unowned.
+// Cancel (timeout / send failure) frees the waiter but retains a bounded tombstone. A late block
+// response is consumed rather than reaching the unsolicited-response ban path.
 #[tokio::test]
-async fn cancel_frees_the_slot() {
+async fn cancel_tolerates_late_block_reply() {
     let pending = PendingRequests::default();
     let (id, _rx) = pending.register();
     pending.cancel(id);
-    assert!(!pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)));
+    assert_eq!(
+        pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
+        PendingDelivery::Retired
+    );
+    assert_eq!(
+        pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
+        PendingDelivery::Retired,
+        "duplicate late replies remain harmless while the tombstone is retained"
+    );
+}
+
+#[tokio::test]
+async fn retired_ids_only_consume_block_replies() {
+    let pending = PendingRequests::default();
+    let (id, _rx) = pending.register();
+    pending.cancel(id);
+    assert_eq!(
+        pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RequestBlocks)),
+        PendingDelivery::Unmatched,
+        "an inbound request whose id collides with a tombstone must still reach its handler"
+    );
+}
+
+#[tokio::test]
+async fn retired_id_history_is_bounded() {
+    let pending = PendingRequests::default();
+    let mut first = 0;
+    for i in 0..=RETIRED_REQUEST_CAP {
+        let (id, _rx) = pending.register();
+        if i == 0 {
+            first = id;
+        }
+        pending.cancel(id);
+    }
+    assert_eq!(
+        pending.deliver(first, msg(Some(first), ProtocolMessageTypes::RespondBlocks)),
+        PendingDelivery::Unmatched,
+        "the oldest tombstone is evicted when the bounded history fills"
+    );
 }
 
 // An enclosing timeout drops the request future rather than calling an async cleanup path. The
@@ -123,11 +177,12 @@ fn guarded_request_drop_releases_pending_and_v3_slots() {
     let released_id = first.id();
     drop(first);
 
-    assert!(
-        !pending.deliver(
+    assert_eq!(
+        pending.deliver(
             released_id,
             msg(Some(released_id), ProtocolMessageTypes::RespondBlocks)
         ),
+        PendingDelivery::Retired,
         "dropping the request removes its correlation waiter"
     );
     assert_eq!(

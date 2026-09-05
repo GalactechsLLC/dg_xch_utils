@@ -1,4 +1,7 @@
 use super::tip_epoch_from;
+
+#[path = "confirmation_tests.rs"]
+mod confirmation;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary;
 

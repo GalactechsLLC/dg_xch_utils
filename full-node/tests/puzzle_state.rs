@@ -57,6 +57,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
     }
@@ -115,6 +116,7 @@ async fn dial_wallet(port: u16, handlers: HandlerMap) -> WsClient {
     let cfg = Arc::new(WsClientConfig {
         host: "127.0.0.1".to_string(),
         port,
+        server_port: 0,
         network_id: "mainnet".to_string(),
         ssl_info: None,
         software_version: None,

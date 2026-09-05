@@ -40,7 +40,14 @@ impl FullNode<SqliteStore> {
     /// # Errors
     /// Returns an I/O error if the backend cannot be opened.
     pub async fn boot(config: Config) -> Result<Self, Error> {
+        config.performance.validate().map_err(Error::other)?;
         let store = open_backend(&config.backend).await?;
+        if let Some(mebibytes) = config.performance.sqlite_writer_cache_mb {
+            store
+                .set_bulk_cache_kib(mebibytes * 1024)
+                .await
+                .map_err(Error::other)?;
+        }
         Self::boot_with_store(config, store)
     }
 }
@@ -64,8 +71,14 @@ where
         store: Arc<S>,
         constants: ConsensusConstants,
     ) -> Result<Self, Error> {
-        let engine = Engine::new(store.clone(), NativePrimitives, constants);
-        let chaser = Chaser::new(engine, SyncConfig::default());
+        config.performance.validate().map_err(Error::other)?;
+        if let Some(workers) = config.performance.compute_workers {
+            dg_xch_core::compute::configure(workers).map_err(Error::other)?;
+        }
+        let mut engine = Engine::new(store.clone(), NativePrimitives, constants);
+        engine.set_coalesce_coin_writes(config.performance.coalesce_coin_writes);
+        let mut chaser = Chaser::new(engine, SyncConfig::default());
+        chaser.set_confirm_transaction_blocks(config.performance.confirm_transaction_blocks);
         let sync_metrics = chaser.metrics().clone();
         let claimed_peak = Arc::new(AtomicU32::new(0));
         let mempool = Arc::new(Mutex::new(Mempool::new(&constants)));
@@ -203,7 +216,16 @@ where
         install_crypto_provider();
         let (peer_server, peer_run, inbound_peers) = self.build_peer_server()?;
 
-        let mut supervisor = Supervisor::new(self.config.p2p);
+        let mut supervisor = Supervisor::with_identity(
+            self.config.p2p,
+            dg_xch_p2p::DialIdentity {
+                network_id: self.config.network_id.clone(),
+                server_port: self
+                    .config
+                    .advertise
+                    .map_or(self.config.listen.port(), |address| address.port()),
+            },
+        );
         supervisor.set_handlers(self.outbound_handler_factory());
         {
             let hook_node = self.clone();

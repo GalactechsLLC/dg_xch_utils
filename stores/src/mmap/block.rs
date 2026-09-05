@@ -212,6 +212,7 @@ impl BlockStore for MmapStore {
     async fn begin(&self) -> Result<BatchHandle, StoreError> {
         Ok(BatchHandle {
             inner: BatchInner::Mmap(crate::types::MmapBatch::default()),
+            _timing: None,
         })
     }
 

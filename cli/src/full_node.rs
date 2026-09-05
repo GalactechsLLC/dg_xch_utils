@@ -48,6 +48,38 @@ pub struct FullNodeArgs {
     /// Maximum aggregate outstanding block-range requests.
     #[arg(long)]
     prefetch_max_inflight: Option<usize>,
+    #[arg(
+        long,
+        help = "Shared bulk CPU workers; defaults to available logical CPUs minus two"
+    )]
+    compute_workers: Option<usize>,
+    #[arg(
+        long,
+        help = "Maximum blocks per bulk validation window; default is CPU-derived"
+    )]
+    validation_window_blocks: Option<u32>,
+    #[arg(
+        long,
+        default_value_t = 128,
+        help = "Estimated resident MiB per validation window; admits one oversized block"
+    )]
+    validation_window_mb: u64,
+    #[arg(
+        long,
+        help = "Maximum staged blocks per bulk confirmation transaction; defaults to whole window"
+    )]
+    confirm_transaction_blocks: Option<usize>,
+    #[arg(
+        long,
+        help = "SQLite bulk writer cache budget in MiB; default 256, near-tip remains 64"
+    )]
+    sqlite_writer_cache_mb: Option<u64>,
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Coalesce coin writes within each bulk confirmation transaction"
+    )]
+    coalesce_coin_writes: bool,
     /// Outbound connections to maintain.
     #[arg(long)]
     target_outbound: Option<usize>,
@@ -130,6 +162,13 @@ impl FullNodeArgs {
         config.rpc_tls =
             dg_full_node::RpcTlsMode::parse(&self.rpc_tls, &self.ssl_dir).map_err(Error::other)?;
         config.debug_endpoints = self.debug_endpoints;
+        config.performance.compute_workers = self.compute_workers;
+        config.performance.validation_window_blocks = self.validation_window_blocks;
+        config.performance.validation_window_mb = self.validation_window_mb;
+        config.performance.confirm_transaction_blocks = self.confirm_transaction_blocks;
+        config.performance.sqlite_writer_cache_mb = self.sqlite_writer_cache_mb;
+        config.performance.coalesce_coin_writes = self.coalesce_coin_writes;
+        config.performance.validate().map_err(Error::other)?;
         Ok(config)
     }
 }

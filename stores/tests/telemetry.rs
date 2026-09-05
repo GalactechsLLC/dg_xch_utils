@@ -99,8 +99,8 @@ async fn checkpointer_is_quiet_during_catch_up() {
 // During bulk sync the WAL must be drained by SIZE, not only by the slow 20-tick cadence:
 // otherwise it can grow past the in-writer wal_autocheckpoint failsafe, whose blocking
 // copy-into-DB then fires inside a confirm COMMIT. Crossing the trigger forces an off-writer
-// checkpoint pass within a tick or two, escalating from PASSIVE (copy) to TRUNCATE (reset +
-// shrink) so the file comes back under the threshold.
+// checkpoint pass within a tick or two. A complete PASSIVE pass makes the allocated WAL reusable;
+// TRUNCATE is needed only when a reader leaves logical frames pinned.
 #[tokio::test]
 async fn bulk_wal_past_the_drain_trigger_is_checkpointed_by_size_not_cadence() {
     use dg_xch_stores::CoinStore;
@@ -128,25 +128,20 @@ async fn bulk_wal_past_the_drain_trigger_is_checkpointed_by_size_not_cadence() {
     let peak_wal = store.wal_bytes();
     assert!(peak_wal > TRIGGER);
 
-    // Within a few 1 s ticks, far below the 20-tick bulk cadence, the size trigger must have
-    // drained AND reset the WAL file back under the threshold, off the writer.
+    // Within a few 1 s ticks, far below the 20-tick bulk cadence, the size trigger must run an
+    // off-writer checkpoint. The physical file may remain at its reusable high-water mark.
     let mut drained = false;
     for _ in 0..60 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if store.wal_bytes() < TRIGGER {
+        if t.checkpoint.count.load(Ordering::Relaxed) >= 1 {
             drained = true;
             break;
         }
     }
     assert!(
         drained,
-        "size-triggered drain must bring the WAL under the trigger within ~6 s \
-         (still {} bytes, was {peak_wal})",
-        store.wal_bytes()
-    );
-    assert!(
-        t.checkpoint.count.load(Ordering::Relaxed) >= 1,
-        "the drain must be a completed off-writer checkpoint pass"
+        "size-triggered drain must run within ~6 s (WAL {} bytes, was {peak_wal})",
+        store.wal_bytes(),
     );
     assert_eq!(t.checkpoint_errors_total.load(Ordering::Relaxed), 0);
 

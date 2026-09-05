@@ -305,6 +305,12 @@ fn expand_confirmed(
 /// simultaneously-resident downloaded blocks stay bounded as chain height grows.
 #[derive(Default)]
 pub struct SyncMetrics {
+    pub stage_total_micros: AtomicU64,
+    pub confirm_total_micros: AtomicU64,
+    pub post_confirm_total_micros: AtomicU64,
+    pub drain_wait_total_micros: AtomicU64,
+    pub pre_wait_total_micros: AtomicU64,
+    pub confirm_parts: AtomicU64,
     pub blocks_downloaded: AtomicU64,
     pub blocks_confirmed: AtomicU64,
     pub reclaimed: AtomicU64,
@@ -491,6 +497,7 @@ impl From<dg_xch_stores::StoreError> for SyncError {
 pub struct Chaser<S, P> {
     engine: Engine<S, P>,
     config: SyncConfig,
+    confirm_transaction_blocks: Option<usize>,
     metrics: Arc<SyncMetrics>,
     // Bounded height window of candidate header records the headers-first pass populates; the ancestry the
     // full validator then reads (bounded — flat in chain height).
@@ -538,6 +545,7 @@ where
         Self {
             engine: engine.with_assume_valid(config.assume_valid),
             config,
+            confirm_transaction_blocks: None,
             metrics: Arc::new(SyncMetrics::default()),
             header_cache: BlockRecordCache::with_default_window(),
         }
@@ -551,6 +559,10 @@ where
     #[must_use]
     pub fn metrics(&self) -> &Arc<SyncMetrics> {
         &self.metrics
+    }
+
+    pub fn set_confirm_transaction_blocks(&mut self, blocks: Option<usize>) {
+        self.confirm_transaction_blocks = blocks.map(|value| value.max(1));
     }
 
     #[must_use]
@@ -1412,6 +1424,10 @@ where
             stage_started.elapsed().as_micros() as u64,
             Ordering::Relaxed,
         );
+        self.metrics.stage_total_micros.fetch_add(
+            stage_started.elapsed().as_micros() as u64,
+            Ordering::Relaxed,
+        );
 
         // A poisoned sink (a panicked staging thread) must fail the window, never yield an empty
         // queue — that would confirm every staged block with its VDF verification silently
@@ -1432,12 +1448,78 @@ where
     }
 
     /// The confirm third of the follow step: persist the dry-staged archive rows and the window's
-    /// coins + peak in ONE transaction, gated by the drain's verdict. Behavior (fork choice,
-    /// error precedence, reported deltas) matches the serial path byte for byte.
+    /// coins + peak atomically per confirmation part, gated by the drain's verdict. By default
+    /// a bulk window is one part; the configured transaction limit splits it in height order.
     ///
     /// # Errors
     /// Returns [`SyncError`] if a block failed validation in stage or drain, or the store errors.
     pub async fn confirm_window_pre(
+        &mut self,
+        window: StagedWindow,
+        verdict: WindowVerdict,
+    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+        let limit = self.confirm_transaction_blocks.unwrap_or(usize::MAX);
+        if window.archive_written || window.staged.len() <= limit {
+            return self.confirm_window_part(window, verdict).await;
+        }
+        let StagedWindow {
+            blocks,
+            staged,
+            stage_err,
+            ..
+        } = window;
+        let total = staged.len();
+        let confirm_upto = verdict.confirm_upto.min(total);
+        let mut remaining_error = verdict.err.or(stage_err);
+        let mut blocks = blocks.into_iter().enumerate().peekable();
+        let mut staged = staged.into_iter();
+        let mut offset = 0usize;
+        let mut reported = Vec::new();
+        let mut peak = None;
+        while offset < total {
+            let mut part: Vec<_> = staged.by_ref().take(limit).collect();
+            let last_index = part.last().expect("nonempty transaction").3;
+            let mut part_blocks = Vec::new();
+            let first_index = blocks.peek().map_or(0, |(index, _)| *index);
+            while blocks.peek().is_some_and(|(index, _)| *index <= last_index) {
+                part_blocks.push(blocks.next().expect("peeked block").1);
+            }
+            for entry in &mut part {
+                entry.3 -= first_index;
+            }
+            let count = part.len();
+            let boundary = confirm_upto.saturating_sub(offset).min(count);
+            let final_part = offset + count >= total || boundary < count;
+            let error = if final_part {
+                remaining_error.take()
+            } else {
+                None
+            };
+            let subwindow = StagedWindow {
+                from: part.first().expect("nonempty transaction").0.height,
+                to: part.last().expect("nonempty transaction").0.height,
+                blocks: part_blocks,
+                staged: part,
+                queue: Vec::new(),
+                sig_queue: Vec::new(),
+                stage_err: None,
+                archive_written: false,
+            };
+            let subverdict = WindowVerdict {
+                confirm_upto: boundary,
+                err: error,
+                vdf_micros: verdict.vdf_micros,
+                sig_micros: verdict.sig_micros,
+            };
+            let (next_peak, deltas) = self.confirm_window_part(subwindow, subverdict).await?;
+            peak = next_peak;
+            reported.extend(deltas);
+            offset += count;
+        }
+        Ok((peak, reported))
+    }
+
+    async fn confirm_window_part(
         &mut self,
         window: StagedWindow,
         verdict: WindowVerdict,
@@ -1463,15 +1545,7 @@ where
         // coins + set_peak in the same transaction.
         let mut window_batch: Option<dg_xch_stores::BatchHandle> = None;
         if !archive_written && !staged.is_empty() {
-            let mut batch = self.engine.store().begin().await?;
-            let rows: Vec<(&FullBlock, &BlockDelta)> = staged
-                .iter()
-                .map(|(delta, _, _, bi)| (&blocks[*bi], delta))
-                .collect();
-            self.engine
-                .persist_archive_window(&rows, &mut batch)
-                .await?;
-            window_batch = Some(batch);
+            window_batch = Some(self.engine.persist_archive_window(blocks, &staged).await?);
         }
         // One store batch confirms the whole window; the engine falls back to per-block fork
         // choice the moment a delta isn't a plain extension.
@@ -1491,6 +1565,11 @@ where
             confirm_started.elapsed().as_micros() as u64,
             Ordering::Relaxed,
         );
+        self.metrics.confirm_total_micros.fetch_add(
+            confirm_started.elapsed().as_micros() as u64,
+            Ordering::Relaxed,
+        );
+        self.metrics.confirm_parts.fetch_add(1, Ordering::Relaxed);
         for (outcome, delta) in outcomes.iter().zip(&reported) {
             if let AddBlockOutcome::Reorg { fork_height, .. } = outcome {
                 self.metrics.last_reorg_depth.store(
@@ -1792,11 +1871,6 @@ pub fn drain_header_sink(
     Ok((vdf, sig))
 }
 
-/// Core-bounded execution of a window's body-precompute jobs — shared by the inline path in
-/// [`Chaser::follow_blocks_reporting_pre`] and the cross-window standalone precompute below.
-/// Workers are bounded by the core count, not the job count: each generator run holds its own
-/// large CLVM heap, so a thread per transaction block would oversubscribe the CPUs and multiply
-/// peak memory by the window size.
 /// A window staged into the engine's overlay but not yet drained or confirmed — the unit the
 /// server's stage-ahead pipeline carries between iterations. During bulk catch-up its archive
 /// rows are NOT yet persisted (they land inside the confirm transaction), so a crash loses the
@@ -1982,46 +2056,26 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
     if jobs.is_empty() {
         return std::collections::HashMap::new();
     }
-    let workers = std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(4)
-        .min(jobs.len());
-    let chunk = jobs.len().div_ceil(workers);
-    std::thread::scope(|s| {
-        let handles: Vec<_> = jobs
-            .chunks(chunk)
-            .map(|part| {
-                s.spawn(move || {
-                    part.iter()
-                        .filter_map(|(block, refs, verify_sig)| {
-                            crate::engine::run_body_expensive(
-                                primitives,
-                                constants,
-                                block,
-                                refs,
-                                *verify_sig,
-                            )
-                            .ok()
-                            .map(|(conds, verified)| {
-                                (
-                                    block.height(),
-                                    crate::engine::PrecomputedBody {
-                                        conds,
-                                        agg_sig_verified: verified,
-                                    },
-                                )
-                            })
-                        })
-                        .collect::<Vec<_>>()
+    dg_xch_core::compute::map(
+        dg_xch_core::compute::Phase::Body,
+        jobs,
+        |(block, refs, verify_sig)| {
+            crate::engine::run_body_expensive(primitives, constants, block, refs, *verify_sig)
+                .ok()
+                .map(|(conds, verified)| {
+                    (
+                        block.height(),
+                        crate::engine::PrecomputedBody {
+                            conds,
+                            agg_sig_verified: verified,
+                        },
+                    )
                 })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .filter_map(|h| h.join().ok())
-            .flatten()
-            .collect()
-    })
+        },
+    )
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// The expensive pure half of body validation for a window (CLVM generator run + BLS aggregate

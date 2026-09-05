@@ -10,7 +10,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{ConnectOptions, Row, SqliteConnection, SqlitePool};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
 
@@ -29,6 +29,7 @@ pub struct SqliteStore {
     pub(crate) telemetry: Arc<StoreTelemetry>,
     // `<db>-wal`, for the wal_bytes() file-size gauge (the SQLite WAL always lives at this suffix).
     wal_path: PathBuf,
+    bulk_cache_kib: Arc<AtomicU64>,
 }
 
 impl Drop for SqliteStore {
@@ -38,10 +39,10 @@ impl Drop for SqliteStore {
 }
 
 /// Size trigger for the off-writer WAL drain (see `spawn_checkpointer`): when the `-wal` file
-/// crosses this many bytes the checkpointer drains NOW, regardless of the bulk-phase cadence,
-/// escalating from PASSIVE to TRUNCATE until the file is back under the trigger. Must stay
-/// well under the in-writer `wal_autocheckpoint` failsafe (~1 GiB), whose blocking
-/// copy-into-DB runs inside a confirm COMMIT.
+/// crosses this many bytes the checkpointer drains NOW, regardless of the bulk-phase cadence.
+/// A fully checkpointed file remains allocated and is reused; TRUNCATE is reserved for a
+/// PASSIVE pass that proves frames remain pinned. Must stay well under the in-writer
+/// `wal_autocheckpoint` failsafe (~1 GiB), whose blocking copy-into-DB runs inside a confirm COMMIT.
 const WAL_DRAIN_TRIGGER_BYTES: u64 = 128 * 1024 * 1024;
 
 /// WRITER-connection page-cache profile by sync phase (`PRAGMA cache_size`, negative = KiB).
@@ -84,6 +85,7 @@ impl SqliteStore {
             .busy_timeout(Duration::from_secs(5))
             .foreign_keys(true)
             .pragma("mmap_size", "268435456")
+            .pragma("temp_store", "MEMORY")
             // Page cache, the CONNECT default (read pool + checkpointer). The SQLite default
             // (-2000 = 2 MiB) forces near-constant cache-spill to the WAL when a confirm writes
             // thousands of random `coin_name` (hash-keyed, WITHOUT ROWID) rows into the multi-GB
@@ -117,6 +119,9 @@ impl SqliteStore {
             .await?;
         let near_tip = Arc::new(AtomicBool::new(false));
         let telemetry = StoreTelemetry::new();
+        telemetry
+            .writer_cache_kib
+            .store(WRITER_CACHE_BULK_KIB as u64, Ordering::Relaxed);
         // SQLite's WAL file always lives at `<db>-wal` (same directory, suffix appended).
         let mut wal_os = path.as_os_str().to_os_string();
         wal_os.push("-wal");
@@ -136,6 +141,7 @@ impl SqliteStore {
             checkpointer,
             telemetry,
             wal_path,
+            bulk_cache_kib: Arc::new(AtomicU64::new(WRITER_CACHE_BULK_KIB as u64)),
         })
     }
 
@@ -165,21 +171,42 @@ impl SqliteStore {
     /// that takes the writer lock; it reads the CURRENT phase at execution time, so racing
     /// flips converge on the latest phase. `PRAGMA cache_size` takes effect immediately on the
     /// connection; shrinking releases the pages lazily.
+    pub async fn set_bulk_cache_kib(&self, kib: u64) -> Result<(), StoreError> {
+        if kib == 0 || kib > i32::MAX as u64 {
+            return Err(StoreError::Batch("writer cache KiB is out of range".into()));
+        }
+        let mut guard = self.writer.lock().await;
+        self.bulk_cache_kib.store(kib, Ordering::Relaxed);
+        if !self.near_tip.load(Ordering::Relaxed) {
+            sqlx::query(&format!("PRAGMA cache_size = -{kib}"))
+                .execute(&mut *guard)
+                .await?;
+            self.telemetry
+                .writer_cache_kib
+                .store(kib, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
     pub(crate) fn apply_writer_cache_profile(&self) {
         let writer = self.writer.clone();
         let near_tip = self.near_tip.clone();
+        let bulk_cache_kib = self.bulk_cache_kib.clone();
+        let telemetry = self.telemetry.clone();
         tokio::spawn(async move {
-            let kib = if near_tip.load(Ordering::Relaxed) {
-                WRITER_CACHE_NEAR_TIP_KIB
-            } else {
-                WRITER_CACHE_BULK_KIB
-            };
             let mut guard = writer.lock().await;
+            let kib = if near_tip.load(Ordering::Relaxed) {
+                WRITER_CACHE_NEAR_TIP_KIB as u64
+            } else {
+                bulk_cache_kib.load(Ordering::Relaxed)
+            };
             if let Err(e) = sqlx::query(&format!("PRAGMA cache_size = -{kib}"))
                 .execute(&mut *guard)
                 .await
             {
                 log::warn!("writer cache re-profile to -{kib} KiB failed: {e}");
+            } else {
+                telemetry.writer_cache_kib.store(kib, Ordering::Relaxed);
             }
         });
     }
@@ -197,14 +224,14 @@ impl SqliteStore {
 /// here, off the writer, so a slow-fsync backend (iSCSI ~100 ms/sync) never stalls the confirmed peak.
 ///
 /// PASSIVE does not shrink the WAL *file*: it stays at the high-water of the largest single
-/// transaction (one batch-confirm window today; a few MB once confirms commit per block). That is a
-/// bounded, reused file — harmless for reads now that the coin multi-get point-gets rather than scans.
+/// transaction. A complete pass makes that allocation reusable, so physical size alone must not
+/// trigger TRUNCATE; doing so takes the exclusive WAL lock and stalls the next confirm writer.
 /// PASSIVE also cannot RESET a WAL some reader still holds a read mark into — which is exactly how
 /// the file grows without bound when a pooled reader wedges (the live 1.44 GB WAL): the
 /// size-triggered escalation below therefore finishes with TRUNCATE, which (on its own dedicated
 /// connection, bounded by `busy_timeout`, retried next tick on SQLITE_BUSY) waits the readers out,
-/// resets the log, and shrinks the file to zero — never on the writer's connection, so a busy
-/// writer degrades the escalation to "try again next second", not to a confirm stall.
+/// resets the log, and shrinks the file to zero. Because its exclusive lock can delay the next
+/// writer even from a dedicated connection, escalation is restricted to an incomplete PASSIVE pass.
 /// Throttle for the size-triggered TRUNCATE escalation.
 ///
 /// TRUNCATE takes the exclusive WAL locks, so every attempt contends with the confirm writer's
@@ -222,6 +249,19 @@ struct EscalationBackoff {
     delay_ticks: u32,
     /// Width of the current backoff window, doubled per failed attempt.
     current: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CheckpointOutcome {
+    busy: i64,
+    log: i64,
+    checkpointed: i64,
+}
+
+impl CheckpointOutcome {
+    fn fully_checkpointed(self) -> bool {
+        self.busy == 0 && self.log >= 0 && self.checkpointed >= self.log
+    }
 }
 
 impl EscalationBackoff {
@@ -285,6 +325,10 @@ fn spawn_checkpointer(
         const BULK_CHECKPOINT_TICKS: u32 = 20;
         let mut bulk_tick: u32 = 0;
         let mut escalation = EscalationBackoff::new();
+        // PASSIVE leaves the file allocated after resetting its write position. Once a complete
+        // pass establishes that the high-water is reusable, physical size no longer makes every
+        // one-second tick urgent; the ordinary bulk cadence still checks for a newly pinned log.
+        let mut reusable_highwater = false;
         loop {
             tick.tick().await;
             // Read-pool census every tick: a high idle count while `wal_frames` refuses to fall
@@ -298,32 +342,37 @@ fn spawn_checkpointer(
             // The size trigger, checked every tick in every phase (one file-metadata stat): a WAL
             // past the trigger is drained NOW. The cadence alone does not bound the file, since a
             // reader pinning the read mark makes every PASSIVE pass a no-op.
-            let over_trigger =
+            let physically_over_trigger =
                 std::fs::metadata(&wal_path).map_or(0, |m| m.len()) > wal_drain_trigger_bytes;
+            let urgent = physically_over_trigger && !reusable_highwater;
             // Best-effort: a busy/failed checkpoint is retried on the next tick.
             // Phase-aware cadence: near the tip drain every tick; during bulk drain on the slow cadence
             // above — enough to bound the WAL below the failsafe while leaving the write budget to
             // catch-up — unless the size trigger fired.
             if !near_tip.load(Ordering::Relaxed) {
                 bulk_tick = bulk_tick.wrapping_add(1);
-                if !over_trigger && !bulk_tick.is_multiple_of(BULK_CHECKPOINT_TICKS) {
+                if !urgent && !bulk_tick.is_multiple_of(BULK_CHECKPOINT_TICKS) {
                     continue;
                 }
             } else {
                 bulk_tick = 0;
             }
-            checkpoint_pass(&mut conn, &telemetry, &mut prev_checkpointed, "PASSIVE").await;
-            // PASSIVE neither resets a reader-pinned log nor shrinks the file, so if it is still
-            // past the trigger afterwards, escalate to TRUNCATE. Bounded by the connection's
-            // busy_timeout; SQLITE_BUSY lands in telemetry. Retries are BACKED OFF, not
-            // every-tick: TRUNCATE contends with the confirm writer, and while a pooled reader
-            // pins the read mark a per-tick retry is a hot loop of writer-stalling attempts
-            // (see `EscalationBackoff`). PASSIVE draining above is unaffected.
-            if !over_trigger {
+            let passive =
+                checkpoint_pass(&mut conn, &telemetry, &mut prev_checkpointed, "PASSIVE").await;
+            if passive.is_some_and(CheckpointOutcome::fully_checkpointed) {
+                reusable_highwater = physically_over_trigger;
                 escalation.reset();
-            } else if std::fs::metadata(&wal_path).map_or(0, |m| m.len()) > wal_drain_trigger_bytes
-                && escalation.should_attempt()
-            {
+                continue;
+            }
+
+            // PASSIVE left frames behind (or failed): a reader/writer is pinning the logical WAL.
+            // Only this state justifies the exclusive TRUNCATE and its potential writer pause.
+            reusable_highwater = false;
+            if !physically_over_trigger {
+                escalation.reset();
+                continue;
+            }
+            if escalation.should_attempt() {
                 checkpoint_pass(&mut conn, &telemetry, &mut prev_checkpointed, "TRUNCATE").await;
                 let drained =
                     std::fs::metadata(&wal_path).map_or(0, |m| m.len()) <= wal_drain_trigger_bytes;
@@ -341,7 +390,7 @@ async fn checkpoint_pass(
     telemetry: &StoreTelemetry,
     prev_checkpointed: &mut i64,
     mode: &str,
-) {
+) -> Option<CheckpointOutcome> {
     let started = std::time::Instant::now();
     let result = sqlx::query(&format!("PRAGMA wal_checkpoint({mode})"))
         .fetch_one(&mut *conn)
@@ -373,11 +422,17 @@ async fn checkpoint_pass(
                     .wal_frames_checkpointed_total
                     .fetch_add(advance as u64, Ordering::Relaxed);
             }
+            Some(CheckpointOutcome {
+                busy,
+                log,
+                checkpointed,
+            })
         }
         Err(_) => {
             telemetry
                 .checkpoint_errors_total
                 .fetch_add(1, Ordering::Relaxed);
+            None
         }
     }
 }

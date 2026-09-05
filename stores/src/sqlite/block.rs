@@ -32,7 +32,8 @@ async fn upsert_records(
     conn: &mut sqlx::SqliteConnection,
     records: &[BlockRecord],
 ) -> Result<(), StoreError> {
-    for r in records {
+    if records.len() == 1 {
+        let r = &records[0];
         let ses = r
             .sub_epoch_summary_included
             .as_ref()
@@ -47,8 +48,50 @@ async fn upsert_records(
             .bind(i64::from(r.is_transaction_block()))
             .bind(ses)
             .bind(r.to_bytes(VERSION)?)
-            .execute(&mut *conn)
+            .execute(conn)
             .await?;
+        return Ok(());
+    }
+    // Eight binds per row; 100 rows stays below SQLite's conservative 999-variable limit.
+    for chunk in records.chunks(100) {
+        let mut encoded = Vec::with_capacity(chunk.len());
+        for r in chunk {
+            encoded.push((
+                r.header_hash,
+                r.prev_hash,
+                i64::from(r.height),
+                r.weight.to_be_bytes().to_vec(),
+                r.total_iters.to_be_bytes().to_vec(),
+                i64::from(r.is_transaction_block()),
+                r.sub_epoch_summary_included
+                    .as_ref()
+                    .map(|s| s.to_bytes(VERSION))
+                    .transpose()?,
+                r.to_bytes(VERSION)?,
+            ));
+        }
+        let mut qb = sqlx::QueryBuilder::new(
+            "INSERT INTO block_record \
+             (header_hash, prev_hash, height, weight, total_iters, is_transaction_block, \
+             sub_epoch_summary, record) ",
+        );
+        qb.push_values(encoded, |mut b, row| {
+            b.push_bind(row.0)
+                .push_bind(row.1)
+                .push_bind(row.2)
+                .push_bind(row.3)
+                .push_bind(row.4)
+                .push_bind(row.5)
+                .push_bind(row.6)
+                .push_bind(row.7);
+        });
+        qb.push(
+            " ON CONFLICT(header_hash) DO UPDATE SET prev_hash = excluded.prev_hash, \
+             height = excluded.height, weight = excluded.weight, total_iters = excluded.total_iters, \
+             is_transaction_block = excluded.is_transaction_block, \
+             sub_epoch_summary = excluded.sub_epoch_summary, record = excluded.record",
+        );
+        qb.build().persistent(false).execute(&mut *conn).await?;
     }
     Ok(())
 }
@@ -140,8 +183,179 @@ async fn set_peak_on(
     Ok(links)
 }
 
+// Fast path for a chain segment whose parent/weight continuity the engine already proved. The
+// general set_peak_on walk issues a SELECT + UPDATE for every new height to rediscover the fork;
+// a plain extension has no fork, so update the exact validated hashes in one bounded statement.
+async fn extend_peak_on(
+    conn: &mut sqlx::SqliteConnection,
+    extension: &[Bytes32],
+    new_height: u32,
+) -> Result<u64, StoreError> {
+    let Some(new_peak) = extension.last() else {
+        return Ok(0);
+    };
+    let mut links = 0u64;
+    // Stay below SQLite's conservative 999-variable limit even on older deployments.
+    for chunk in extension.chunks(900) {
+        let mut qb = sqlx::QueryBuilder::new(
+            "UPDATE block_record SET in_main_chain = 1 WHERE header_hash IN (",
+        );
+        let mut separated = qb.separated(", ");
+        for hash in chunk {
+            separated.push_bind(*hash);
+        }
+        qb.push(")");
+        links += qb
+            .build()
+            .persistent(false)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+    }
+    if links != extension.len() as u64 {
+        return Err(StoreError::Corrupt(format!(
+            "extend_peak: expected {} validated records, updated {links}",
+            extension.len()
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO current_peak (id, header_hash, height) VALUES (0, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET header_hash = excluded.header_hash, height = excluded.height",
+    )
+    .bind(*new_peak)
+    .bind(i64::from(new_height))
+    .execute(conn)
+    .await?;
+    Ok(links)
+}
+
 #[async_trait]
 impl BlockStore for SqliteStore {
+    async fn prepare_archive(
+        &self,
+        records: Vec<(BlockRecord, BlockStatus)>,
+        blocks: Vec<FullBlock>,
+    ) -> Result<crate::types::PreparedArchive, StoreError> {
+        let telemetry = self.telemetry.clone();
+        tokio::task::spawn_blocking(move || {
+            let _timer = telemetry.archive_prepare.start();
+            let encoded = dg_xch_core::compute::map(
+                dg_xch_core::compute::Phase::Archive,
+                &records,
+                |(record, status)| {
+                    Ok::<_, StoreError>(crate::types::EncodedRecord {
+                        hash: record.header_hash,
+                        parent: record.prev_hash,
+                        height: i64::from(record.height),
+                        weight: record.weight.to_be_bytes().to_vec(),
+                        iterations: record.total_iters.to_be_bytes().to_vec(),
+                        transaction: i64::from(record.is_transaction_block()),
+                        summary: record
+                            .sub_epoch_summary_included
+                            .as_ref()
+                            .map(|summary| summary.to_bytes(VERSION))
+                            .transpose()?,
+                        record: record.to_bytes(VERSION)?,
+                        status: i64::from(status.as_u8()),
+                    })
+                },
+            )
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+            let bodies =
+                dg_xch_core::compute::map(dg_xch_core::compute::Phase::Archive, &blocks, |block| {
+                    Ok::<_, StoreError>((
+                        block.header_hash()?,
+                        zstd::encode_all(&block.to_bytes(VERSION)?[..], 3)?,
+                    ))
+                })
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?;
+            let bytes: usize = bodies.iter().map(|(_, body)| body.len()).sum::<usize>()
+                + encoded
+                    .iter()
+                    .map(|record| record.record.len())
+                    .sum::<usize>();
+            telemetry
+                .prepared_bytes
+                .fetch_add(bytes as u64, Ordering::Relaxed);
+            Ok(crate::types::PreparedArchive::Sqlite {
+                records: encoded,
+                bodies,
+            })
+        })
+        .await
+        .map_err(|error| StoreError::Batch(format!("archive preparation: {error}")))?
+    }
+
+    async fn persist_prepared_archive_in(
+        &self,
+        batch: &mut BatchHandle,
+        prepared: crate::types::PreparedArchive,
+    ) -> Result<(), StoreError> {
+        let crate::types::PreparedArchive::Sqlite { records, bodies } = prepared else {
+            return Err(StoreError::Batch(
+                "archive prepared by another backend".into(),
+            ));
+        };
+        let _timer = self.telemetry.archive_write.start();
+        let conn = batch.sqlite_conn()?;
+        for chunk in records.chunks(100) {
+            let mut query = sqlx::QueryBuilder::new(
+                "INSERT INTO block_record (header_hash, prev_hash, height, weight, total_iters, \
+                 is_transaction_block, sub_epoch_summary, record, status) ",
+            );
+            query.push_values(chunk, |mut bindings, record| {
+                bindings
+                    .push_bind(record.hash)
+                    .push_bind(record.parent)
+                    .push_bind(record.height)
+                    .push_bind(&record.weight)
+                    .push_bind(&record.iterations)
+                    .push_bind(record.transaction)
+                    .push_bind(&record.summary)
+                    .push_bind(&record.record)
+                    .push_bind(record.status);
+            });
+            query.push(" ON CONFLICT(header_hash) DO UPDATE SET prev_hash=excluded.prev_hash, \
+                height=excluded.height, weight=excluded.weight, total_iters=excluded.total_iters, \
+                is_transaction_block=excluded.is_transaction_block, \
+                sub_epoch_summary=excluded.sub_epoch_summary, record=excluded.record, status=excluded.status");
+            query
+                .build()
+                .persistent(chunk.len() == 100)
+                .execute(&mut *conn)
+                .await?;
+            self.telemetry.archive_write.statement(chunk.len());
+        }
+        let mut start = 0;
+        while start < bodies.len() {
+            let mut end = start;
+            let mut bytes = 0usize;
+            while end < bodies.len() && end - start < 16 {
+                let next = bodies[end].1.len();
+                if end > start && bytes.saturating_add(next) > 16 * 1024 * 1024 {
+                    break;
+                }
+                bytes = bytes.saturating_add(next);
+                end += 1;
+            }
+            let mut query =
+                sqlx::QueryBuilder::new("INSERT OR REPLACE INTO block_body (header_hash, body) ");
+            query.push_values(&bodies[start..end], |mut bindings, (hash, body)| {
+                bindings.push_bind(*hash).push_bind(body);
+            });
+            query
+                .build()
+                .persistent(end - start == 16)
+                .execute(&mut *conn)
+                .await?;
+            self.telemetry.archive_write.statement(end - start);
+            start = end;
+        }
+        Ok(())
+    }
+
     async fn get_block_record(&self, hh: &Bytes32) -> Result<Option<BlockRecord>, StoreError> {
         self.telemetry.record_reads.fetch_add(1, Ordering::Relaxed);
         let row = sqlx::query("SELECT record FROM block_record WHERE header_hash = ?")
@@ -279,7 +493,10 @@ impl BlockStore for SqliteStore {
     }
 
     async fn begin(&self) -> Result<BatchHandle, StoreError> {
+        let wait = self.telemetry.writer_wait.start();
         let mut guard = self.writer.clone().lock_owned().await;
+        drop(wait);
+        let timing = Some(self.telemetry.writer_hold.start());
         // A BatchHandle dropped without a commit (e.g. a mid-window per-block confirm error) leaves
         // its BEGIN open on the single writer connection; without this a later begin would fail with
         // "cannot start a transaction within a transaction" and wedge the writer forever. Best-effort
@@ -289,6 +506,7 @@ impl BlockStore for SqliteStore {
         sqlx::query("BEGIN").execute(&mut *guard).await?;
         Ok(BatchHandle {
             inner: crate::types::BatchInner::Sqlite(guard),
+            _timing: timing,
         })
     }
 
@@ -304,14 +522,30 @@ impl BlockStore for SqliteStore {
                 "batch was opened by a different backend".to_string(),
             ));
         };
-        for block in blocks {
-            let hh = block.header_hash()?;
-            let body = zstd::encode_all(&block.to_bytes(VERSION)?[..], 3)?;
+        if blocks.len() == 1 {
+            let block = &blocks[0];
             sqlx::query("INSERT OR REPLACE INTO block_body (header_hash, body) VALUES (?, ?)")
-                .bind(hh)
-                .bind(body)
+                .bind(block.header_hash()?)
+                .bind(zstd::encode_all(&block.to_bytes(VERSION)?[..], 3)?)
                 .execute(&mut **conn)
                 .await?;
+            return Ok(());
+        }
+        // Keep statements body-size bounded: later-chain blocks can approach 1 MiB each.
+        for chunk in blocks.chunks(16) {
+            let mut encoded = Vec::with_capacity(chunk.len());
+            for block in chunk {
+                encoded.push((
+                    block.header_hash()?,
+                    zstd::encode_all(&block.to_bytes(VERSION)?[..], 3)?,
+                ));
+            }
+            let mut qb =
+                sqlx::QueryBuilder::new("INSERT OR REPLACE INTO block_body (header_hash, body) ");
+            qb.push_values(encoded, |mut b, (hash, body)| {
+                b.push_bind(hash).push_bind(body);
+            });
+            qb.build().persistent(false).execute(&mut **conn).await?;
         }
         Ok(())
     }
@@ -342,6 +576,42 @@ impl BlockStore for SqliteStore {
                 .map_or(0, |d| d.as_secs()),
             Ordering::Relaxed,
         );
+        if let Ok(mut handle) = conn.lock_handle().await {
+            let database = handle.as_raw_handle().as_ptr();
+            for (kind, counter) in [
+                (
+                    libsqlite3_sys::SQLITE_DBSTATUS_CACHE_HIT,
+                    &self.telemetry.cache_hits,
+                ),
+                (
+                    libsqlite3_sys::SQLITE_DBSTATUS_CACHE_MISS,
+                    &self.telemetry.cache_misses,
+                ),
+                (
+                    libsqlite3_sys::SQLITE_DBSTATUS_CACHE_WRITE,
+                    &self.telemetry.cache_writes,
+                ),
+                (
+                    libsqlite3_sys::SQLITE_DBSTATUS_CACHE_SPILL,
+                    &self.telemetry.cache_spills,
+                ),
+            ] {
+                let mut current = 0;
+                let mut highwater = 0;
+                if unsafe {
+                    libsqlite3_sys::sqlite3_db_status(
+                        database,
+                        kind,
+                        &mut current,
+                        &mut highwater,
+                        1,
+                    )
+                } == 0
+                {
+                    counter.fetch_add(current.max(0) as u64, Ordering::Relaxed);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -394,7 +664,18 @@ impl BlockStore for SqliteStore {
         batch: &mut BatchHandle,
         new_peak: &Bytes32,
     ) -> Result<u64, StoreError> {
+        let _timer = self.telemetry.peak_update.start();
         set_peak_on(batch.sqlite_conn()?, new_peak).await
+    }
+
+    async fn extend_peak_in(
+        &self,
+        batch: &mut BatchHandle,
+        extension: &[Bytes32],
+        new_height: u32,
+    ) -> Result<u64, StoreError> {
+        let _timer = self.telemetry.peak_update.start();
+        extend_peak_on(batch.sqlite_conn()?, extension, new_height).await
     }
 
     async fn get_status(&self, hh: &Bytes32) -> Result<BlockStatus, StoreError> {
@@ -420,6 +701,27 @@ impl BlockStore for SqliteStore {
         s: BlockStatus,
     ) -> Result<(), StoreError> {
         set_status_on(batch.sqlite_conn()?, hh, s).await
+    }
+
+    async fn set_status_many_in(
+        &self,
+        batch: &mut BatchHandle,
+        hashes: &[Bytes32],
+        status: BlockStatus,
+    ) -> Result<(), StoreError> {
+        let conn = batch.sqlite_conn()?;
+        for chunk in hashes.chunks(900) {
+            let mut qb = sqlx::QueryBuilder::new("UPDATE block_record SET status = ");
+            qb.push_bind(i64::from(status.as_u8()));
+            qb.push(" WHERE header_hash IN (");
+            let mut separated = qb.separated(", ");
+            for hash in chunk {
+                separated.push_bind(*hash);
+            }
+            qb.push(")");
+            qb.build().persistent(false).execute(&mut *conn).await?;
+        }
+        Ok(())
     }
 
     async fn savepoint(&self) -> Result<Savepoint, StoreError> {

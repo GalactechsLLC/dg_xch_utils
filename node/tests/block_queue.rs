@@ -12,6 +12,25 @@ fn base() -> FullBlock {
     load_full_block(5_000_004)
 }
 
+#[test]
+fn bounded_windows_match_peek_and_admit_one_oversized_block() {
+    let block = base();
+    let queue = queue(100, 1 << 30);
+    for height in 100..104 {
+        put(&queue, block_at(&block, height));
+    }
+    let per_block = queue.resident_bytes() / 4;
+    let peeked = queue.peek_ready_window_bounded(4, per_block * 2);
+    assert_eq!(peeked.len(), 2);
+    assert_eq!(queue.drain_ready_window_bounded(4, per_block * 2), peeked);
+    let oversized = queue.peek_ready_window_bounded(4, 1);
+    assert_eq!(oversized.len(), 1);
+    assert_eq!(queue.drain_ready_window_bounded(4, 1), oversized);
+    assert!(queue.drain_ready_window_bounded(0, 1).is_empty());
+    assert_eq!(queue.drain_ready_window_bounded(4, 1).len(), 1);
+    assert_eq!(queue.resident_bytes(), 0);
+}
+
 fn block_at(base: &FullBlock, h: Height) -> FullBlock {
     restamp_block(base, h)
 }

@@ -34,7 +34,7 @@ pub const DEFAULT_MAX_BANNED_HOSTS: usize = 10_000;
 /// Why a peer is being banned; the wire-close site names the cause and the duration follows.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum BanCause {
-    /// Inbound rate-limit violation, and unsolicited/late block replies.
+    /// Inbound rate-limit violation and genuinely unsolicited block replies.
     RateLimit,
     /// Consensus error: a `NewTransaction` announcing a zero-cost or already-seen-but-mismatched
     /// tx, and the `RespondUnfinishedBlock` generator/body failures.

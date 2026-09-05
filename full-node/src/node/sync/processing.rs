@@ -82,7 +82,19 @@ pub(super) async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 's
         // covered; cleared on every exit path below.
         node.follow_inflight_since
             .store(unix_secs(), Ordering::Relaxed);
-        let window = queue.drain_ready_window(FOLLOW_BATCH);
+        let near_tip = { node.chaser.lock().await.near_tip() };
+        let process_batch = if near_tip {
+            FETCH_BATCH
+        } else {
+            node.config
+                .performance
+                .validation_window_blocks
+                .unwrap_or_else(validation_batch)
+        };
+        let window = queue.drain_ready_window_bounded(
+            process_batch,
+            node.config.performance.validation_window_mb * 1024 * 1024,
+        );
         if window.is_empty() && pipeline.is_none() {
             node.follow_inflight_since.store(0, Ordering::Relaxed);
             continue;
@@ -133,6 +145,9 @@ pub(super) async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 's
                 pipe_metrics
                     .window_pre_wait_micros
                     .store(join_started.elapsed().as_micros() as u64, Ordering::Relaxed);
+                pipe_metrics
+                    .pre_wait_total_micros
+                    .fetch_add(join_started.elapsed().as_micros() as u64, Ordering::Relaxed);
                 joined
             }
             Some((_, handle)) => {
@@ -144,7 +159,10 @@ pub(super) async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 's
         // Spawn the NEXT window's precompute before validating this one, so the two overlap.
         // Out-of-window compression refs resolve from the confirmed store up front (final in a
         // forward sync); the ones the store cannot serve yet fall to the engine's inline path.
-        let next = queue.peek_ready_window(FOLLOW_BATCH);
+        let next = queue.peek_ready_window_bounded(
+            process_batch,
+            node.config.performance.validation_window_mb * 1024 * 1024,
+        );
         if let Some(next_from) = next.first().map(FullBlock::height)
             && next
                 .iter()
@@ -171,7 +189,6 @@ pub(super) async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 's
         // Confirm results to consume this iteration, each with the bounds of the window it
         // belongs to (the pipeline lags announcement by one window).
         let mut steps: Vec<(u32, u32, StepOutcome)> = Vec::new();
-        let near_tip = { node.chaser.lock().await.near_tip() };
         if near_tip || window.is_empty() {
             // Near the tip (or on a drain-only tick) the pipeline empties first: the per-block
             // path must own the writer and the overlay alone.
@@ -352,6 +369,9 @@ async fn join_drain(
     metrics
         .window_drain_wait_micros
         .store(waited.elapsed().as_micros() as u64, Ordering::Relaxed);
+    metrics
+        .drain_wait_total_micros
+        .fetch_add(waited.elapsed().as_micros() as u64, Ordering::Relaxed);
     verdict.unwrap_or_else(|_| dg_xch_node::sync::WindowVerdict::failed_closed())
 }
 

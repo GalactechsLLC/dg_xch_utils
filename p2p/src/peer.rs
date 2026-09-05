@@ -26,6 +26,21 @@ pub struct OutboundPeer {
     pub client: WsClient,
     pub run: Arc<AtomicBool>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DialIdentity {
+    pub network_id: String,
+    pub server_port: u16,
+}
+
+impl Default for DialIdentity {
+    fn default() -> Self {
+        Self {
+            network_id: "mainnet".to_string(),
+            server_port: 8444,
+        }
+    }
+}
 impl OutboundPeer {
     #[must_use]
     pub fn is_closed(&self) -> bool {
@@ -169,10 +184,30 @@ pub async fn dial(
     run: Arc<AtomicBool>,
     settings: &P2pSettings,
 ) -> Result<WsClient, Error> {
+    dial_with_identity(
+        host,
+        port,
+        handlers,
+        run,
+        settings,
+        &DialIdentity::default(),
+    )
+    .await
+}
+
+pub async fn dial_with_identity(
+    host: &str,
+    port: u16,
+    handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    run: Arc<AtomicBool>,
+    settings: &P2pSettings,
+    identity: &DialIdentity,
+) -> Result<WsClient, Error> {
     let config = Arc::new(WsClientConfig {
         host: host.to_string(),
         port,
-        network_id: "mainnet".to_string(),
+        server_port: identity.server_port,
+        network_id: identity.network_id.clone(),
         ssl_info: None::<ClientSSLConfig>,
         software_version: None,
         protocol_version: ChiaProtocolVersion::default(),
@@ -184,7 +219,7 @@ pub async fn dial(
     });
     let timeout = settings.connect_timeout.as_secs();
     let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || {
+    let client = tokio::task::spawn_blocking(move || {
         runtime.block_on(WsClient::with_ca(
             config,
             NodeType::FullNode,
@@ -196,7 +231,8 @@ pub async fn dial(
         ))
     })
     .await
-    .map_err(|error| Error::other(format!("connection task failed: {error}")))?
+    .map_err(|error| Error::other(format!("connection task failed: {error}")))??;
+    Ok(client)
 }
 
 impl dg_xch_core::errors::ErrorCode for AdmitError {

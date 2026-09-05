@@ -7,6 +7,43 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
+
+#[derive(Default, Debug)]
+pub struct OperationMetrics {
+    pub calls: AtomicU64,
+    pub nanos: AtomicU64,
+    pub rows: AtomicU64,
+    pub statements: AtomicU64,
+}
+
+pub struct OperationTimer {
+    metrics: Arc<OperationMetrics>,
+    started: Instant,
+}
+
+impl Drop for OperationTimer {
+    fn drop(&mut self) {
+        self.metrics.calls.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .nanos
+            .fetch_add(self.started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    }
+}
+
+impl OperationMetrics {
+    pub fn start(self: &Arc<Self>) -> OperationTimer {
+        OperationTimer {
+            metrics: self.clone(),
+            started: Instant::now(),
+        }
+    }
+
+    pub fn statement(&self, rows: usize) {
+        self.statements.fetch_add(1, Ordering::Relaxed);
+        self.rows.fetch_add(rows as u64, Ordering::Relaxed);
+    }
+}
 
 /// Histogram bucket upper bounds in seconds, shared by the commit and checkpoint histograms.
 /// Spans a healthy local-fsync commit (~10 ms) through the ~100 ms/fsync network-storage band up
@@ -68,6 +105,21 @@ pub struct HistogramSnapshot {
 /// shared between the backend and the `/metrics` sampler; see [`crate::BlockStore::telemetry`].
 #[derive(Default, Debug)]
 pub struct StoreTelemetry {
+    pub writer_wait: Arc<OperationMetrics>,
+    pub writer_hold: Arc<OperationMetrics>,
+    pub archive_prepare: Arc<OperationMetrics>,
+    pub archive_write: Arc<OperationMetrics>,
+    pub coin_additions: Arc<OperationMetrics>,
+    pub coin_removals: Arc<OperationMetrics>,
+    pub coin_lookup: Arc<OperationMetrics>,
+    pub hints: Arc<OperationMetrics>,
+    pub peak_update: Arc<OperationMetrics>,
+    pub prepared_bytes: AtomicU64,
+    pub writer_cache_kib: AtomicU64,
+    pub cache_hits: AtomicU64,
+    pub cache_misses: AtomicU64,
+    pub cache_writes: AtomicU64,
+    pub cache_spills: AtomicU64,
     /// Writer batch commits (body-append batches AND confirm transactions — every `COMMIT` on the
     /// single writer connection) while the store was in the CATCH-UP band (`near_tip = false`:
     /// one big transaction per sync window).

@@ -1,5 +1,8 @@
 # Running a dg_xch Full Node
 
+For CPU, validation-window, transaction-window and writer-cache experiments, see the
+[SQLite confirmation performance testing plan](sqlite-confirm-performance-testing.md).
+
 ## Build
 
 Install stable Rust, `cmake`, a C compiler, and the system zstd development package. Then build the node:
@@ -53,9 +56,10 @@ The follow-sync fetch width now uses both standard V3 request slots for each
 concurrency instead of leaving extra connections idle. For a high-core-count machine, start with
 `--target-outbound 32 --target-peer-count 80` (up to 64 concurrent range fetches). Increase
 `--prefetch-memory-mb` if `/metrics` shows the queue repeatedly reaching its byte ceiling, and use
-`--prefetch-max-inflight` only when an explicit cap is needed. More fetch concurrency cannot make
-the serial chain-confirm boundary parallel, so CPU usage below 100% can still be normal when storage
-or ordered validation is the limiting stage.
+`--prefetch-max-inflight` only when an explicit cap is needed. Catch-up validation automatically
+combines the 32-block peer responses into a CPU-sized window (up to 256 blocks), while near-tip
+confirmation stays at 32 blocks for low latency. The ordered store commit remains serial; use the
+window phase metrics to distinguish that limit from validation capacity.
 
 ## Storage
 

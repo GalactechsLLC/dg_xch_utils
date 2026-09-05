@@ -26,6 +26,7 @@ async fn shutdown_cancels_node_and_protocol_services() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
         rpc_tls: RpcTlsMode::Local,

@@ -26,7 +26,7 @@ use futures_util::{Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use log::{debug, error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::{Cursor, Error};
 use std::pin::Pin;
@@ -691,6 +691,20 @@ struct PendingInner {
     /// Last id handed out; the next allocation is `wrapping_add(1)`, skipping `0` and any live id.
     last_id: u16,
     waiters: HashMap<u16, tokio::sync::oneshot::Sender<Arc<ChiaMessage>>>,
+    /// Recently cancelled request ids. A slow peer may still answer after the caller's timeout;
+    /// retaining a bounded tombstone lets the read loop recognize and discard that valid-but-late
+    /// block reply instead of treating it as an unsolicited protocol violation.
+    retired_order: VecDeque<u16>,
+    retired: HashSet<u16>,
+}
+
+const RETIRED_REQUEST_CAP: usize = 4096;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingDelivery {
+    Delivered,
+    Retired,
+    Unmatched,
 }
 
 impl PendingRequests {
@@ -706,7 +720,7 @@ impl PendingRequests {
         let id = loop {
             let cand = guard.last_id.wrapping_add(1);
             guard.last_id = cand;
-            if cand != 0 && !guard.waiters.contains_key(&cand) {
+            if cand != 0 && !guard.waiters.contains_key(&cand) && !guard.retired.contains(&cand) {
                 break cand;
             }
         };
@@ -714,36 +728,55 @@ impl PendingRequests {
         (id, rx)
     }
 
-    /// Drop a waiter without delivery (its request timed out or the send failed) so the table never
-    /// leaks an entry for a request no reply will ever satisfy.
+    /// Drop a waiter without delivery (its request timed out or the send failed). Keep a bounded
+    /// tombstone so a late block reply is consumed by the correlation path rather than punished as
+    /// unsolicited traffic.
     pub fn cancel(&self, id: u16) {
-        let _ = self
+        let mut guard = self
             .inner
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .waiters
-            .remove(&id);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.waiters.remove(&id).is_none() || !guard.retired.insert(id) {
+            return;
+        }
+        guard.retired_order.push_back(id);
+        if guard.retired_order.len() > RETIRED_REQUEST_CAP
+            && let Some(expired) = guard.retired_order.pop_front()
+        {
+            guard.retired.remove(&expired);
+        }
     }
 
-    /// Route `msg` to the single waiter that owns `id`. Returns `true` when a waiter was found (the
-    /// read loop then skips the handler scan for this frame); `false` when `id` is not one of ours —
-    /// an inbound request we must answer, or a stale/duplicate reply after the waiter already left.
+    /// Route `msg` to the single waiter that owns `id`, or recognize a block reply to a recently
+    /// retired request. Other ids are inbound requests to answer or genuinely unsolicited traffic.
     #[must_use]
-    pub fn deliver(&self, id: u16, msg: Arc<ChiaMessage>) -> bool {
-        let waiter = {
+    fn deliver(&self, id: u16, msg: Arc<ChiaMessage>) -> PendingDelivery {
+        let (waiter, retired) = {
             let mut guard = self
                 .inner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.waiters.remove(&id)
+            let waiter = guard.waiters.remove(&id);
+            let retired = waiter.is_none()
+                && guard.retired.contains(&id)
+                && matches!(
+                    msg.msg_type,
+                    ProtocolMessageTypes::RespondBlock
+                        | ProtocolMessageTypes::RespondBlocks
+                        | ProtocolMessageTypes::RejectBlock
+                        | ProtocolMessageTypes::RejectBlocks
+                );
+            (waiter, retired)
         };
         if let Some(tx) = waiter {
             // The receiver may already be gone (its own timeout won the race); dropping the send is
             // then correct — the caller has moved on.
             let _ = tx.send(msg);
-            true
+            PendingDelivery::Delivered
+        } else if retired {
+            PendingDelivery::Retired
         } else {
-            false
+            PendingDelivery::Unmatched
         }
     }
 }
@@ -918,6 +951,7 @@ impl WebsocketConnection {
         peer_id: Arc<Bytes32>,
         peers: PeerMap,
         limiter: Option<Arc<rate_limits::RateLimiter>>,
+        connection_label: Arc<str>,
     ) -> (Self, ReadStream) {
         let (write, read) = websocket.split();
         let pending = Arc::new(PendingRequests::default());
@@ -936,6 +970,7 @@ impl WebsocketConnection {
             pending,
             limiter,
             v3,
+            connection_label,
         };
         (websocket, stream)
     }
@@ -1017,6 +1052,8 @@ pub struct ReadStream {
     /// capability was negotiated, v3-tabled types bypass the time-based limiter and bounded
     /// request types are admitted through in-flight receive windows instead.
     v3: Arc<rate_limits_v3::V3Link>,
+    /// Human-readable direction and endpoint supplied by the owning client/server lifecycle.
+    connection_label: Arc<str>,
 }
 impl ReadStream {
     pub async fn run(&mut self, run: Arc<AtomicBool>) {
@@ -1202,17 +1239,27 @@ impl ReadStream {
                                             // scan (the ambiguity that produced the 27 s stall). An id
                                             // that is not ours (an inbound request to answer) falls
                                             // through to the handler path below unchanged.
-                                            if let Some(id) = msg_arc.id
-                                                && self.pending.deliver(id, msg_arc.clone())
-                                            {
-                                                // A solicited reply frees any v3 outbound-window
-                                                // slot its request occupied.
-                                                self.v3.out_release(id);
-                                                debug!(
-                                                    "Routed reply id={id}: {:?}",
-                                                    msg_arc.msg_type
-                                                );
-                                                continue;
+                                            if let Some(id) = msg_arc.id {
+                                                match self.pending.deliver(id, msg_arc.clone()) {
+                                                    PendingDelivery::Delivered => {
+                                                        // A solicited reply frees any v3 outbound-window
+                                                        // slot its request occupied.
+                                                        self.v3.out_release(id);
+                                                        debug!(
+                                                            "Routed reply id={id}: {:?}",
+                                                            msg_arc.msg_type
+                                                        );
+                                                        continue;
+                                                    }
+                                                    PendingDelivery::Retired => {
+                                                        debug!(
+                                                            "Ignoring late reply id={id}: {:?}",
+                                                            msg_arc.msg_type
+                                                        );
+                                                        continue;
+                                                    }
+                                                    PendingDelivery::Unmatched => {}
+                                                }
                                             }
                                             let mut matched = false;
                                             for v in self.message_handlers.read().await.values()
@@ -1246,7 +1293,11 @@ impl ReadStream {
                                     }
                                 }
                                 Message::Close(e) => {
-                                    info!("Got Close Message: {e:?}");
+                                    info!(
+                                        "websocket close connection={} peer_id={} frame={e:?}",
+                                        self.connection_label,
+                                        self.peer_id
+                                    );
                                     return;
                                 },
                                 _ => {
@@ -1292,7 +1343,7 @@ impl ReadStream {
                             return;
                         }
                         None => {
-                            info!("End of server read Stream");
+                            debug!("websocket stream ended connection={}", self.connection_label);
                             return;
                         }
                     }

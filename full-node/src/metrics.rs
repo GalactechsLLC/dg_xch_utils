@@ -1,4 +1,5 @@
 mod memory;
+mod performance;
 #[cfg(feature = "profiling")]
 pub(crate) mod profiling;
 mod rendering;
@@ -451,7 +452,9 @@ pub struct MetricsSnapshot {
 impl<S: BlockStore + Send + Sync> MetricsSources<S> {
     /// The `/metrics` body — same renderer the accept-loop responder uses.
     pub async fn metrics_text(&self) -> String {
-        render_metrics(&self.sample().await)
+        let mut text = render_metrics(&self.sample().await);
+        performance::render(&mut text, self.store.telemetry().as_deref(), &self.metrics);
+        text
     }
 
     pub async fn health_check(&self) -> (&'static str, String) {

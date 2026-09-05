@@ -1,10 +1,25 @@
 use crate::config::P2pSettings;
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
 use rand::seq::IndexedRandom;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 pub type Endpoint = (String, u16);
+
+const RETRY_BACKOFF_CAP: Duration = Duration::from_secs(300);
+
+#[derive(Clone, Copy)]
+struct RetryState {
+    failures: u32,
+    ready_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetryStatus {
+    pub failures: u32,
+    pub delay: Duration,
+}
 
 fn endpoint(p: &TimestampedPeerInfo) -> Endpoint {
     (p.host.clone(), p.port)
@@ -16,6 +31,7 @@ pub struct AddressBook {
     pool: VecDeque<TimestampedPeerInfo>,
     pooled: HashSet<Endpoint>,
     reserved: HashSet<Endpoint>,
+    retry: HashMap<Endpoint, RetryState>,
     selfs: HashSet<Endpoint>,
     capacity: usize,
     address_lower: usize,
@@ -29,6 +45,7 @@ impl AddressBook {
             pool: VecDeque::with_capacity(settings.host_pool_capacity),
             pooled: HashSet::new(),
             reserved: HashSet::new(),
+            retry: HashMap::new(),
             selfs: HashSet::new(),
             capacity: settings.host_pool_capacity,
             address_lower: settings.address_lower,
@@ -69,7 +86,9 @@ impl AddressBook {
             if self.pool.len() >= self.capacity
                 && let Some(old) = self.pool.pop_front()
             {
-                self.pooled.remove(&endpoint(&old));
+                let old_endpoint = endpoint(&old);
+                self.pooled.remove(&old_endpoint);
+                self.retry.remove(&old_endpoint);
             }
             self.pooled.insert(ep);
             self.pool.push_back(p.clone());
@@ -80,15 +99,44 @@ impl AddressBook {
 
     // Random dial candidate; moved to the reserved (connected) set.
     pub fn take(&mut self) -> Option<TimestampedPeerInfo> {
-        if self.pool.is_empty() {
+        self.take_at(Instant::now())
+    }
+
+    fn take_at(&mut self, now: Instant) -> Option<TimestampedPeerInfo> {
+        let ready: Vec<usize> = self
+            .pool
+            .iter()
+            .enumerate()
+            .filter_map(|(index, peer)| {
+                self.retry
+                    .get(&endpoint(peer))
+                    .is_none_or(|state| state.ready_at <= now)
+                    .then_some(index)
+            })
+            .collect();
+        if ready.is_empty() {
             return None;
         }
-        let idx = rand::random_range(0..self.pool.len());
+        let idx = ready[rand::random_range(0..ready.len())];
         let picked = self.pool.remove(idx)?;
         let ep = endpoint(&picked);
         self.pooled.remove(&ep);
         self.reserved.insert(ep);
         Some(picked)
+    }
+
+    /// Whether at least one pooled endpoint is currently outside its retry cooldown.
+    #[must_use]
+    pub fn has_ready(&self) -> bool {
+        self.has_ready_at(Instant::now())
+    }
+
+    fn has_ready_at(&self, now: Instant) -> bool {
+        self.pool.iter().any(|peer| {
+            self.retry
+                .get(&endpoint(peer))
+                .is_none_or(|state| state.ready_at <= now)
+        })
     }
 
     // On channel stop: drop the reservation; a non-violating peer is returned to the
@@ -97,6 +145,7 @@ impl AddressBook {
     pub fn reclaim(&mut self, peer: &TimestampedPeerInfo, forget: bool) {
         let ep = endpoint(peer);
         self.reserved.remove(&ep);
+        self.retry.remove(&ep);
         if forget || self.pooled.contains(&ep) {
             return;
         }
@@ -104,6 +153,43 @@ impl AddressBook {
             self.pooled.insert(ep);
             self.pool.push_back(peer.clone());
         }
+    }
+
+    /// Return a failed endpoint to the pool behind a per-address exponential cooldown. This keeps
+    /// saturated or incompatible public nodes from occupying a hot reconnect loop while preserving
+    /// them for a later attempt.
+    pub fn cooldown(&mut self, peer: &TimestampedPeerInfo, retry_base: Duration) -> RetryStatus {
+        self.cooldown_at(peer, retry_base, Instant::now())
+    }
+
+    fn cooldown_at(
+        &mut self,
+        peer: &TimestampedPeerInfo,
+        retry_base: Duration,
+        now: Instant,
+    ) -> RetryStatus {
+        let ep = endpoint(peer);
+        self.reserved.remove(&ep);
+        let failures = self
+            .retry
+            .get(&ep)
+            .map_or(1, |state| state.failures.saturating_add(1));
+        let multiplier = 1u32 << failures.saturating_sub(1).min(8);
+        let delay = retry_base.saturating_mul(multiplier).min(RETRY_BACKOFF_CAP);
+        self.retry.insert(
+            ep.clone(),
+            RetryState {
+                failures,
+                ready_at: now + delay,
+            },
+        );
+        if !self.pooled.contains(&ep) && self.pool.len() < self.capacity {
+            self.pooled.insert(ep.clone());
+            self.pool.push_back(peer.clone());
+        } else if !self.pooled.contains(&ep) {
+            self.retry.remove(&ep);
+        }
+        RetryStatus { failures, delay }
     }
 
     // Randomized-size subset for RespondPeers gossip so pool size is not fingerprinted
@@ -139,6 +225,8 @@ impl AddressBook {
             if p.timestamp >= cutoff {
                 self.pooled.insert(endpoint(&p));
                 kept.push_back(p);
+            } else {
+                self.retry.remove(&endpoint(&p));
             }
         }
         self.pool = kept;

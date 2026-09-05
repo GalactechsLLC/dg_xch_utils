@@ -14,6 +14,25 @@ use dg_xch_core::protocols::wallet::CoinStateFilters;
 /// streamed range delete/update returning a count, never a materialized changed-coin set.
 #[async_trait]
 pub trait CoinStore {
+    async fn apply_coin_window_in(
+        &self,
+        batch: &mut BatchHandle,
+        changes: &[crate::types::CoinChanges<'_>],
+    ) -> Result<(), StoreError> {
+        for change in changes {
+            self.apply_block_in(
+                batch,
+                change.height,
+                change.timestamp,
+                change.additions,
+                change.removals,
+            )
+            .await?;
+            self.apply_hints_in(batch, change.hints).await?;
+        }
+        Ok(())
+    }
+
     /// Point-get a coin record by coin id.
     ///
     /// # Errors
@@ -478,6 +497,42 @@ pub(crate) fn coin_state_from_record(cr: &CoinRecord) -> CoinState {
 /// confirmation-pointer flip. Point reads are lock-free during an open write batch (WAL snapshot).
 #[async_trait]
 pub trait BlockStore {
+    async fn prepare_archive(
+        &self,
+        records: Vec<(BlockRecord, BlockStatus)>,
+        blocks: Vec<FullBlock>,
+    ) -> Result<crate::types::PreparedArchive, StoreError> {
+        Ok(crate::types::PreparedArchive::Native { records, blocks })
+    }
+
+    async fn persist_prepared_archive_in(
+        &self,
+        batch: &mut BatchHandle,
+        prepared: crate::types::PreparedArchive,
+    ) -> Result<(), StoreError> {
+        let crate::types::PreparedArchive::Native { records, blocks } = prepared else {
+            return Err(StoreError::Batch(
+                "archive prepared by another backend".into(),
+            ));
+        };
+        let plain: Vec<_> = records.iter().map(|(record, _)| record.clone()).collect();
+        self.add_block_records_in(batch, &plain).await?;
+        self.append_many(batch, &blocks).await?;
+        for status in [
+            BlockStatus::Bypass,
+            BlockStatus::Validated,
+            BlockStatus::Unvalidated,
+        ] {
+            let hashes: Vec<_> = records
+                .iter()
+                .filter(|(_, value)| *value == status)
+                .map(|(record, _)| record.header_hash)
+                .collect();
+            self.set_status_many_in(batch, &hashes, status).await?;
+        }
+        Ok(())
+    }
+
     /// # Errors
     /// Returns [`StoreError`] on a query or decode failure.
     async fn get_block_record(&self, hh: &Bytes32) -> Result<Option<BlockRecord>, StoreError>;
@@ -611,6 +666,26 @@ pub trait BlockStore {
         new_peak: &Bytes32,
     ) -> Result<u64, StoreError>;
 
+    /// Mark an already-validated plain extension as the main chain and move the peak inside an
+    /// open batch. The engine calls this only after proving that every hash extends the current
+    /// peak in the supplied order. Backends may override this to avoid rediscovering that ancestry;
+    /// the fallback preserves the ordinary fork-aware walk.
+    ///
+    /// # Errors
+    /// As [`BlockStore::set_peak_in`].
+    async fn extend_peak_in(
+        &self,
+        batch: &mut BatchHandle,
+        extension: &[Bytes32],
+        new_height: u32,
+    ) -> Result<u64, StoreError> {
+        let Some(new_peak) = extension.last() else {
+            return Ok(0);
+        };
+        let _ = new_height;
+        self.set_peak_in(batch, new_peak).await
+    }
+
     /// # Errors
     /// Returns [`StoreError::Backend`] on a query failure.
     async fn get_status(&self, hh: &Bytes32) -> Result<BlockStatus, StoreError>;
@@ -630,6 +705,23 @@ pub trait BlockStore {
         hh: &Bytes32,
         s: BlockStatus,
     ) -> Result<(), StoreError>;
+
+    /// Set one status for several records inside an open batch. SQL backends override this to
+    /// issue a bounded set update; the fallback preserves compatibility for custom stores.
+    ///
+    /// # Errors
+    /// As [`BlockStore::set_status_in`].
+    async fn set_status_many_in(
+        &self,
+        batch: &mut BatchHandle,
+        hashes: &[Bytes32],
+        status: BlockStatus,
+    ) -> Result<(), StoreError> {
+        for hash in hashes {
+            self.set_status_in(batch, hash, status).await?;
+        }
+        Ok(())
+    }
 
     /// # Errors
     /// Returns [`StoreError::Backend`] on a query failure.

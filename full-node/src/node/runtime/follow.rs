@@ -163,6 +163,7 @@ where
         peak: Option<(Bytes32, u32)>,
         deltas: &[ConfirmedDelta],
     ) -> Result<Option<(Bytes32, u32)>, SyncError> {
+        let started = std::time::Instant::now();
         for cd in deltas {
             let d = &cd.delta;
             // S8 — terminal PASS: a confirmed block whose header hash matches one WE farmed. The farmed
@@ -187,6 +188,7 @@ where
         if peak.is_some() {
             self.update_synced().await;
         }
+        self.sync_metrics.post_confirm_total_micros.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
         Ok(peak)
     }
 

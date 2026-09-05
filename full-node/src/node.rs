@@ -132,7 +132,9 @@ use sync::{
 pub(crate) use sync::{reap_wallet_subscriptions_once, sync_driver, tip_follower};
 use workers::*;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+// Public peers can need more than a minute to assemble and upload a full 32-block response under
+// load. Keep the request alive long enough for those useful peers instead of churning connections.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 
 // An in-flight gossip-transaction fetch (`full_node_store` `pending_tx_request`): WHEN we asked
 // (for age-expiry) plus the ADVERTISED fee + cost from the peer's `NewTransaction`, carried to
@@ -144,11 +146,27 @@ struct PendingTx {
     advertised_fee: u64,
     advertised_cost: u64,
 }
-// Tip-follow driver knobs: poll cadence + max blocks pulled per follow step (a hard bound on catch-up work).
+// Peer range requests stay at the consensus-protocol cap. Validation combines adjacent fetched
+// ranges into a CPU-sized window during catch-up; near tip stays at one request window.
 const DRIVER_TICK: Duration = Duration::from_secs(2);
-const FOLLOW_BATCH: u32 = 32;
+const FETCH_BATCH: u32 = 32;
+const MAX_VALIDATION_BATCH: u32 = 256;
+
+fn validation_batch_for_parallelism(parallelism: usize) -> u32 {
+    let target = u32::try_from(parallelism.saturating_mul(2)).unwrap_or(u32::MAX);
+    target
+        .clamp(FETCH_BATCH, MAX_VALIDATION_BATCH)
+        .div_ceil(FETCH_BATCH)
+        * FETCH_BATCH
+}
+
+fn validation_batch() -> u32 {
+    validation_batch_for_parallelism(
+        std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get),
+    )
+}
 // Fast-sync trigger: a claimed peak this many blocks ahead of a near-empty local store means tip-follow
-// (FOLLOW_BATCH/step) would never converge — drive the weight-proof bulk sync instead. `local < GAP`
+// (FETCH_BATCH/request) would never converge — drive the weight-proof bulk sync instead. `local < GAP`
 // gates the RECENT-CHAIN JUMP to a fresh/near-empty store (a mid-chain node long-syncs the gap through
 // the batch pipeline instead — see `wants_long_sync`). The value doubles as the weight-proof anchor
 // floor: WEIGHT_PROOF_RECENT_BLOCKS (1000, core/src/consensus/constants.rs) — a tip below it
@@ -160,7 +178,7 @@ const SYNC_BLOCKS_BEHIND_THRESHOLD: u32 = 300;
 // `short_sync_blocks_behind_threshold` (20): within this many blocks of a peer-announced peak the
 // node follows block-by-block off the NewPeak event (the normal case of receiving the next
 // block) rather than batch-syncing, so
-// the confirmed peak tracks the tip within 0-1. The tip_follower owns this band; FOLLOW_BATCH catch-up
+// the confirmed peak tracks the tip within 0-1. The tip_follower owns this band; batched catch-up
 // and bulk_sync own the wider bands.
 const SHORT_SYNC_BLOCKS_BEHIND_THRESHOLD: u32 = 20;
 // Falling-edge hysteresis for the secondary-index shed (`update_synced`): shed only when the node

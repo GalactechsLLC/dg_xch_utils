@@ -102,15 +102,15 @@ pub(super) const RECOVERY_CHANNEL_CAP: usize = 8;
 // but nothing detects the pipeline AS A WHOLE ceasing to advance. This is that whole-pipeline watchdog
 // bound: if the confirmed frontier (`queue.low_water`) does not advance for this long WHILE work remains,
 // peers are live, and no confirm is legitimately in flight, the driver force-rebases to break the wedge.
-// 60s = 2× REQUEST_TIMEOUT (the longest a single window fetch can legitimately stall outside a confirm),
-// matching the node's existing 60s liveness convention; confirm time is excluded via `follow_inflight_since`
-// so healthy — even slow — validation never trips it.
-const RECLAIM_TIMEOUT: Duration = Duration::from_secs(60);
+// 180s = 2× REQUEST_TIMEOUT (the longest a single window fetch can legitimately stall outside a
+// confirm); confirm time is excluded via `follow_inflight_since` so healthy — even slow —
+// validation never trips it.
+const RECLAIM_TIMEOUT: Duration = Duration::from_secs(180);
 // Bound on how long the peer-free consumer parks on a recovery reply before giving up and retrying the
 // window, so a stuck driver loop can never hang the confirm consumer forever. Set above the worst
 // legitimate `handle_recovery` (MissingRecord's 8xDRIVER_TICK re-arm, a bounded backtrack's fetches)
 // so it never abandons an in-progress recovery.
-pub(super) const RESET_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
+pub(super) const RESET_REPLY_TIMEOUT: Duration = Duration::from_secs(300);
 
 fn unix_secs() -> u64 {
     std::time::SystemTime::now()

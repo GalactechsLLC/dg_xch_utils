@@ -10,7 +10,7 @@ use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::traits::SizedBytes;
-use dg_xch_stores::CoinStore;
+use dg_xch_stores::{BlockStore, CoinStore};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,6 +55,50 @@ fn upd<'a>(
         spent_ids,
         hints,
     }
+}
+
+#[tokio::test]
+async fn unsubscribed_peak_notifications_do_not_read_spent_coins() {
+    let store = common::open_store().await;
+    let notifier = WalletNotifier::new();
+    let telemetry = store.telemetry().unwrap();
+    let peer = h(0xaa);
+    let spent_ids = [h(0x01), h(0x02)];
+    notifier
+        .on_new_peak(&store, upd(h(0xf1), 200, 199, &[], &spent_ids, &[]))
+        .await
+        .unwrap();
+    assert_eq!(
+        telemetry
+            .coin_reads
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+    let _receiver = notifier
+        .register_for_ph_updates(peer, None, &[h(0x42)])
+        .await
+        .unwrap();
+    notifier
+        .on_new_peak(&store, upd(h(0xf2), 201, 200, &[], &spent_ids, &[]))
+        .await
+        .unwrap();
+    assert_eq!(
+        telemetry
+            .coin_reads
+            .load(std::sync::atomic::Ordering::Relaxed),
+        2
+    );
+    notifier.unsubscribe(&peer).await;
+    notifier
+        .on_new_peak(&store, upd(h(0xf3), 202, 201, &[], &spent_ids, &[]))
+        .await
+        .unwrap();
+    assert_eq!(
+        telemetry
+            .coin_reads
+            .load(std::sync::atomic::Ordering::Relaxed),
+        2
+    );
 }
 
 #[tokio::test]

@@ -20,7 +20,7 @@ path = "src/lib.rs"
 portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false, features = ["endpoint", "tasks", "tls", "websocket"] }
 dg_logger = { path = "../logging", version = "3.0.0" }
 log = "0.4"
-dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, features = ["bls"] }
+dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, features = ["bounded-bls"] }
 dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
 dg_xch_stores = { path = "../stores", version = "3.0.0" }
 dg_xch_p2p = { path = "../p2p", version = "3.0.0" }

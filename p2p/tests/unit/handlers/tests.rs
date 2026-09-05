@@ -3,8 +3,8 @@ use dg_xch_core::protocols::ProtocolMessageTypes;
 
 // The dispatch filter must MATCH tip announcements, block requests, the pure-gossip
 // broadcasts (so they graceful-ignore instead of logging "No Matches"), AND the four block
-// replies (a solicited one is consumed by the read loop's correlation-id fast path before the
-// handler scan, so a match here is by definition unsolicited/late → the close arm).
+// replies (solicited and recently timed-out ones are consumed by the read loop's correlation-id
+// fast path before the handler scan, so a match here is genuinely unsolicited → the close arm).
 // RespondProofOfWeight stays oneshot-owned and unmatched — it falls to the read loop's
 // no-match drop.
 #[test]

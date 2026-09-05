@@ -24,6 +24,15 @@ fn follow_prefetch_uses_both_v3_slots_per_configured_peer() {
     assert_eq!(cfg.byte_budget, dg_xch_node::sync::READAHEAD_BYTE_BUDGET);
 }
 
+#[test]
+fn catch_up_validation_windows_scale_past_the_peer_request_cap() {
+    assert_eq!(validation_batch_for_parallelism(1), 32);
+    assert_eq!(validation_batch_for_parallelism(16), 32);
+    assert_eq!(validation_batch_for_parallelism(17), 64);
+    assert_eq!(validation_batch_for_parallelism(56), 128);
+    assert_eq!(validation_batch_for_parallelism(512), 256);
+}
+
 // A subscribed coin spent on branch A must read UNSPENT again after a reorg to branch B where
 // the spend never happened, which means delivering the POST-ROLLBACK records to subscribers.
 // Reporting only the reorg tip's own delta would leave the subscriber hearing nothing about
@@ -54,6 +63,7 @@ async fn reorg_rollback_states_reach_subscribed_wallets() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
         rpc_tls: crate::config::RpcTlsMode::Local,
@@ -692,6 +702,7 @@ async fn sync_target_weight_gates_against_the_local_peak() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
         rpc_tls: crate::config::RpcTlsMode::Local,
@@ -785,6 +796,7 @@ async fn follow_fill_clamps_the_frontier_to_the_servable_outbound_tip() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
         rpc_tls: crate::config::RpcTlsMode::Local,
@@ -857,6 +869,7 @@ async fn follow_fill_opens_the_sync_from_band_once_anchored() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
         rpc_tls: crate::config::RpcTlsMode::Local,
@@ -1488,6 +1501,7 @@ async fn infusion_point_finishes_cached_genesis_unfinished_block() {
             uncompact: false,
             prefetch_memory_mb: None,
             prefetch_max_inflight: None,
+            performance: Default::default(),
             trusted_peers: Vec::new(),
             trusted_cidrs: Vec::new(),
             rpc_tls: crate::config::RpcTlsMode::Local,
@@ -1915,6 +1929,7 @@ async fn ub_store_error_requeues_candidate_never_counts_it_as_prev_unknown() {
                 uncompact: false,
                 prefetch_memory_mb: None,
                 prefetch_max_inflight: None,
+                performance: Default::default(),
                 trusted_peers: Vec::new(),
                 trusted_cidrs: Vec::new(),
                 rpc_tls: crate::config::RpcTlsMode::Local,
@@ -2058,6 +2073,7 @@ async fn deep_fall_behind_sheds_indexes_once_and_the_tip_edge_rebuilds() {
                 uncompact: false,
                 prefetch_memory_mb: None,
                 prefetch_max_inflight: None,
+                performance: Default::default(),
                 trusted_peers: Vec::new(),
                 trusted_cidrs: Vec::new(),
                 rpc_tls: crate::config::RpcTlsMode::Local,

@@ -305,6 +305,7 @@ pub struct Engine<S, P> {
     // the window confirms. Inserted at stage, drained at confirm; bounded by the window size.
     staged_deltas: HashMap<Bytes32, BlockDelta>,
     stage_preload: Option<StagePreload>,
+    coalesce_coin_writes: bool,
     horizon: u32,
     // assume-valid seam: below this height script/sig validation is bypassed but the block is
     // still confirmed and its PoW header still validated. 0 = off (fresh genesis default).
@@ -344,6 +345,7 @@ where
             seed_generators: HashMap::new(),
             staged_deltas: HashMap::new(),
             stage_preload: None,
+            coalesce_coin_writes: false,
             horizon: crate::cache::BLOCK_RECORD_WINDOW as u32,
             assume_valid: 0,
             full_history: None,
@@ -538,21 +540,42 @@ where
         .await
     }
 
-    /// Persist the archive rows for a dry-staged window into an OPEN batch — the deferred half of
-    /// [`Engine::stage_block_pre_dry`], called from the confirm with its transaction so archive
-    /// rows still land before `set_peak` inside the same commit.
+    /// Prepare archive rows before opening a writer batch, then persist them and return the
+    /// still-open batch so confirmation can add coins and peak inside the same commit.
     ///
     /// # Errors
     /// Returns [`NodeError::Store`] on a persistence failure.
     pub async fn persist_archive_window(
         &self,
-        rows: &[(&FullBlock, &BlockDelta)],
-        batch: &mut BatchHandle,
-    ) -> Result<(), NodeError> {
-        for (block, delta) in rows {
-            self.persist_archive_in(block, delta, batch).await?;
-        }
-        Ok(())
+        blocks: Vec<FullBlock>,
+        staged: &[(BlockDelta, usize, usize, usize)],
+    ) -> Result<BatchHandle, NodeError> {
+        let records = staged
+            .iter()
+            .map(|(delta, _, _, _)| {
+                (
+                    delta.record.clone(),
+                    if delta.height < self.assume_valid {
+                        BlockStatus::Bypass
+                    } else {
+                        BlockStatus::Validated
+                    },
+                )
+            })
+            .collect();
+        let selected: std::collections::HashSet<usize> =
+            staged.iter().map(|entry| entry.3).collect();
+        let blocks = blocks
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, block)| selected.contains(&index).then_some(block))
+            .collect();
+        let prepared = self.store.prepare_archive(records, blocks).await?;
+        let mut batch = self.store.begin().await?;
+        self.store
+            .persist_prepared_archive_in(&mut batch, prepared)
+            .await?;
+        Ok(batch)
     }
 
     /// [`Engine::stage_block_pre`] with the archive writes threaded into a caller-owned WINDOW
@@ -565,7 +588,7 @@ where
     /// actually stages (an all-`AlreadyHave` window opens no transaction); the caller commits it
     /// once for the window — BEFORE any other `begin()` (the open batch holds the single writer),
     /// and even on a mid-window stage error, because the already-staged prefix still confirms
-    /// (`set_peak` walks the archive rows this batch carries). A crash before the window commit
+    /// (the peak update consumes the archive rows this batch carries). A crash before the window commit
     /// loses only candidate archive rows — the durable peak is untouched and the resume path
     /// re-fetches the window, exactly as it re-fetches a window whose confirm batch was lost.
     ///
@@ -631,6 +654,10 @@ where
         self.confirm_staged_batch_in(deltas, None).await
     }
 
+    pub fn set_coalesce_coin_writes(&mut self, enabled: bool) {
+        self.coalesce_coin_writes = enabled;
+    }
+
     /// [`Engine::confirm_staged_batch`] continuing in a CARRIED open batch — the window staging
     /// transaction (`stage_block_pre_in`'s archive rows), handed over uncommitted so the whole
     /// catch-up window costs ONE writer transaction and ONE fsync: archive + coins + peak commit
@@ -675,7 +702,8 @@ where
         // transaction when the window loop handed one over; near-tip mode commits each block
         // inline (the first near-tip block folds any carried rows into its own commit).
         let mut batch: Option<BatchHandle> = carry;
-        let mut last_applied: Option<Bytes32> = None;
+        let mut last_applied: Option<(Bytes32, u32)> = None;
+        let mut extension = Vec::with_capacity(deltas.len());
         let mut idx = 0usize;
         while idx < deltas.len() {
             let delta = &deltas[idx];
@@ -693,18 +721,20 @@ where
                 Some(b) => b,
                 None => self.store.begin().await?,
             };
-            self.store
-                .apply_block_in(
-                    &mut b,
-                    delta.height,
-                    delta.timestamp,
-                    &delta.additions,
-                    &delta.removals,
-                )
-                .await?;
-            // coin_hint rows join this block's batch (per-block near tip, or the window batch
-            // during catch-up) so they commit atomically with the coins; no-op without the hint tier.
-            self.store.apply_hints_in(&mut b, &delta.hints).await?;
+            if per_block || !self.coalesce_coin_writes {
+                self.store
+                    .apply_block_in(
+                        &mut b,
+                        delta.height,
+                        delta.timestamp,
+                        &delta.additions,
+                        &delta.removals,
+                    )
+                    .await?;
+                // coin_hint rows join this block's batch (per-block near tip, or the window batch
+                // during catch-up) so they commit atomically with the coins; no-op without the hint tier.
+                self.store.apply_hints_in(&mut b, &delta.hints).await?;
+            }
             if per_block {
                 // NEAR-TIP: commit this block atomically (peak = this block). A crash/error leaves the
                 // store at the last committed block -- 0..K-1 with peak = K-1, block K rolled back, the
@@ -720,7 +750,8 @@ where
             self.staged_deltas.remove(&delta.header_hash);
             self.cache.insert(delta.record.clone());
             self.pending.remove(&delta.header_hash);
-            last_applied = Some(delta.header_hash);
+            last_applied = Some((delta.header_hash, delta.height));
+            extension.push(delta.header_hash);
             running = Some((delta.header_hash, delta.weight));
             outcomes.push(if fresh_chain {
                 AddBlockOutcome::NewPeak {
@@ -739,8 +770,24 @@ where
         // A batch with NO applied delta (a carried staging transaction whose first delta did not
         // extend) commits archive-only — the sequential path below reads those rows.
         if let Some(mut b) = batch {
-            if let Some(tip) = last_applied {
-                self.store.set_peak_in(&mut b, &tip).await?;
+            if self.coalesce_coin_writes && idx > 0 {
+                let changes: Vec<_> = deltas[..idx]
+                    .iter()
+                    .map(|delta| dg_xch_stores::types::CoinChanges {
+                        height: delta.height,
+                        timestamp: delta.timestamp,
+                        additions: &delta.additions,
+                        removals: &delta.removals,
+                        hints: &delta.hints,
+                    })
+                    .collect();
+                self.store.apply_coin_window_in(&mut b, &changes).await?;
+            }
+            if let Some((tip, height)) = last_applied {
+                debug_assert_eq!(extension.last(), Some(&tip));
+                self.store
+                    .extend_peak_in(&mut b, &extension, height)
+                    .await?;
             }
             self.store.commit(b).await?;
         }
@@ -1118,8 +1165,19 @@ where
         block: &FullBlock,
         delta: &BlockDelta,
     ) -> Result<BatchHandle, NodeError> {
+        let status = if block.height() < self.assume_valid {
+            BlockStatus::Bypass
+        } else {
+            BlockStatus::Validated
+        };
+        let prepared = self
+            .store
+            .prepare_archive(vec![(delta.record.clone(), status)], vec![block.clone()])
+            .await?;
         let mut batch = self.store.begin().await?;
-        self.persist_archive_in(block, delta, &mut batch).await?;
+        self.store
+            .persist_prepared_archive_in(&mut batch, prepared)
+            .await?;
         Ok(batch)
     }
 

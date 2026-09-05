@@ -23,7 +23,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_tungstenite::{is_upgrade_request, upgrade};
 use hyper_util::rt::TokioIo;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 #[cfg(feature = "metrics")]
 use prometheus::core::{AtomicU64, GenericGauge};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -443,6 +443,7 @@ async fn handle_connection(
     rate_limited: bool,
     bans: Arc<BanRegistry>,
 ) -> Result<(), tungstenite::error::Error> {
+    let connected_at = std::time::Instant::now();
     // A full-node listener (the server sets `rate_limited`) installs a fresh per-connection
     // inbound limiter; other server roles leave it off.
     let limiter = if rate_limited {
@@ -463,6 +464,7 @@ async fn handle_connection(
         peer_id.clone(),
         peers.clone(),
         limiter,
+        Arc::<str>::from(format!("inbound endpoint={peer_addr}")),
     );
     // Hold our own handle so the teardown below can prove the map still points at THIS
     // connection (and not a peer that reconnected in the meantime) before removing it.
@@ -486,6 +488,12 @@ async fn handle_connection(
         let _ = removed.websocket.write().await.close(None).await;
     }
     stream.run(run).await;
+    info!(
+        "inbound peer disconnected endpoint={} peer_id={} lifetime_ms={}",
+        peer_addr,
+        peer_id,
+        connected_at.elapsed().as_millis()
+    );
     // The read loop returned: the connection is dead. Release this peer's slot so the shared
     // inbound PeerMap stays bounded to LIVE connections. Guard on `Arc` identity so a peer that
     // reconnected (replacing the map value) keeps its fresh entry.

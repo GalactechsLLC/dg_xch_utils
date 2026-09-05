@@ -1,5 +1,42 @@
 use super::*;
 
+#[test]
+fn performance_bounds_reject_zero_and_unbounded_work() {
+    assert!(PerformanceConfig::default().validate().is_ok());
+    for invalid in [
+        PerformanceConfig {
+            compute_workers: Some(0),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            compute_workers: Some(1025),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            validation_window_blocks: Some(0),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            validation_window_blocks: Some(4097),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            validation_window_mb: 0,
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            confirm_transaction_blocks: Some(0),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            sqlite_writer_cache_mb: Some(0),
+            ..PerformanceConfig::default()
+        },
+    ] {
+        assert!(invalid.validate().is_err());
+    }
+}
+
 fn cfg(peers: &[&str]) -> Result<Config, String> {
     let owned: Vec<String> = peers.iter().map(|s| (*s).to_string()).collect();
     Config::build(

@@ -1,4 +1,4 @@
-use super::EscalationBackoff;
+use super::{CheckpointOutcome, EscalationBackoff};
 
 /// Drive one over-trigger tick; returns whether an attempt ran, feeding `drained` back
 /// when it did.
@@ -65,5 +65,37 @@ fn dropping_under_the_trigger_resets() {
     assert!(
         b.should_attempt(),
         "under-trigger reset must clear the backoff"
+    );
+}
+
+#[test]
+fn truncate_is_unnecessary_after_a_complete_pass() {
+    assert!(
+        CheckpointOutcome {
+            busy: 0,
+            log: 32_000,
+            checkpointed: 32_000,
+        }
+        .fully_checkpointed()
+    );
+}
+
+#[test]
+fn pinned_or_busy_passes_are_not_complete() {
+    assert!(
+        !CheckpointOutcome {
+            busy: 0,
+            log: 32_000,
+            checkpointed: 20_000,
+        }
+        .fully_checkpointed()
+    );
+    assert!(
+        !CheckpointOutcome {
+            busy: 1,
+            log: 32_000,
+            checkpointed: 32_000,
+        }
+        .fully_checkpointed()
     );
 }

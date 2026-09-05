@@ -3,7 +3,6 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 use sha2::{Digest, Sha256};
-use std::sync::Mutex;
 
 const MAX_DISCRIMINANT_SIZE_BITS: usize = 1024;
 
@@ -14,39 +13,10 @@ const MAX_DISCRIMINANT_SIZE_BITS: usize = 1024;
 /// deliberately NOT cached.
 const DISCRIMINANT_CACHE_CAPACITY: usize = 200;
 
-/// `(seed, size_bits, prime)`, least-recently-used at the front. Linear scan + Vec rotate: at 200
-/// entries the whole structure is a few KB and a lookup is microseconds against a ~56 ms miss.
-static DISCRIMINANT_CACHE: Mutex<Vec<(Vec<u8>, usize, BigInt)>> = Mutex::new(Vec::new());
-
-fn discriminant_cache_get(seed: &[u8], size_bits: usize) -> Option<BigInt> {
-    let mut cache = DISCRIMINANT_CACHE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let idx = cache
-        .iter()
-        .position(|(s, bits, _)| *bits == size_bits && s == seed)?;
-    let entry = cache.remove(idx);
-    let prime = entry.2.clone();
-    cache.push(entry);
-    Some(prime)
-}
-
-fn discriminant_cache_put(seed: &[u8], size_bits: usize, prime: &BigInt) {
-    let mut cache = DISCRIMINANT_CACHE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // Concurrent verifiers of the same challenge race the derivation; first insert wins, the
-    // duplicate result is identical by construction (the derivation is deterministic).
-    if cache
-        .iter()
-        .any(|(s, bits, _)| *bits == size_bits && s == seed)
-    {
-        return;
-    }
-    if cache.len() >= DISCRIMINANT_CACHE_CAPACITY {
-        cache.remove(0);
-    }
-    cache.push((seed.to_vec(), size_bits, prime.clone()));
+pub(crate) fn discriminant_memo() -> &'static crate::memo::Memo<(Vec<u8>, usize), BigInt> {
+    static MEMO: std::sync::OnceLock<crate::memo::Memo<(Vec<u8>, usize), BigInt>> =
+        std::sync::OnceLock::new();
+    MEMO.get_or_init(|| crate::memo::Memo::new(DISCRIMINANT_CACHE_CAPACITY))
 }
 
 pub fn create_discriminant(seed: &[u8], result: &mut [u8]) -> bool {
@@ -75,12 +45,10 @@ pub(crate) fn create_discriminant_int(seed: &[u8], size_bits: usize) -> Result<B
         return Err(Error::EmptySeed);
     }
 
-    if let Some(prime) = discriminant_cache_get(seed, size_bits) {
-        return Ok(-prime);
-    }
-    let prime = hash_prime(seed, size_bits, &[0, 1, 2, size_bits - 1]);
-    discriminant_cache_put(seed, size_bits, &prime);
-    Ok(-prime)
+    let prime = discriminant_memo().get_or_init((seed.to_vec(), size_bits), || {
+        hash_prime(seed, size_bits, &[0, 1, 2, size_bits - 1])
+    });
+    Ok(-prime.get().expect("discriminant initialized"))
 }
 
 pub(crate) fn hash_prime(seed: &[u8], size_bits: usize, bitmask: &[usize]) -> BigInt {

@@ -21,19 +21,9 @@ pub fn verify_n_wesolowski(
 
 const VERIFY_MEMO_CAPACITY: usize = 1000;
 
-struct VerifyMemo {
-    map: std::collections::HashMap<Vec<u8>, (bool, u64)>,
-    tick: u64,
-}
-
-fn verify_memo() -> &'static std::sync::Mutex<VerifyMemo> {
-    static MEMO: std::sync::OnceLock<std::sync::Mutex<VerifyMemo>> = std::sync::OnceLock::new();
-    MEMO.get_or_init(|| {
-        std::sync::Mutex::new(VerifyMemo {
-            map: std::collections::HashMap::with_capacity(VERIFY_MEMO_CAPACITY),
-            tick: 0,
-        })
-    })
+pub(crate) fn verify_memo() -> &'static crate::memo::Memo<Vec<u8>, bool> {
+    static MEMO: std::sync::OnceLock<crate::memo::Memo<Vec<u8>, bool>> = std::sync::OnceLock::new();
+    MEMO.get_or_init(|| crate::memo::Memo::new(VERIFY_MEMO_CAPACITY))
 }
 
 fn verify_memo_key(
@@ -53,36 +43,6 @@ fn verify_memo_key(
     key.extend_from_slice(&num_iterations.to_be_bytes());
     key.extend_from_slice(&recursion.to_be_bytes());
     key
-}
-
-fn verify_memo_get(key: &[u8]) -> Option<bool> {
-    let mut memo = verify_memo().lock().ok()?;
-    memo.tick += 1;
-    let tick = memo.tick;
-    let (result, last_used) = memo.map.get_mut(key)?;
-    *last_used = tick;
-    Some(*result)
-}
-
-fn verify_memo_put(key: Vec<u8>, result: bool) {
-    let Ok(mut memo) = verify_memo().lock() else {
-        return;
-    };
-    if memo.map.len() >= VERIFY_MEMO_CAPACITY && !memo.map.contains_key(&key) {
-        // Evict the least-recently-used entry: O(capacity) scan on insert, but the map is
-        // bounded at 1000 entries and the scan is a u64 compare per entry.
-        if let Some(oldest) = memo
-            .map
-            .iter()
-            .min_by_key(|(_, (_, used))| *used)
-            .map(|(k, _)| k.clone())
-        {
-            memo.map.remove(&oldest);
-        }
-    }
-    memo.tick += 1;
-    let tick = memo.tick;
-    memo.map.insert(key, (result, tick));
 }
 
 pub fn verify_vdf(
@@ -145,20 +105,18 @@ fn verify_vdf_impl(
         num_iterations,
         recursion,
     );
-    if let Some(hit) = verify_memo_get(&key) {
-        return hit;
-    }
-    let result = verify_vdf_uncached(
-        challenge,
-        x_s,
-        proof,
-        discriminant_size_bits,
-        num_iterations,
-        recursion,
-        parallel,
-    );
-    verify_memo_put(key, result);
-    result
+    let result = verify_memo().get_or_init(key, || {
+        verify_vdf_uncached(
+            challenge,
+            x_s,
+            proof,
+            discriminant_size_bits,
+            num_iterations,
+            recursion,
+            parallel,
+        )
+    });
+    *result.get().expect("verification initialized")
 }
 
 fn verify_vdf_uncached(
@@ -482,7 +440,7 @@ fn approximate_parameters(t: u64) -> Result<(u64, u64)> {
 
 #[cfg(test)]
 fn verify_memo_len() -> usize {
-    verify_memo().lock().map(|m| m.map.len()).unwrap_or(0)
+    verify_memo().len()
 }
 
 #[cfg(test)]

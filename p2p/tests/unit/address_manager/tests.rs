@@ -50,6 +50,49 @@ fn take_moves_to_reserved_and_reclaim_returns() {
 }
 
 #[test]
+fn failed_endpoint_cools_down_with_escalating_delay() {
+    let mut book = AddressBook::new(&P2pSettings::default());
+    let candidate = peer("1.1.1.1", 8444, 10);
+    book.insert_many(std::slice::from_ref(&candidate));
+    let now = std::time::Instant::now();
+    let taken = book.take_at(now).expect("candidate ready");
+
+    let first = book.cooldown_at(&taken, std::time::Duration::from_secs(1), now);
+    assert_eq!(first.failures, 1);
+    assert_eq!(first.delay, std::time::Duration::from_secs(1));
+    assert!(book.take_at(now).is_none(), "cooling endpoint is skipped");
+    assert!(
+        !book.has_ready_at(now),
+        "a non-empty pool can have no currently usable candidates"
+    );
+
+    let retry_at = now + first.delay;
+    let taken = book.take_at(retry_at).expect("cooldown elapsed");
+    let second = book.cooldown_at(&taken, std::time::Duration::from_secs(1), retry_at);
+    assert_eq!(second.failures, 2);
+    assert_eq!(second.delay, std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn healthy_reclaim_clears_endpoint_failure_history() {
+    let mut book = AddressBook::new(&P2pSettings::default());
+    let candidate = peer("1.1.1.1", 8444, 10);
+    book.insert_many(std::slice::from_ref(&candidate));
+    let now = std::time::Instant::now();
+    let taken = book.take_at(now).expect("candidate ready");
+    let first = book.cooldown_at(&taken, std::time::Duration::from_secs(1), now);
+    let taken = book
+        .take_at(now + first.delay)
+        .expect("candidate ready after cooldown");
+    book.reclaim(&taken, false);
+    let taken = book
+        .take_at(now + first.delay)
+        .expect("healthy endpoint immediately reusable");
+    let reset = book.cooldown_at(&taken, std::time::Duration::from_secs(1), now + first.delay);
+    assert_eq!(reset.failures, 1);
+}
+
+#[test]
 fn violation_reclaim_forgets_the_peer() {
     let mut book = AddressBook::new(&P2pSettings::default());
     book.insert_many(&[peer("1.1.1.1", 8444, 10)]);

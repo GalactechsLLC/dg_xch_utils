@@ -123,6 +123,7 @@ async fn dial_as(port: u16, node_type: NodeType, handlers: HandlerMap) -> WsClie
     let cfg = Arc::new(WsClientConfig {
         host: "127.0.0.1".to_string(),
         port,
+        server_port: 0,
         network_id: "mainnet".to_string(),
         ssl_info: None,
         software_version: None,

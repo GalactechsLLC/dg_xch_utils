@@ -472,6 +472,9 @@ impl WalletNotifier {
         store: &S,
         update: WalletUpdate<'_>,
     ) -> Result<(), WalletError> {
+        if self.inner.read().await.subs.is_empty() {
+            return Ok(());
+        }
         // Resolve spent records first (await, no lock held) so no async lock spans the store call.
         let spent_records = if update.spent_ids.is_empty() {
             Vec::new()

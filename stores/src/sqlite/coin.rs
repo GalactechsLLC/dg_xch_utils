@@ -8,49 +8,119 @@ use dg_xch_core::blockchain::coin_record::CoinRecord;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 #[cfg(feature = "coin-index")]
 use dg_xch_core::protocols::wallet::{CoinState, CoinStateFilters};
+use dg_xch_core::traits::SizedBytes;
 use sqlx::Connection;
 use std::sync::atomic::Ordering;
 
-const INSERT_COIN: &str = "INSERT OR REPLACE INTO coin_record \
-    (coin_name, confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, timestamp) \
-    VALUES (?, ?, 0, ?, ?, ?, ?, ?)";
 const SELECT_COIN: &str = "SELECT confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, \
     amount, timestamp FROM coin_record WHERE coin_name = ?";
 
-// One block's coin deltas, parameterized over the connection: a self-contained transaction from
-// `apply_block`, or joined onto an open batch from `apply_block_in` (one fsync per block).
+const COIN_LOOKUP_BATCH: usize = 256;
+
+#[cfg(test)]
+#[path = "../../tests/unit/sqlite/coin_lookup_tests.rs"]
+mod coin_lookup_tests;
+
+fn coin_lookup_query(names: &[Bytes32]) -> sqlx::QueryBuilder<'_, sqlx::Sqlite> {
+    let mut query = sqlx::QueryBuilder::new("WITH requested(ordinal, coin_name) AS (");
+    query.push_values(names.iter().enumerate(), |mut bindings, (ordinal, name)| {
+        bindings.push_bind(ordinal as i64).push_bind(*name);
+    });
+    query.push(
+        ") SELECT coins.confirmed_index, coins.spent_index, coins.coinbase, \
+         coins.puzzle_hash, coins.coin_parent, coins.amount, coins.timestamp \
+         FROM requested CROSS JOIN coin_record AS coins \
+         WHERE coins.coin_name = requested.coin_name ORDER BY requested.ordinal",
+    );
+    query
+}
+
+async fn write_additions(
+    conn: &mut sqlx::SqliteConnection,
+    additions: &[(Bytes32, CoinRecord)],
+    telemetry: &crate::telemetry::StoreTelemetry,
+) -> Result<(), StoreError> {
+    let _timer = telemetry.coin_additions.start();
+    for chunk in additions.chunks(100) {
+        let mut query = sqlx::QueryBuilder::new(
+            "INSERT OR REPLACE INTO coin_record (coin_name, confirmed_index, spent_index, \
+             coinbase, puzzle_hash, coin_parent, amount, timestamp) ",
+        );
+        query.push_values(chunk, |mut bindings, (name, record)| {
+            bindings
+                .push_bind(*name)
+                .push_bind(i64::from(record.confirmed_block_index))
+                .push_bind(i64::from(record.spent_block_index))
+                .push_bind(i64::from(record.coinbase))
+                .push_bind(record.coin.puzzle_hash)
+                .push_bind(record.coin.parent_coin_info)
+                .push_bind(amount_be(record.coin.amount))
+                .push_bind(record.timestamp as i64);
+        });
+        query
+            .build()
+            .persistent(chunk.len() == 100)
+            .execute(&mut *conn)
+            .await?;
+        telemetry.coin_additions.statement(chunk.len());
+    }
+    Ok(())
+}
+
+async fn write_removals(
+    conn: &mut sqlx::SqliteConnection,
+    removals: &[(Bytes32, u32)],
+    telemetry: &crate::telemetry::StoreTelemetry,
+) -> Result<(), StoreError> {
+    let _timer = telemetry.coin_removals.start();
+    for chunk in removals.chunks(100) {
+        let mut query = sqlx::QueryBuilder::new("WITH changes(coin_name, height) AS (");
+        query.push_values(chunk, |mut bindings, (name, height)| {
+            bindings.push_bind(*name).push_bind(i64::from(*height));
+        });
+        query.push(
+            ") UPDATE coin_record SET spent_index = changes.height \
+                    FROM changes WHERE coin_record.coin_name = changes.coin_name",
+        );
+        query
+            .build()
+            .persistent(chunk.len() == 100)
+            .execute(&mut *conn)
+            .await?;
+        telemetry.coin_removals.statement(chunk.len());
+    }
+    Ok(())
+}
+
 async fn apply_block_on(
     conn: &mut sqlx::SqliteConnection,
     height: u32,
     timestamp: u64,
     additions: &[CoinRecord],
     removals: &[Bytes32],
+    telemetry: &crate::telemetry::StoreTelemetry,
 ) -> Result<(), StoreError> {
-    // Batches are sorted by coin_name first (see lib.rs sort_additions_by_name): the per-row
-    // point writes then walk the WITHOUT ROWID coin_name btree in key order — adjacent leaf
-    // pages, shared interior paths — instead of one random descent per coin. The upsert
-    // (INSERT OR REPLACE over unique names) and the spent-update are order-independent, so the
-    // landed rows are identical for any input order.
-    for (name, cr) in crate::sort_additions_by_name(additions) {
-        sqlx::query(INSERT_COIN)
-            .bind(name)
-            .bind(i64::from(height))
-            .bind(i64::from(cr.coinbase))
-            .bind(cr.coin.puzzle_hash)
-            .bind(cr.coin.parent_coin_info)
-            .bind(amount_be(cr.coin.amount))
-            .bind(timestamp as i64)
-            .execute(&mut *conn)
-            .await?;
-    }
-    for name in crate::sorted_removal_names(removals) {
-        sqlx::query("UPDATE coin_record SET spent_index = ? WHERE coin_name = ?")
-            .bind(i64::from(height))
-            .bind(name)
-            .execute(&mut *conn)
-            .await?;
-    }
-    Ok(())
+    let additions: Vec<_> = crate::sort_additions_by_name(additions)
+        .into_iter()
+        .map(|(name, record)| {
+            (
+                name,
+                CoinRecord {
+                    confirmed_block_index: height,
+                    spent_block_index: 0,
+                    spent: false,
+                    timestamp,
+                    ..record.clone()
+                },
+            )
+        })
+        .collect();
+    write_additions(conn, &additions, telemetry).await?;
+    let removals: Vec<_> = crate::sorted_removal_names(removals)
+        .into_iter()
+        .map(|name| (name, height))
+        .collect();
+    write_removals(conn, &removals, telemetry).await
 }
 
 // The fork revert, parameterized over the connection: a self-contained transaction from
@@ -75,12 +145,63 @@ async fn rollback_to_on(
 
 #[async_trait]
 impl CoinStore for SqliteStore {
+    async fn apply_coin_window_in(
+        &self,
+        batch: &mut crate::types::BatchHandle,
+        changes: &[crate::types::CoinChanges<'_>],
+    ) -> Result<(), StoreError> {
+        let mut additions = std::collections::HashMap::new();
+        let mut removals = std::collections::HashMap::new();
+        for change in changes {
+            for record in change.additions {
+                let name = record.coin.name();
+                removals.remove(&name);
+                additions.insert(
+                    name,
+                    CoinRecord {
+                        confirmed_block_index: change.height,
+                        spent_block_index: 0,
+                        spent: false,
+                        timestamp: change.timestamp,
+                        ..record.clone()
+                    },
+                );
+            }
+            for name in change.removals {
+                if let Some(record) = additions.get_mut(name) {
+                    record.spent_block_index = change.height;
+                    record.spent = true;
+                } else {
+                    removals.insert(*name, change.height);
+                }
+            }
+        }
+        let mut additions: Vec<_> = additions.into_iter().collect();
+        let mut removals: Vec<_> = removals.into_iter().collect();
+        additions.sort_unstable_by_key(|(name, _)| name.bytes());
+        removals.sort_unstable_by_key(|(name, _)| name.bytes());
+        let conn = batch.sqlite_conn()?;
+        write_additions(conn, &additions, &self.telemetry).await?;
+        write_removals(conn, &removals, &self.telemetry).await?;
+        #[cfg(feature = "hint")]
+        {
+            let pairs: Vec<_> = changes
+                .iter()
+                .flat_map(|change| change.hints.iter().copied())
+                .collect();
+            apply_hints_on(conn, &pairs, &self.telemetry).await?;
+        }
+        Ok(())
+    }
+
     async fn get_coin_record(&self, coin_name: &Bytes32) -> Result<Option<CoinRecord>, StoreError> {
+        let _timer = self.telemetry.coin_lookup.start();
         self.telemetry.coin_reads.fetch_add(1, Ordering::Relaxed);
         let row = sqlx::query(SELECT_COIN)
             .bind(*coin_name)
             .fetch_optional(&self.read)
             .await?;
+        self.telemetry.coin_lookup.statement(1);
         row.as_ref().map(row_to_coin_record).transpose()
     }
 
@@ -88,26 +209,23 @@ impl CoinStore for SqliteStore {
         if names.is_empty() {
             return Ok(Vec::new());
         }
+        if names.len() == 1 {
+            return Ok(self.get_coin_record(&names[0]).await?.into_iter().collect());
+        }
+        let _timer = self.telemetry.coin_lookup.start();
         self.telemetry
             .coin_reads
             .fetch_add(names.len() as u64, Ordering::Relaxed);
-        // Point-get each name over the primary key rather than one `coin_name IN (...)` statement.
-        //
-        // A dynamic `IN (...)` list defeats the query planner once it grows past SQLite's
-        // search-vs-scan cost crossover: on the WITHOUT ROWID `coin_name` primary key a short list
-        // plans as `SEARCH USING PRIMARY KEY` but a long one collapses to a full `SCAN
-        // coin_record`. That scan also pins a WAL read snapshot for its whole duration, blocking
-        // the checkpoint reset. A single `= ?` lookup can never regress to a scan, so this is
-        // stable regardless of table size or planner statistics. All lookups share one pooled read
-        // connection: one snapshot, held only for the batch.
         let mut conn = self.read.acquire().await?;
         let mut out = Vec::with_capacity(names.len());
-        for name in names {
-            if let Some(row) = sqlx::query(SELECT_COIN)
-                .bind(*name)
-                .fetch_optional(&mut *conn)
-                .await?
-            {
+        for chunk in names.chunks(COIN_LOOKUP_BATCH) {
+            let rows = coin_lookup_query(chunk)
+                .build()
+                .persistent(chunk.len() == COIN_LOOKUP_BATCH)
+                .fetch_all(&mut *conn)
+                .await?;
+            self.telemetry.coin_lookup.statement(chunk.len());
+            for row in rows {
                 out.push(row_to_coin_record(&row)?);
             }
         }
@@ -123,7 +241,15 @@ impl CoinStore for SqliteStore {
     ) -> Result<(), StoreError> {
         let mut guard = self.writer.lock().await;
         let mut tx = guard.begin().await?;
-        apply_block_on(&mut tx, height, timestamp, additions, removals).await?;
+        apply_block_on(
+            &mut tx,
+            height,
+            timestamp,
+            additions,
+            removals,
+            &self.telemetry,
+        )
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -136,7 +262,15 @@ impl CoinStore for SqliteStore {
         additions: &[CoinRecord],
         removals: &[Bytes32],
     ) -> Result<(), StoreError> {
-        apply_block_on(batch.sqlite_conn()?, height, timestamp, additions, removals).await
+        apply_block_on(
+            batch.sqlite_conn()?,
+            height,
+            timestamp,
+            additions,
+            removals,
+            &self.telemetry,
+        )
+        .await
     }
 
     async fn rollback_to(&self, fork_height: u32) -> Result<u64, StoreError> {
@@ -369,7 +503,7 @@ impl CoinStore for SqliteStore {
     ) -> Result<(), StoreError> {
         #[cfg(feature = "hint")]
         {
-            apply_hints_on(batch.sqlite_conn()?, pairs).await
+            apply_hints_on(batch.sqlite_conn()?, pairs, &self.telemetry).await
         }
         #[cfg(not(feature = "hint"))]
         {
@@ -383,7 +517,7 @@ impl CoinStore for SqliteStore {
         {
             let mut guard = self.writer.lock().await;
             let mut tx = guard.begin().await?;
-            apply_hints_on(&mut tx, pairs).await?;
+            apply_hints_on(&mut tx, pairs, &self.telemetry).await?;
             tx.commit().await?;
             Ok(())
         }
@@ -402,13 +536,24 @@ impl CoinStore for SqliteStore {
 async fn apply_hints_on(
     conn: &mut sqlx::SqliteConnection,
     pairs: &[(Bytes32, Bytes32)],
+    telemetry: &crate::telemetry::StoreTelemetry,
 ) -> Result<(), StoreError> {
-    for (hint, coin_name) in pairs {
-        sqlx::query("INSERT OR IGNORE INTO coin_hint (hint, coin_name) VALUES (?, ?)")
-            .bind(*hint)
-            .bind(*coin_name)
+    let _timer = telemetry.hints.start();
+    let mut pairs = pairs.to_vec();
+    pairs.sort_unstable_by_key(|(hint, name)| (hint.bytes(), name.bytes()));
+    pairs.dedup();
+    for chunk in pairs.chunks(400) {
+        let mut query =
+            sqlx::QueryBuilder::new("INSERT OR IGNORE INTO coin_hint (hint, coin_name) ");
+        query.push_values(chunk, |mut bindings, (hint, name)| {
+            bindings.push_bind(*hint).push_bind(*name);
+        });
+        query
+            .build()
+            .persistent(chunk.len() == 400)
             .execute(&mut *conn)
             .await?;
+        telemetry.hints.statement(chunk.len());
     }
     Ok(())
 }

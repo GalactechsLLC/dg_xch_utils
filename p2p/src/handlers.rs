@@ -1061,12 +1061,10 @@ impl FullNodeHandler {
                 )
                 .await
             }
-            // An unsolicited or late block reply bans the sender — a full node never volunteers
-            // these. A SOLICITED reply never reaches this dispatch: the read loop's
-            // correlation-id fast path (`PendingRequests::deliver`) consumes it before the
-            // handler scan, so any of these four types arriving here is by definition unsolicited
-            // (no pending waiter) or late (already timed out + cancelled). Close + evict + timed
-            // host ban via the peer's injected ban registry.
+            // A genuinely unsolicited block reply bans the sender — a full node never volunteers
+            // these. Solicited replies and replies to recently timed-out requests are consumed by
+            // the read loop's correlation-id fast path before the handler scan. Close + evict +
+            // timed host ban via the peer's injected ban registry.
             ProtocolMessageTypes::RespondBlock
             | ProtocolMessageTypes::RespondBlocks
             | ProtocolMessageTypes::RejectBlock
@@ -1966,9 +1964,9 @@ fn served(msg_type: ProtocolMessageTypes) -> bool {
             | ProtocolMessageTypes::NewPeak
             | ProtocolMessageTypes::RequestBlock
             | ProtocolMessageTypes::RequestBlocks
-            // The four block replies: solicited ones are consumed by the read loop's
-            // correlation-id fast path before the handler scan ever runs, so matching them here
-            // only catches unsolicited/late ones — dispatched to the close arm.
+            // The four block replies: solicited and recently timed-out ones are consumed by the
+            // read loop's correlation-id fast path before the handler scan ever runs, so matching
+            // them here catches genuinely unsolicited ones and dispatches them to the close arm.
             | ProtocolMessageTypes::RespondBlock
             | ProtocolMessageTypes::RespondBlocks
             | ProtocolMessageTypes::RejectBlock
