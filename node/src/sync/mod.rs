@@ -305,6 +305,9 @@ fn expand_confirmed(
 /// simultaneously-resident downloaded blocks stay bounded as chain height grows.
 #[derive(Default)]
 pub struct SyncMetrics {
+    pub confirm_coin_mutations: AtomicU64,
+    pub confirm_coin_bytes: AtomicU64,
+    pub confirm_oversized_coin_blocks: AtomicU64,
     pub stage_total_micros: AtomicU64,
     pub confirm_total_micros: AtomicU64,
     pub post_confirm_total_micros: AtomicU64,
@@ -498,6 +501,8 @@ pub struct Chaser<S, P> {
     engine: Engine<S, P>,
     config: SyncConfig,
     confirm_transaction_blocks: Option<usize>,
+    confirm_transaction_coin_changes: Option<usize>,
+    confirm_transaction_coin_bytes: Option<usize>,
     metrics: Arc<SyncMetrics>,
     // Bounded height window of candidate header records the headers-first pass populates; the ancestry the
     // full validator then reads (bounded — flat in chain height).
@@ -546,6 +551,8 @@ where
             engine: engine.with_assume_valid(config.assume_valid),
             config,
             confirm_transaction_blocks: None,
+            confirm_transaction_coin_changes: None,
+            confirm_transaction_coin_bytes: None,
             metrics: Arc::new(SyncMetrics::default()),
             header_cache: BlockRecordCache::with_default_window(),
         }
@@ -563,6 +570,15 @@ where
 
     pub fn set_confirm_transaction_blocks(&mut self, blocks: Option<usize>) {
         self.confirm_transaction_blocks = blocks.map(|value| value.max(1));
+    }
+
+    pub fn set_confirm_transaction_coin_limits(
+        &mut self,
+        changes: Option<usize>,
+        bytes: Option<usize>,
+    ) {
+        self.confirm_transaction_coin_changes = changes.map(|value| value.max(1));
+        self.confirm_transaction_coin_bytes = bytes.map(|value| value.max(1));
     }
 
     #[must_use]
@@ -1397,6 +1413,10 @@ where
         // Batch the loop's per-block store reads for the whole window (one candidate multi-get +
         // one peak read) so the staging loop awaits no per-block point reads.
         self.engine.preload_stage_context(&blocks).await?;
+        if let Err(error) = self.engine.preload_stage_coins(&blocks, &pre_bodies).await {
+            self.engine.clear_stage_preload();
+            return Err(error.into());
+        }
         for (bi, block) in blocks.iter().enumerate() {
             let pre = pre_bodies.remove(&block.height());
             let outcome = if per_block_staging {
@@ -1459,7 +1479,33 @@ where
         verdict: WindowVerdict,
     ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
         let limit = self.confirm_transaction_blocks.unwrap_or(usize::MAX);
-        if window.archive_written || window.staged.len() <= limit {
+        let coin_limit = self.confirm_transaction_coin_changes.unwrap_or(usize::MAX);
+        let byte_limit = self.confirm_transaction_coin_bytes.unwrap_or(usize::MAX);
+        let mut ranges = Vec::new();
+        let mut count = 0usize;
+        let mut coins = 0usize;
+        let mut bytes = 0usize;
+        for entry in &window.staged {
+            let next_coins = entry.0.coin_mutations();
+            let next_bytes = entry.0.estimated_coin_bytes();
+            if count > 0
+                && (count >= limit
+                    || coins.saturating_add(next_coins) > coin_limit
+                    || bytes.saturating_add(next_bytes) > byte_limit)
+            {
+                ranges.push(count);
+                count = 0;
+                coins = 0;
+                bytes = 0;
+            }
+            count += 1;
+            coins = coins.saturating_add(next_coins);
+            bytes = bytes.saturating_add(next_bytes);
+        }
+        if count > 0 {
+            ranges.push(count);
+        }
+        if window.archive_written || ranges.len() <= 1 {
             return self.confirm_window_part(window, verdict).await;
         }
         let StagedWindow {
@@ -1476,8 +1522,8 @@ where
         let mut offset = 0usize;
         let mut reported = Vec::new();
         let mut peak = None;
-        while offset < total {
-            let mut part: Vec<_> = staged.by_ref().take(limit).collect();
+        for count in ranges {
+            let mut part: Vec<_> = staged.by_ref().take(count).collect();
             let last_index = part.last().expect("nonempty transaction").3;
             let mut part_blocks = Vec::new();
             let first_index = blocks.peek().map_or(0, |(index, _)| *index);
@@ -1540,6 +1586,15 @@ where
         let confirm_upto = verdict.confirm_upto.min(staged.len());
         let vdf_err = verdict.err;
         let confirm_started = std::time::Instant::now();
+        let prepared_coins = self
+            .engine
+            .prepare_confirmation_coins(
+                &staged[..confirm_upto]
+                    .iter()
+                    .map(|entry| &entry.0)
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
         // Deferred archive persistence: EVERY staged row lands (the confirmed prefix plus any
         // rejected tail's candidates — matching the batch the staging loop used to carry), before
         // coins + set_peak in the same transaction.
@@ -1559,7 +1614,7 @@ where
         log::debug!("window.confirm blocks={}", to_confirm.len());
         let outcomes = self
             .engine
-            .confirm_staged_batch_in(to_confirm, window_batch.take())
+            .confirm_staged_batch_prepared(to_confirm, window_batch.take(), prepared_coins)
             .await?;
         self.metrics.window_confirm_micros.store(
             confirm_started.elapsed().as_micros() as u64,
@@ -1570,6 +1625,28 @@ where
             Ordering::Relaxed,
         );
         self.metrics.confirm_parts.fetch_add(1, Ordering::Relaxed);
+        for (outcome, delta) in outcomes.iter().zip(&reported) {
+            if matches!(
+                outcome,
+                AddBlockOutcome::AlreadyHave | AddBlockOutcome::Orphan { .. }
+            ) {
+                continue;
+            }
+            self.metrics
+                .confirm_coin_mutations
+                .fetch_add(delta.coin_mutations() as u64, Ordering::Relaxed);
+            self.metrics
+                .confirm_coin_bytes
+                .fetch_add(delta.estimated_coin_bytes() as u64, Ordering::Relaxed);
+            if delta.coin_mutations() > self.confirm_transaction_coin_changes.unwrap_or(usize::MAX)
+                || delta.estimated_coin_bytes()
+                    > self.confirm_transaction_coin_bytes.unwrap_or(usize::MAX)
+            {
+                self.metrics
+                    .confirm_oversized_coin_blocks
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
         for (outcome, delta) in outcomes.iter().zip(&reported) {
             if let AddBlockOutcome::Reorg { fork_height, .. } = outcome {
                 self.metrics.last_reorg_depth.store(

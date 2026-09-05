@@ -14,6 +14,23 @@ use std::sync::Arc;
 // wrapper — the single-writer/WAL-reader concurrency lives inside the backend, unchanged.
 #[async_trait]
 impl<T: CoinStore + Send + Sync> CoinStore for Arc<T> {
+    async fn prepare_coin_window(
+        &self,
+        changes: Vec<crate::types::OwnedCoinChanges>,
+    ) -> Result<crate::types::PreparedCoinWindow, StoreError> {
+        (**self).prepare_coin_window(changes).await
+    }
+
+    async fn apply_prepared_coin_window_in(
+        &self,
+        batch: &mut BatchHandle,
+        prepared: crate::types::PreparedCoinWindow,
+    ) -> Result<(), StoreError> {
+        (**self)
+            .apply_prepared_coin_window_in(batch, prepared)
+            .await
+    }
+
     async fn apply_coin_window_in(
         &self,
         batch: &mut BatchHandle,

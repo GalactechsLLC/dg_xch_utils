@@ -9,10 +9,17 @@ pub enum Phase {
     Signature,
     Body,
     Archive,
+    CoinPrepare,
 }
 
 impl Phase {
-    pub const ALL: [Self; 4] = [Self::Vdf, Self::Signature, Self::Body, Self::Archive];
+    pub const ALL: [Self; 5] = [
+        Self::Vdf,
+        Self::Signature,
+        Self::Body,
+        Self::Archive,
+        Self::CoinPrepare,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -20,6 +27,7 @@ impl Phase {
             Self::Signature => "signature",
             Self::Body => "body",
             Self::Archive => "archive",
+            Self::CoinPrepare => "coin_prepare",
         }
     }
 }
@@ -34,7 +42,7 @@ pub struct Counters {
     pub wait_nanos: AtomicU64,
 }
 
-static COUNTERS: [Counters; 4] = [const {
+static COUNTERS: [Counters; 5] = [const {
     Counters {
         active: AtomicU64::new(0),
         pending: AtomicU64::new(0),
@@ -43,7 +51,7 @@ static COUNTERS: [Counters; 4] = [const {
         cpu_nanos: AtomicU64::new(0),
         wait_nanos: AtomicU64::new(0),
     }
-}; 4];
+}; 5];
 struct ComputePools {
     validation: rayon::ThreadPool,
     archive: Option<rayon::ThreadPool>,
@@ -76,7 +84,9 @@ impl ComputePools {
 
     fn for_phase(&self, phase: Phase) -> &rayon::ThreadPool {
         match phase {
-            Phase::Archive => self.archive.as_ref().unwrap_or(&self.validation),
+            Phase::Archive | Phase::CoinPrepare => {
+                self.archive.as_ref().unwrap_or(&self.validation)
+            }
             _ => &self.validation,
         }
     }

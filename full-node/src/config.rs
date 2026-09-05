@@ -177,6 +177,8 @@ pub struct PerformanceConfig {
     pub validation_window_blocks: Option<u32>,
     pub validation_window_mb: u64,
     pub confirm_transaction_blocks: Option<usize>,
+    pub confirm_transaction_coin_changes: Option<usize>,
+    pub confirm_transaction_coin_mb: Option<u64>,
     pub sqlite_writer_cache_mb: Option<u64>,
     pub coalesce_coin_writes: bool,
 }
@@ -188,6 +190,8 @@ impl Default for PerformanceConfig {
             validation_window_blocks: None,
             validation_window_mb: 128,
             confirm_transaction_blocks: None,
+            confirm_transaction_coin_changes: None,
+            confirm_transaction_coin_mb: None,
             sqlite_writer_cache_mb: None,
             coalesce_coin_writes: false,
         }
@@ -196,6 +200,20 @@ impl Default for PerformanceConfig {
 
 impl PerformanceConfig {
     pub fn validate(&self) -> Result<(), String> {
+        if self
+            .confirm_transaction_coin_changes
+            .is_some_and(|value| !(1..=100_000_000).contains(&value))
+        {
+            return Err("confirmation coin changes must be between 1 and 100000000".into());
+        }
+        if self.confirm_transaction_coin_mb.is_some_and(|value| {
+            !(1..=65536).contains(&value)
+                || usize::try_from(value.saturating_mul(1024 * 1024)).is_err()
+        }) {
+            return Err(
+                "confirmation coin MiB must be between 1 and 65536 and fit this platform".into(),
+            );
+        }
         if self
             .compute_workers
             .is_some_and(|workers| workers == 0 || workers > 1024)

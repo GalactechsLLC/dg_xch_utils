@@ -79,6 +79,13 @@ where
         engine.set_coalesce_coin_writes(config.performance.coalesce_coin_writes);
         let mut chaser = Chaser::new(engine, SyncConfig::default());
         chaser.set_confirm_transaction_blocks(config.performance.confirm_transaction_blocks);
+        chaser.set_confirm_transaction_coin_limits(
+            config.performance.confirm_transaction_coin_changes,
+            config
+                .performance
+                .confirm_transaction_coin_mb
+                .map(|value| (value * 1024 * 1024) as usize),
+        );
         let sync_metrics = chaser.metrics().clone();
         let claimed_peak = Arc::new(AtomicU32::new(0));
         let mempool = Arc::new(Mutex::new(Mempool::new(&constants)));

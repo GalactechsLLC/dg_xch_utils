@@ -163,8 +163,51 @@ pub(super) fn render(output: &mut String, store: Option<&StoreTelemetry>, sync: 
         "# HELP fullnode_confirm_parts_total Successfully persisted confirmation parts.\n# TYPE fullnode_confirm_parts_total counter\nfullnode_confirm_parts_total {}",
         sync.confirm_parts.load(Ordering::Relaxed)
     );
+    for (name, help, counter) in [
+        (
+            "fullnode_confirm_coin_mutations_total",
+            "Input additions, spends and hints of accepted reported blocks; not affected SQL rows.",
+            &sync.confirm_coin_mutations,
+        ),
+        (
+            "fullnode_confirm_coin_bytes_total",
+            "Estimated input coin payload of accepted reported blocks; excludes archive, indexes, WAL and allocator overhead.",
+            &sync.confirm_coin_bytes,
+        ),
+        (
+            "fullnode_confirm_oversized_coin_blocks_total",
+            "Accepted reported blocks individually exceeding configured coin budgets.",
+            &sync.confirm_oversized_coin_blocks,
+        ),
+    ] {
+        let _ = writeln!(
+            output,
+            "# HELP {name} {help}\n# TYPE {name} counter\n{name} {}",
+            counter.load(Ordering::Relaxed)
+        );
+    }
     if let Some(store) = store {
+        family(
+            output,
+            "fullnode_coin_path_events_total",
+            "Coin path work and cache events; preparation counts include hints only when hint persistence is enabled.",
+            "counter",
+            "event",
+            &[
+                ("view_reuse", &store.coin_view_reused),
+                ("ancestors_walked", &store.coin_view_ancestors),
+                ("coins_folded", &store.coin_view_coins),
+                ("prefetch_hit", &store.coin_prefetch_hits),
+                ("lookup_fallback", &store.coin_prefetch_fallbacks),
+                ("prepared_input_mutations", &store.coin_prepare_input_rows),
+                ("prepared_output_mutations", &store.coin_prepare_output_rows),
+            ],
+            1.0,
+        );
         let operations = [
+            ("coin_prepare", &store.coin_prepare),
+            ("coin_view", &store.coin_view),
+            ("coin_prefetch", &store.coin_prefetch),
             ("writer_wait", &store.writer_wait),
             ("writer_hold", &store.writer_hold),
             ("archive_prepare", &store.archive_prepare),
@@ -255,6 +298,7 @@ mod tests {
             .store(2_000_000_000, Ordering::Relaxed);
         store.coin_additions.statement(100);
         store.coin_lookup.statement(256);
+        store.coin_prefetch_hits.store(42, Ordering::Relaxed);
         let mut output = String::new();
         render(&mut output, Some(&store), &SyncMetrics::default());
         assert!(
@@ -268,6 +312,10 @@ mod tests {
             )
         );
         assert!(output.contains("# TYPE fullnode_compute_cpu_seconds_total counter"));
+        assert!(output.contains("fullnode_coin_path_events_total{event=\"prefetch_hit\"} 42\n"));
+        assert!(
+            output.contains("fullnode_store_operation_calls_total{operation=\"coin_prepare\"}")
+        );
         assert!(
             output.contains("fullnode_store_operation_rows_total{operation=\"coin_lookup\"} 256\n")
         );

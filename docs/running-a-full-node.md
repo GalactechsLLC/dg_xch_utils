@@ -1,8 +1,5 @@
 # Running a dg_xch Full Node
 
-For CPU, validation-window, transaction-window and writer-cache experiments, see the
-[SQLite confirmation performance testing plan](sqlite-confirm-performance-testing.md).
-
 ## Build
 
 Install stable Rust, `cmake`, a C compiler, and the system zstd development package. Then build the node:

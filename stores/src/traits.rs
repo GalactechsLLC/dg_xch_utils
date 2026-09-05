@@ -14,6 +14,30 @@ use dg_xch_core::protocols::wallet::CoinStateFilters;
 /// streamed range delete/update returning a count, never a materialized changed-coin set.
 #[async_trait]
 pub trait CoinStore {
+    async fn prepare_coin_window(
+        &self,
+        changes: Vec<crate::types::OwnedCoinChanges>,
+    ) -> Result<crate::types::PreparedCoinWindow, StoreError> {
+        Ok(crate::types::PreparedCoinWindow::Native(changes))
+    }
+
+    async fn apply_prepared_coin_window_in(
+        &self,
+        batch: &mut BatchHandle,
+        prepared: crate::types::PreparedCoinWindow,
+    ) -> Result<(), StoreError> {
+        let crate::types::PreparedCoinWindow::Native(changes) = prepared else {
+            return Err(StoreError::Batch(
+                "coins prepared by another backend".into(),
+            ));
+        };
+        let changes: Vec<_> = changes
+            .iter()
+            .map(crate::types::OwnedCoinChanges::borrowed)
+            .collect();
+        self.apply_coin_window_in(batch, &changes).await
+    }
+
     async fn apply_coin_window_in(
         &self,
         batch: &mut BatchHandle,

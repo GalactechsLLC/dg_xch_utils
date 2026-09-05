@@ -61,6 +61,80 @@ async fn coin_lookup_batches_preserve_order_duplicates_and_missing_names() {
 }
 
 #[tokio::test]
+async fn prepared_coins_do_not_wait_for_writer_and_preserve_atomic_spent_records() {
+    let store = common::new_store().await;
+    let additions: Vec<_> = (0..600).map(coin).collect();
+    let removals: Vec<_> = additions[..300]
+        .iter()
+        .map(|record| record.coin.name())
+        .collect();
+    let changes = vec![dg_xch_stores::types::OwnedCoinChanges {
+        height: 4,
+        timestamp: 40,
+        additions: additions.clone(),
+        removals: removals.clone(),
+        hints: vec![(Bytes32::from([3; 32]), additions[0].coin.name()); 2],
+    }];
+    let mut batch = store.begin().await.unwrap();
+    let prepared = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        store.prepare_coin_window(changes.clone()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    store
+        .apply_prepared_coin_window_in(&mut batch, prepared)
+        .await
+        .unwrap();
+    assert!(store.get_coin_record(&removals[0]).await.unwrap().is_none());
+    drop(batch);
+    let mut batch = store.begin().await.unwrap();
+    assert!(store.get_coin_record(&removals[0]).await.unwrap().is_none());
+    let prepared = store.prepare_coin_window(changes.clone()).await.unwrap();
+    store
+        .apply_prepared_coin_window_in(&mut batch, prepared)
+        .await
+        .unwrap();
+    store.commit(batch).await.unwrap();
+    let sequential = common::new_store().await;
+    for change in &changes {
+        sequential
+            .apply_block(
+                change.height,
+                change.timestamp,
+                &change.additions,
+                &change.removals,
+            )
+            .await
+            .unwrap();
+    }
+    let names: Vec<_> = additions.iter().map(|record| record.coin.name()).collect();
+    assert_eq!(
+        store.get_coin_records(&names).await.unwrap(),
+        sequential.get_coin_records(&names).await.unwrap()
+    );
+    let record = store.get_coin_record(&removals[0]).await.unwrap().unwrap();
+    assert!(record.spent);
+    assert_eq!(record.confirmed_block_index, 4);
+    assert_eq!(record.spent_block_index, 4);
+    store.rollback_to(3).await.unwrap();
+    assert!(store.get_coin_records(&names).await.unwrap().is_empty());
+    assert!(
+        store
+            .telemetry()
+            .unwrap()
+            .coin_prepare_input_rows
+            .load(Ordering::Relaxed)
+            > store
+                .telemetry()
+                .unwrap()
+                .coin_prepare_output_rows
+                .load(Ordering::Relaxed)
+    );
+}
+
+#[tokio::test]
 async fn coalesced_coin_window_matches_sequential_writes_and_rollback() {
     let sequential = common::new_store().await;
     let coalesced = common::new_store().await;
@@ -118,8 +192,23 @@ async fn coalesced_coin_window_matches_sequential_writes_and_rollback() {
     }
     sequential.commit(batch).await.unwrap();
     let mut batch = coalesced.begin().await.unwrap();
+    let prepared = coalesced
+        .prepare_coin_window(
+            changes
+                .iter()
+                .map(|change| dg_xch_stores::types::OwnedCoinChanges {
+                    height: change.height,
+                    timestamp: change.timestamp,
+                    additions: change.additions.to_vec(),
+                    removals: change.removals.to_vec(),
+                    hints: change.hints.to_vec(),
+                })
+                .collect(),
+        )
+        .await
+        .unwrap();
     coalesced
-        .apply_coin_window_in(&mut batch, &changes)
+        .apply_prepared_coin_window_in(&mut batch, prepared)
         .await
         .unwrap();
     coalesced.commit(batch).await.unwrap();

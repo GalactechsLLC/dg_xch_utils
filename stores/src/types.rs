@@ -10,6 +10,36 @@ pub struct CoinChanges<'a> {
     pub hints: &'a [(Bytes32, Bytes32)],
 }
 
+#[derive(Clone)]
+pub struct OwnedCoinChanges {
+    pub height: u32,
+    pub timestamp: u64,
+    pub additions: Vec<dg_xch_core::blockchain::coin_record::CoinRecord>,
+    pub removals: Vec<Bytes32>,
+    pub hints: Vec<(Bytes32, Bytes32)>,
+}
+
+impl OwnedCoinChanges {
+    pub fn borrowed(&self) -> CoinChanges<'_> {
+        CoinChanges {
+            height: self.height,
+            timestamp: self.timestamp,
+            additions: &self.additions,
+            removals: &self.removals,
+            hints: &self.hints,
+        }
+    }
+}
+
+pub enum PreparedCoinWindow {
+    Native(Vec<OwnedCoinChanges>),
+    Sqlite {
+        additions: Vec<(Bytes32, dg_xch_core::blockchain::coin_record::CoinRecord)>,
+        removals: Vec<(Bytes32, u32)>,
+        hints: Vec<(Bytes32, Bytes32)>,
+    },
+}
+
 pub enum PreparedArchive {
     Native {
         records: Vec<(

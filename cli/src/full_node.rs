@@ -71,6 +71,16 @@ pub struct FullNodeArgs {
     confirm_transaction_blocks: Option<usize>,
     #[arg(
         long,
+        help = "Maximum coin additions, spends and hints per bulk confirmation part; one oversized block is admitted"
+    )]
+    confirm_transaction_coin_changes: Option<usize>,
+    #[arg(
+        long,
+        help = "Maximum estimated coin payload MiB per bulk confirmation part; not an RSS or WAL limit"
+    )]
+    confirm_transaction_coin_mb: Option<u64>,
+    #[arg(
+        long,
         help = "SQLite bulk writer cache budget in MiB; default 256, near-tip remains 64"
     )]
     sqlite_writer_cache_mb: Option<u64>,
@@ -166,6 +176,8 @@ impl FullNodeArgs {
         config.performance.validation_window_blocks = self.validation_window_blocks;
         config.performance.validation_window_mb = self.validation_window_mb;
         config.performance.confirm_transaction_blocks = self.confirm_transaction_blocks;
+        config.performance.confirm_transaction_coin_changes = self.confirm_transaction_coin_changes;
+        config.performance.confirm_transaction_coin_mb = self.confirm_transaction_coin_mb;
         config.performance.sqlite_writer_cache_mb = self.sqlite_writer_cache_mb;
         config.performance.coalesce_coin_writes = self.coalesce_coin_writes;
         config.performance.validate().map_err(Error::other)?;

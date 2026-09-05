@@ -143,55 +143,140 @@ async fn rollback_to_on(
     Ok(deleted + unspent)
 }
 
+fn prepare_coin_changes(
+    changes: &[crate::types::CoinChanges<'_>],
+) -> crate::types::PreparedCoinWindow {
+    let mut additions = std::collections::HashMap::new();
+    let mut removals = std::collections::HashMap::new();
+    for change in changes {
+        for record in change.additions {
+            let name = record.coin.name();
+            removals.remove(&name);
+            additions.insert(
+                name,
+                CoinRecord {
+                    confirmed_block_index: change.height,
+                    spent_block_index: 0,
+                    spent: false,
+                    timestamp: change.timestamp,
+                    ..record.clone()
+                },
+            );
+        }
+        for name in change.removals {
+            if let Some(record) = additions.get_mut(name) {
+                record.spent_block_index = change.height;
+                record.spent = true;
+            } else {
+                removals.insert(*name, change.height);
+            }
+        }
+    }
+    let mut additions: Vec<_> = additions.into_iter().collect();
+    let mut removals: Vec<_> = removals.into_iter().collect();
+    additions.sort_unstable_by_key(|(name, _)| name.bytes());
+    removals.sort_unstable_by_key(|(name, _)| name.bytes());
+
+    #[cfg(feature = "hint")]
+    let hints = {
+        let mut hints: Vec<_> = changes
+            .iter()
+            .flat_map(|change| change.hints.iter().copied())
+            .collect();
+        hints.sort_unstable_by_key(|(hint, name)| (hint.bytes(), name.bytes()));
+        hints.dedup();
+        hints
+    };
+    #[cfg(not(feature = "hint"))]
+    let hints = Vec::new();
+    crate::types::PreparedCoinWindow::Sqlite {
+        additions,
+        removals,
+        hints,
+    }
+}
+
 #[async_trait]
 impl CoinStore for SqliteStore {
+    async fn prepare_coin_window(
+        &self,
+        changes: Vec<crate::types::OwnedCoinChanges>,
+    ) -> Result<crate::types::PreparedCoinWindow, StoreError> {
+        let telemetry = self.telemetry.clone();
+        tokio::task::spawn_blocking(move || {
+            let _timer = telemetry.coin_prepare.start();
+            let input_rows: usize = changes
+                .iter()
+                .map(|change| {
+                    change.additions.len()
+                        + change.removals.len()
+                        + if cfg!(feature = "hint") {
+                            change.hints.len()
+                        } else {
+                            0
+                        }
+                })
+                .sum();
+            let changes: Vec<_> = changes
+                .iter()
+                .map(crate::types::OwnedCoinChanges::borrowed)
+                .collect();
+            let prepared =
+                dg_xch_core::compute::map(dg_xch_core::compute::Phase::CoinPrepare, &[()], |_| {
+                    prepare_coin_changes(&changes)
+                })
+                .pop()
+                .expect("one coin preparation job");
+            if let crate::types::PreparedCoinWindow::Sqlite {
+                additions,
+                removals,
+                hints,
+            } = &prepared
+            {
+                telemetry
+                    .coin_prepare_input_rows
+                    .fetch_add(input_rows as u64, Ordering::Relaxed);
+                telemetry.coin_prepare_output_rows.fetch_add(
+                    (additions.len() + removals.len() + hints.len()) as u64,
+                    Ordering::Relaxed,
+                );
+            }
+            prepared
+        })
+        .await
+        .map_err(|error| StoreError::Batch(format!("coin preparation: {error}")))
+    }
+
+    async fn apply_prepared_coin_window_in(
+        &self,
+        batch: &mut crate::types::BatchHandle,
+        prepared: crate::types::PreparedCoinWindow,
+    ) -> Result<(), StoreError> {
+        let crate::types::PreparedCoinWindow::Sqlite {
+            additions,
+            removals,
+            hints: _hints,
+        } = prepared
+        else {
+            return Err(StoreError::Batch(
+                "coins prepared by another backend".into(),
+            ));
+        };
+        let conn = batch.sqlite_conn()?;
+        write_additions(conn, &additions, &self.telemetry).await?;
+        write_removals(conn, &removals, &self.telemetry).await?;
+        #[cfg(feature = "hint")]
+        write_hints_on(conn, &_hints, &self.telemetry).await?;
+        Ok(())
+    }
+
     async fn apply_coin_window_in(
         &self,
         batch: &mut crate::types::BatchHandle,
         changes: &[crate::types::CoinChanges<'_>],
     ) -> Result<(), StoreError> {
-        let mut additions = std::collections::HashMap::new();
-        let mut removals = std::collections::HashMap::new();
-        for change in changes {
-            for record in change.additions {
-                let name = record.coin.name();
-                removals.remove(&name);
-                additions.insert(
-                    name,
-                    CoinRecord {
-                        confirmed_block_index: change.height,
-                        spent_block_index: 0,
-                        spent: false,
-                        timestamp: change.timestamp,
-                        ..record.clone()
-                    },
-                );
-            }
-            for name in change.removals {
-                if let Some(record) = additions.get_mut(name) {
-                    record.spent_block_index = change.height;
-                    record.spent = true;
-                } else {
-                    removals.insert(*name, change.height);
-                }
-            }
-        }
-        let mut additions: Vec<_> = additions.into_iter().collect();
-        let mut removals: Vec<_> = removals.into_iter().collect();
-        additions.sort_unstable_by_key(|(name, _)| name.bytes());
-        removals.sort_unstable_by_key(|(name, _)| name.bytes());
-        let conn = batch.sqlite_conn()?;
-        write_additions(conn, &additions, &self.telemetry).await?;
-        write_removals(conn, &removals, &self.telemetry).await?;
-        #[cfg(feature = "hint")]
-        {
-            let pairs: Vec<_> = changes
-                .iter()
-                .flat_map(|change| change.hints.iter().copied())
-                .collect();
-            apply_hints_on(conn, &pairs, &self.telemetry).await?;
-        }
-        Ok(())
+        self.apply_prepared_coin_window_in(batch, prepare_coin_changes(changes))
+            .await
     }
 
     async fn get_coin_record(&self, coin_name: &Bytes32) -> Result<Option<CoinRecord>, StoreError> {
@@ -538,10 +623,19 @@ async fn apply_hints_on(
     pairs: &[(Bytes32, Bytes32)],
     telemetry: &crate::telemetry::StoreTelemetry,
 ) -> Result<(), StoreError> {
-    let _timer = telemetry.hints.start();
     let mut pairs = pairs.to_vec();
     pairs.sort_unstable_by_key(|(hint, name)| (hint.bytes(), name.bytes()));
     pairs.dedup();
+    write_hints_on(conn, &pairs, telemetry).await
+}
+
+#[cfg(feature = "hint")]
+async fn write_hints_on(
+    conn: &mut sqlx::SqliteConnection,
+    pairs: &[(Bytes32, Bytes32)],
+    telemetry: &crate::telemetry::StoreTelemetry,
+) -> Result<(), StoreError> {
+    let _timer = telemetry.hints.start();
     for chunk in pairs.chunks(400) {
         let mut query =
             sqlx::QueryBuilder::new("INSERT OR IGNORE INTO coin_hint (hint, coin_name) ");

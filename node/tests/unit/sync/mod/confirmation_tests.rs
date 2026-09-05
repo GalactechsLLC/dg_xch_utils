@@ -38,7 +38,10 @@ async fn split_confirmation_preserves_failure_prefix_and_restarts() {
     let base: FullBlock =
         serde_json::from_str(include_str!("../../../fixtures/full_block_5000000.json")).unwrap();
     let chain = build_chain(&base, START, START + N - 1, Bytes32::from([0xab; 32]));
-    for boundary in [0, 3, 5, 7] {
+    for (boundary, mode) in [0, 3, 5, 7]
+        .into_iter()
+        .flat_map(|boundary| (0..3).map(move |mode| (boundary, mode)))
+    {
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(
             dg_xch_stores::SqliteStore::open(&directory.path().join("chain.db"))
@@ -48,8 +51,14 @@ async fn split_confirmation_preserves_failure_prefix_and_restarts() {
         let mut engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
         engine.set_coalesce_coin_writes(true);
         let mut chaser = Chaser::new(engine, cfg());
-        chaser.set_confirm_transaction_blocks(Some(3));
+        chaser.set_confirm_transaction_blocks((mode == 0).then_some(3));
         let window = chaser.stage_window_pre(chain.clone(), None).await.unwrap();
+        let coin_limit = window.staged[0].0.coin_mutations() * 3;
+        let byte_limit = window.staged[0].0.estimated_coin_bytes() * 3;
+        chaser.set_confirm_transaction_coin_limits(
+            (mode == 1).then_some(coin_limit),
+            (mode == 2).then_some(byte_limit),
+        );
         let verdict = crate::sync::WindowVerdict {
             confirm_upto: boundary,
             err: Some(crate::error::NodeError::Invalid("injected drain failure".into()).into()),
@@ -65,7 +74,11 @@ async fn split_confirmation_preserves_failure_prefix_and_restarts() {
         let mut engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
         engine.set_coalesce_coin_writes(true);
         let mut resumed = Chaser::new(engine, cfg());
-        resumed.set_confirm_transaction_blocks(Some(3));
+        resumed.set_confirm_transaction_blocks((mode == 0).then_some(3));
+        resumed.set_confirm_transaction_coin_limits(
+            (mode == 1).then_some(coin_limit),
+            (mode == 2).then_some(byte_limit),
+        );
         let peak = resumed.follow_blocks(&chain[boundary..]).await.unwrap();
         assert_eq!(
             peak,

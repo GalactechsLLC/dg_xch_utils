@@ -10,6 +10,8 @@ fn confirmation_performance_controls_parse() {
         "--validation-window-blocks=256",
         "--validation-window-mb=64",
         "--confirm-transaction-blocks=64",
+        "--confirm-transaction-coin-changes=50000",
+        "--confirm-transaction-coin-mb=32",
         "--sqlite-writer-cache-mb=1024",
         "--coalesce-coin-writes",
         "--prefetch-memory-mb=1024",

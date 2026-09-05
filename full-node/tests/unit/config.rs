@@ -29,6 +29,22 @@ fn performance_bounds_reject_zero_and_unbounded_work() {
             ..PerformanceConfig::default()
         },
         PerformanceConfig {
+            confirm_transaction_coin_changes: Some(0),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            confirm_transaction_coin_changes: Some(100_000_001),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            confirm_transaction_coin_mb: Some(0),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
+            confirm_transaction_coin_mb: Some(65_537),
+            ..PerformanceConfig::default()
+        },
+        PerformanceConfig {
             sqlite_writer_cache_mb: Some(0),
             ..PerformanceConfig::default()
         },
