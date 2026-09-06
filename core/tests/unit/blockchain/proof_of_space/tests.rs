@@ -301,3 +301,20 @@ fn get_plot_id_routes_by_version() {
     assert!(make_pos(1, true, true, 0).get_plot_id().is_none());
     assert!(make_pos(1, false, false, 0).get_plot_id().is_none());
 }
+#[test]
+fn plot_filter_prefix_matches_bit_reference_for_all_i8_values() {
+    for set_bit in 0..=256 {
+        let mut digest = [0; 32];
+        if set_bit < 256 {
+            digest[set_bit / 8] = 1 << (7 - set_bit % 8);
+        }
+        for prefix in i8::MIN..=i8::MAX {
+            let expected = digest
+                .iter()
+                .flat_map(|byte| (0..8).rev().map(move |bit| (byte >> bit) & 1))
+                .take(prefix as usize)
+                .all(|bit| bit == 0);
+            assert_eq!(passes_plot_filter_input(prefix, digest.into()), expected);
+        }
+    }
+}

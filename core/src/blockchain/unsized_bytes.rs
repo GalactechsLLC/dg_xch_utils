@@ -152,7 +152,18 @@ impl fmt::Debug for UnsizedBytes {
 }
 impl ChiaSerialize for UnsizedBytes {
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
-        self.bytes.to_bytes(version)
+        let mut bytes = Vec::with_capacity(4 + self.bytes.len());
+        self.append_bytes(&mut bytes, version)?;
+        Ok(bytes)
+    }
+    fn append_bytes(
+        &self,
+        bytes: &mut Vec<u8>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<(), Error> {
+        bytes.extend_from_slice(&(self.bytes.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&self.bytes);
+        Ok(())
     }
     fn from_bytes(bytes: &mut Cursor<&[u8]>, version: ChiaProtocolVersion) -> Result<Self, Error>
     where

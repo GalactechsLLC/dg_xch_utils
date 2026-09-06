@@ -645,8 +645,12 @@ fn pow_window_table(
     let wbase = WForm::from_form(base);
     let mut table: Vec<WForm> = Vec::with_capacity(1 << POW_WINDOW);
     table.push(wbase);
-    for i in 1..(1 << POW_WINDOW) - 1 {
-        let next = wmultiply(&table[i - 1], &wbase, wd, gl);
+    for power in 2..(1 << POW_WINDOW) {
+        let next = if power % 2 == 0 {
+            wsquare(&table[power / 2 - 1], wd, gl)
+        } else {
+            wmultiply(&table[power - 2], &wbase, wd, gl)
+        };
         table.push(next);
     }
     table

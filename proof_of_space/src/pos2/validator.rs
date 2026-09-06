@@ -33,6 +33,15 @@ impl ProofValidator {
     pub fn validate_table_1_pair(&self, xs: &[u32; 2]) -> Option<T1Pairing> {
         let match_info_l = self.core.hashing.g(xs[0]);
         let match_info_r = self.core.hashing.g(xs[1]);
+        self.validate_table_1_with_matches(xs, match_info_l, match_info_r)
+    }
+
+    fn validate_table_1_with_matches(
+        &self,
+        xs: &[u32; 2],
+        match_info_l: u32,
+        match_info_r: u32,
+    ) -> Option<T1Pairing> {
         if !self
             .core
             .validate_match_info_pairing(1, u64::from(xs[0]), match_info_l, match_info_r)
@@ -46,6 +55,10 @@ impl ProofValidator {
     pub fn validate_table_2_pairs(&self, xs: &[u32; 4]) -> Option<T2Pairing> {
         let left = self.validate_table_1_pair(&[xs[0], xs[1]])?;
         let right = self.validate_table_1_pair(&[xs[2], xs[3]])?;
+        self.validate_table_2_with_pairs(left, right)
+    }
+
+    fn validate_table_2_with_pairs(&self, left: T1Pairing, right: T1Pairing) -> Option<T2Pairing> {
         if !self
             .core
             .validate_match_info_pairing(2, left.meta, left.match_info, right.match_info)
@@ -57,8 +70,17 @@ impl ProofValidator {
 
     #[must_use]
     pub fn validate_table_3_pairs(&self, xs: &[u32; 8]) -> Option<T3Pairing> {
-        let left = self.validate_table_2_pairs(&[xs[0], xs[1], xs[2], xs[3]])?;
-        let right = self.validate_table_2_pairs(&[xs[4], xs[5], xs[6], xs[7]])?;
+        let mut matches = [0; 8];
+        self.core.hashing.g_batch(xs, &mut matches);
+        let pair = |offset: usize| {
+            self.validate_table_1_with_matches(
+                &[xs[offset], xs[offset + 1]],
+                matches[offset],
+                matches[offset + 1],
+            )
+        };
+        let left = self.validate_table_2_with_pairs(pair(0)?, pair(2)?)?;
+        let right = self.validate_table_2_with_pairs(pair(4)?, pair(6)?)?;
         if !self
             .core
             .validate_match_info_pairing(3, left.meta, left.match_info, right.match_info)

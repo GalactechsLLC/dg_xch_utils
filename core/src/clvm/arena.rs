@@ -258,8 +258,7 @@ impl Arena {
     ///
     /// Rewound storage converts into ghosts rather than falling out of the count: the ceilings
     /// are consensus, and the reference allocator only grows within a run, so a node minted and
-    /// rewound must still count against them. The intern map is cleared wholesale — its entries
-    /// index into the truncated pools.
+    /// rewound must still count against them. Interned atoms preceding the checkpoint remain valid.
     pub fn restore(&mut self, cp: Checkpoint) {
         self.ghost_heap += self.u8_vec.len() - cp.heap;
         self.ghost_pairs += self.pair_vec.len() - cp.pairs;
@@ -267,7 +266,8 @@ impl Arena {
         self.u8_vec.truncate(cp.heap);
         self.pair_vec.truncate(cp.pairs);
         self.atom_vec.truncate(cp.atoms);
-        self.atom_intern.clear();
+        self.atom_intern
+            .retain(|_, node| (node.index() as usize) < cp.atoms);
     }
 
     /// Truncate all pools (capacity retained) and reset the ghost counters to their initial

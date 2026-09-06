@@ -1,6 +1,28 @@
 use super::*;
 use crate::discriminant::create_discriminant_int;
 
+#[test]
+fn window_table_matches_repeated_reference_composition() {
+    let discriminant = create_discriminant_int(b"window-table-reference", 1024).unwrap();
+    let bound = nucomp_bound(&discriminant);
+    let wide_discriminant = crate::limbs::SwWide::from_bigint(&discriminant);
+    let gcd_bound = crate::limbs::SwGcd::from_bigint(&bound);
+    let mut base = Form::generator(&discriminant).unwrap();
+    for _ in 0..8 {
+        let table = pow_window_table(&base, &wide_discriminant, &gcd_bound);
+        let mut expected = base.clone();
+        for entry in table {
+            assert_eq!(
+                entry.to_form().serialize(1024).unwrap(),
+                expected.serialize(1024).unwrap()
+            );
+            expected = expected.compose_reference(&base).unwrap();
+            expected.reduce();
+        }
+        base = base.square().unwrap();
+    }
+}
+
 // lehmer_gcdinv must agree with the schoolbook extended GCD: g = gcd(b, a) and v·b ≡ g (mod a),
 // 0 ≤ v < a, across a walk of real-size operands.
 #[test]

@@ -84,3 +84,18 @@ fn individual_full_block_round_trips() {
         );
     }
 }
+#[test]
+fn appended_real_wire_preserves_prefix_and_protocol_versions() {
+    let response = decode();
+    for version in [
+        ChiaProtocolVersion::Chia0_0_34,
+        ChiaProtocolVersion::Chia0_0_35,
+        ChiaProtocolVersion::Chia0_0_36,
+        ChiaProtocolVersion::Chia0_0_37,
+    ] {
+        let mut bytes = vec![0xab; 17];
+        response.append_bytes(&mut bytes, version).unwrap();
+        assert_eq!(&bytes[..17], &[0xab; 17]);
+        assert_eq!(&bytes[17..], RAW);
+    }
+}

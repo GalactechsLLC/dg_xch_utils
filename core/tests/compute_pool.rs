@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[test]
 fn concurrent_batches_share_the_worker_budget_and_keep_result_order() {
     compute::configure(2).unwrap();
+    assert_eq!(compute::install_validation(rayon::current_num_threads), 1);
     let active = AtomicUsize::new(0);
     let maximum = AtomicUsize::new(0);
     std::thread::scope(|scope| {

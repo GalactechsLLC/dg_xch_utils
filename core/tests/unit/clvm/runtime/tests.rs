@@ -66,6 +66,35 @@ fn cost_limit_is_enforced() {
     assert!(matches!(err, ClvmError::CostExceeded(_, _)), "got {err:?}");
 }
 
+#[test]
+fn reused_runtime_resets_after_failure_and_uses_each_cost_limit() {
+    let program = Program::to((1_u8, 100_u8));
+    let args = Program::default();
+    let mut runtime = ClvmRuntime::new(20, 0);
+    let expected = runtime.run(program.sexp(), args.sexp()).unwrap();
+    let counters = runtime.arena_counters();
+    for limit in [5, 20, 19, 0, 21, 1, 20] {
+        runtime.set_max_cost(limit);
+        let mut fresh = ClvmRuntime::new(limit, 0);
+        let actual = runtime.run(program.sexp(), args.sexp());
+        let reference = fresh.run(program.sexp(), args.sexp());
+        match (actual, reference) {
+            (Ok(actual), Ok(reference)) => {
+                assert_eq!(actual, reference);
+                assert_eq!(actual, expected);
+                assert_eq!(runtime.arena_counters(), counters);
+            }
+            (
+                Err(ClvmError::CostExceeded(actual, actual_limit)),
+                Err(ClvmError::CostExceeded(reference, reference_limit)),
+            ) => {
+                assert_eq!((actual, actual_limit), (reference, reference_limit));
+            }
+            other => panic!("runtime mismatch: {other:?}"),
+        }
+    }
+}
+
 // factorial(5) == 120
 #[test]
 fn factorial_of_five_is_120() {

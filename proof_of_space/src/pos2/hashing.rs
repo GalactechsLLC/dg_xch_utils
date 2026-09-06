@@ -70,6 +70,15 @@ impl ProofHashing {
         self.aes.g_x(x, AES_G_ROUNDS)
     }
 
+    pub fn g_batch<const COUNT: usize>(&self, inputs: &[u32; COUNT], output: &mut [u32; COUNT]) {
+        if self.params.is_testnet() {
+            let inputs = inputs.map(|value| value ^ TESTNET_G_XOR_CONST);
+            self.aes.g_x_batch(&inputs, output, AES_G_ROUNDS);
+        } else {
+            self.aes.g_x_batch(inputs, output, AES_G_ROUNDS);
+        }
+    }
+
     #[must_use]
     pub fn matching_target(
         &self,

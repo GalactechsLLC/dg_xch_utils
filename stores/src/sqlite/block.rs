@@ -612,6 +612,8 @@ impl BlockStore for SqliteStore {
                 }
             }
         }
+        drop(batch);
+        self.checkpoint_notify.notify_one();
         Ok(())
     }
 

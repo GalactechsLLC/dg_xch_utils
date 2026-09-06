@@ -14,8 +14,8 @@ pub struct MemoMetrics {
 }
 
 struct Entries<Key, Value> {
-    values: HashMap<Key, (Arc<OnceLock<Value>>, u64)>,
-    order: BTreeMap<u64, Key>,
+    values: HashMap<Arc<Key>, (Arc<OnceLock<Value>>, u64)>,
+    order: BTreeMap<u64, Arc<Key>>,
     tick: u64,
 }
 
@@ -25,7 +25,7 @@ pub(crate) struct Memo<Key, Value> {
     pub metrics: MemoMetrics,
 }
 
-impl<Key: Clone + Eq + Hash, Value> Memo<Key, Value> {
+impl<Key: Eq + Hash, Value> Memo<Key, Value> {
     pub fn new(capacity: usize) -> Self {
         assert!(capacity > 0);
         Self {
@@ -50,13 +50,13 @@ impl<Key: Clone + Eq + Hash, Value> Memo<Key, Value> {
             .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
         entries.tick += 1;
         let tick = entries.tick;
-        let cell = if let Some((cell, previous)) = entries.values.get(&key).cloned() {
-            entries.order.remove(&previous);
+        let (key, cell) = if let Some((cell, previous)) = entries.values.get(&key).cloned() {
+            let stored_key = entries.order.remove(&previous).expect("memo recency entry");
             self.metrics.hits.fetch_add(1, Ordering::Relaxed);
             if cell.get().is_none() {
                 self.metrics.shared.fetch_add(1, Ordering::Relaxed);
             }
-            cell
+            (stored_key, cell)
         } else {
             self.metrics.misses.fetch_add(1, Ordering::Relaxed);
             if entries.values.len() >= self.capacity {
@@ -65,7 +65,7 @@ impl<Key: Clone + Eq + Hash, Value> Memo<Key, Value> {
                     self.metrics.evictions.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            Arc::new(OnceLock::new())
+            (Arc::new(key), Arc::new(OnceLock::new()))
         };
         entries.order.insert(tick, key.clone());
         entries.values.insert(key, (cell.clone(), tick));

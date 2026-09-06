@@ -562,6 +562,14 @@ impl SerializedProgram {
     }
 }
 impl ChiaSerialize for SerializedProgram {
+    fn append_bytes(
+        &self,
+        bytes: &mut Vec<u8>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<(), Error> {
+        bytes.extend_from_slice(self.as_ref());
+        Ok(())
+    }
     fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,

@@ -79,3 +79,17 @@ fn every_chain_link_gets_its_own_challenge() {
         h.chaining_challenge_with_plot_id_hash(Bytes32::from([4u8; 32]))
     );
 }
+#[test]
+fn batch_g_matches_scalar_across_networks_and_lane_boundaries() {
+    for testnet in [false, true] {
+        for strength in [2, 6] {
+            let hashing = ProofHashing::new(params(strength, testnet));
+            let inputs: [u32; 17] =
+                std::array::from_fn(|index| (index as u32).wrapping_mul(2_654_435_761));
+            let mut output = [0; 17];
+            hashing.g_batch(&inputs, &mut output);
+            assert_eq!(output, inputs.map(|value| hashing.g(value)));
+            hashing.g_batch(&[], &mut []);
+        }
+    }
+}

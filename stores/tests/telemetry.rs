@@ -85,24 +85,18 @@ async fn checkpointer_records_passes_when_near_tip() {
 }
 
 #[tokio::test]
-async fn checkpointer_is_quiet_during_catch_up() {
+async fn checkpointer_periodically_probes_during_catch_up() {
     let store = common::new_store().await;
     let t = store.telemetry().expect("sqlite records telemetry");
     tokio::time::sleep(Duration::from_millis(2500)).await;
-    assert_eq!(
-        t.checkpoint.count.load(Ordering::Relaxed),
-        0,
-        "catch-up band must not checkpoint"
+    assert!(
+        t.checkpoint.count.load(Ordering::Relaxed) >= 1,
+        "catch-up band must probe even without batch notifications"
     );
 }
 
-// During bulk sync the WAL must be drained by SIZE, not only by the slow 20-tick cadence:
-// otherwise it can grow past the in-writer wal_autocheckpoint failsafe, whose blocking
-// copy-into-DB then fires inside a confirm COMMIT. Crossing the trigger forces an off-writer
-// checkpoint pass within a tick or two. A complete PASSIVE pass makes the allocated WAL reusable;
-// TRUNCATE is needed only when a reader leaves logical frames pinned.
 #[tokio::test]
-async fn bulk_wal_past_the_drain_trigger_is_checkpointed_by_size_not_cadence() {
+async fn bulk_direct_coin_writes_are_checkpointed_without_batch_notifications() {
     use dg_xch_stores::CoinStore;
 
     const TRIGGER: u64 = 64 * 1024; // tiny in-test stand-in for the 128 MiB production trigger
@@ -128,8 +122,6 @@ async fn bulk_wal_past_the_drain_trigger_is_checkpointed_by_size_not_cadence() {
     let peak_wal = store.wal_bytes();
     assert!(peak_wal > TRIGGER);
 
-    // Within a few 1 s ticks, far below the 20-tick bulk cadence, the size trigger must run an
-    // off-writer checkpoint. The physical file may remain at its reusable high-water mark.
     let mut drained = false;
     for _ in 0..60 {
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -140,7 +132,7 @@ async fn bulk_wal_past_the_drain_trigger_is_checkpointed_by_size_not_cadence() {
     }
     assert!(
         drained,
-        "size-triggered drain must run within ~6 s (WAL {} bytes, was {peak_wal})",
+        "periodic drain must run within ~6 s (WAL {} bytes, was {peak_wal})",
         store.wal_bytes(),
     );
     assert_eq!(t.checkpoint_errors_total.load(Ordering::Relaxed), 0);

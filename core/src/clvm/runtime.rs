@@ -54,6 +54,10 @@ impl ClvmRuntime {
         self.arena.counters()
     }
 
+    pub fn set_max_cost(&mut self, max_cost: u64) {
+        self.max_cost = max_cost;
+    }
+
     pub fn run(&mut self, program: &SExp, args: &SExp) -> Result<(u64, SExp<'static>), ClvmError> {
         let (cost, node) = self.run_in_arena(program, args)?;
         Ok((cost, self.arena.export(node)))

@@ -128,6 +128,10 @@ pub fn worker_count() -> usize {
     pool().workers
 }
 
+pub fn install_validation<Output: Send>(operation: impl FnOnce() -> Output + Send) -> Output {
+    pool().validation.install(operation)
+}
+
 pub fn thread_cpu_nanos() -> u64 {
     #[cfg(target_os = "linux")]
     {

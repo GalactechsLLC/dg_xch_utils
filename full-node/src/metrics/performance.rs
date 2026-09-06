@@ -189,6 +189,75 @@ pub(super) fn render(output: &mut String, store: Option<&StoreTelemetry>, sync: 
     if let Some(store) = store {
         family(
             output,
+            "fullnode_sqlite_checkpoint_requests_total",
+            "Background PASSIVE checkpoint scheduling decisions.",
+            "counter",
+            "reason",
+            &[
+                ("write_budget", &store.checkpoint_write_budget),
+                ("interval", &store.checkpoint_interval),
+                ("backlog", &store.checkpoint_backlog),
+            ],
+            1.0,
+        );
+        family(
+            output,
+            "fullnode_sqlite_checkpoint_events_total",
+            "Incomplete checkpoint results and escalation attempts deferred by an active writer.",
+            "counter",
+            "event",
+            &[
+                ("incomplete", &store.checkpoint_incomplete),
+                ("writer_active", &store.checkpoint_escalation_deferred),
+            ],
+            1.0,
+        );
+        for (name, help, divisor, passive, truncate) in [
+            (
+                "fullnode_sqlite_checkpoint_mode_calls_total",
+                "Completed checkpoint attempts by mode, including errors.",
+                1.0,
+                &store.checkpoint_passive.calls,
+                &store.checkpoint_truncate.calls,
+            ),
+            (
+                "fullnode_sqlite_checkpoint_mode_seconds_total",
+                "Checkpoint elapsed time by mode, including errors.",
+                1e9,
+                &store.checkpoint_passive.nanos,
+                &store.checkpoint_truncate.nanos,
+            ),
+        ] {
+            family(
+                output,
+                name,
+                help,
+                "counter",
+                "mode",
+                &[("passive", passive), ("truncate", truncate)],
+                divisor,
+            );
+        }
+        for (name, help, value) in [
+            (
+                "fullnode_sqlite_wal_outstanding_frames",
+                "Uncheckpointed frames observed in the last valid checkpoint result; sampled, not live WAL size.",
+                &store.wal_outstanding_frames,
+            ),
+            (
+                "fullnode_sqlite_checkpoint_no_progress_seconds",
+                "Seconds without observed checkpoint progress while frames remain outstanding; zero after completion.",
+                &store.checkpoint_no_progress_seconds,
+            ),
+        ] {
+            let _ = writeln!(
+                output,
+                "# HELP {name} {help}\n# TYPE {name} gauge\n{name} {}",
+                value.load(Ordering::Relaxed)
+            );
+        }
+        family(
+            output,
             "fullnode_coin_path_events_total",
             "Coin path work and cache events; preparation counts include hints only when hint persistence is enabled.",
             "counter",
@@ -299,6 +368,16 @@ mod tests {
         store.coin_additions.statement(100);
         store.coin_lookup.statement(256);
         store.coin_prefetch_hits.store(42, Ordering::Relaxed);
+        store.checkpoint_write_budget.store(7, Ordering::Relaxed);
+        store.checkpoint_passive.calls.store(9, Ordering::Relaxed);
+        store
+            .checkpoint_passive
+            .nanos
+            .store(3_000_000_000, Ordering::Relaxed);
+        store.wal_outstanding_frames.store(11, Ordering::Relaxed);
+        store
+            .checkpoint_no_progress_seconds
+            .store(12, Ordering::Relaxed);
         let mut output = String::new();
         render(&mut output, Some(&store), &SyncMetrics::default());
         assert!(
@@ -325,6 +404,18 @@ mod tests {
             )
         );
         assert!(output.contains("fullnode_vdf_cache_misses_total{cache=\"discriminant\"}"));
+        assert!(
+            output
+                .contains("fullnode_sqlite_checkpoint_requests_total{reason=\"write_budget\"} 7\n")
+        );
+        assert!(
+            output.contains("fullnode_sqlite_checkpoint_mode_calls_total{mode=\"passive\"} 9\n")
+        );
+        assert!(
+            output.contains("fullnode_sqlite_checkpoint_mode_seconds_total{mode=\"passive\"} 3\n")
+        );
+        assert!(output.contains("fullnode_sqlite_wal_outstanding_frames 11\n"));
+        assert!(output.contains("fullnode_sqlite_checkpoint_no_progress_seconds 12\n"));
     }
 
     #[test]

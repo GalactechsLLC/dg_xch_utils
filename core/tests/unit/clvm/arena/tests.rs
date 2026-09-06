@@ -284,3 +284,23 @@ fn rewound_storage_stays_counted_against_the_ceilings() {
         "rewound heap fell out of the count"
     );
 }
+#[test]
+fn rewind_preserves_live_interns_without_reusing_discarded_handles() {
+    let mut arena = Arena::new();
+    let survivor_bytes = [0x55; 64];
+    let discarded_bytes = [0x66; 64];
+    let survivor = arena.new_atom(&survivor_bytes).unwrap();
+    let checkpoint = arena.checkpoint();
+    arena.new_atom(&discarded_bytes).unwrap();
+    let counters = arena.counters();
+    arena.restore(checkpoint);
+    assert_eq!(arena.counters(), counters);
+    let replacement = arena.new_atom(&[0x77; 64]).unwrap();
+    assert_eq!(arena.new_atom(&survivor_bytes).unwrap(), survivor);
+    let restored = arena.new_atom(&discarded_bytes).unwrap();
+    assert_ne!(restored, replacement);
+    assert_eq!(arena.atom(restored).unwrap().as_ref(), discarded_bytes);
+    arena.reset();
+    let fresh = arena.new_atom(&discarded_bytes).unwrap();
+    assert_eq!(arena.atom(fresh).unwrap().as_ref(), discarded_bytes);
+}

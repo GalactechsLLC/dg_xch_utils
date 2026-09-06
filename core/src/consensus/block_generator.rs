@@ -1331,6 +1331,7 @@ fn conditions_from_generator_output(
     let mut created = HashSet::<Bytes32>::new();
     let mut conditions_cost = 0_u64;
     let all_spends = output.first()?;
+    let mut runtime = ClvmRuntime::new(max_cost, clvm_flags);
     for (spend_index, spend_sexp) in all_spends.ref_list().into_iter().enumerate() {
         let spend_parts = spend_sexp.ref_list();
         if spend_parts.len() < 4 {
@@ -1340,7 +1341,7 @@ fn conditions_from_generator_output(
             ));
         }
         let parent_id = Bytes32::parse_atom(spend_parts[0])?;
-        let puzzle_reveal = Program::new_ref(spend_parts[1]).to_owned();
+        let puzzle_reveal = Program::new_ref(spend_parts[1]);
         let puzzle_hash = match reveal_hashes.and_then(|hashes| hashes.get(spend_index)) {
             Some(hash) => *hash,
             None => puzzle_reveal.tree_hash(),
@@ -1349,7 +1350,7 @@ fn conditions_from_generator_output(
             .as_int()?
             .to_u64()
             .ok_or_else(|| ClvmError::AtomNotValidU64(spend_parts[2].to_string()))?;
-        let solution = Program::new_ref(spend_parts[3]).to_owned();
+        let solution = Program::new_ref(spend_parts[3]);
         let coin = Coin {
             parent_coin_info: parent_id,
             puzzle_hash,
@@ -1368,7 +1369,7 @@ fn conditions_from_generator_output(
         // native stack). `run_in_arena` leaves the result in the flat arena so
         // `parse_and_apply_spend_from_arena` can walk it iteratively, cost-bounded, and bail
         // early.
-        let mut runtime = ClvmRuntime::new(cost_left, clvm_flags);
+        runtime.set_max_cost(cost_left);
         let (puzzle_cost, output_ptr) =
             runtime.run_in_arena(puzzle_reveal.sexp(), solution.sexp())?;
         conds.cost = conds

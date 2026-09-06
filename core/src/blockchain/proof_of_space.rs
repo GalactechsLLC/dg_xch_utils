@@ -2,7 +2,6 @@ use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
 use crate::clvm::sexp::SExp;
 use crate::consensus::constants::ConsensusConstants;
 use crate::formatting::prep_hex_str;
-use crate::traits::SizedBytes;
 #[cfg(feature = "bls")]
 use crate::utils::hash_256;
 #[cfg(feature = "bls")]
@@ -43,11 +42,22 @@ impl Debug for ProofBytes {
 }
 
 impl ChiaSerialize for ProofBytes {
+    fn append_bytes(
+        &self,
+        bytes: &mut Vec<u8>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<(), Error> {
+        bytes.extend_from_slice(&(self.0.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&self.0);
+        Ok(())
+    }
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
     {
-        ChiaSerialize::to_bytes(&self.0, version)
+        let mut bytes = Vec::with_capacity(4 + self.0.len());
+        self.append_bytes(&mut bytes, version)?;
+        Ok(bytes)
     }
 
     fn from_bytes(bytes: &mut Cursor<&[u8]>, version: ChiaProtocolVersion) -> Result<Self, Error>
@@ -233,28 +243,31 @@ impl ProofOfSpace {
 
 impl ChiaSerialize for ProofOfSpace {
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
-        let mut bytes = ChiaSerialize::to_bytes(&self.challenge, version)?;
-        bytes.extend(ChiaSerialize::to_bytes(&self.pool_public_key, version)?);
+        let mut bytes = Vec::new();
+        self.append_bytes(&mut bytes, version)?;
+        Ok(bytes)
+    }
+    fn append_bytes(&self, bytes: &mut Vec<u8>, version: ChiaProtocolVersion) -> Result<(), Error> {
+        self.challenge.append_bytes(bytes, version)?;
+        self.pool_public_key.append_bytes(bytes, version)?;
         match self.version {
             0 => {
-                bytes.extend(ChiaSerialize::to_bytes(
-                    &self.pool_contract_puzzle_hash,
-                    version,
-                )?);
-                bytes.extend(ChiaSerialize::to_bytes(&self.plot_public_key, version)?);
-                bytes.extend(ChiaSerialize::to_bytes(&self.size, version)?);
+                self.pool_contract_puzzle_hash
+                    .append_bytes(bytes, version)?;
+                self.plot_public_key.append_bytes(bytes, version)?;
+                self.size.append_bytes(bytes, version)?;
             }
             1 => {
                 if let Some(contract) = &self.pool_contract_puzzle_hash {
                     bytes.push(0b11);
-                    bytes.extend(ChiaSerialize::to_bytes(contract, version)?);
+                    contract.append_bytes(bytes, version)?;
                 } else {
                     bytes.push(0b10);
                 }
-                bytes.extend(ChiaSerialize::to_bytes(&self.plot_public_key, version)?);
-                bytes.extend(ChiaSerialize::to_bytes(&self.plot_index, version)?);
-                bytes.extend(ChiaSerialize::to_bytes(&self.meta_group, version)?);
-                bytes.extend(ChiaSerialize::to_bytes(&self.strength, version)?);
+                self.plot_public_key.append_bytes(bytes, version)?;
+                self.plot_index.append_bytes(bytes, version)?;
+                self.meta_group.append_bytes(bytes, version)?;
+                self.strength.append_bytes(bytes, version)?;
             }
             other => {
                 return Err(Error::new(
@@ -263,8 +276,7 @@ impl ChiaSerialize for ProofOfSpace {
                 ));
             }
         }
-        bytes.extend(ChiaSerialize::to_bytes(&self.proof, version)?);
-        Ok(bytes)
+        self.proof.append_bytes(bytes, version)
     }
 
     fn from_bytes(bytes: &mut Cursor<&[u8]>, version: ChiaProtocolVersion) -> Result<Self, Error> {
@@ -511,21 +523,20 @@ pub fn passes_plot_filter(
     if prefix_bits == 0 {
         true
     } else {
-        let mut filter = [false; 256];
-        let mut index = 0;
-        for b in calculate_plot_filter_input(plot_id, challenge_hash, signage_point).bytes() {
-            for i in (0..=7).rev() {
-                filter[index] = ((b >> i) & 1) == 1;
-                index += 1;
-            }
-        }
-        for is_one in filter.iter().take(prefix_bits as usize) {
-            if *is_one {
-                return false;
-            }
-        }
-        true
+        passes_plot_filter_input(
+            prefix_bits,
+            calculate_plot_filter_input(plot_id, challenge_hash, signage_point),
+        )
     }
+}
+
+#[must_use]
+pub fn passes_plot_filter_input(prefix_bits: i8, input: Bytes32) -> bool {
+    let prefix_bits = (prefix_bits as usize).min(256);
+    let full_bytes = prefix_bits / 8;
+    let remaining_bits = prefix_bits % 8;
+    input[0..full_bytes].iter().all(|byte| *byte == 0)
+        && (remaining_bits == 0 || input[full_bytes] >> (8 - remaining_bits) == 0)
 }
 
 #[must_use]

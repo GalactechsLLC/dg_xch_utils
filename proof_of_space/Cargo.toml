@@ -35,3 +35,7 @@ dg_logger = { path = "../logging", version = "3.0.0" }
 [[bench]]
 name = "compression"
 harness = false
+
+[[bench]]
+name = "verification"
+harness = false

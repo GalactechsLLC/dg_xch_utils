@@ -16,7 +16,7 @@ use dg_xch_core::consensus::pot_iterations::{
 use dg_xch_core::utils::hash_256;
 use dg_xch_pos::verify_and_get_quality_string;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
-use dg_xch_vdf::{default_classgroup_element, validate_vdf_info};
+use dg_xch_vdf::{default_classgroup_element, validate_vdf_info_serial};
 use log::info;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -642,7 +642,7 @@ fn check_vdf(
     if n > MAX_VDFS_TO_VERIFY {
         return Err(WeightProofError::TooLarge("vdf count"));
     }
-    if validate_vdf_info(c, input, info, proof, None) {
+    if validate_vdf_info_serial(c, input, info, proof, None) {
         Ok(())
     } else {
         Err(WeightProofError::Rejected("invalid VDF"))
@@ -1393,36 +1393,38 @@ fn validate_sub_epoch_segments(
     }
 
     // --- Parallel pass (the hotspot: thousands of independent class-group VDFs) ---
-    // Each task's sampled-segment verification is independent; rayon's global pool is core-count
-    // bounded, so this saturates the machine width. The shared `vdf_count` keeps the global DoS
+    // Each task's sampled-segment verification is independent; the shared validation pool bounds
+    // CPU concurrency alongside block sync. The shared `vdf_count` keeps the global DoS
     // bound exact under interleaving; `try_for_each` short-circuits on the first failure with the
     // identical error variant the serial version would return.
     let vdf_count = AtomicUsize::new(0);
-    tasks
-        .par_iter()
-        .try_for_each(|task| -> Result<(), WeightProofError> {
-            let valid = validate_segment(
-                c,
-                task.segment,
-                task.curr_ssi,
-                task.curr_difficulty,
-                task.ses,
-                task.first_in_se,
-                true,
-                task.height,
-                &vdf_count,
-            )?;
-            if valid {
-                Ok(())
-            } else {
-                Err(WeightProofError::Rejected("segment validation failed"))
-            }
-        })?;
+    dg_xch_core::compute::install_validation(|| {
+        tasks
+            .par_iter()
+            .try_for_each(|task| -> Result<(), WeightProofError> {
+                let valid = validate_segment(
+                    c,
+                    task.segment,
+                    task.curr_ssi,
+                    task.curr_difficulty,
+                    task.ses,
+                    task.first_in_se,
+                    true,
+                    task.height,
+                    &vdf_count,
+                )?;
+                if valid {
+                    Ok(())
+                } else {
+                    Err(WeightProofError::Rejected("segment validation failed"))
+                }
+            })
+    })?;
     info!(
         "weight-proof phase 4: sampled segments verified in parallel sampled_sub_epochs={} vdfs={} threads={}",
         tasks.len(),
         vdf_count.load(Ordering::Relaxed),
-        rayon::current_num_threads()
+        dg_xch_core::compute::install_validation(rayon::current_num_threads)
     );
     Ok(())
 }

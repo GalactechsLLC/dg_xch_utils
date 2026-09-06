@@ -64,6 +64,13 @@ pub trait ChiaSerialize {
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized;
+    fn append_bytes(&self, bytes: &mut Vec<u8>, version: ChiaProtocolVersion) -> Result<(), Error>
+    where
+        Self: Sized,
+    {
+        bytes.extend(self.to_bytes(version)?);
+        Ok(())
+    }
     fn from_bytes(bytes: &mut Cursor<&[u8]>, version: ChiaProtocolVersion) -> Result<Self, Error>
     where
         Self: Sized;
@@ -85,6 +92,9 @@ pub trait ChiaSerialize {
     }
 }
 impl ChiaSerialize for OffsetDateTime {
+    fn append_bytes(&self, bytes: &mut Vec<u8>, version: ChiaProtocolVersion) -> Result<(), Error> {
+        (self.unix_timestamp() as u64).append_bytes(bytes, version)
+    }
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
@@ -102,6 +112,15 @@ impl ChiaSerialize for OffsetDateTime {
 }
 
 impl ChiaSerialize for String {
+    fn append_bytes(
+        &self,
+        bytes: &mut Vec<u8>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<(), Error> {
+        bytes.extend_from_slice(&(self.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(self.as_bytes());
+        Ok(())
+    }
     fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
@@ -146,6 +165,14 @@ impl ChiaSerialize for String {
 }
 
 impl ChiaSerialize for bool {
+    fn append_bytes(
+        &self,
+        bytes: &mut Vec<u8>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<(), Error> {
+        bytes.push(u8::from(*self));
+        Ok(())
+    }
     fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
@@ -173,6 +200,16 @@ impl<T> ChiaSerialize for Option<T>
 where
     T: ChiaSerialize,
 {
+    fn append_bytes(&self, bytes: &mut Vec<u8>, version: ChiaProtocolVersion) -> Result<(), Error> {
+        match self {
+            Some(value) => {
+                bytes.push(1);
+                value.append_bytes(bytes, version)?;
+            }
+            None => bytes.push(0),
+        }
+        Ok(())
+    }
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
@@ -211,6 +248,10 @@ where
     T: ChiaSerialize,
     U: ChiaSerialize,
 {
+    fn append_bytes(&self, bytes: &mut Vec<u8>, version: ChiaProtocolVersion) -> Result<(), Error> {
+        self.0.append_bytes(bytes, version)?;
+        self.1.append_bytes(bytes, version)
+    }
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
@@ -236,6 +277,11 @@ where
     U: ChiaSerialize,
     V: ChiaSerialize,
 {
+    fn append_bytes(&self, bytes: &mut Vec<u8>, version: ChiaProtocolVersion) -> Result<(), Error> {
+        self.0.append_bytes(bytes, version)?;
+        self.1.append_bytes(bytes, version)?;
+        self.2.append_bytes(bytes, version)
+    }
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
@@ -261,6 +307,13 @@ impl<T> ChiaSerialize for Vec<T>
 where
     T: ChiaSerialize,
 {
+    fn append_bytes(&self, bytes: &mut Vec<u8>, version: ChiaProtocolVersion) -> Result<(), Error> {
+        bytes.extend_from_slice(&(self.len() as u32).to_be_bytes());
+        for value in self {
+            value.append_bytes(bytes, version)?;
+        }
+        Ok(())
+    }
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
@@ -348,6 +401,10 @@ macro_rules! impl_primitives {
                 fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
                     Ok(self.to_be_bytes().to_vec())
                 }
+                fn append_bytes(&self, bytes: &mut Vec<u8>, _version: ChiaProtocolVersion) -> Result<(), Error> {
+                    bytes.extend_from_slice(&self.to_be_bytes());
+                    Ok(())
+                }
                 fn from_bytes(bytes: &mut Cursor<&[u8]>, _version: ChiaProtocolVersion) -> Result<Self, std::io::Error> where Self: Sized,
                 {
                     let remaining = bytes.get_ref().as_ref().len().saturating_sub(bytes.position() as usize);
@@ -386,6 +443,10 @@ macro_rules! impl_arrays {
                 fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
                     Ok(self.to_vec())
                 }
+                fn append_bytes(&self, bytes: &mut Vec<u8>, _version: ChiaProtocolVersion) -> Result<(), Error> {
+                    bytes.extend_from_slice(self);
+                    Ok(())
+                }
                 fn from_bytes(bytes: &mut Cursor<&[u8]>, _version: ChiaProtocolVersion) -> Result<Self, std::io::Error> where Self: Sized,
                 {
                     let remaining = bytes.get_ref().as_ref().len().saturating_sub(bytes.position() as usize);
@@ -420,6 +481,10 @@ macro_rules! impl_nz_primitives {
     ($($nz:ty, $base:ty);* $(;)?) => {
         $(
             impl ChiaSerialize for $nz {
+                fn append_bytes(&self, bytes: &mut Vec<u8>, _version: ChiaProtocolVersion) -> Result<(), io::Error> {
+                    bytes.extend_from_slice(&self.get().to_be_bytes());
+                    Ok(())
+                }
                 #[inline]
                 fn to_bytes(&self, _v: ChiaProtocolVersion) -> Result<Vec<u8>, io::Error> {
                     Ok(self.get().to_be_bytes().to_vec())
@@ -524,6 +589,14 @@ pub fn decode_size(stream: &mut dyn Read, initial_b: u8) -> Result<u64, Error> {
 }
 
 impl<K: ChiaSerialize + Eq + Hash, V: ChiaSerialize> ChiaSerialize for HashMap<K, V> {
+    fn append_bytes(&self, bytes: &mut Vec<u8>, version: ChiaProtocolVersion) -> Result<(), Error> {
+        bytes.extend_from_slice(&(self.len() as u32).to_be_bytes());
+        for (key, value) in self {
+            key.append_bytes(bytes, version)?;
+            value.append_bytes(bytes, version)?;
+        }
+        Ok(())
+    }
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,
@@ -560,6 +633,14 @@ impl<K: ChiaSerialize + Eq + Hash, V: ChiaSerialize> ChiaSerialize for HashMap<K
 }
 
 impl ChiaSerialize for PrimitiveDateTime {
+    fn append_bytes(
+        &self,
+        bytes: &mut Vec<u8>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<(), Error> {
+        self.assume_utc()
+            .append_bytes(bytes, ChiaProtocolVersion::default())
+    }
     fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, Error>
     where
         Self: Sized,

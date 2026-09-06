@@ -414,7 +414,7 @@ pub fn render_metrics(s: &MetricsSnapshot) -> String {
         g(
             &mut out,
             "fullnode_store_near_tip",
-            "1 = near-tip band (per-block commits, active WAL checkpointer); 0 = catch-up band (window batch commits, checkpointer quiet).",
+            "1 = near-tip band (per-block commits); 0 = catch-up band (window batch commits). Background checkpointing is active in both bands.",
             "gauge",
             st.near_tip,
         );
@@ -430,7 +430,7 @@ pub fn render_metrics(s: &MetricsSnapshot) -> String {
         render_histogram(
             &mut out,
             "fullnode_sqlite_checkpoint_seconds",
-            "PASSIVE WAL checkpoint duration on the dedicated checkpointer connection.",
+            "Successful WAL checkpoint pragma duration across all modes on the dedicated connection.",
             &[("", &st.checkpoint)],
         );
         g(
@@ -450,7 +450,7 @@ pub fn render_metrics(s: &MetricsSnapshot) -> String {
         g(
             &mut out,
             "fullnode_sqlite_checkpoint_busy_total",
-            "Checkpoints that returned busy (incomplete pass; persistent busy = checkpointer not keeping up).",
+            "Checkpoint results with a nonzero busy flag; PASSIVE may be incomplete even with busy zero.",
             "counter",
             st.checkpoint_busy_total,
         );
@@ -478,7 +478,7 @@ pub fn render_metrics(s: &MetricsSnapshot) -> String {
         g(
             &mut out,
             "fullnode_sqlite_read_pool_idle",
-            "Read-pool connections idle (in WAL mode an idle pooled reader can hold an old WAL read mark). High while wal_frames stays high names the reader pinning the checkpoint reset.",
+            "Read-pool connections currently idle; this count alone does not establish a pinned WAL reader.",
             "gauge",
             st.read_pool_idle,
         );

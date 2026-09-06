@@ -61,6 +61,10 @@ name = "clvm"
 harness = false
 
 [[bench]]
+name = "serialization"
+harness = false
+
+[[bench]]
 name = "bls"
 harness = false
 required-features = ["bls"]

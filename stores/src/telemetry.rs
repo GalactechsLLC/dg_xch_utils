@@ -140,8 +140,17 @@ pub struct StoreTelemetry {
     /// Unix second of the last successful writer COMMIT (0 = none yet this process); read by the
     /// stall dump.
     pub last_commit_unix: AtomicU64,
-    /// Completed `wal_checkpoint(PASSIVE)` pragmas on the dedicated checkpointer connection.
+    /// Successful checkpoint pragmas across all modes on the dedicated connection.
     pub checkpoint: DurationHistogram,
+    pub checkpoint_passive: Arc<OperationMetrics>,
+    pub checkpoint_truncate: Arc<OperationMetrics>,
+    pub checkpoint_write_budget: AtomicU64,
+    pub checkpoint_interval: AtomicU64,
+    pub checkpoint_backlog: AtomicU64,
+    pub checkpoint_incomplete: AtomicU64,
+    pub checkpoint_escalation_deferred: AtomicU64,
+    pub wal_outstanding_frames: AtomicU64,
+    pub checkpoint_no_progress_seconds: AtomicU64,
     /// WAL frames copied into the main DB by checkpoints (the pragma's `checkpointed` column).
     pub wal_frames_checkpointed_total: AtomicU64,
     /// WAL length in frames as of the last checkpoint (the pragma's `log` column).
@@ -158,9 +167,7 @@ pub struct StoreTelemetry {
     /// Coin-record point reads executed on the read path (`get_coin_record` and each element of
     /// `get_coin_records`), counted separately from the record reads.
     pub coin_reads: AtomicU64,
-    /// Read-pool connections currently idle in the pool, sampled by the checkpointer. In WAL mode
-    /// an idle pooled reader can hold a read mark at an old WAL position and block the checkpoint
-    /// reset, so a high idle count while `wal_frames` refuses to fall names the pinning reader.
+    /// Read-pool connections currently idle, not a measurement of active read transactions.
     pub read_pool_idle: AtomicU64,
     /// Read-pool total connections (idle + in-use), sampled by the checkpointer.
     pub read_pool_size: AtomicU64,
