@@ -968,7 +968,7 @@ impl Mempool {
     /// # Errors
     /// Returns the specific [`MempoolError`] (double-spend, conflict, unknown-unspent, cost, fee-too-low)
     /// if the bundle cannot enter, or [`MempoolError::Store`] on a store failure.
-    pub async fn admit<S: CoinStore + Sync>(
+    pub async fn admit<S: CoinStore + Sync + ?Sized>(
         &mut self,
         store: &S,
         bundle: SpendBundle,
@@ -1225,7 +1225,7 @@ impl Mempool {
     // DEDUP-eligible spends, resolve the latest unspent singleton lineage for spends that are
     // FF-eligible AND structurally fast-forwardable, and reject a bundle whose spends are ALL
     // fast-forward.
-    async fn build_bundle_coin_spends<S: CoinStore + Sync>(
+    async fn build_bundle_coin_spends<S: CoinStore + Sync + ?Sized>(
         &self,
         store: &S,
         bundle: &SpendBundle,

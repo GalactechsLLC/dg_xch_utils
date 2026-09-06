@@ -5,32 +5,40 @@
 Install stable Rust, `cmake`, a C compiler, and the system zstd development package. Then build the node:
 
 ```bash
-cargo build --release -p full-node --features sqlite,coin-index,hint
+cargo build --release -p dg_xch_cli --bin dg --features sqlite,coin-index,hint
 ```
 
-The binary is written to `target/release/full-node`.
+The binary is written to `target/release/dg`.
 
 ## Start
 
 ```bash
 mkdir -p "$HOME/dg-xch-data"
-./target/release/full-node \
+./target/release/dg full-node \
   --listen 0.0.0.0:8444 \
-  --rpc 127.0.0.1:8555 \
   --db "sqlite://$HOME/dg-xch-data/chain.db" \
-  --network mainnet \
-  --metrics 127.0.0.1:9100
+  --network mainnet
 ```
 
 Use one or more `--peer host:port` options or an `--introducer host:port` to establish outbound connections. Use `--advertise ip:port` only when the listener is reachable from the public network.
 
-## RPC TLS
+## Unified Portfu TLS
 
-The default `--rpc-tls local` mode requires the RPC listener to use a loopback address. Use `--rpc-tls private-ca --ssl-dir <directory>` for authenticated remote RPC. The directory must contain `ca/private_ca.crt` and `ca/private_ca.key`; public network certificates are not accepted as RPC client-authentication roots.
+Portfu owns the single `--listen` socket and serves the Chia peer WebSocket, RPC, health,
+metrics, and operational WebSockets on it. Peer clients connect to `/ws` with a certificate rooted
+at the Chia network CA. RPC and operational routes require a certificate rooted at the private CA
+under `<ssl-dir>/ca`; it is generated on first start when missing. `/health` and `/metrics` remain
+public. The deprecated `--rpc` flag does not create a second listener and, when supplied, must equal
+`--listen`.
+
+The configured `--listen` address is always honored; Portfu never rewrites it to loopback. The
+default `--rpc-tls private-ca` mode is appropriate for a public listener. Development mode
+`--rpc-tls local` accepts Chia-CA client certificates for protected routes and therefore does not
+provide private administrative isolation.
 
 ## Peer Settings
 
-The full-node command exposes every `P2pSettings` value:
+The `dg full-node` command exposes every `P2pSettings` value:
 
 - `--target-outbound` and `--target-peer-count`
 - `--host-pool-capacity`, `--address-lower`, and `--address-upper`
@@ -39,6 +47,16 @@ The full-node command exposes every `P2pSettings` value:
 - `--jitter-floor`
 
 Invalid combinations are rejected during startup. In particular, outbound peers cannot exceed total peers, address bounds must fit within the host pool, durations must be nonzero, and jitter must be between `0.0` and `1.0`.
+
+The follow-sync fetch width now uses both standard V3 request slots for each
+`--target-outbound` connection; raising the outbound target therefore raises useful network
+concurrency instead of leaving extra connections idle. For a high-core-count machine, start with
+`--target-outbound 32 --target-peer-count 80` (up to 64 concurrent range fetches). Increase
+`--prefetch-memory-mb` if `/metrics` shows the queue repeatedly reaching its byte ceiling, and use
+`--prefetch-max-inflight` only when an explicit cap is needed. Catch-up validation automatically
+combines the 32-block peer responses into a CPU-sized window (up to 256 blocks), while near-tip
+confirmation stays at 32 blocks for low latency. The ordered store commit remains serial; use the
+window phase metrics to distinguish that limit from validation capacity.
 
 ## Storage
 
@@ -58,4 +76,4 @@ The mmap directory must be writable by the node process.
 
 ## Monitoring
 
-Set `--metrics host:port` to serve Prometheus metrics or `--metrics off` to disable them. See [monitoring.md](monitoring.md) for the metric names and scrape configuration.
+Prometheus metrics are served at `https://<listen-address>/metrics`. See [monitoring.md](monitoring.md) for the metric names and scrape configuration.

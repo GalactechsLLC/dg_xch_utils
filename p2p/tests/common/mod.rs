@@ -101,6 +101,7 @@ fn client_config(port: u16, rate_limited: bool) -> Arc<WsClientConfig> {
     Arc::new(WsClientConfig {
         host: "127.0.0.1".to_string(),
         port,
+        server_port: 0,
         network_id: "mainnet".to_string(),
         ssl_info: None::<ClientSSLConfig>,
         software_version: None,
@@ -240,7 +241,7 @@ pub async fn spawn_full_node(api: Arc<dyn FullNodeApi>) -> RunningServer {
 }
 
 // Same as `spawn_full_node` but with the per-connection inbound rate limiter active — the
-// production full-node listener posture (daemon sets `WebsocketServer::rate_limited = true`).
+// production full-node listener posture (the server sets `WebsocketServer::rate_limited = true`).
 pub async fn spawn_full_node_rate_limited(api: Arc<dyn FullNodeApi>) -> RunningServer {
     install_crypto();
     let port = free_port();

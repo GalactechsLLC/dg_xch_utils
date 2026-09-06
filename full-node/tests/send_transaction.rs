@@ -14,6 +14,7 @@
 mod common;
 
 use async_trait::async_trait;
+use dg_full_node::{Backend, Config, FullNode};
 use dg_xch_clients::websocket::{WsClient, oneshot_message};
 use dg_xch_core::blockchain::condition_with_args::ConditionWithArgs;
 use dg_xch_core::blockchain::full_block::FullBlock;
@@ -27,7 +28,6 @@ use dg_xch_core::protocols::{ChiaMessage, ProtocolMessageTypes, WebsocketConnect
 use dg_xch_p2p::{FullNodeApi, P2pSettings, full_node_handlers_client};
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use dg_xch_stores::CoinStore;
-use full_node::{Backend, Config, Node};
 use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -44,7 +44,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         std::process::id()
     ));
     Config {
-        rpc_tls: full_node::RpcTlsMode::Local,
+        rpc_tls: dg_full_node::RpcTlsMode::Local,
         debug_endpoints: false,
         p2p: Default::default(),
         listen,
@@ -54,13 +54,13 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         advertise: None,
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
-        metrics: None,
         capture_dir: None,
         genesis_sync: false,
         sync_from: 0,
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
     }
@@ -86,15 +86,20 @@ impl FullNodeApi for SubmitterApi {
 
 // A node at the mainnet-fixture peak with the easy coin seeded, serving the production handler
 // stack, plus a dialed-in submitting client. `synced` posture is the caller's choice.
-async fn rig(synced: bool) -> (Arc<Node>, dg_xch_core::blockchain::coin::Coin, WsClient) {
+async fn rig(synced: bool) -> (Arc<FullNode>, dg_xch_core::blockchain::coin::Coin, WsClient) {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let listen = free_addr();
-    let node = Arc::new(Node::boot(config(listen, free_addr())).await.expect("boot"));
+    let node = Arc::new(
+        FullNode::boot(config(listen, free_addr()))
+            .await
+            .expect("boot"),
+    );
     common::seed_peak(&node.store).await;
     let coin = common::seed_easy_coin(&node.store, 1_000).await;
     node.mempool.lock().await.set_peak(common::PEAK_HEIGHT, 0);
     node.synced.store(synced, Ordering::Relaxed);
-    let (_serve_run, _inbound_peers) = node.spawn_peer_server().expect("peer server");
+    let (server, serve_run, _inbound_peers) = node.build_peer_server().expect("peer server");
+    tokio::spawn(async move { server.run(serve_run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let api: Arc<dyn FullNodeApi> = Arc::new(SubmitterApi);

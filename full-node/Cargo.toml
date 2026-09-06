@@ -1,6 +1,6 @@
 [package]
-name = "full-node"
-description = "dg_xch full-node daemon with storage, P2P, consensus, RPC, and wallet services"
+name = "dg_full_node"
+description = "full-node server with storage, P2P, consensus, RPC, and wallet services"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,67 +8,44 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-[[bin]]
-name = "full-node"
-path = "src/main.rs"
-
-# Leak measurement/regression tool — fetches a real generator from a Postgres node and loops
-# the CLVM parse/execute path while reading jemalloc `allocated`. Gated on `postgres` so the mmap
-# image build (FEATURES=mmap) skips it instead of failing on the PostgresStore import.
-# Prerequisite-validation harness (synthetic timelord + farmer peers): connects to a running
-# node p2p WebSocket, captures inbound frames, and asserts the node gossips NewPeakTimelord and
-# NewSignagePoint. Operational probe; no store backend, so it builds in every profile.
 [lib]
-name = "full_node"
+name = "dg_full_node"
 path = "src/lib.rs"
 
-# The server layer of the full node: a thin daemon over dg_xch_node (+ the three layers below
-# it). Owns config, main, the RPC block/coin endpoints, and the wallet coin-state subscription server. Blind
-# to consensus internals. Package name `full-node` (not dg_xch_*) so the binary target matches the crate name.
+# The server layer of the full node: a thin application over dg_xch_node. It owns
+# configuration, startup, RPC endpoints, and wallet coin-state subscriptions.
 [dependencies]
 # default-features off: the oauth feature drags reqwest 0.11's hyper-0.14/rustls-0.21
 # stack, which carries open RustSec advisories the audit gate rejects.
-portfu = { git = "https://github.com/GalactechsLLC/portfu.git", branch = "2.0.0", default-features = false, features = ["endpoint", "tasks", "websocket"] }
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false, features = ["endpoint", "tasks", "tls", "websocket"] }
 dg_logger = { path = "../logging", version = "3.0.0" }
 log = "0.4"
-dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, features = ["bls"] }
+dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, features = ["bounded-bls"] }
 dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
 dg_xch_stores = { path = "../stores", version = "3.0.0" }
 dg_xch_p2p = { path = "../p2p", version = "3.0.0" }
 dg_xch_node = { path = "../node", version = "3.0.0" }
 zstd = "0.13.2"
-# The daemon runs the weight-proof verify itself now (spawn_blocking, off the chaser lock) so a body-download
+# The server runs the weight-proof verify itself now (spawn_blocking, off the chaser lock) so a body-download
 # retry never re-triggers the multi-minute verify — hence a direct dependency, not only through the node.
 dg_xch_weight_proof = { path = "../weight-proof", version = "3.0.0" }
-dg_xch_clients = { path = "../clients", version = "3.0.0" }
 dg_xch_servers = { path = "../servers", version = "3.0.0" }
 async-trait = "0.1.89"
+futures-util = "0.3.32"
 # CIDR matching for trusted peer configuration.
 ipnet = "2.12"
 uuid = { version = "1.24.0", features = ["v4"] }
-bytes = "1.10.1"
-clap = { version = "4.5.60", features = ["derive", "env"] }
 http = "1.3.1"
-http-body-util = "0.1.3"
-hyper = { version = "1.7.0", features = ["full"] }
 pprof = { version = "0.14", features = ["flamegraph"], optional = true }
 rustls = { version = "0.23.37", features = ["ring"] }
-# Global allocator: glibc's per-thread 64MB arenas held freed sync-path buffers forever
-# (GiB/hour RSS climb → OOM); jemalloc purges dirty pages back to the OS. -ctl exposes
-# allocated/resident for the metrics endpoint. background_threads is Linux-only, hence the
-# target split below.
+# The `dg` process owns the global allocator; this library reads its statistics.
 tikv-jemalloc-ctl = { version = "0.6", features = ["stats"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "signal", "macros", "time", "net"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-tikv-jemallocator = "0.6"
-
 [dev-dependencies]
+dg_xch_clients = { path = "../clients", version = "3.0.0" }
 hex = "0.4.3"
 # Test builds get the coin-index store tier (the FF lineage lookup + the FaultStore test double's
 # delegating impls, gated any(feature = "coin-index", test)); production feature defaults untouched.
@@ -82,17 +59,12 @@ uuid = { version = "1.24.0", features = ["v4"] }
 blst = { version = "0.3.16", features = ["portable"] }
 
 [features]
-# Sampling CPU profiler and jemalloc heap-dump endpoints on the metrics port. Off by default:
+# Sampling CPU profiler and jemalloc heap-dump endpoints on the shared server listener. Off by default:
 # the same data is available from external tooling against a normal build.
-profiling = ["dep:pprof", "tikv-jemallocator/profiling"]
+profiling = ["dep:pprof"]
 default = ["sqlite"]
-# Pi-floor embedded profile: sqlx-SQLite backend (the only backend today).
 sqlite = []
-# Service-tier secondary indexes (puzzle-hash / parent coin lookups) a pure validating node refuses to build.
 coin-index = ["dg_xch_stores/coin-index"]
 hint = ["coin-index", "dg_xch_stores/hint", "dg_xch_node/hint"]
-# Server-scale profile: the industrial sqlx-Postgres backend plus the service-tier indexes.
-# A `postgres://` --db boots PostgresStore; without this feature it is rejected with a clear error.
 postgres = ["coin-index", "hint", "dg_xch_stores/postgres"]
-# The embedded libbitcoin-style mmap backend (the Pi profile); a mmap:// --db boots MmapStore.
 mmap = ["dg_xch_stores/mmap"]

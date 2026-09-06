@@ -43,18 +43,10 @@ pub const fn fse_ctable_size(max_table_log: u32, max_symbol_value: u32) -> u32 {
 pub const fn fse_dtable_size(max_table_log: u32) -> u32 {
     fse_dtable_size_u32(max_table_log) * size_of::<DTable>() as u32
 }
-//
-// const fn fse_wksp_size_u32(max_table_log: u32, max_symbol_value: u32) -> u32 {fse_ctable_size_u32(max_table_log, max_symbol_value) + if max_table_log > 12 { 1 << (max_table_log - 2) } else { 1024 }}
-
 #[must_use]
 pub const fn fse_tablestep(table_size: u32) -> u32 {
     (table_size >> 1) + (table_size >> 3) + 3
 }
-
-// pub fn compress(src: Vec<u8>) -> Result<Vec<u8>, Error> {
-//     //Todo
-//     Ok(vec![])
-// }
 
 /*-**************************************************************
 *  FSE NCount encoding-decoding
@@ -83,7 +75,6 @@ pub fn read_ncount(
         }
         return Ok(count_size);
     }
-    //assert(hbSize >= 4); //Todo convert to Error
     normalized_counter.fill(0); //memset(normalized_counter, 0, (*max_svptr +1) * sizeof(normalized_counter[0]));   /* all symbols not present in NCount have a frequency of 0 */
     let mut bit_stream: u32 = u32::from_le_bytes(
         src[index..index + size_of::<u32>()]
@@ -144,7 +135,6 @@ pub fn read_ncount(
                 charnum += 1;
             }
             if index <= src.len() - 7 || index + (bit_count >> 3) <= src.len() - 4 {
-                //assert((bit_count >> 3) <= 3); /* For first condition to work *///Todo convert to Error
                 index += bit_count >> 3;
                 bit_count &= 7;
                 bit_stream =

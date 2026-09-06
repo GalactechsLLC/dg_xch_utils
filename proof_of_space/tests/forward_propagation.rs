@@ -219,3 +219,36 @@ fn the_batch_f1_agrees_with_the_verifiers_f1() {
         "batched f1 disagrees with the verifier's f1"
     );
 }
+#[test]
+fn f1_extraction_matches_individual_bits_across_block_boundaries() {
+    use dg_xch_pos::chacha8::{ChachaContext, chacha8_get_keystream, chacha8_keysetup};
+    use dg_xch_pos::constants::K_EXTRA_BITS;
+    use dg_xch_pos::plots::fx_generator::get_proof_f1_and_meta;
+
+    let plot_id = [0x63; 32];
+    let mut key = [0x63; 32];
+    key[0] = 1;
+    let mut context = ChachaContext { input: [0; 16] };
+    chacha8_keysetup(&mut context, &key, None);
+    for size in 32..=50u32 {
+        for offset in (0..512u64).step_by(64) {
+            let proof: [u64; 64] =
+                std::array::from_fn(|index| (1 << (size - 1)) + offset + index as u64);
+            let mut actual = [0; 64];
+            let mut metadata = Vec::new();
+            get_proof_f1_and_meta(size, &plot_id, &proof, &mut actual, &mut metadata).unwrap();
+            for (index, value) in proof.iter().enumerate() {
+                let position = value * u64::from(size);
+                let mut stream = Vec::new();
+                chacha8_get_keystream(&context, position / 512, 2, &mut stream);
+                let mut expected = 0u64;
+                for bit in position % 512..position % 512 + u64::from(size) {
+                    expected = (expected << 1)
+                        | u64::from((stream[bit as usize / 8] >> (7 - bit % 8)) & 1);
+                }
+                expected = (expected << K_EXTRA_BITS) | (value >> (size - u32::from(K_EXTRA_BITS)));
+                assert_eq!(actual[index], expected, "k={size}, x={value}");
+            }
+        }
+    }
+}

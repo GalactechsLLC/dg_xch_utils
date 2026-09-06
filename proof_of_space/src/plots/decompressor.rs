@@ -1412,7 +1412,6 @@ impl Decompressor {
                         self.tables[PlotTable::Table5 as usize].groups[l_group].count,
                     )
                 };
-                //let _meta_left = &proof_context.meta_left[prev_table.groups[l_group].offset..prev_table.groups[l_group].count];
                 let r_group = l_group / 2;
                 if l_group & 1 == 0 {
                     self.tables[PlotTable::Table6 as usize].begin_group(r_group);

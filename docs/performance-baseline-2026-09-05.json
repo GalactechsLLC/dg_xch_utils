@@ -1,0 +1,903 @@
+{
+  "source": "https://grafana.galactechs.com/d/dgxch-sync-overview",
+  "dashboard_version": 8,
+  "datasource_uid": "P1809F7CD0C75ACF3",
+  "job": "local_full_node",
+  "instance": "192.168.0.109:8444",
+  "timezone": "America/Los_Angeles",
+  "query_range_utc": [
+    "2026-09-05T06:15:00Z",
+    "2026-09-05T20:10:00Z"
+  ],
+  "step_seconds": 60,
+  "boundary_step_seconds": 15,
+  "observed_up_transition_utc": {
+    "down": "2026-09-05T17:53:30Z",
+    "up": "2026-09-05T18:09:00Z"
+  },
+  "method": "Counter endpoint differences divided by elapsed query-window time; gauge mean/max from one-minute evaluation samples. Five-minute rate percentiles summarize sampled rates, not individual events. Height ranges are approximately matched, not identical. CPU is instrumented worker CPU only.",
+  "windows": {
+    "previous_matched": {
+      "start_utc": "2026-09-05T06:23:00Z",
+      "end_utc": "2026-09-05T08:33:00Z",
+      "seconds": 7800,
+      "height_endpoints": [
+        218719,
+        1601087
+      ],
+      "confirmed_counter_endpoints": [
+        218720,
+        1601088
+      ],
+      "confirmed_blocks_per_minute": 10633.6,
+      "gauges": {
+        "fullnode_alloc_allocated_bytes": {
+          "mean": 335961686.16793895,
+          "max": 1572858608,
+          "samples": 131
+        },
+        "fullnode_compute_workers": {
+          "mean": 62,
+          "max": 62,
+          "samples": 131
+        },
+        "fullnode_outbound_peers": {
+          "mean": 15.977099236641221,
+          "max": 16,
+          "samples": 131
+        },
+        "fullnode_process_resident_bytes": {
+          "mean": 2087308092.5801528,
+          "max": 4041293824,
+          "samples": 131
+        },
+        "fullnode_queue_len": {
+          "mean": 12435.297709923665,
+          "max": 87264,
+          "samples": 131
+        },
+        "fullnode_queue_resident_bytes": {
+          "mean": 113736484.67175573,
+          "max": 556712217,
+          "samples": 131
+        },
+        "fullnode_readahead_depth": {
+          "mean": 64,
+          "max": 64,
+          "samples": 131
+        },
+        "fullnode_sqlite_writer_cache_bytes": {
+          "mean": 268435456,
+          "max": 268435456,
+          "samples": 131
+        }
+      },
+      "counter_endpoints": {
+        "fullnode_compute_cpu_seconds_total[phase=archive]": [
+          18.930123648,
+          222.120601237
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=body]": [
+          0,
+          40642.749340774
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=coin_prepare]": [
+          0.205753171,
+          41.149999015
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=signature]": [
+          2004.899280216,
+          14073.379647851
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=vdf]": [
+          23279.317058841,
+          173941.408609386
+        ],
+        "fullnode_compute_job_seconds_total[phase=archive]": [
+          18.900630989,
+          224.570592907
+        ],
+        "fullnode_compute_job_seconds_total[phase=body]": [
+          0,
+          40863.652123258
+        ],
+        "fullnode_compute_job_seconds_total[phase=coin_prepare]": [
+          0.206308243,
+          41.578175177
+        ],
+        "fullnode_compute_job_seconds_total[phase=signature]": [
+          2019.844369149,
+          14220.263067423
+        ],
+        "fullnode_compute_job_seconds_total[phase=vdf]": [
+          25427.81784274,
+          189875.529589495
+        ],
+        "fullnode_compute_jobs_total[phase=archive]": [
+          437440,
+          3202396
+        ],
+        "fullnode_compute_jobs_total[phase=body]": [
+          0,
+          481070
+        ],
+        "fullnode_compute_jobs_total[phase=coin_prepare]": [
+          1738,
+          13142
+        ],
+        "fullnode_compute_jobs_total[phase=signature]": [
+          949414,
+          6706959
+        ],
+        "fullnode_compute_jobs_total[phase=vdf]": [
+          992765,
+          7318284
+        ],
+        "fullnode_compute_queue_seconds_total[phase=archive]": [
+          1222.899065144,
+          14249.498834213
+        ],
+        "fullnode_compute_queue_seconds_total[phase=body]": [
+          0,
+          4606.698526192
+        ],
+        "fullnode_compute_queue_seconds_total[phase=coin_prepare]": [
+          0.022457095,
+          0.263430068
+        ],
+        "fullnode_compute_queue_seconds_total[phase=signature]": [
+          13242.225860613,
+          64259.464536359
+        ],
+        "fullnode_compute_queue_seconds_total[phase=vdf]": [
+          186695.47305771,
+          1004198.215484289
+        ],
+        "fullnode_confirm_coin_mutations_total": [
+          437430,
+          91865596
+        ],
+        "fullnode_store_commit_seconds_count[phase=catch_up]": [
+          1738,
+          13141
+        ],
+        "fullnode_store_commit_seconds_count[phase=near_tip]": [
+          0,
+          0
+        ],
+        "fullnode_store_commit_seconds_sum[phase=catch_up]": [
+          11.632125,
+          848.696916
+        ],
+        "fullnode_store_commit_seconds_sum[phase=near_tip]": [
+          0,
+          0
+        ],
+        "fullnode_store_operation_seconds_total[operation=writer_hold]": [
+          31.35643757,
+          2088.010871773
+        ],
+        "fullnode_store_operation_seconds_total[operation=writer_wait]": [
+          0.00110282,
+          0.010169539
+        ],
+        "fullnode_sync_phase_seconds_total[phase=confirm]": [
+          51.379828,
+          2366.139047
+        ],
+        "fullnode_sync_phase_seconds_total[phase=drain_wait]": [
+          435.642378,
+          1491.456856
+        ],
+        "fullnode_sync_phase_seconds_total[phase=post_confirm]": [
+          9.013963,
+          84.018716
+        ],
+        "fullnode_sync_phase_seconds_total[phase=precompute_wait]": [
+          0,
+          1290.934656
+        ],
+        "fullnode_sync_phase_seconds_total[phase=stage]": [
+          45.740296,
+          849.423768
+        ],
+        "fullnode_vdf_cache_hits_total[cache=discriminant]": [
+          754166,
+          5563705
+        ],
+        "fullnode_vdf_cache_hits_total[cache=verification]": [
+          780,
+          5165
+        ],
+        "fullnode_vdf_cache_lock_seconds_total[cache=discriminant]": [
+          0.22664606,
+          2.442456427
+        ],
+        "fullnode_vdf_cache_lock_seconds_total[cache=verification]": [
+          10.761291282,
+          120.686852974
+        ],
+        "fullnode_vdf_cache_misses_total[cache=discriminant]": [
+          237880,
+          1749414
+        ],
+        "fullnode_vdf_cache_misses_total[cache=verification]": [
+          992046,
+          7313119
+        ]
+      },
+      "five_minute_throughput_blocks_per_minute": {
+        "median": 9951.457627118645,
+        "p95": 18640.271186440677
+      },
+      "five_minute_commit_p95_seconds": {
+        "median": 0.0987793427230047,
+        "max": 1.9439024390243895
+      }
+    },
+    "current_matched": {
+      "start_utc": "2026-09-05T18:24:00Z",
+      "end_utc": "2026-09-05T20:00:00Z",
+      "seconds": 5760,
+      "height_endpoints": [
+        204543,
+        1600895
+      ],
+      "confirmed_counter_endpoints": [
+        204544,
+        1600896
+      ],
+      "confirmed_blocks_per_minute": 14545.333333333332,
+      "gauges": {
+        "fullnode_alloc_allocated_bytes": {
+          "mean": 6237637463.092784,
+          "max": 10926001224,
+          "samples": 97
+        },
+        "fullnode_compute_workers": {
+          "mean": 62,
+          "max": 62,
+          "samples": 97
+        },
+        "fullnode_outbound_peers": {
+          "mean": 15.989690721649485,
+          "max": 16,
+          "samples": 97
+        },
+        "fullnode_process_resident_bytes": {
+          "mean": 11777709805.525774,
+          "max": 16944123904,
+          "samples": 97
+        },
+        "fullnode_queue_len": {
+          "mean": 276682.2268041237,
+          "max": 484096,
+          "samples": 97
+        },
+        "fullnode_queue_resident_bytes": {
+          "mean": 5349377344.4536085,
+          "max": 8591289017,
+          "samples": 97
+        },
+        "fullnode_readahead_depth": {
+          "mean": 64,
+          "max": 64,
+          "samples": 97
+        },
+        "fullnode_sqlite_wal_outstanding_frames": {
+          "mean": 0,
+          "max": 0,
+          "samples": 97
+        },
+        "fullnode_sqlite_writer_cache_bytes": {
+          "mean": 4294967296,
+          "max": 4294967296,
+          "samples": 97
+        }
+      },
+      "counter_endpoints": {
+        "fullnode_compute_cpu_seconds_total[phase=archive]": [
+          18.12506685,
+          224.23589013
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=body]": [
+          0,
+          41766.705706157
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=coin_prepare]": [
+          0.198310192,
+          44.50633502
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=signature]": [
+          1878.495058619,
+          14203.504408187
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=vdf]": [
+          21916.202301415,
+          174637.797161824
+        ],
+        "fullnode_compute_job_seconds_total[phase=archive]": [
+          18.102031803,
+          227.760205017
+        ],
+        "fullnode_compute_job_seconds_total[phase=body]": [
+          0,
+          42018.282290992
+        ],
+        "fullnode_compute_job_seconds_total[phase=coin_prepare]": [
+          0.19889131,
+          45.343129894
+        ],
+        "fullnode_compute_job_seconds_total[phase=signature]": [
+          1892.705675893,
+          14366.974746605
+        ],
+        "fullnode_compute_job_seconds_total[phase=vdf]": [
+          23972.538065835,
+          190714.779155735
+        ],
+        "fullnode_compute_jobs_total[phase=archive]": [
+          409344,
+          3201792
+        ],
+        "fullnode_compute_jobs_total[phase=body]": [
+          0,
+          480985
+        ],
+        "fullnode_compute_jobs_total[phase=coin_prepare]": [
+          1676,
+          12590
+        ],
+        "fullnode_compute_jobs_total[phase=signature]": [
+          889058,
+          6705666
+        ],
+        "fullnode_compute_jobs_total[phase=vdf]": [
+          929608,
+          7314767
+        ],
+        "fullnode_compute_queue_seconds_total[phase=archive]": [
+          1160.135464605,
+          14864.886262294
+        ],
+        "fullnode_compute_queue_seconds_total[phase=body]": [
+          0,
+          2135.923677762
+        ],
+        "fullnode_compute_queue_seconds_total[phase=coin_prepare]": [
+          0.021632956,
+          0.252620223
+        ],
+        "fullnode_compute_queue_seconds_total[phase=signature]": [
+          12045.659136021,
+          64490.273850656
+        ],
+        "fullnode_compute_queue_seconds_total[phase=vdf]": [
+          172409.775727531,
+          1014462.169585229
+        ],
+        "fullnode_confirm_coin_mutations_total": [
+          409084,
+          91753539
+        ],
+        "fullnode_store_commit_seconds_count[phase=catch_up]": [
+          1675,
+          12590
+        ],
+        "fullnode_store_commit_seconds_count[phase=near_tip]": [
+          0,
+          0
+        ],
+        "fullnode_store_commit_seconds_sum[phase=catch_up]": [
+          9.582932,
+          633.517024
+        ],
+        "fullnode_store_commit_seconds_sum[phase=near_tip]": [
+          0,
+          0
+        ],
+        "fullnode_store_operation_seconds_total[operation=writer_hold]": [
+          26.508246459,
+          1682.266951554
+        ],
+        "fullnode_store_operation_seconds_total[operation=writer_wait]": [
+          0.000949211,
+          0.008699887
+        ],
+        "fullnode_sync_phase_seconds_total[phase=confirm]": [
+          45.677683,
+          1968.762259
+        ],
+        "fullnode_sync_phase_seconds_total[phase=drain_wait]": [
+          405.859176,
+          1467.797942
+        ],
+        "fullnode_sync_phase_seconds_total[phase=post_confirm]": [
+          9.424624,
+          89.862879
+        ],
+        "fullnode_sync_phase_seconds_total[phase=precompute_wait]": [
+          0,
+          1530.037411
+        ],
+        "fullnode_sync_phase_seconds_total[phase=stage]": [
+          42.616445,
+          801.320896
+        ],
+        "fullnode_vdf_cache_hits_total[cache=discriminant]": [
+          706232,
+          5560430
+        ],
+        "fullnode_vdf_cache_hits_total[cache=verification]": [
+          721,
+          5239
+        ],
+        "fullnode_vdf_cache_lock_seconds_total[cache=discriminant]": [
+          0.177977945,
+          2.141059409
+        ],
+        "fullnode_vdf_cache_lock_seconds_total[cache=verification]": [
+          10.563534398,
+          124.938562058
+        ],
+        "fullnode_vdf_cache_misses_total[cache=discriminant]": [
+          222655,
+          1749098
+        ],
+        "fullnode_vdf_cache_misses_total[cache=verification]": [
+          928887,
+          7309528
+        ]
+      },
+      "five_minute_throughput_blocks_per_minute": {
+        "median": 15229.830508474575,
+        "p95": 18640.271186440677
+      },
+      "five_minute_commit_p95_seconds": {
+        "median": 0.09671969696969698,
+        "max": 0.9409090909090909
+      }
+    },
+    "previous_late": {
+      "start_utc": "2026-09-05T17:15:00Z",
+      "end_utc": "2026-09-05T17:50:00Z",
+      "seconds": 2100,
+      "height_endpoints": [
+        5148191,
+        5366687
+      ],
+      "confirmed_counter_endpoints": [
+        5148192,
+        5366688
+      ],
+      "confirmed_blocks_per_minute": 6242.742857142857,
+      "gauges": {
+        "fullnode_alloc_allocated_bytes": {
+          "mean": 7004057950.222222,
+          "max": 7491889752,
+          "samples": 36
+        },
+        "fullnode_compute_workers": {
+          "mean": 62,
+          "max": 62,
+          "samples": 36
+        },
+        "fullnode_outbound_peers": {
+          "mean": 16,
+          "max": 16,
+          "samples": 36
+        },
+        "fullnode_process_resident_bytes": {
+          "mean": 10328402147.555555,
+          "max": 11246174208,
+          "samples": 36
+        },
+        "fullnode_queue_len": {
+          "mean": 451974.22222222225,
+          "max": 505696,
+          "samples": 36
+        },
+        "fullnode_queue_resident_bytes": {
+          "mean": 5095044276,
+          "max": 5635356363,
+          "samples": 36
+        },
+        "fullnode_readahead_depth": {
+          "mean": 64,
+          "max": 64,
+          "samples": 36
+        },
+        "fullnode_sqlite_writer_cache_bytes": {
+          "mean": 268435456,
+          "max": 268435456,
+          "samples": 36
+        }
+      },
+      "counter_endpoints": {
+        "fullnode_compute_cpu_seconds_total[phase=archive]": [
+          904.88517501,
+          948.910979832
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=body]": [
+          226424.406435979,
+          233225.903831024
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=coin_prepare]": [
+          236.081468587,
+          238.858746767
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=signature]": [
+          42535.366611013,
+          44357.094230446
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=vdf]": [
+          620764.453386795,
+          660952.292459823
+        ],
+        "fullnode_compute_job_seconds_total[phase=archive]": [
+          922.495711539,
+          966.78849423
+        ],
+        "fullnode_compute_job_seconds_total[phase=body]": [
+          227563.832393297,
+          234373.164484411
+        ],
+        "fullnode_compute_job_seconds_total[phase=coin_prepare]": [
+          240.256823497,
+          243.061778556
+        ],
+        "fullnode_compute_job_seconds_total[phase=signature]": [
+          43064.113445494,
+          44902.434350588
+        ],
+        "fullnode_compute_job_seconds_total[phase=vdf]": [
+          672262.780145291,
+          714026.418666093
+        ],
+        "fullnode_compute_jobs_total[phase=archive]": [
+          10296384,
+          10733376
+        ],
+        "fullnode_compute_jobs_total[phase=body]": [
+          1680568,
+          1753919
+        ],
+        "fullnode_compute_jobs_total[phase=coin_prepare]": [
+          45219,
+          46928
+        ],
+        "fullnode_compute_jobs_total[phase=signature]": [
+          20378331,
+          21234552
+        ],
+        "fullnode_compute_jobs_total[phase=vdf]": [
+          23629400,
+          24635323
+        ],
+        "fullnode_compute_queue_seconds_total[phase=archive]": [
+          57240.70390243,
+          60182.067142565
+        ],
+        "fullnode_compute_queue_seconds_total[phase=body]": [
+          16097.289473576,
+          16345.36863378
+        ],
+        "fullnode_compute_queue_seconds_total[phase=coin_prepare]": [
+          1.054851553,
+          1.086352518
+        ],
+        "fullnode_compute_queue_seconds_total[phase=signature]": [
+          210919.026663239,
+          218830.358058798
+        ],
+        "fullnode_compute_queue_seconds_total[phase=vdf]": [
+          3695729.190863933,
+          3908320.709131047
+        ],
+        "fullnode_confirm_coin_mutations_total": [
+          510383715,
+          517965780
+        ],
+        "fullnode_store_commit_seconds_count[phase=catch_up]": [
+          45219,
+          46928
+        ],
+        "fullnode_store_commit_seconds_count[phase=near_tip]": [
+          0,
+          0
+        ],
+        "fullnode_store_commit_seconds_sum[phase=catch_up]": [
+          4652.930008,
+          4701.052183
+        ],
+        "fullnode_store_commit_seconds_sum[phase=near_tip]": [
+          0,
+          0
+        ],
+        "fullnode_store_operation_seconds_total[operation=writer_hold]": [
+          11576.388821155,
+          11770.854535128
+        ],
+        "fullnode_store_operation_seconds_total[operation=writer_wait]": [
+          0.035088328,
+          0.036825387
+        ],
+        "fullnode_sync_phase_seconds_total[phase=confirm]": [
+          12792.533867,
+          13035.75407
+        ],
+        "fullnode_sync_phase_seconds_total[phase=drain_wait]": [
+          4749.972767,
+          5229.080886
+        ],
+        "fullnode_sync_phase_seconds_total[phase=post_confirm]": [
+          294.343172,
+          306.819951
+        ],
+        "fullnode_sync_phase_seconds_total[phase=precompute_wait]": [
+          6058.989194,
+          7221.81547
+        ],
+        "fullnode_sync_phase_seconds_total[phase=stage]": [
+          3971.11892,
+          4095.729874
+        ],
+        "fullnode_vdf_cache_hits_total[cache=discriminant]": [
+          17981692,
+          18747212
+        ],
+        "fullnode_vdf_cache_hits_total[cache=verification]": [
+          15669,
+          16247
+        ],
+        "fullnode_vdf_cache_lock_seconds_total[cache=discriminant]": [
+          8.647007985,
+          8.867464092
+        ],
+        "fullnode_vdf_cache_lock_seconds_total[cache=verification]": [
+          481.995603607,
+          498.977577262
+        ],
+        "fullnode_vdf_cache_misses_total[cache=discriminant]": [
+          5632099,
+          5871865
+        ],
+        "fullnode_vdf_cache_misses_total[cache=verification]": [
+          23613791,
+          24619077
+        ]
+      },
+      "five_minute_throughput_blocks_per_minute": {
+        "median": 6404.338983050847,
+        "p95": 6534.5084745762715
+      },
+      "five_minute_commit_p95_seconds": {
+        "median": 0.04735086382113822,
+        "max": 0.23683673469387756
+      }
+    },
+    "current_late": {
+      "start_utc": "2026-09-05T19:40:00Z",
+      "end_utc": "2026-09-05T20:10:00Z",
+      "seconds": 1800,
+      "height_endpoints": [
+        1374847,
+        1675007
+      ],
+      "confirmed_counter_endpoints": [
+        1374848,
+        1675008
+      ],
+      "confirmed_blocks_per_minute": 10005.333333333334,
+      "gauges": {
+        "fullnode_alloc_allocated_bytes": {
+          "mean": 9831003797.67742,
+          "max": 10052225960,
+          "samples": 31
+        },
+        "fullnode_compute_workers": {
+          "mean": 62,
+          "max": 62,
+          "samples": 31
+        },
+        "fullnode_outbound_peers": {
+          "mean": 16,
+          "max": 16,
+          "samples": 31
+        },
+        "fullnode_process_resident_bytes": {
+          "mean": 16263235253.67742,
+          "max": 16944123904,
+          "samples": 31
+        },
+        "fullnode_queue_len": {
+          "mean": 322965.67741935485,
+          "max": 354496,
+          "samples": 31
+        },
+        "fullnode_queue_resident_bytes": {
+          "mean": 8590016282.612904,
+          "max": 8591174647,
+          "samples": 31
+        },
+        "fullnode_readahead_depth": {
+          "mean": 64,
+          "max": 64,
+          "samples": 31
+        },
+        "fullnode_sqlite_wal_outstanding_frames": {
+          "mean": 3038.7419354838707,
+          "max": 94201,
+          "samples": 31
+        },
+        "fullnode_sqlite_writer_cache_bytes": {
+          "mean": 4294967296,
+          "max": 4294967296,
+          "samples": 31
+        }
+      },
+      "counter_endpoints": {
+        "fullnode_compute_cpu_seconds_total[phase=archive]": [
+          184.326947863,
+          240.553771268
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=body]": [
+          32150.83485852,
+          44540.510829771
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=coin_prepare]": [
+          25.31274882,
+          62.062757433
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=signature]": [
+          12295.14843648,
+          14823.069761185
+        ],
+        "fullnode_compute_cpu_seconds_total[phase=vdf]": [
+          149974.396415891,
+          182720.096216676
+        ],
+        "fullnode_compute_job_seconds_total[phase=archive]": [
+          186.873477428,
+          244.45393673
+        ],
+        "fullnode_compute_job_seconds_total[phase=body]": [
+          32374.924052425,
+          44793.300948321
+        ],
+        "fullnode_compute_job_seconds_total[phase=coin_prepare]": [
+          25.806452612,
+          63.171997155
+        ],
+        "fullnode_compute_job_seconds_total[phase=signature]": [
+          12435.305097906,
+          14993.318387139
+        ],
+        "fullnode_compute_job_seconds_total[phase=vdf]": [
+          163832.551696076,
+          199560.145009245
+        ],
+        "fullnode_compute_jobs_total[phase=archive]": [
+          2749952,
+          3350190
+        ],
+        "fullnode_compute_jobs_total[phase=body]": [
+          401098,
+          504862
+        ],
+        "fullnode_compute_jobs_total[phase=coin_prepare]": [
+          10819,
+          13170
+        ],
+        "fullnode_compute_jobs_total[phase=signature]": [
+          5801534,
+          7000990
+        ],
+        "fullnode_compute_jobs_total[phase=vdf]": [
+          6280480,
+          7654676
+        ],
+        "fullnode_compute_queue_seconds_total[phase=archive]": [
+          12184.467334137,
+          15947.687540914
+        ],
+        "fullnode_compute_queue_seconds_total[phase=body]": [
+          1981.004221191,
+          2162.507774313
+        ],
+        "fullnode_compute_queue_seconds_total[phase=coin_prepare]": [
+          0.21127033,
+          0.264013136
+        ],
+        "fullnode_compute_queue_seconds_total[phase=signature]": [
+          56945.054816656,
+          66865.06386613
+        ],
+        "fullnode_compute_queue_seconds_total[phase=vdf]": [
+          873156.873476496,
+          1056010.959680512
+        ],
+        "fullnode_confirm_coin_mutations_total": [
+          58969457,
+          118102030
+        ],
+        "fullnode_store_commit_seconds_count[phase=catch_up]": [
+          10818,
+          13169
+        ],
+        "fullnode_store_commit_seconds_count[phase=near_tip]": [
+          0,
+          0
+        ],
+        "fullnode_store_commit_seconds_sum[phase=catch_up]": [
+          412.726575,
+          817.056588
+        ],
+        "fullnode_store_commit_seconds_sum[phase=near_tip]": [
+          0,
+          0
+        ],
+        "fullnode_store_operation_seconds_total[operation=writer_hold]": [
+          1138.331268467,
+          2110.329121613
+        ],
+        "fullnode_store_operation_seconds_total[operation=writer_wait]": [
+          0.00743094,
+          0.009117344
+        ],
+        "fullnode_sync_phase_seconds_total[phase=confirm]": [
+          1361.29824,
+          2433.004586
+        ],
+        "fullnode_sync_phase_seconds_total[phase=drain_wait]": [
+          1361.96562,
+          1481.464139
+        ],
+        "fullnode_sync_phase_seconds_total[phase=post_confirm]": [
+          77.056872,
+          94.533676
+        ],
+        "fullnode_sync_phase_seconds_total[phase=precompute_wait]": [
+          1294.384785,
+          1543.14901
+        ],
+        "fullnode_sync_phase_seconds_total[phase=stage]": [
+          626.984379,
+          893.22022
+        ],
+        "fullnode_vdf_cache_hits_total[cache=discriminant]": [
+          4774220,
+          5818963
+        ],
+        "fullnode_vdf_cache_hits_total[cache=verification]": [
+          4521,
+          5475
+        ],
+        "fullnode_vdf_cache_lock_seconds_total[cache=discriminant]": [
+          1.831944314,
+          2.237261904
+        ],
+        "fullnode_vdf_cache_lock_seconds_total[cache=verification]": [
+          106.324594144,
+          130.947895952
+        ],
+        "fullnode_vdf_cache_misses_total[cache=discriminant]": [
+          1501798,
+          1830289
+        ],
+        "fullnode_vdf_cache_misses_total[cache=verification]": [
+          6276018,
+          7649252
+        ]
+      },
+      "five_minute_throughput_blocks_per_minute": {
+        "median": 9189.966101694916,
+        "p95": 15828.610169491525
+      },
+      "five_minute_commit_p95_seconds": {
+        "median": 0.5514705882352929,
+        "max": 0.9409090909090909
+      }
+    }
+  }
+}

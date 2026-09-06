@@ -2,7 +2,7 @@
 // (`BACKTRACK_MAX_DEPTH` = 5) and the WP-anchored long-sync band: a fork ~6-50 below our
 // confirmed peak. The new-peak ladder answers it by falling through the failed backtrack to batch
 // sync, whose downloads re-enter weight-only fork choice. Here the backtrack
-// signals `SyncError::DeepFork` (the escalation, pinned in backtrack.rs), and the daemon's
+// signals `SyncError::DeepFork` (the escalation, pinned in backtrack.rs), and the server's
 // deep-fork arm re-enters through the BULK pipeline — headers-first candidates + the
 // reservation-window out-of-order body download + per-block confirm (`Chaser::sync_range`, the
 // exact path `Node::bulk_sync`'s `fast_sync_with_summaries` drives) — where the engine's

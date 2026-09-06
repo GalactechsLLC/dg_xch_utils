@@ -27,18 +27,13 @@ required-features = ["server"]
 dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, features = ["bls"] }
 dg_xch_keys = { path = "../keys", version = "3.0.0" }
 dg_xch_node = { path = "../node", version = "3.0.0" }
-# The full-node daemon, reused (behind the `server` feature) to serve the peer/wallet protocol from
+# The full-node server, reused (behind the `server` feature) to serve the peer/wallet protocol from
 # the simulator's own store — a wallet syncs against the sim as if it were a mainnet node. `hint`
 # pulls the coin-index + hint secondary indexes a wallet needs to discover coins and CAT/NFT assets.
-full-node = { path = "../full-node", features = ["hint"], optional = true }
+dg_full_node = { path = "../full-node", features = ["hint"], optional = true }
 rustls = { version = "0.23", optional = true }
 num-bigint = { version = "0.4.6", optional = true }
 async-trait = { version = "0.1.89", optional = true }
-# Plain-HTTP chain control for wallet integration tests.
-hyper = { version = "1.7.0", features = ["full"], optional = true }
-http-body-util = { version = "0.1.3", optional = true }
-hyper-util = { version = "0.1.17", features = ["full"], optional = true }
-serde_json = { version = "1.0.145", optional = true }
 dg_xch_pos = { path = "../proof_of_space", version = "3.0.0" }
 dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
 dg_xch_stores = { path = "../stores", version = "3.0.0" }
@@ -49,7 +44,7 @@ blake3 = "1.8.3"
 chia-pos2 = { version = "0.6.0", optional = true }
 blst = { version = "0.3.16", features = ["portable"] }
 log = "0.4.29"
-portfu = { version = "1.3.3" }
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false, features = ["tasks", "tls"] }
 rand_chacha = "0.10.0"
 serde = { version = "1.0.228", features = ["derive"] }
 # zstd-sys and chia-pos2 each vendor a copy of FSE, and the two define the same symbols. Linking
@@ -69,19 +64,14 @@ default = ["pos2"]
 #
 # It also pins zstd to the system library, because chia-pos2 and zstd-sys each vendor a copy of FSE
 # and both define its symbols; a binary linking the two fails on a duplicate symbol unless one of
-# them comes from elsewhere. That only reaches a binary built alongside this crate: `cargo build -p
-# full-node`, which is what the Dockerfile runs, does not have this crate in its graph and keeps the
-# bundled zstd. A workspace-wide build produces a full-node that wants libzstd at runtime.
+# them comes from elsewhere. The Docker image builds `dg` without this crate in its graph and keeps
+# bundled zstd. A workspace-wide build that includes simulator binaries requires system zstd.
 pos2 = ["dep:chia-pos2", "dep:zstd"]
 # Serve the peer/wallet protocol from the simulator's chain so a real wallet can sync against it.
 server = [
     "pos2",
-    "dep:full-node",
+    "dep:dg_full_node",
     "dep:rustls",
     "dep:num-bigint",
     "dep:async-trait",
-    "dep:hyper",
-    "dep:http-body-util",
-    "dep:hyper-util",
-    "dep:serde_json",
 ]

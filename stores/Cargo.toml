@@ -19,6 +19,7 @@ sqlx = { version = "=0.8.6", features = ["macros", "runtime-tokio", "tls-rustls-
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "macros"] }
 memmap2 = { version = "0.9", optional = true }
 zstd = "0.13.2"
+libsqlite3-sys = "0.30.1"
 
  [dev-dependencies]
 tempfile = "3"

@@ -96,6 +96,7 @@ async fn try_peer(
     let config = Arc::new(WsClientConfig {
         host: host.to_string(),
         port,
+        server_port: 0,
         network_id: network_id.to_string(),
         ssl_info: None, // None → with_ca generates a per-run cert from the embedded CA (Chia identity model)
         software_version: None,

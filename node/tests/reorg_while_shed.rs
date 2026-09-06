@@ -1,6 +1,6 @@
 // Reorg WHILE the service indexes are SHED — the idxphase falling edge meets the reorg path.
-// During a deep re-catch-up the daemon sheds every secondary `coin_record` index
-// (`full-node/src/daemon.rs` `update_synced` falling-edge latch, pinned by
+// During a deep re-catch-up the server sheds every secondary `coin_record` index
+// (`full-node/src/node/runtime.rs` `update_synced` falling-edge latch, pinned by
 // `deep_fall_behind_sheds_indexes_once_and_the_tip_edge_rebuilds`); reorgs are a tip
 // phenomenon, but a node CAN be asked to reorg while shed — a minority-branch node must rejoin
 // the heavier chain mid-catch-up, long before the rising-edge `build_indexes` fires. The
@@ -90,7 +90,7 @@ where
         );
     }
 
-    // The falling edge: what the daemon's deep-catch-up latch fires.
+    // The falling edge: what the server's deep-catch-up latch fires.
     store
         .shed_service_indexes()
         .await

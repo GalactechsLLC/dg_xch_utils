@@ -297,6 +297,25 @@ async fn fresh_readahead_reports_zero_signals() {
     assert_eq!(m.readahead_inflight.load(Ordering::Relaxed), 0);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dropping_readahead_clears_the_inflight_gauge() {
+    let rig = Rig::new();
+    let metrics = Arc::new(SyncMetrics::default());
+    let mut ra = WindowReadahead::new(metrics.clone(), TIMEOUT);
+    let sources: Vec<_> = (0..4)
+        .map(|i| rig.scripted(i, Duration::ZERO, true, false))
+        .collect();
+    ra.fill(&sources, 0, 10_000, BATCH);
+    assert_eq!(
+        metrics.readahead_inflight.load(Ordering::Relaxed),
+        READAHEAD_START_DEPTH as u64
+    );
+
+    drop(ra);
+    assert_eq!(metrics.readahead_inflight.load(Ordering::Relaxed), 0);
+    assert!(rig.drained().await, "drop aborts every fetch future");
+}
+
 fn served_by_peer(rig: &Rig) -> HashMap<u64, usize> {
     let mut per_peer: HashMap<u64, usize> = HashMap::new();
     for (p, _, _) in rig.served.lock().expect("served").iter() {

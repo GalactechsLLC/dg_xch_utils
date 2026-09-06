@@ -64,6 +64,24 @@ pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }
 
+fn outbound_handshake(
+    config: &WsClientConfig,
+    node_type: NodeType,
+    protocol_version: ChiaProtocolVersion,
+) -> Handshake {
+    Handshake {
+        network_id: config.network_id.clone(),
+        protocol_version: protocol_version.to_string(),
+        software_version: config.software_version.clone().unwrap_or_else(version),
+        server_port: config.server_port,
+        node_type: node_type as u8,
+        capabilities: CAPABILITIES
+            .iter()
+            .map(|entry| (entry.0, entry.1.to_string()))
+            .collect(),
+    }
+}
+
 #[test]
 fn test_version() {
     println!("{}", version());
@@ -240,6 +258,10 @@ impl WsClient {
             peer_id.clone(),
             peers.clone(),
             limiter,
+            Arc::<str>::from(format!(
+                "outbound endpoint={}:{}",
+                client_config.host, client_config.port
+            )),
         );
         let v3 = ws_con.v3();
         let connection = Arc::new(RwLock::new(ws_con));
@@ -269,7 +291,8 @@ impl WsClient {
         };
         ws_client
             .perform_handshake(node_type, protocol_version)
-            .await?;
+            .await
+            .map_err(|error| Error::other(format!("Chia handshake failed: {error}")))?;
         // The server's handshake reply is consumed by the oneshot correlation path, not the handler,
         // so record its advertised capabilities on our own peer entry here — this is what the read
         // loop's rate limiter reads to pick the v1/v2 numbers for the peer we dialed.
@@ -333,17 +356,7 @@ impl WsClient {
             ChiaMessage::new(
                 ProtocolMessageTypes::Handshake,
                 chia_protocol_version,
-                &Handshake {
-                    network_id: self.client_config.network_id.to_string(),
-                    protocol_version: chia_protocol_version.to_string(),
-                    software_version: version(),
-                    server_port: self.client_config.port,
-                    node_type: node_type as u8,
-                    capabilities: CAPABILITIES
-                        .iter()
-                        .map(|e| (e.0, e.1.to_string()))
-                        .collect(),
-                },
+                &outbound_handshake(&self.client_config, node_type, chia_protocol_version),
                 None,
             )?,
             Some(ProtocolMessageTypes::Handshake),
@@ -359,7 +372,11 @@ impl WsClient {
 
 pub struct WsClientConfig {
     pub host: String,
+    /// Remote WebSocket port to dial.
     pub port: u16,
+    /// Our listening port advertised in the Chia handshake, or zero when this client does not
+    /// accept inbound peer connections.
+    pub server_port: u16,
     pub network_id: String,
     pub ssl_info: Option<ClientSSLConfig>,
     //Used to control software version sent to server, default is dg_xch_clients: VERSION
@@ -369,6 +386,33 @@ pub struct WsClientConfig {
     /// Install the per-connection inbound rate limiter on this link.
     /// Set by the p2p full-node dialer; false for harvester/farmer/wallet client roles.
     pub rate_limited: bool,
+}
+
+#[cfg(test)]
+mod handshake_tests {
+    use super::*;
+
+    #[test]
+    fn handshake_uses_local_identity_not_remote_destination() {
+        let config = WsClientConfig {
+            host: "remote.example".to_string(),
+            port: 18444,
+            server_port: 58444,
+            network_id: "testnet11".to_string(),
+            ssl_info: None,
+            software_version: Some("test-client".to_string()),
+            protocol_version: ChiaProtocolVersion::Chia0_0_37,
+            additional_headers: None,
+            rate_limited: false,
+        };
+        let handshake =
+            outbound_handshake(&config, NodeType::FullNode, ChiaProtocolVersion::Chia0_0_37);
+
+        assert_eq!(handshake.network_id, "testnet11");
+        assert_eq!(handshake.server_port, 58444);
+        assert_ne!(handshake.server_port, config.port);
+        assert_eq!(handshake.software_version, "test-client");
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -412,7 +456,6 @@ async fn acquire_v3_out_window(
             Ok(_) => return Ok(()),
             Err(()) => {
                 if waited >= WAIT_CAP_MS {
-                    connection.read().await.cancel_request(id);
                     return Err(Error::new(
                         ErrorKind::TimedOut,
                         format!(
@@ -435,26 +478,25 @@ pub async fn oneshot_message(
     _msg_id: Option<u16>,
     timeout: Option<u64>,
 ) -> Result<Arc<ChiaMessage>, Error> {
-    let (id, rx) = connection.read().await.register_request();
+    let mut request = connection.read().await.register_guarded_request();
+    let id = request.id();
     msg.id = Some(id);
     acquire_v3_out_window(&connection, &msg, id).await?;
     if let Err(e) = connection.write().await.send(msg.into()).await {
-        connection.read().await.cancel_request(id);
         return Err(Error::new(
             ErrorKind::InvalidData,
             format!("Failed to send data: {e:?}"),
         ));
     }
-    match tokio::time::timeout(Duration::from_millis(timeout.unwrap_or(15000)), rx).await {
+    match tokio::time::timeout(
+        Duration::from_millis(timeout.unwrap_or(15000)),
+        request.recv(),
+    )
+    .await
+    {
         Ok(Ok(reply)) => Ok(reply),
-        Ok(Err(_)) => {
-            connection.read().await.cancel_request(id);
-            Err(Error::other("Channel Closed before response received"))
-        }
-        Err(_) => {
-            connection.read().await.cancel_request(id);
-            Err(Error::other("Timeout before oneshot_message completed"))
-        }
+        Ok(Err(_)) => Err(Error::other("Channel Closed before response received")),
+        Err(_) => Err(Error::other("Timeout before oneshot_message completed")),
     }
 }
 
@@ -470,17 +512,21 @@ pub async fn oneshot<R: ChiaSerialize>(
     // fix). The id-less case (the Handshake verack, which correlates by type and happens once, before
     // any concurrent traffic exists) keeps the legacy type-filtered handler path below.
     if msg_id.is_some() || msg.id.is_some() {
-        let (id, rx) = connection.read().await.register_request();
+        let mut request = connection.read().await.register_guarded_request();
+        let id = request.id();
         msg.id = Some(id);
         acquire_v3_out_window(&connection, &msg, id).await?;
         if let Err(e) = connection.write().await.send(msg.into()).await {
-            connection.read().await.cancel_request(id);
             return Err(Error::new(
                 ErrorKind::InvalidData,
                 format!("Failed to parse send data: {e:?}"),
             ));
         }
-        return match tokio::time::timeout(Duration::from_millis(timeout.unwrap_or(15000)), rx).await
+        return match tokio::time::timeout(
+            Duration::from_millis(timeout.unwrap_or(15000)),
+            request.recv(),
+        )
+        .await
         {
             Ok(Ok(reply)) => {
                 let mut cursor = Cursor::new(reply.data.bytes.as_slice());
@@ -491,14 +537,8 @@ pub async fn oneshot<R: ChiaSerialize>(
                     )
                 })
             }
-            Ok(Err(_)) => {
-                connection.read().await.cancel_request(id);
-                Err(Error::other("Channel Closed before response received"))
-            }
-            Err(_) => {
-                connection.read().await.cancel_request(id);
-                Err(Error::other("Timeout before oneshot completed"))
-            }
+            Ok(Err(_)) => Err(Error::other("Channel Closed before response received")),
+            Err(_) => Err(Error::other("Timeout before oneshot completed")),
         };
     }
     let handle_uuid = Uuid::new_v4();

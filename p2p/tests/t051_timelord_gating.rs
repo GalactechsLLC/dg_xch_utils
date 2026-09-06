@@ -54,6 +54,7 @@ fn client_config(port: u16) -> Arc<WsClientConfig> {
     Arc::new(WsClientConfig {
         host: "127.0.0.1".to_string(),
         port,
+        server_port: 0,
         network_id: "mainnet".to_string(),
         ssl_info: None,
         software_version: None,

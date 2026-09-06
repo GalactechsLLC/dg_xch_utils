@@ -2,6 +2,70 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use sqlx::SqliteConnection;
 use tokio::sync::OwnedMutexGuard;
 
+pub struct CoinChanges<'a> {
+    pub height: u32,
+    pub timestamp: u64,
+    pub additions: &'a [dg_xch_core::blockchain::coin_record::CoinRecord],
+    pub removals: &'a [Bytes32],
+    pub hints: &'a [(Bytes32, Bytes32)],
+}
+
+#[derive(Clone)]
+pub struct OwnedCoinChanges {
+    pub height: u32,
+    pub timestamp: u64,
+    pub additions: Vec<dg_xch_core::blockchain::coin_record::CoinRecord>,
+    pub removals: Vec<Bytes32>,
+    pub hints: Vec<(Bytes32, Bytes32)>,
+}
+
+impl OwnedCoinChanges {
+    pub fn borrowed(&self) -> CoinChanges<'_> {
+        CoinChanges {
+            height: self.height,
+            timestamp: self.timestamp,
+            additions: &self.additions,
+            removals: &self.removals,
+            hints: &self.hints,
+        }
+    }
+}
+
+pub enum PreparedCoinWindow {
+    Native(Vec<OwnedCoinChanges>),
+    Sqlite {
+        additions: Vec<(Bytes32, dg_xch_core::blockchain::coin_record::CoinRecord)>,
+        removals: Vec<(Bytes32, u32)>,
+        hints: Vec<(Bytes32, Bytes32)>,
+    },
+}
+
+pub enum PreparedArchive {
+    Native {
+        records: Vec<(
+            dg_xch_core::blockchain::block_record::BlockRecord,
+            BlockStatus,
+        )>,
+        blocks: Vec<dg_xch_core::blockchain::full_block::FullBlock>,
+    },
+    Sqlite {
+        records: Vec<EncodedRecord>,
+        bodies: Vec<(Bytes32, Vec<u8>)>,
+    },
+}
+
+pub struct EncodedRecord {
+    pub hash: Bytes32,
+    pub parent: Bytes32,
+    pub height: i64,
+    pub weight: Vec<u8>,
+    pub iterations: Vec<u8>,
+    pub transaction: i64,
+    pub summary: Option<Vec<u8>>,
+    pub record: Vec<u8>,
+    pub status: i64,
+}
+
 /// Durable per-block validation state, stored as a u8 in `block_record.status`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BlockStatus {
@@ -34,6 +98,7 @@ impl BlockStatus {
 /// A handle only commits against the backend that opened it.
 pub struct BatchHandle {
     pub(crate) inner: BatchInner,
+    pub(crate) _timing: Option<crate::telemetry::OperationTimer>,
 }
 
 impl BatchHandle {

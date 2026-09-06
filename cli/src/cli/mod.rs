@@ -6,6 +6,8 @@ use dialoguer::theme::ColorfulTheme;
 use std::io::{Error, ErrorKind};
 use std::str::FromStr;
 
+use crate::full_node::FullNodeArgs;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
@@ -33,6 +35,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum RootCommands {
+    #[command(name = "full-node", about = "Run the dg_xch validating full node")]
+    FullNode(Box<FullNodeArgs>),
     //START OF FULLNODE API
     #[command(about = "Get the current BlockchainState", long_about = None)]
     PrintPlottingInfo {

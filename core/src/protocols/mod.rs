@@ -9,6 +9,7 @@ pub mod pool;
 pub mod rate_limits;
 pub mod rate_limits_v3;
 pub mod shared;
+pub mod simulator;
 pub mod timelord;
 pub mod wallet;
 
@@ -25,7 +26,7 @@ use futures_util::{Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use log::{debug, error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::{Cursor, Error};
 use std::pin::Pin;
@@ -643,11 +644,67 @@ pub struct PendingRequests {
     inner: std::sync::Mutex<PendingInner>,
 }
 
+/// Cancellation-safe ownership of one outbound request correlation slot.
+///
+/// Dropping the future that is waiting for a reply must also remove the pending
+/// waiter and release any RATE_LIMITS_V3 window slot. Keeping that cleanup in
+/// `Drop` makes enclosing timeouts and task aborts safe.
+pub struct PendingRequest {
+    id: u16,
+    receiver: tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>,
+    pending: Arc<PendingRequests>,
+    v3: Arc<rate_limits_v3::V3Link>,
+}
+
+impl PendingRequest {
+    fn new(pending: Arc<PendingRequests>, v3: Arc<rate_limits_v3::V3Link>) -> Self {
+        let (id, receiver) = pending.register();
+        Self {
+            id,
+            receiver,
+            pending,
+            v3,
+        }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> u16 {
+        self.id
+    }
+
+    pub async fn recv(
+        &mut self,
+    ) -> Result<Arc<ChiaMessage>, tokio::sync::oneshot::error::RecvError> {
+        (&mut self.receiver).await
+    }
+}
+
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        self.pending.cancel(self.id);
+        self.v3.out_release(self.id);
+    }
+}
+
 #[derive(Default)]
 struct PendingInner {
     /// Last id handed out; the next allocation is `wrapping_add(1)`, skipping `0` and any live id.
     last_id: u16,
     waiters: HashMap<u16, tokio::sync::oneshot::Sender<Arc<ChiaMessage>>>,
+    /// Recently cancelled request ids. A slow peer may still answer after the caller's timeout;
+    /// retaining a bounded tombstone lets the read loop recognize and discard that valid-but-late
+    /// block reply instead of treating it as an unsolicited protocol violation.
+    retired_order: VecDeque<u16>,
+    retired: HashSet<u16>,
+}
+
+const RETIRED_REQUEST_CAP: usize = 4096;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingDelivery {
+    Delivered,
+    Retired,
+    Unmatched,
 }
 
 impl PendingRequests {
@@ -663,7 +720,7 @@ impl PendingRequests {
         let id = loop {
             let cand = guard.last_id.wrapping_add(1);
             guard.last_id = cand;
-            if cand != 0 && !guard.waiters.contains_key(&cand) {
+            if cand != 0 && !guard.waiters.contains_key(&cand) && !guard.retired.contains(&cand) {
                 break cand;
             }
         };
@@ -671,36 +728,55 @@ impl PendingRequests {
         (id, rx)
     }
 
-    /// Drop a waiter without delivery (its request timed out or the send failed) so the table never
-    /// leaks an entry for a request no reply will ever satisfy.
+    /// Drop a waiter without delivery (its request timed out or the send failed). Keep a bounded
+    /// tombstone so a late block reply is consumed by the correlation path rather than punished as
+    /// unsolicited traffic.
     pub fn cancel(&self, id: u16) {
-        let _ = self
+        let mut guard = self
             .inner
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .waiters
-            .remove(&id);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.waiters.remove(&id).is_none() || !guard.retired.insert(id) {
+            return;
+        }
+        guard.retired_order.push_back(id);
+        if guard.retired_order.len() > RETIRED_REQUEST_CAP
+            && let Some(expired) = guard.retired_order.pop_front()
+        {
+            guard.retired.remove(&expired);
+        }
     }
 
-    /// Route `msg` to the single waiter that owns `id`. Returns `true` when a waiter was found (the
-    /// read loop then skips the handler scan for this frame); `false` when `id` is not one of ours —
-    /// an inbound request we must answer, or a stale/duplicate reply after the waiter already left.
+    /// Route `msg` to the single waiter that owns `id`, or recognize a block reply to a recently
+    /// retired request. Other ids are inbound requests to answer or genuinely unsolicited traffic.
     #[must_use]
-    pub fn deliver(&self, id: u16, msg: Arc<ChiaMessage>) -> bool {
-        let waiter = {
+    fn deliver(&self, id: u16, msg: Arc<ChiaMessage>) -> PendingDelivery {
+        let (waiter, retired) = {
             let mut guard = self
                 .inner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.waiters.remove(&id)
+            let waiter = guard.waiters.remove(&id);
+            let retired = waiter.is_none()
+                && guard.retired.contains(&id)
+                && matches!(
+                    msg.msg_type,
+                    ProtocolMessageTypes::RespondBlock
+                        | ProtocolMessageTypes::RespondBlocks
+                        | ProtocolMessageTypes::RejectBlock
+                        | ProtocolMessageTypes::RejectBlocks
+                );
+            (waiter, retired)
         };
         if let Some(tx) = waiter {
             // The receiver may already be gone (its own timeout won the race); dropping the send is
             // then correct — the caller has moved on.
             let _ = tx.send(msg);
-            true
+            PendingDelivery::Delivered
+        } else if retired {
+            PendingDelivery::Retired
         } else {
-            false
+            PendingDelivery::Unmatched
         }
     }
 }
@@ -763,9 +839,29 @@ impl SocketPeer {
     }
 }
 
+pub trait WebsocketIo:
+    Stream<Item = Result<Message, tokio_tungstenite::tungstenite::error::Error>>
+    + Sink<Message, Error = tokio_tungstenite::tungstenite::error::Error>
+    + FusedStream
+    + Unpin
+    + Send
+{
+}
+
+impl<T> WebsocketIo for T where
+    T: Stream<Item = Result<Message, tokio_tungstenite::tungstenite::error::Error>>
+        + Sink<Message, Error = tokio_tungstenite::tungstenite::error::Error>
+        + FusedStream
+        + Unpin
+        + Send
+{
+}
+
 pub enum WebsocketMsgStream {
     TokioIo(Box<WebSocketStream<TokioIo<Upgraded>>>),
     Tls(Box<WebSocketStream<MaybeTlsStream<TcpStream>>>),
+    /// An upgraded websocket owned by an embedding server such as Portfu.
+    Boxed(Box<dyn WebsocketIo>),
 }
 impl Stream for WebsocketMsgStream {
     type Item = Result<Message, tokio_tungstenite::tungstenite::error::Error>;
@@ -773,6 +869,7 @@ impl Stream for WebsocketMsgStream {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).poll_next(cx),
             WebsocketMsgStream::Tls(s) => Pin::new(s).poll_next(cx),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).poll_next(cx),
         }
     }
 }
@@ -781,6 +878,7 @@ impl FusedStream for WebsocketMsgStream {
         match self {
             WebsocketMsgStream::TokioIo(s) => s.is_terminated(),
             WebsocketMsgStream::Tls(s) => s.is_terminated(),
+            WebsocketMsgStream::Boxed(s) => s.is_terminated(),
         }
     }
 }
@@ -790,24 +888,28 @@ impl Sink<Message> for WebsocketMsgStream {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).poll_ready(cx),
             WebsocketMsgStream::Tls(s) => Pin::new(s).poll_ready(cx),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).poll_ready(cx),
         }
     }
     fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).start_send(item),
             WebsocketMsgStream::Tls(s) => Pin::new(s).start_send(item),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).start_send(item),
         }
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).poll_flush(cx),
             WebsocketMsgStream::Tls(s) => Pin::new(s).poll_flush(cx),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).poll_flush(cx),
         }
     }
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.get_mut() {
             WebsocketMsgStream::TokioIo(s) => Pin::new(s).poll_close(cx),
             WebsocketMsgStream::Tls(s) => Pin::new(s).poll_close(cx),
+            WebsocketMsgStream::Boxed(s) => Pin::new(s).poll_close(cx),
         }
     }
 }
@@ -849,6 +951,7 @@ impl WebsocketConnection {
         peer_id: Arc<Bytes32>,
         peers: PeerMap,
         limiter: Option<Arc<rate_limits::RateLimiter>>,
+        connection_label: Arc<str>,
     ) -> (Self, ReadStream) {
         let (write, read) = websocket.split();
         let pending = Arc::new(PendingRequests::default());
@@ -867,6 +970,7 @@ impl WebsocketConnection {
             pending,
             limiter,
             v3,
+            connection_label,
         };
         (websocket, stream)
     }
@@ -888,6 +992,13 @@ impl WebsocketConnection {
     #[must_use]
     pub fn register_request(&self) -> (u16, tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>) {
         self.pending.register()
+    }
+
+    /// Register a request whose correlation and V3 window state are released
+    /// even when its waiting future is cancelled by an outer timeout or abort.
+    #[must_use]
+    pub fn register_guarded_request(&self) -> PendingRequest {
+        PendingRequest::new(self.pending.clone(), self.v3.clone())
     }
 
     /// Release a reserved correlation id whose reply never arrived (timeout / send failure).
@@ -941,6 +1052,8 @@ pub struct ReadStream {
     /// capability was negotiated, v3-tabled types bypass the time-based limiter and bounded
     /// request types are admitted through in-flight receive windows instead.
     v3: Arc<rate_limits_v3::V3Link>,
+    /// Human-readable direction and endpoint supplied by the owning client/server lifecycle.
+    connection_label: Arc<str>,
 }
 impl ReadStream {
     pub async fn run(&mut self, run: Arc<AtomicBool>) {
@@ -1126,17 +1239,27 @@ impl ReadStream {
                                             // scan (the ambiguity that produced the 27 s stall). An id
                                             // that is not ours (an inbound request to answer) falls
                                             // through to the handler path below unchanged.
-                                            if let Some(id) = msg_arc.id
-                                                && self.pending.deliver(id, msg_arc.clone())
-                                            {
-                                                // A solicited reply frees any v3 outbound-window
-                                                // slot its request occupied.
-                                                self.v3.out_release(id);
-                                                debug!(
-                                                    "Routed reply id={id}: {:?}",
-                                                    msg_arc.msg_type
-                                                );
-                                                continue;
+                                            if let Some(id) = msg_arc.id {
+                                                match self.pending.deliver(id, msg_arc.clone()) {
+                                                    PendingDelivery::Delivered => {
+                                                        // A solicited reply frees any v3 outbound-window
+                                                        // slot its request occupied.
+                                                        self.v3.out_release(id);
+                                                        debug!(
+                                                            "Routed reply id={id}: {:?}",
+                                                            msg_arc.msg_type
+                                                        );
+                                                        continue;
+                                                    }
+                                                    PendingDelivery::Retired => {
+                                                        debug!(
+                                                            "Ignoring late reply id={id}: {:?}",
+                                                            msg_arc.msg_type
+                                                        );
+                                                        continue;
+                                                    }
+                                                    PendingDelivery::Unmatched => {}
+                                                }
                                             }
                                             let mut matched = false;
                                             for v in self.message_handlers.read().await.values()
@@ -1170,7 +1293,11 @@ impl ReadStream {
                                     }
                                 }
                                 Message::Close(e) => {
-                                    info!("Got Close Message: {e:?}");
+                                    info!(
+                                        "websocket close connection={} peer_id={} frame={e:?}",
+                                        self.connection_label,
+                                        self.peer_id
+                                    );
                                     return;
                                 },
                                 _ => {
@@ -1216,7 +1343,7 @@ impl ReadStream {
                             return;
                         }
                         None => {
-                            info!("End of server read Stream");
+                            debug!("websocket stream ended connection={}", self.connection_label);
                             return;
                         }
                     }
@@ -1241,157 +1368,9 @@ impl ReadStream {
 }
 
 #[cfg(test)]
-mod send_timeout_tests {
-    use super::{SEND_TIMEOUT, timeout_send};
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
-    use std::time::Duration;
-    use tokio_tungstenite::tungstenite::Message;
-
-    // A ready sink (a peer draining normally): the write completes and round-trips Ok.
-    #[tokio::test]
-    async fn send_round_trips_on_a_ready_sink() {
-        let mut sink = futures_util::sink::drain::<Message>();
-        let msg = Message::Binary(vec![1, 2, 3].into());
-        let out = timeout_send(&mut sink, msg, SEND_TIMEOUT).await;
-        assert!(out.is_ok(), "a draining sink must accept the write");
-    }
-
-    // A never-ready sink models a peer whose TCP receive window is full — the exact backpressure that
-    // used to wedge the sender under the connection write lock. The bounded write must resolve to a
-    // timeout error, never hang.
-    #[tokio::test]
-    async fn send_times_out_on_a_stalled_sink() {
-        struct StalledSink;
-        impl futures_util::Sink<Message> for StalledSink {
-            type Error = std::io::Error;
-            fn poll_ready(
-                self: Pin<&mut Self>,
-                _: &mut Context<'_>,
-            ) -> Poll<Result<(), Self::Error>> {
-                Poll::Pending
-            }
-            fn start_send(self: Pin<&mut Self>, _: Message) -> Result<(), Self::Error> {
-                Ok(())
-            }
-            fn poll_flush(
-                self: Pin<&mut Self>,
-                _: &mut Context<'_>,
-            ) -> Poll<Result<(), Self::Error>> {
-                Poll::Pending
-            }
-            fn poll_close(
-                self: Pin<&mut Self>,
-                _: &mut Context<'_>,
-            ) -> Poll<Result<(), Self::Error>> {
-                Poll::Pending
-            }
-        }
-        let mut sink = StalledSink;
-        let msg = Message::Binary(vec![].into());
-        let out = timeout_send(&mut sink, msg, Duration::from_millis(50)).await;
-        assert!(
-            out.is_err(),
-            "a stalled sink must time out, not hang the sender"
-        );
-    }
-}
+#[path = "../../tests/unit/protocols/mod/send_timeout_tests.rs"]
+mod send_timeout_tests;
 
 #[cfg(test)]
-mod pending_request_tests {
-    use super::{ChiaMessage, PendingRequests, ProtocolMessageTypes};
-    use crate::blockchain::unsized_bytes::UnsizedBytes;
-    use std::collections::HashSet;
-    use std::sync::Arc;
-
-    fn msg(id: Option<u16>, t: ProtocolMessageTypes) -> Arc<ChiaMessage> {
-        Arc::new(ChiaMessage {
-            msg_type: t,
-            id,
-            data: UnsizedBytes::new(vec![]),
-        })
-    }
-
-    // Allocation is connection-unique and non-zero: a run of registrations (all still in flight)
-    // hands out strictly distinct, non-zero ids. This is the property whose *absence* — the per-source
-    // counter reset to 1 — let two concurrent requests share id 1 and produced the 27 s stall.
-    #[tokio::test]
-    async fn register_hands_out_distinct_nonzero_ids() {
-        let pending = PendingRequests::default();
-        let mut ids = HashSet::new();
-        let mut _keep = Vec::new();
-        for _ in 0..1000 {
-            let (id, rx) = pending.register();
-            assert_ne!(id, 0, "id 0 is reserved (id-less gossip / handshake)");
-            assert!(
-                ids.insert(id),
-                "id {id} was handed out twice while still in flight"
-            );
-            _keep.push(rx); // hold the receivers so their ids stay live and cannot be reused
-        }
-    }
-
-    // A live id is never re-handed even as the u16 counter advances: with two waiters outstanding, a
-    // third allocation differs from both.
-    #[tokio::test]
-    async fn register_skips_live_ids() {
-        let pending = PendingRequests::default();
-        let (a, _ra) = pending.register();
-        let (b, _rb) = pending.register();
-        let (c, _rc) = pending.register();
-        assert!(a != b && b != c && a != c, "live ids {a},{b},{c} collided");
-    }
-
-    // A reply is routed to the ONE waiter that owns its id, and only that waiter — the other waiter's
-    // receiver is untouched. This is the demux invariant: no fan-out to every matching handler.
-    #[tokio::test]
-    async fn deliver_routes_to_exactly_the_owning_waiter() {
-        let pending = PendingRequests::default();
-        let (id_a, rx_a) = pending.register();
-        let (id_b, rx_b) = pending.register();
-
-        // Deliver B first, then A — out-of-order, as concurrent replies arrive.
-        assert!(pending.deliver(id_b, msg(Some(id_b), ProtocolMessageTypes::RespondBlocks)));
-        assert!(pending.deliver(id_a, msg(Some(id_a), ProtocolMessageTypes::RejectBlocks)));
-
-        let got_a = rx_a.await.expect("waiter A received its reply");
-        let got_b = rx_b.await.expect("waiter B received its reply");
-        assert_eq!(got_a.id, Some(id_a), "waiter A got another request's reply");
-        assert_eq!(got_a.msg_type, ProtocolMessageTypes::RejectBlocks);
-        assert_eq!(got_b.id, Some(id_b), "waiter B got another request's reply");
-        assert_eq!(got_b.msg_type, ProtocolMessageTypes::RespondBlocks);
-    }
-
-    // An id nobody is waiting on (an inbound request to answer, or a stale/late reply) reports
-    // `false`, so the read loop falls through to the gossip/handler scan instead of dropping it.
-    #[tokio::test]
-    async fn deliver_unknown_id_is_not_consumed() {
-        let pending = PendingRequests::default();
-        assert!(!pending.deliver(4242, msg(Some(4242), ProtocolMessageTypes::NewPeak)));
-    }
-
-    // Delivery consumes the waiter: a duplicate/late second reply for the same id is dropped (returns
-    // `false`), never routed into an already-satisfied — and now closed — channel. That closed-channel
-    // re-delivery was precisely how the true reply got lost under id aliasing.
-    #[tokio::test]
-    async fn deliver_is_idempotent_after_the_first() {
-        let pending = PendingRequests::default();
-        let (id, rx) = pending.register();
-        assert!(pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)));
-        assert!(
-            !pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)),
-            "a second reply for a consumed id must not be re-delivered"
-        );
-        assert!(rx.await.is_ok(), "the one delivery reached the waiter");
-    }
-
-    // Cancel (timeout / send failure) frees the slot so the table never leaks, and a reply that then
-    // shows up is treated as unowned.
-    #[tokio::test]
-    async fn cancel_frees_the_slot() {
-        let pending = PendingRequests::default();
-        let (id, _rx) = pending.register();
-        pending.cancel(id);
-        assert!(!pending.deliver(id, msg(Some(id), ProtocolMessageTypes::RespondBlocks)));
-    }
-}
+#[path = "../../tests/unit/protocols/mod/pending_request_tests.rs"]
+mod pending_request_tests;

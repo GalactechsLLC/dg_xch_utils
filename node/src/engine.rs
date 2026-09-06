@@ -47,7 +47,7 @@ use std::collections::{HashMap, HashSet};
 // every `seed_missing_refs` pass, so it only ever holds the current window's out-of-span refs
 // (a handful) — bounded independent of sync length, with no capacity cap that could evict a ref
 // the current window still needs. A `--sync-from` window's compression back-references reach below
-// the anchor span; the daemon fetches each such generator from a peer and seeds it so the window's
+// the anchor span; the server fetches each such generator from a peer and seeds it so the window's
 // body validation (`resolve_generator_refs`, which consults this map) can resolve the ref. These
 // heights are never confirmed, so they have no confirm-time drain — the per-window clear is their
 // removal point. (A prior FIFO-cap design bounded retention but could evict a still-needed ref
@@ -229,6 +229,35 @@ struct ForkView {
     removals: HashSet<Bytes32>,
 }
 
+#[derive(Default)]
+struct StageCoins {
+    view: Option<(Bytes32, std::sync::Arc<ForkView>)>,
+    records: HashMap<Bytes32, Option<CoinRecord>>,
+}
+
+const COIN_PREFETCH_LIMIT: usize = 16_384;
+
+#[cfg(test)]
+#[path = "../tests/unit/engine_coin_path.rs"]
+mod coin_path_tests;
+
+impl BlockDelta {
+    pub fn coin_mutations(&self) -> usize {
+        self.additions
+            .len()
+            .saturating_add(self.removals.len())
+            .saturating_add(self.hints.len())
+    }
+
+    pub fn estimated_coin_bytes(&self) -> usize {
+        self.additions
+            .len()
+            .saturating_mul(128)
+            .saturating_add(self.removals.len().saturating_mul(36))
+            .saturating_add(self.hints.len().saturating_mul(64))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AddBlockOutcome {
     NewPeak { height: u32 },
@@ -305,6 +334,8 @@ pub struct Engine<S, P> {
     // the window confirms. Inserted at stage, drained at confirm; bounded by the window size.
     staged_deltas: HashMap<Bytes32, BlockDelta>,
     stage_preload: Option<StagePreload>,
+    stage_coins: Option<StageCoins>,
+    coalesce_coin_writes: bool,
     horizon: u32,
     // assume-valid seam: below this height script/sig validation is bypassed but the block is
     // still confirmed and its PoW header still validated. 0 = off (fresh genesis default).
@@ -344,6 +375,8 @@ where
             seed_generators: HashMap::new(),
             staged_deltas: HashMap::new(),
             stage_preload: None,
+            stage_coins: None,
+            coalesce_coin_writes: false,
             horizon: crate::cache::BLOCK_RECORD_WINDOW as u32,
             assume_valid: 0,
             full_history: None,
@@ -538,21 +571,42 @@ where
         .await
     }
 
-    /// Persist the archive rows for a dry-staged window into an OPEN batch — the deferred half of
-    /// [`Engine::stage_block_pre_dry`], called from the confirm with its transaction so archive
-    /// rows still land before `set_peak` inside the same commit.
+    /// Prepare archive rows before opening a writer batch, then persist them and return the
+    /// still-open batch so confirmation can add coins and peak inside the same commit.
     ///
     /// # Errors
     /// Returns [`NodeError::Store`] on a persistence failure.
     pub async fn persist_archive_window(
         &self,
-        rows: &[(&FullBlock, &BlockDelta)],
-        batch: &mut BatchHandle,
-    ) -> Result<(), NodeError> {
-        for (block, delta) in rows {
-            self.persist_archive_in(block, delta, batch).await?;
-        }
-        Ok(())
+        blocks: Vec<FullBlock>,
+        staged: &[(BlockDelta, usize, usize, usize)],
+    ) -> Result<BatchHandle, NodeError> {
+        let records = staged
+            .iter()
+            .map(|(delta, _, _, _)| {
+                (
+                    delta.record.clone(),
+                    if delta.height < self.assume_valid {
+                        BlockStatus::Bypass
+                    } else {
+                        BlockStatus::Validated
+                    },
+                )
+            })
+            .collect();
+        let selected: std::collections::HashSet<usize> =
+            staged.iter().map(|entry| entry.3).collect();
+        let blocks = blocks
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, block)| selected.contains(&index).then_some(block))
+            .collect();
+        let prepared = self.store.prepare_archive(records, blocks).await?;
+        let mut batch = self.store.begin().await?;
+        self.store
+            .persist_prepared_archive_in(&mut batch, prepared)
+            .await?;
+        Ok(batch)
     }
 
     /// [`Engine::stage_block_pre`] with the archive writes threaded into a caller-owned WINDOW
@@ -565,7 +619,7 @@ where
     /// actually stages (an all-`AlreadyHave` window opens no transaction); the caller commits it
     /// once for the window — BEFORE any other `begin()` (the open batch holds the single writer),
     /// and even on a mid-window stage error, because the already-staged prefix still confirms
-    /// (`set_peak` walks the archive rows this batch carries). A crash before the window commit
+    /// (the peak update consumes the archive rows this batch carries). A crash before the window commit
     /// loses only candidate archive rows — the durable peak is untouched and the resume path
     /// re-fetches the window, exactly as it re-fetches a window whose confirm batch was lost.
     ///
@@ -599,6 +653,33 @@ where
     // exactly why the window staging batch can stay open across the whole loop: no staging read
     // goes back to the store for in-window state.
     fn finish_stage(&mut self, block: &FullBlock, delta: BlockDelta) -> BlockDelta {
+        {
+            let telemetry = self.store.telemetry();
+            let _timer = telemetry.as_ref().map(|metrics| metrics.coin_view.start());
+            if let Some(context) = &mut self.stage_coins {
+                if let Some((parent, view)) = &mut context.view {
+                    if *parent == delta.prev_hash {
+                        if let Some(view) = std::sync::Arc::get_mut(view) {
+                            if let Some(metrics) = &telemetry {
+                                metrics.coin_view_coins.fetch_add(
+                                    delta.additions.len() as u64,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                            }
+                            for record in &delta.additions {
+                                view.additions.entry(record.coin.name()).or_insert(*record);
+                            }
+                            view.removals.extend(delta.removals.iter().copied());
+                            *parent = delta.header_hash;
+                        } else {
+                            context.view = None;
+                        }
+                    } else {
+                        context.view = None;
+                    }
+                }
+            }
+        }
         self.cache.insert(delta.record.clone());
         if let Some(g) = &block.transactions_generator {
             self.staged_generators.insert(delta.height, g.clone());
@@ -631,6 +712,30 @@ where
         self.confirm_staged_batch_in(deltas, None).await
     }
 
+    pub fn set_coalesce_coin_writes(&mut self, enabled: bool) {
+        self.coalesce_coin_writes = enabled;
+    }
+
+    pub(crate) async fn prepare_confirmation_coins(
+        &self,
+        deltas: &[&BlockDelta],
+    ) -> Result<Option<dg_xch_stores::types::PreparedCoinWindow>, NodeError> {
+        if !self.coalesce_coin_writes || self.store.near_tip() || deltas.is_empty() {
+            return Ok(None);
+        }
+        let changes = deltas
+            .iter()
+            .map(|delta| dg_xch_stores::types::OwnedCoinChanges {
+                height: delta.height,
+                timestamp: delta.timestamp,
+                additions: delta.additions.clone(),
+                removals: delta.removals.clone(),
+                hints: delta.hints.clone(),
+            })
+            .collect();
+        Ok(Some(self.store.prepare_coin_window(changes).await?))
+    }
+
     /// [`Engine::confirm_staged_batch`] continuing in a CARRIED open batch — the window staging
     /// transaction (`stage_block_pre_in`'s archive rows), handed over uncommitted so the whole
     /// catch-up window costs ONE writer transaction and ONE fsync: archive + coins + peak commit
@@ -650,6 +755,20 @@ where
         deltas: Vec<BlockDelta>,
         carry: Option<BatchHandle>,
     ) -> Result<Vec<AddBlockOutcome>, NodeError> {
+        let prepared = self
+            .prepare_confirmation_coins(&deltas.iter().collect::<Vec<_>>())
+            .await?;
+        self.confirm_staged_batch_prepared(deltas, carry, prepared)
+            .await
+    }
+
+    pub(crate) async fn confirm_staged_batch_prepared(
+        &mut self,
+        deltas: Vec<BlockDelta>,
+        carry: Option<BatchHandle>,
+        prepared: Option<dg_xch_stores::types::PreparedCoinWindow>,
+    ) -> Result<Vec<AddBlockOutcome>, NodeError> {
+        self.stage_coins = None;
         let mut outcomes = Vec::with_capacity(deltas.len());
         if deltas.is_empty() {
             // Nothing to confirm: roll the carried staging rows back (see the doc note).
@@ -675,7 +794,8 @@ where
         // transaction when the window loop handed one over; near-tip mode commits each block
         // inline (the first near-tip block folds any carried rows into its own commit).
         let mut batch: Option<BatchHandle> = carry;
-        let mut last_applied: Option<Bytes32> = None;
+        let mut last_applied: Option<(Bytes32, u32)> = None;
+        let mut extension = Vec::with_capacity(deltas.len());
         let mut idx = 0usize;
         while idx < deltas.len() {
             let delta = &deltas[idx];
@@ -693,18 +813,20 @@ where
                 Some(b) => b,
                 None => self.store.begin().await?,
             };
-            self.store
-                .apply_block_in(
-                    &mut b,
-                    delta.height,
-                    delta.timestamp,
-                    &delta.additions,
-                    &delta.removals,
-                )
-                .await?;
-            // coin_hint rows join this block's batch (per-block near tip, or the window batch
-            // during catch-up) so they commit atomically with the coins; no-op without the hint tier.
-            self.store.apply_hints_in(&mut b, &delta.hints).await?;
+            if per_block || !self.coalesce_coin_writes {
+                self.store
+                    .apply_block_in(
+                        &mut b,
+                        delta.height,
+                        delta.timestamp,
+                        &delta.additions,
+                        &delta.removals,
+                    )
+                    .await?;
+                // coin_hint rows join this block's batch (per-block near tip, or the window batch
+                // during catch-up) so they commit atomically with the coins; no-op without the hint tier.
+                self.store.apply_hints_in(&mut b, &delta.hints).await?;
+            }
             if per_block {
                 // NEAR-TIP: commit this block atomically (peak = this block). A crash/error leaves the
                 // store at the last committed block -- 0..K-1 with peak = K-1, block K rolled back, the
@@ -720,7 +842,8 @@ where
             self.staged_deltas.remove(&delta.header_hash);
             self.cache.insert(delta.record.clone());
             self.pending.remove(&delta.header_hash);
-            last_applied = Some(delta.header_hash);
+            last_applied = Some((delta.header_hash, delta.height));
+            extension.push(delta.header_hash);
             running = Some((delta.header_hash, delta.weight));
             outcomes.push(if fresh_chain {
                 AddBlockOutcome::NewPeak {
@@ -739,8 +862,30 @@ where
         // A batch with NO applied delta (a carried staging transaction whose first delta did not
         // extend) commits archive-only — the sequential path below reads those rows.
         if let Some(mut b) = batch {
-            if let Some(tip) = last_applied {
-                self.store.set_peak_in(&mut b, &tip).await?;
+            if self.coalesce_coin_writes && idx > 0 {
+                let changes: Vec<_> = deltas[..idx]
+                    .iter()
+                    .map(|delta| dg_xch_stores::types::CoinChanges {
+                        height: delta.height,
+                        timestamp: delta.timestamp,
+                        additions: &delta.additions,
+                        removals: &delta.removals,
+                        hints: &delta.hints,
+                    })
+                    .collect();
+                if let Some(prepared) = prepared.filter(|_| idx == deltas.len()) {
+                    self.store
+                        .apply_prepared_coin_window_in(&mut b, prepared)
+                        .await?;
+                } else {
+                    self.store.apply_coin_window_in(&mut b, &changes).await?;
+                }
+            }
+            if let Some((tip, height)) = last_applied {
+                debug_assert_eq!(extension.last(), Some(&tip));
+                self.store
+                    .extend_peak_in(&mut b, &extension, height)
+                    .await?;
             }
             self.store.commit(b).await?;
         }
@@ -762,6 +907,7 @@ where
         &mut self,
         delta: BlockDelta,
     ) -> Result<AddBlockOutcome, NodeError> {
+        self.stage_coins = None;
         // The block is on (or rejected from) the confirmed chain now — the store serves its
         // generator; the staged overlay entries retire.
         self.staged_generators.remove(&delta.height);
@@ -784,6 +930,7 @@ where
     }
 
     pub fn clear_staged_overlay(&mut self) {
+        self.stage_coins = None;
         self.staged_generators.clear();
         self.seed_generators.clear();
         self.staged_deltas.clear();
@@ -791,6 +938,8 @@ where
     }
 
     pub async fn preload_stage_context(&mut self, blocks: &[FullBlock]) -> Result<(), NodeError> {
+        self.stage_coins = None;
+        self.stage_preload = None;
         let mut covered = std::collections::HashSet::with_capacity(blocks.len());
         let mut hashes = Vec::with_capacity(blocks.len());
         for b in blocks {
@@ -811,15 +960,93 @@ where
             candidates,
             peak_height,
         });
+        if !self.store.near_tip() {
+            self.stage_coins = Some(StageCoins::default());
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn preload_stage_coins(
+        &mut self,
+        blocks: &[FullBlock],
+        bodies: &HashMap<u32, PrecomputedBody>,
+    ) -> Result<(), NodeError> {
+        if self.stage_coins.is_none() || self.full_history != Some(true) {
+            return Ok(());
+        }
+        let telemetry = self.store.telemetry();
+        let _timer = telemetry
+            .as_ref()
+            .map(|metrics| metrics.coin_prefetch.start());
+        let mut names = HashSet::new();
+        for block in blocks {
+            let Some(body) = bodies.get(&block.height()) else {
+                continue;
+            };
+            let mut candidates: HashSet<_> = body
+                .conds
+                .spends
+                .iter()
+                .take(COIN_PREFETCH_LIMIT.saturating_sub(names.len()))
+                .map(|spend| spend.coin_id)
+                .collect();
+            if candidates.is_empty() {
+                continue;
+            }
+            let potential_parents: HashSet<_> = body
+                .conds
+                .spends
+                .iter()
+                .filter(|spend| candidates.contains(&spend.coin_id))
+                .map(|spend| spend.parent_id)
+                .collect();
+            for spend in &body.conds.spends {
+                if !potential_parents.contains(&spend.coin_id) {
+                    continue;
+                }
+                for created in &spend.create_coin {
+                    candidates.remove(
+                        &Coin {
+                            parent_coin_info: spend.coin_id,
+                            puzzle_hash: created.puzzle_hash,
+                            amount: created.amount,
+                        }
+                        .name(),
+                    );
+                }
+            }
+            if let Some(info) = &block.transactions_info {
+                for coin in &info.reward_claims_incorporated {
+                    candidates.remove(&coin.name());
+                }
+            }
+            names.extend(candidates);
+            if names.len() >= COIN_PREFETCH_LIMIT {
+                break;
+            }
+        }
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort_unstable_by_key(|name| name.bytes());
+        let found = self.store.get_coin_records(&names).await?;
+        let mut records: HashMap<_, _> = names.into_iter().map(|name| (name, None)).collect();
+        for record in found {
+            if let Some(cached) = records.get_mut(&record.coin.name()) {
+                *cached = Some(record);
+            }
+        }
+        if let Some(context) = &mut self.stage_coins {
+            context.records = records;
+        }
         Ok(())
     }
 
     /// Drop the window staging read context (see [`Self::preload_stage_context`]).
     pub fn clear_stage_preload(&mut self) {
         self.stage_preload = None;
+        self.stage_coins = None;
     }
 
-    /// Wipe only the out-of-span seed cache (leaving in-window staged entries). The daemon calls
+    /// Wipe only the out-of-span seed cache (leaving in-window staged entries). The server calls
     /// this at the START of each `seed_missing_refs` pass so the cache holds exactly the current
     /// window's out-of-span refs — bounded independent of sync length, with no eviction that could
     /// drop a ref the window still needs.
@@ -918,6 +1145,13 @@ where
         pre: Option<PrecomputedBody>,
     ) -> Result<Option<BlockDelta>, NodeError> {
         let header_hash = block.header_hash()?;
+        if !self
+            .stage_preload
+            .as_ref()
+            .is_some_and(|context| context.covered.contains(&header_hash))
+        {
+            self.stage_coins = None;
+        }
         let preloaded_candidate = match &self.stage_preload {
             Some(p) if p.covered.contains(&header_hash) => {
                 Some(p.candidates.get(&header_hash).cloned())
@@ -1118,8 +1352,19 @@ where
         block: &FullBlock,
         delta: &BlockDelta,
     ) -> Result<BatchHandle, NodeError> {
+        let status = if block.height() < self.assume_valid {
+            BlockStatus::Bypass
+        } else {
+            BlockStatus::Validated
+        };
+        let prepared = self
+            .store
+            .prepare_archive(vec![(delta.record.clone(), status)], vec![block.clone()])
+            .await?;
         let mut batch = self.store.begin().await?;
-        self.persist_archive_in(block, delta, &mut batch).await?;
+        self.store
+            .persist_prepared_archive_in(&mut batch, prepared)
+            .await?;
         Ok(batch)
     }
 
@@ -1827,7 +2072,34 @@ where
     // empty). The walk streams one ancestor at a time (O(1) beyond the accumulated coin delta,
     // which the in-cache walk already accumulated); a non-strictly-decreasing height is a corrupt
     // store, surfaced as such — never a refusal of a valid fork.
-    async fn fork_view(&self, block: &FullBlock) -> Result<ForkView, NodeError> {
+    async fn fork_view(
+        &mut self,
+        block: &FullBlock,
+    ) -> Result<std::sync::Arc<ForkView>, NodeError> {
+        let telemetry = self.store.telemetry();
+        let _timer = telemetry.as_ref().map(|metrics| metrics.coin_view.start());
+        if let Some((parent, view)) = self
+            .stage_coins
+            .as_ref()
+            .and_then(|context| context.view.as_ref())
+        {
+            if *parent == block.prev_header_hash() {
+                if let Some(metrics) = &telemetry {
+                    metrics
+                        .coin_view_reused
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Ok(view.clone());
+            }
+        }
+        let view = std::sync::Arc::new(self.rebuild_fork_view(block).await?);
+        if let Some(context) = &mut self.stage_coins {
+            context.view = Some((block.prev_header_hash(), view.clone()));
+        }
+        Ok(view)
+    }
+
+    async fn rebuild_fork_view(&self, block: &FullBlock) -> Result<ForkView, NodeError> {
         let height = block.height();
         let mut view = ForkView {
             fork_height: i64::from(height) - 1,
@@ -1850,6 +2122,17 @@ where
                 .or_else(|| self.pending.get(&cursor))
             {
                 Self::fold_delta_into_view(&mut view, d);
+                if let Some(metrics) = self.store.telemetry() {
+                    metrics.coin_view_coins.fetch_add(
+                        d.additions.len() as u64,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                }
+                if let Some(metrics) = self.store.telemetry() {
+                    metrics
+                        .coin_view_ancestors
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 if d.height == 0 {
                     view.fork_height = -1;
                     return Ok(view);
@@ -1936,11 +2219,36 @@ where
                 from_db.push(*rem);
             }
         }
-        let found = if from_db.is_empty() {
-            Vec::new()
-        } else {
-            self.store.get_coin_records(&from_db).await?
-        };
+        let mut found = Vec::new();
+        let mut unresolved = Vec::new();
+        for name in &from_db {
+            if let Some(record) = self
+                .stage_coins
+                .as_ref()
+                .and_then(|context| context.records.get(name))
+            {
+                if let Some(record) = record {
+                    found.push(*record);
+                }
+                if let Some(metrics) = self.store.telemetry() {
+                    metrics
+                        .coin_prefetch_hits
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            } else {
+                unresolved.push(*name);
+            }
+        }
+        if !unresolved.is_empty() {
+            if let Some(metrics) = self.store.telemetry() {
+                metrics.coin_prefetch_fallbacks.fetch_add(
+                    unresolved.len() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
+            unresolved.sort_unstable_by_key(|name| name.bytes());
+            found.extend(self.store.get_coin_records(&unresolved).await?);
+        }
         // Coins the store cannot answer for this branch: unknown rows, and rows confirmed after
         // the fork point (main-chain-only state) — both must come from the fork's own additions.
         let mut look_in_fork: Vec<Bytes32> = Vec::new();
@@ -2339,6 +2647,7 @@ where
         batch: BatchHandle,
         delta: BlockDelta,
     ) -> Result<AddBlockOutcome, NodeError> {
+        self.stage_coins = None;
         let peak = self.store.get_peak().await?;
         let outcome = match peak {
             None => {
@@ -2549,7 +2858,7 @@ fn coin_record(coin: Coin, height: u32, timestamp: u64, coinbase: bool) -> CoinR
 // Node-local FullBlock→HeaderBlock view for record computation. The two share every field the
 // record needs; the transactions_filter is unused by header_block_to_sub_block_record. The
 // filter default is the ENCODED-EMPTY filter b"\x00", never a zero-length byte string; the
-// daemon's wallet-facing header serving overrides it with the real per-block filter.
+// server's wallet-facing header serving overrides it with the real per-block filter.
 pub fn header_block_from_full_block(block: &FullBlock) -> HeaderBlock {
     HeaderBlock {
         finished_sub_slots: block

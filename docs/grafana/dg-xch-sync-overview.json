@@ -1,0 +1,220 @@
+{
+  "title": "dg-xch — Sync Overview",
+  "uid": "dgxch-sync-overview",
+  "tags": ["dg-xch"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": { "list": [
+    { "name": "DS_PROMETHEUS", "type": "datasource", "query": "prometheus", "label": "Prometheus" },
+    { "name": "job", "type": "query", "label": "Scrape job", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": "label_values(fullnode_peak_height, job)", "definition": "label_values(fullnode_peak_height, job)", "includeAll": false, "multi": false, "refresh": 1 },
+    { "name": "instance", "type": "query", "label": "Node", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": "label_values(fullnode_peak_height{job=\"$job\"}, instance)", "definition": "label_values(fullnode_peak_height{job=\"$job\"}, instance)", "includeAll": false, "multi": false, "refresh": 1 }
+  ]},
+  "panels": [
+    { "type": "timeseries", "title": "Blocks per minute (confirmed)", "gridPos": {"h": 9, "w": 24, "x": 0, "y": 10},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "custom": {"lineWidth": 2, "fillOpacity": 12}}, "overrides": []},
+      "targets": [
+        { "expr": "rate(fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"}[5m]) * 60", "legendFormat": "{{instance}}" }
+      ]},
+    { "type": "timeseries", "title": "Peak height by node", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 35},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        { "expr": "fullnode_peak_height{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} peak" },
+        { "expr": "fullnode_claimed_peak_height{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} network tip" }
+      ]},
+    { "type": "timeseries", "title": "Distance to network tip", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 35},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"min": 0}, "overrides": []},
+      "targets": [
+        { "expr": "fullnode_tip_lag{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]},
+    { "type": "timeseries", "title": "Resident memory", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}, "overrides": []},
+      "targets": [
+        { "expr": "fullnode_process_resident_bytes{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]},
+    { "type": "timeseries", "title": "Peers (outbound solid / inbound dashed)", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 43},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        { "expr": "fullnode_outbound_peers{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} out" },
+        { "expr": "fullnode_inbound_peers{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} in" }
+      ]},
+    { "type": "timeseries", "title": "Blocks downloaded vs confirmed (rate/s)", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"min": 0}, "overrides": []},
+      "targets": [
+        { "expr": "rate(fullnode_blocks_downloaded_total{job=\"$job\", instance=\"$instance\"}[5m])", "legendFormat": "{{instance}} downloaded" },
+        { "expr": "rate(fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"}[5m])", "legendFormat": "{{instance}} confirmed" }
+      ]},
+    { "type": "timeseries", "title": "Reclaimed reservations (stalled peers, rate/min)", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 43},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        { "expr": "rate(fullnode_reservations_reclaimed_total{job=\"$job\", instance=\"$instance\"}[5m]) * 60", "legendFormat": "{{instance}}" }
+      ]},
+    { "type": "timeseries", "title": "Downloaded, confirmed, and prefetch depth", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 59},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {"unit": "none", "min": 0, "custom": {"lineWidth": 2, "fillOpacity": 8}},
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/.*prefetch depth$/"},
+            "properties": [
+              {"id": "custom.axisPlacement", "value": "right"},
+              {"id": "custom.fillOpacity", "value": 20},
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        { "expr": "max by (job, instance) (fullnode_blocks_downloaded_total{job=\"$job\", instance=\"$instance\"})", "legendFormat": "{{instance}} downloaded", "refId": "A" },
+        { "expr": "max by (job, instance) (fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"})", "legendFormat": "{{instance}} confirmed", "refId": "B" },
+        { "expr": "clamp_min(max by (job, instance) (fullnode_blocks_downloaded_total{job=\"$job\", instance=\"$instance\"}) - max by (job, instance) (fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"}), 0)", "legendFormat": "{{instance}} prefetch depth", "refId": "C" }
+      ]},
+    { "type": "stat", "title": "Estimated time to network tip", "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 3600}, {"color": "red", "value": 21600}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        { "expr": "fullnode_tip_lag{job=\"$job\", instance=\"$instance\"} / clamp_min(rate(fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"}[15m]), 0.001)", "legendFormat": "{{instance}}" }
+      ]},
+    { "type": "stat", "title": "Distance to tip", "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 32}, {"color": "red", "value": 256}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        { "expr": "fullnode_tip_lag{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]},
+    { "type": "stat", "title": "Live queue slots", "gridPos": {"h": 5, "w": 6, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        { "expr": "fullnode_queue_len{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]},
+    { "type": "stat", "title": "Readahead hit ratio", "gridPos": {"h": 5, "w": 6, "x": 6, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 75}, {"color": "green", "value": 90}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        { "expr": "100 * rate(fullnode_readahead_hits_total{job=\"$job\", instance=\"$instance\"}[15m]) / clamp_min(rate(fullnode_readahead_hits_total{job=\"$job\", instance=\"$instance\"}[15m]) + rate(fullnode_readahead_misses_total{job=\"$job\", instance=\"$instance\"}[15m]), 0.001)", "legendFormat": "{{instance}}" }
+      ]},
+    { "type": "timeseries", "title": "Live prefetch pipeline occupancy", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "none", "custom": {"lineWidth": 2, "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        { "expr": "fullnode_queue_len{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} queue slots" },
+        { "expr": "fullnode_readahead_depth{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} target windows" },
+        { "expr": "fullnode_readahead_inflight_windows{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} in-flight windows" }
+      ]},
+    { "type": "timeseries", "title": "Memory attribution (queue / allocator / RSS)", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"lineWidth": 2, "fillOpacity": 8}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        { "expr": "fullnode_queue_resident_bytes{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} queue" },
+        { "expr": "fullnode_alloc_allocated_bytes{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} allocated" },
+        { "expr": "fullnode_alloc_resident_bytes{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} allocator resident" },
+        { "expr": "fullnode_process_resident_bytes{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} process RSS" }
+      ]},
+    { "type": "timeseries", "title": "Sampled sync-window timings (overlapping)", "gridPos": {"h": 9, "w": 24, "x": 0, "y": 67},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "µs", "custom": {"lineWidth": 2, "fillOpacity": 5}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        { "expr": "fullnode_window_vdf_micros{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} VDF drain" },
+        { "expr": "fullnode_window_sig_micros{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} signature drain" },
+        { "expr": "fullnode_window_body_micros{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} body precompute" },
+        { "expr": "fullnode_window_stage_micros{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} validation staging" },
+        { "expr": "fullnode_window_confirm_micros{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} confirm" },
+        { "expr": "fullnode_window_pre_wait_micros{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} precompute wait" },
+        { "expr": "fullnode_window_drain_wait_micros{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} drain wait" }
+      ]},
+    { "type": "timeseries", "title": "SQLite WAL size and frames", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 51},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"lineWidth": 2, "fillOpacity": 10}}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/.*frames$/"}, "properties": [{"id": "unit", "value": "none"}, {"id": "custom.axisPlacement", "value": "right"}]}]},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        { "expr": "fullnode_sqlite_wal_bytes{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} WAL bytes" },
+        { "expr": "fullnode_sqlite_wal_frames{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} WAL frames" }
+      ]},
+    { "type": "timeseries", "title": "SQLite commit latency (p95)", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 51},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2, "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (job, instance, phase, le) (rate(fullnode_store_commit_seconds_bucket{job=\"$job\", instance=\"$instance\"}[5m])))", "legendFormat": "{{instance}} {{phase}} p95" }
+      ]},
+    { "type": "timeseries", "title": "SQLite checkpoint and read-pool health", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 51},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "none", "custom": {"lineWidth": 2, "fillOpacity": 8}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        { "expr": "rate(fullnode_sqlite_checkpoint_busy_total{job=\"$job\", instance=\"$instance\"}[5m]) * 60", "legendFormat": "{{instance}} busy/min" },
+        { "expr": "rate(fullnode_sqlite_checkpoint_errors_total{job=\"$job\", instance=\"$instance\"}[5m]) * 60", "legendFormat": "{{instance}} errors/min" },
+        { "expr": "fullnode_sqlite_read_pool_idle{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} idle readers" },
+        { "expr": "fullnode_sqlite_read_pool_size{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}} reader pool" }
+      ]},
+    { "type": "stat", "title": "Blocks / minute", "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 1, "min": 0}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "max by (job, instance) (rate(fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"}[5m])) * 60", "legendFormat": "{{instance}}", "refId": "A"}]},
+    { "type": "stat", "title": "Outbound peers", "gridPos": {"h": 5, "w": 6, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 1}, {"color": "green", "value": 3}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "fullnode_outbound_peers{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}}"}]},
+    { "type": "stat", "title": "Sync stalled", "gridPos": {"h": 5, "w": 6, "x": 18, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "NO", "color": "green"}, "1": {"text": "YES", "color": "red"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "(fullnode_tip_lag{job=\"$job\", instance=\"$instance\"} > bool 0) * on(job, instance) (rate(fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"}[10m]) == bool 0)", "legendFormat": "{{instance}}"}]},
+    { "type": "stat", "title": "Current Height", "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "fullnode_peak_height{job=\"$job\", instance=\"$instance\"}", "legendFormat": "{{instance}}", "refId": "A"}]}
+    ,
+    {"id":100,"type":"row","title":"Confirmation CPU and scheduling","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":76},"panels":[]},
+    {"id":101,"type":"timeseries","title":"Shared CPU budget and active jobs","description":"Bulk VDF, signatures, body precompute and archive encoding share this worker pool.","gridPos":{"h":8,"w":12,"x":0,"y":77},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"fullnode_compute_workers{job=\"$job\", instance=\"$instance\"}","legendFormat":"worker budget","refId":"A"},{"expr":"fullnode_compute_active_jobs{job=\"$job\", instance=\"$instance\"}","legendFormat":"{{phase}} active","refId":"B"}]},
+    {"id":102,"type":"timeseries","title":"CPU jobs waiting and completing","description":"Queue depth is a scrape-time sample. Completed jobs include failures and early exits.","gridPos":{"h":8,"w":12,"x":12,"y":77},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"fullnode_compute_queued_jobs{job=\"$job\", instance=\"$instance\"}","legendFormat":"{{phase}} queued","refId":"A"},{"expr":"rate(fullnode_compute_jobs_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{phase}} completed/s","refId":"B"}]},
+    {"id":103,"type":"timeseries","title":"Worker CPU and elapsed occupancy","description":"CPU seconds/second approximates occupied cores on Linux; elapsed occupancy includes blocking. Concurrent jobs overlap.","gridPos":{"h":8,"w":12,"x":0,"y":85},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_compute_cpu_seconds_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{phase}} CPU cores","refId":"A"},{"expr":"rate(fullnode_compute_job_seconds_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{phase}} elapsed concurrency","refId":"B"}]},
+    {"id":104,"type":"timeseries","title":"Mean CPU job queue wait","description":"Submission-to-start delay per completed job, averaged over five minutes; not a percentile.","gridPos":{"h":8,"w":12,"x":12,"y":85},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"s","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_compute_queue_seconds_total{job=\"$job\", instance=\"$instance\"}[5m]) / clamp_min(rate(fullnode_compute_jobs_total{job=\"$job\", instance=\"$instance\"}[5m]), 0.000001)","legendFormat":"{{phase}}","refId":"A"}]},
+    {"id":105,"type":"timeseries","title":"VDF cache requests and evictions","description":"In-progress hits share a computation while its cache entry remains resident.","gridPos":{"h":8,"w":12,"x":0,"y":93},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"ops","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_vdf_cache_hits_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{cache}} hit","refId":"A"},{"expr":"rate(fullnode_vdf_cache_misses_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{cache}} miss","refId":"B"},{"expr":"rate(fullnode_vdf_cache_shared_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{cache}} in-progress hit","refId":"C"},{"expr":"rate(fullnode_vdf_cache_evictions_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{cache}} eviction","refId":"D"}]},
+    {"id":106,"type":"timeseries","title":"VDF cache metadata lock wait","description":"Aggregate metadata-lock wait, not time waiting for an in-progress proof or discriminant.","gridPos":{"h":8,"w":12,"x":12,"y":93},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_vdf_cache_lock_seconds_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{cache}} wait seconds/s","refId":"A"}]},
+    {"id":107,"type":"row","title":"Confirmation transactions and SQL","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":101},"panels":[]},
+    {"id":108,"type":"timeseries","title":"Cumulative sync phase occupancy","description":"Phase scopes overlap. Do not sum these as an end-to-end window latency.","gridPos":{"h":8,"w":12,"x":0,"y":102},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_sync_phase_seconds_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{phase}} seconds/s","refId":"A"}]},
+    {"id":109,"type":"timeseries","title":"Confirmation parts and blocks per part","description":"A bulk window can be split into multiple parts. Near-tip parts can contain multiple per-block commits; parts are not a universal commit counter.","gridPos":{"h":8,"w":12,"x":12,"y":102},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_confirm_parts_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"parts/s","refId":"A"},{"expr":"rate(fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"}[5m]) / clamp_min(rate(fullnode_confirm_parts_total{job=\"$job\", instance=\"$instance\"}[5m]), 0.000001)","legendFormat":"confirmed blocks/part","refId":"B"}]},
+    {"id":110,"type":"timeseries","title":"Mean storage operation duration","description":"Includes failed attempts. coin_lookup measures indexed coin reads including pool wait. Writer hold includes nested SQL and COMMIT; do not add overlapping operations. Archive preparation runs outside writer hold on reserved CPU capacity.","gridPos":{"h":8,"w":12,"x":0,"y":110},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"s","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_store_operation_seconds_total{job=\"$job\", instance=\"$instance\"}[5m]) / clamp_min(rate(fullnode_store_operation_calls_total{job=\"$job\", instance=\"$instance\"}[5m]), 0.000001)","legendFormat":"{{operation}}","refId":"A"}]},
+    {"id":111,"type":"timeseries","title":"Storage operation occupancy","description":"Elapsed time per second by scope. Compare coin_lookup, writer wait, writer hold and archive preparation to identify serialized work.","gridPos":{"h":8,"w":12,"x":12,"y":110},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_store_operation_seconds_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{operation}} seconds/s","refId":"A"}]},
+    {"id":112,"type":"timeseries","title":"SQL rows and executions","description":"Counts successful archive, coin and hint SQL. coin_lookup rows count requested names, including duplicates and misses; up to 256 names per batched lookup. Write rows need not be changed or committed.","gridPos":{"h":8,"w":12,"x":0,"y":118},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"ops","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_store_operation_rows_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{operation}} submitted rows/s","refId":"A"},{"expr":"rate(fullnode_store_operation_statements_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{operation}} statements/s","refId":"B"}]},
+    {"id":113,"type":"timeseries","title":"Rows per SQL execution","description":"Larger batches reduce SQL dispatches, not necessarily physical I/O. coin_lookup should approach 256 requested names per execution for large batches; single reads and partial batches lower the average.","gridPos":{"h":8,"w":12,"x":12,"y":118},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_store_operation_rows_total{job=\"$job\", instance=\"$instance\"}[5m]) / clamp_min(rate(fullnode_store_operation_statements_total{job=\"$job\", instance=\"$instance\"}[5m]), 0.000001)","legendFormat":"{{operation}}","refId":"A"}]},
+    {"id":114,"type":"row","title":"SQLite cache and write amplification","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":126},"panels":[]},
+    {"id":115,"type":"timeseries","title":"SQLite writer cache activity","description":"SQLite DBSTATUS counters sampled/reset after batch commits. Includes rolled-back work; these are page-cache events, not RAID device IOPS.","gridPos":{"h":8,"w":12,"x":0,"y":127},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"ops","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_sqlite_writer_cache_events_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{event}} pages/s","refId":"A"}]},
+    {"id":116,"type":"timeseries","title":"Writer cache budget","description":"Configured cache_size budget, not allocated memory. Bulk override returns after near-tip uses its 64 MiB profile.","gridPos":{"h":8,"w":12,"x":12,"y":127},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"bytes","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"fullnode_sqlite_writer_cache_bytes{job=\"$job\", instance=\"$instance\"}","legendFormat":"configured budget","refId":"A"}]},
+    {"id":117,"type":"timeseries","title":"Prepared archive payload","description":"Encoded records and compressed bodies prepared, including retries. Excludes SQLite pages, indexes, WAL framing and checkpoint writes.","gridPos":{"h":8,"w":12,"x":0,"y":135},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"Bps","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_archive_prepared_bytes_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"encoded payload bytes/s","refId":"A"}]},
+    {"id":118,"type":"timeseries","title":"Cache writes and spills per confirmed block","description":"Normalize by confirmed progress across the same chain interval. Compare with device write bytes and IOPS on RAID; RAM-drive results alone cannot prove physical write reductions.","gridPos":{"h":8,"w":12,"x":12,"y":135},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_sqlite_writer_cache_events_total{job=\"$job\", instance=\"$instance\", event=~\"write|spill\"}[5m]) / on(job, instance) group_left rate(fullnode_blocks_confirmed_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{event}} pages/block","refId":"A"}]},
+    {"id":146,"type":"row","title":"Coin-heavy validation and persistence","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":143},"panels":[]},
+    {"id":141,"type":"timeseries","title":"Coin view and lookup work","description":"Window prefetch is capped at 16384 names. A prefetch hit includes cached absence; it does not imply that the initial database lookup was eliminated. Ancestor work excludes incremental updates.","gridPos":{"h":8,"w":12,"x":0,"y":144},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"ops","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_coin_path_events_total{job=\"$job\", instance=\"$instance\", event=~\"view_reuse|ancestors_walked|coins_folded|prefetch_hit|lookup_fallback\"}[5m])","legendFormat":"{{event}} /s","refId":"A"}]},
+    {"id":142,"type":"timeseries","title":"Prepared coin mutation reduction","description":"Logical input versus coalesced output; hints count only when hint persistence is enabled. Includes retries, not just committed mutations. Coin preparation uses reserved persistence CPU capacity.","gridPos":{"h":8,"w":12,"x":12,"y":144},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"ops","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_coin_path_events_total{job=\"$job\", instance=\"$instance\", event=~\"prepared_.*\"}[5m])","legendFormat":"{{event}} /s","refId":"A"}]},
+    {"id":143,"type":"timeseries","title":"Coin mutations and oversized blocks per part","description":"Accepted reported block workload. Reorg totals do not enumerate every replayed branch block. A single oversized block remains atomic; near-tip and reorg fallbacks retain their own boundaries.","gridPos":{"h":8,"w":12,"x":0,"y":152},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_confirm_coin_mutations_total{job=\"$job\", instance=\"$instance\"}[5m]) / clamp_min(rate(fullnode_confirm_parts_total{job=\"$job\", instance=\"$instance\"}[5m]), 0.000001)","legendFormat":"input mutations/part","refId":"A"},{"expr":"rate(fullnode_confirm_oversized_coin_blocks_total{job=\"$job\", instance=\"$instance\"}[5m]) / clamp_min(rate(fullnode_confirm_parts_total{job=\"$job\", instance=\"$instance\"}[5m]), 0.000001)","legendFormat":"oversized blocks/part","refId":"B"}]},
+    {"id":144,"type":"timeseries","title":"Estimated coin payload per part","description":"128 bytes/addition, 36/spend, 64/hint, before coalescing. Excludes archive, allocator overhead, SQL buffers, indexes, WAL and checkpoint writes. Not an RSS cap.","gridPos":{"h":8,"w":12,"x":12,"y":152},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"bytes","min":0,"custom":{"lineWidth":2,"fillOpacity":5}},"overrides":[]},"options":{"legend":{"calcs":["mean","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"expr":"rate(fullnode_confirm_coin_bytes_total{job=\"$job\", instance=\"$instance\"}[5m]) / clamp_min(rate(fullnode_confirm_parts_total{job=\"$job\", instance=\"$instance\"}[5m]), 0.000001)","legendFormat":"estimated input bytes/part","refId":"A"}]}
+    ,
+    {"id":150,"type":"row","title":"SQLite checkpoint scheduling","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":160},"panels":[]},
+    {"id":151,"type":"timeseries","title":"Checkpoint scheduling and incomplete passes","description":"Write budget estimates new WAL activity from writer cache-write samples, not allocated WAL size. Incomplete PASSIVE does not by itself establish a stuck reader.","gridPos":{"h":8,"w":12,"x":0,"y":161},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"ops","min":0},"overrides":[]},"targets":[{"expr":"rate(fullnode_sqlite_checkpoint_requests_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{reason}} scheduled/s","refId":"A"},{"expr":"rate(fullnode_sqlite_checkpoint_events_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{event}} /s","refId":"B"}]},
+    {"id":152,"type":"timeseries","title":"Mean checkpoint duration by mode","description":"Includes failed attempts. TRUNCATE requires at least 30 seconds without observed progress, a large backlog, and the writer mutex; its busy timeout is zero and attempts are spaced at least 60 seconds apart.","gridPos":{"h":8,"w":12,"x":12,"y":161},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"s","min":0},"overrides":[]},"targets":[{"expr":"rate(fullnode_sqlite_checkpoint_mode_seconds_total{job=\"$job\", instance=\"$instance\"}[5m]) / clamp_min(rate(fullnode_sqlite_checkpoint_mode_calls_total{job=\"$job\", instance=\"$instance\"}[5m]), 0.000001)","legendFormat":"{{mode}} mean seconds","refId":"A"}]},
+    {"id":153,"type":"timeseries","title":"Outstanding WAL frames","description":"Last valid checkpoint result: log minus checkpointed. Sampled backlog, not physical allocation or an exact live counter.","gridPos":{"h":8,"w":12,"x":0,"y":169},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"none","min":0},"overrides":[]},"targets":[{"expr":"fullnode_sqlite_wal_outstanding_frames{job=\"$job\", instance=\"$instance\"}","legendFormat":"uncheckpointed frames","refId":"A"}]},
+    {"id":154,"type":"timeseries","title":"Checkpoint progress age","description":"Age while observed frames remain outstanding. Resets on observed advance, WAL reset, or completed checkpoint. Not an identification of the blocking reader.","gridPos":{"h":8,"w":12,"x":12,"y":169},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"s","min":0},"overrides":[]},"targets":[{"expr":"fullnode_sqlite_checkpoint_no_progress_seconds{job=\"$job\", instance=\"$instance\"}","legendFormat":"seconds without progress","refId":"A"}]}
+    ,
+    {"id":155,"type":"timeseries","title":"Checkpoint attempts by mode","gridPos":{"h":8,"w":24,"x":0,"y":177},"datasource":{"type":"prometheus","uid":"${DS_PROMETHEUS}"},"fieldConfig":{"defaults":{"unit":"ops","min":0},"overrides":[]},"targets":[{"expr":"rate(fullnode_sqlite_checkpoint_mode_calls_total{job=\"$job\", instance=\"$instance\"}[5m])","legendFormat":"{{mode}} attempts/s","refId":"A"}]}
+  ]
+}

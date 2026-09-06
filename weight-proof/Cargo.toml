@@ -18,7 +18,7 @@ dg_xch_vdf = { path = "../vdf", version = "3.0.0" }
 dg_xch_pos = { path = "../proof_of_space", version = "3.0.0" }
 dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
 # The serving half (serve.rs) builds proofs out of a node's BlockStore — the same query-shaped trait the
-# daemon runs on, so a built proof is exactly what the p2p arm serves. tokio is `sync`-only: the whole-proof
+# server runs on, so a built proof is exactly what the p2p arm serves. tokio is `sync`-only: the whole-proof
 # cache is an async single-flight, nothing else of the runtime.
 dg_xch_stores = { path = "../stores", version = "3.0.0" }
 tokio = { version = "1.50.0", features = ["sync"] }

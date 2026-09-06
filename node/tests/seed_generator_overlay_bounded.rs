@@ -37,7 +37,7 @@ fn synthetic_generator(seed: u32) -> SerializedProgram {
     decoded
 }
 
-// The `--sync-from` daemon fetches every out-of-span generator back-ref from a peer and seeds it
+// The `--sync-from` server fetches every out-of-span generator back-ref from a peer and seeds it
 // into the engine via `seed_generator`; those heights live BELOW the anchor span, so they are never
 // in this node's store and never confirmed. Two invariants must hold, and a prior fix got the
 // second right while breaking the first — walling every anchored node.
@@ -91,7 +91,7 @@ async fn seed_overlay_is_bounded_per_window_by_clear() {
     let (_c, _p, before) = engine.collection_sizes();
     assert_eq!(before, SEEDS as usize, "in-window seeds are all held");
 
-    // The daemon calls this at the start of every window: retention drops to zero regardless of how
+    // The server calls this at the start of every window: retention drops to zero regardless of how
     // many distinct historical refs the whole sync has streamed — no accumulation with sync length.
     engine.clear_seed_generators();
     let (_c, _p, after) = engine.collection_sizes();

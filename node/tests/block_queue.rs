@@ -12,6 +12,25 @@ fn base() -> FullBlock {
     load_full_block(5_000_004)
 }
 
+#[test]
+fn bounded_windows_match_peek_and_admit_one_oversized_block() {
+    let block = base();
+    let queue = queue(100, 1 << 30);
+    for height in 100..104 {
+        put(&queue, block_at(&block, height));
+    }
+    let per_block = queue.resident_bytes() / 4;
+    let peeked = queue.peek_ready_window_bounded(4, per_block * 2);
+    assert_eq!(peeked.len(), 2);
+    assert_eq!(queue.drain_ready_window_bounded(4, per_block * 2), peeked);
+    let oversized = queue.peek_ready_window_bounded(4, 1);
+    assert_eq!(oversized.len(), 1);
+    assert_eq!(queue.drain_ready_window_bounded(4, 1), oversized);
+    assert!(queue.drain_ready_window_bounded(0, 1).is_empty());
+    assert_eq!(queue.drain_ready_window_bounded(4, 1).len(), 1);
+    assert_eq!(queue.resident_bytes(), 0);
+}
+
 fn block_at(base: &FullBlock, h: Height) -> FullBlock {
     restamp_block(base, h)
 }
@@ -204,6 +223,21 @@ async fn wait_ready_wakes_on_head_complete() {
         .expect("consumer released within the deadline")
         .expect("waiter task ok");
     assert_eq!(got, Some(0));
+}
+
+#[tokio::test]
+async fn wait_replan_wakes_on_generation_change() {
+    let q = Arc::new(queue(100, 1 << 30));
+    let generation = q.current_gen();
+    let q2 = q.clone();
+    let waiter = tokio::spawn(async move { q2.wait_replan(generation).await });
+    tokio::task::yield_now().await;
+
+    q.rebase(100);
+    tokio::time::timeout(Duration::from_secs(5), waiter)
+        .await
+        .expect("rebase interrupts a stale fetch promptly")
+        .expect("waiter task ok");
 }
 
 // drain_ready_window pulls the maximal contiguous PRESENT run from low_water in one call (the

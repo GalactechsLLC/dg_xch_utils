@@ -54,3 +54,4 @@ pub mod testing {
         g.is_probably_prime(24) != rug::integer::IsPrime::No
     }
 }
+pub mod memo;

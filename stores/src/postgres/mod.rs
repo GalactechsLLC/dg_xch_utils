@@ -49,7 +49,7 @@ async fn migrate(pool: &PgPool) -> Result<(), StoreError> {
         .execute(pool)
         .await?;
     // 0003 (service indexes) and 0006 (reorg indexes) are NOT applied at open: secondary indexes
-    // on coin_record are pure write-amplification during bulk sync. The daemon builds them once
+    // on coin_record are pure write-amplification during bulk sync. The server builds them once
     // at the sync->tip transition via `BlockStore::build_indexes`.
     #[cfg(feature = "hint")]
     sqlx::raw_sql(include_str!("../../migrations/postgres/0004_hint.sql"))

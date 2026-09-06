@@ -176,7 +176,7 @@ async fn reland_reorgs_across_the_gap_onto_the_heavier_branch() {
         30,
         "reorg depth = reorging block height (140) - fork height (110)"
     );
-    // The reorg deltas surfaced for the daemon's wallet/mempool feed.
+    // The reorg deltas surfaced for the server's wallet/mempool feed.
     assert!(
         deltas.iter().any(|d| d.delta.height == 140),
         "the reorged branch's deltas must be reported"

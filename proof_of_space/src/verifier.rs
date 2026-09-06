@@ -211,7 +211,7 @@ async fn validate_disk<F: AsyncSeek + AsyncRead + Unpin>(
 pub fn uncompress_proof(proof: &[u8], k: usize) -> Vec<u64> {
     let mut index = 0;
     let proof_bits = BitReader::from_bytes_be(proof, proof.len() * 8);
-    let mut new_proof = vec![];
+    let mut new_proof = Vec::with_capacity(PROOF_X_COUNT);
     while index < 64usize {
         let as_int = proof_bits.slice_to_int(k * index, k * (index + 1));
         new_proof.push(as_int);
@@ -228,7 +228,7 @@ pub fn validate_proof(
     proof: &[u8],
     challenge: &[u8],
 ) -> Result<Bytes32, Error> {
-    let mut fx = vec![0; PROOF_X_COUNT];
+    let mut fx = [0; PROOF_X_COUNT];
     let mut meta: Vec<BitReader> = Vec::with_capacity(PROOF_X_COUNT);
     let f7 = get_f7_from_proof(
         u32::from(k),
@@ -416,8 +416,8 @@ fn compare_proof_bits(left: &BitReader, right: &BitReader, k: u8) -> Result<bool
     let mut i = size as isize - 1;
     while i >= 0 {
         let ui = i as usize;
-        let left_val = left.range(k as usize * ui, k as usize * (ui + 1));
-        let right_val = right.range(k as usize * ui, k as usize * (ui + 1));
+        let left_val = left.slice_to_int(k as usize * ui, k as usize * (ui + 1));
+        let right_val = right.slice_to_int(k as usize * ui, k as usize * (ui + 1));
         if left_val < right_val {
             return Ok(true);
         }
@@ -431,8 +431,9 @@ fn compare_proof_bits(left: &BitReader, right: &BitReader, k: u8) -> Result<bool
 
 #[must_use]
 pub fn proof_to_bytes(src: &[u64]) -> Vec<u8> {
-    src.iter()
-        .map(|b| b.to_be_bytes())
-        .collect::<Vec<[u8; size_of::<u64>()]>>()
-        .concat()
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(src));
+    for value in src {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    bytes
 }
