@@ -110,7 +110,7 @@ async fn apply_block_on(
                     spent_block_index: 0,
                     spent: false,
                     timestamp,
-                    ..record.clone()
+                    ..*record
                 },
             )
         })
@@ -159,7 +159,7 @@ fn prepare_coin_changes(
                     spent_block_index: 0,
                     spent: false,
                     timestamp: change.timestamp,
-                    ..record.clone()
+                    ..*record
                 },
             );
         }

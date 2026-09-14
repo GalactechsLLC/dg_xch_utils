@@ -59,11 +59,11 @@ impl<Key: Eq + Hash, Value> Memo<Key, Value> {
             (stored_key, cell)
         } else {
             self.metrics.misses.fetch_add(1, Ordering::Relaxed);
-            if entries.values.len() >= self.capacity {
-                if let Some((_, oldest)) = entries.order.pop_first() {
-                    entries.values.remove(&oldest);
-                    self.metrics.evictions.fetch_add(1, Ordering::Relaxed);
-                }
+            if entries.values.len() >= self.capacity
+                && let Some((_, oldest)) = entries.order.pop_first()
+            {
+                entries.values.remove(&oldest);
+                self.metrics.evictions.fetch_add(1, Ordering::Relaxed);
             }
             (Arc::new(key), Arc::new(OnceLock::new()))
         };

@@ -706,27 +706,27 @@ where
         {
             let telemetry = self.store.telemetry();
             let _timer = telemetry.as_ref().map(|metrics| metrics.coin_view.start());
-            if let Some(context) = &mut self.stage_coins {
-                if let Some((parent, view)) = &mut context.view {
-                    if *parent == delta.prev_hash {
-                        if let Some(view) = std::sync::Arc::get_mut(view) {
-                            if let Some(metrics) = &telemetry {
-                                metrics.coin_view_coins.fetch_add(
-                                    delta.additions.len() as u64,
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
-                            }
-                            for record in &delta.additions {
-                                view.additions.entry(record.coin.name()).or_insert(*record);
-                            }
-                            view.removals.extend(delta.removals.iter().copied());
-                            *parent = delta.header_hash;
-                        } else {
-                            context.view = None;
+            if let Some(context) = &mut self.stage_coins
+                && let Some((parent, view)) = &mut context.view
+            {
+                if *parent == delta.prev_hash {
+                    if let Some(view) = std::sync::Arc::get_mut(view) {
+                        if let Some(metrics) = &telemetry {
+                            metrics.coin_view_coins.fetch_add(
+                                delta.additions.len() as u64,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
                         }
+                        for record in &delta.additions {
+                            view.additions.entry(record.coin.name()).or_insert(*record);
+                        }
+                        view.removals.extend(delta.removals.iter().copied());
+                        *parent = delta.header_hash;
                     } else {
                         context.view = None;
                     }
+                } else {
+                    context.view = None;
                 }
             }
         }
@@ -2131,15 +2131,14 @@ where
             .stage_coins
             .as_ref()
             .and_then(|context| context.view.as_ref())
+            && *parent == block.prev_header_hash()
         {
-            if *parent == block.prev_header_hash() {
-                if let Some(metrics) = &telemetry {
-                    metrics
-                        .coin_view_reused
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                return Ok(view.clone());
+            if let Some(metrics) = &telemetry {
+                metrics
+                    .coin_view_reused
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
+            return Ok(view.clone());
         }
         let view = std::sync::Arc::new(self.rebuild_fork_view(block).await?);
         if let Some(context) = &mut self.stage_coins {
