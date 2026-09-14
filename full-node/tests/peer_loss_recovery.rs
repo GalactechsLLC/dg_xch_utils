@@ -188,6 +188,8 @@ async fn claimed_peak_recovers_after_a_peer_drop_and_redial() {
     // NewPeak handler records the per-connection claim -> claimed_peak == H.
     let (client1, handlers1, run1) = dial_as_outbound_slot(&node, peer_port, &settings).await;
     let baseline = wait_claimed(&node, PEAK_H, Duration::from_secs(5)).await;
+    assert_eq!(client1.peer_peak.height(), Some(PEAK_H));
+    let first_connection_peak = client1.peer_peak.clone();
     assert_eq!(
         baseline, PEAK_H,
         "baseline: a live peer's volunteered peak sets claimed_peak to H"
@@ -218,6 +220,17 @@ async fn claimed_peak_recovers_after_a_peer_drop_and_redial() {
     outbound_on_connect(&node, &peer2).await;
 
     let recovered = wait_claimed(&node, PEAK_H, Duration::from_secs(5)).await;
+    assert_eq!(peer2.client.peer_peak.height(), Some(PEAK_H));
+    assert!(!Arc::ptr_eq(
+        &first_connection_peak,
+        &peer2.client.peer_peak
+    ));
+    let source =
+        dg_xch_node::sync::source::OutboundPeerSource::new(peer2.clone(), Duration::from_secs(5));
+    assert_eq!(
+        dg_xch_node::sync::source::BlockRangeSource::advertised_height(&source),
+        Some(PEAK_H)
+    );
     assert_eq!(
         recovered, PEAK_H,
         "after a peer drop + redial the reconnected peer's greeting must re-acquire the sync \

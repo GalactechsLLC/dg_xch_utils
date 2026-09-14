@@ -56,34 +56,6 @@ async fn commit_latency_is_filed_under_the_current_phase() {
     );
 }
 
-// The near-tip-gated checkpointer records its passes: with near_tip=true its 1s tick runs the
-// PASSIVE checkpoint and the telemetry must show completed passes and no errors. The 2.5s wait
-// leaves margin for a slow CI runner.
-#[tokio::test]
-async fn checkpointer_records_passes_when_near_tip() {
-    let store = common::new_store().await;
-    let t = store.telemetry().expect("sqlite records telemetry");
-    let records = common::load_records();
-    let mut batch = store.begin().await.expect("begin");
-    store
-        .add_block_records_in(&mut batch, &records)
-        .await
-        .expect("records in batch");
-    store.commit(batch).await.expect("commit");
-
-    store.set_near_tip(true);
-    tokio::time::sleep(Duration::from_millis(2500)).await;
-    assert!(
-        t.checkpoint.count.load(Ordering::Relaxed) >= 1,
-        "near-tip checkpointer must have completed at least one pass"
-    );
-    assert_eq!(
-        t.checkpoint_errors_total.load(Ordering::Relaxed),
-        0,
-        "checkpoint passes must not error on a healthy store"
-    );
-}
-
 #[tokio::test]
 async fn checkpointer_periodically_probes_during_catch_up() {
     let store = common::new_store().await;
@@ -115,7 +87,6 @@ async fn bulk_direct_coin_writes_are_checkpointed_without_batch_notifications() 
             .apply_block(height, 0, &adds, &[])
             .await
             .expect("apply");
-        // Re-key the batch per height so every pass writes fresh rows, not no-op upserts.
         height += 1;
         assert!(height < 200, "the WAL must grow past the trigger");
     }

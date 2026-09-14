@@ -4,6 +4,8 @@ use super::*;
 
 mod bulk;
 mod follow;
+pub(super) mod maintenance;
+pub(super) use maintenance::IndexMaintenance;
 mod peers;
 mod proof;
 mod resume;

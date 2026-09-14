@@ -256,6 +256,11 @@ pub(super) fn render(output: &mut String, store: Option<&StoreTelemetry>, sync: 
                 value.load(Ordering::Relaxed)
             );
         }
+        let _ = writeln!(
+            output,
+            "# HELP fullnode_database_maintenance_seconds_total SQLite schema statement elapsed time, including failures.\n# TYPE fullnode_database_maintenance_seconds_total counter\nfullnode_database_maintenance_seconds_total {}",
+            store.schema_seconds.sum_micros.load(Ordering::Relaxed) as f64 / 1e6
+        );
         family(
             output,
             "fullnode_coin_path_events_total",
@@ -346,6 +351,62 @@ pub(super) fn render(output: &mut String, store: Option<&StoreTelemetry>, sync: 
             "# HELP fullnode_sqlite_writer_cache_bytes Configured writer cache budget.\n# TYPE fullnode_sqlite_writer_cache_bytes gauge\nfullnode_sqlite_writer_cache_bytes {}",
             store.writer_cache_kib.load(Ordering::Relaxed) * 1024
         );
+        let (sqlite_memory, sqlite_peak_memory) = dg_xch_stores::SqliteStore::memory_usage();
+        for (name, help, kind, value) in [
+            (
+                "fullnode_sqlite_memory_used_bytes",
+                "Process-wide live SQLite allocations, excluding allocator retention and tmpfs files.",
+                "gauge",
+                sqlite_memory,
+            ),
+            (
+                "fullnode_sqlite_memory_highwater_bytes",
+                "Process-wide SQLite allocation high-water mark.",
+                "gauge",
+                sqlite_peak_memory,
+            ),
+            (
+                "fullnode_database_maintenance_active",
+                "SQLite schema maintenance running or waiting for the writer.",
+                "gauge",
+                store.schema_active.load(Ordering::Relaxed),
+            ),
+            (
+                "fullnode_database_maintenance_started_seconds",
+                "Unix time SQLite schema maintenance last started.",
+                "gauge",
+                store.schema_started_unix.load(Ordering::Relaxed),
+            ),
+            (
+                "fullnode_database_maintenance_progress_seconds",
+                "Unix time of the last SQLite maintenance VM progress callback; not a completion percentage.",
+                "gauge",
+                store.schema_progress_unix.load(Ordering::Relaxed),
+            ),
+            (
+                "fullnode_database_maintenance_statements_total",
+                "SQLite maintenance statements completed or failed.",
+                "counter",
+                store.schema_statements.load(Ordering::Relaxed),
+            ),
+            (
+                "fullnode_database_maintenance_errors_total",
+                "SQLite maintenance statement failures, including cancellation.",
+                "counter",
+                store.schema_errors.load(Ordering::Relaxed),
+            ),
+            (
+                "fullnode_database_maintenance_vm_steps_total",
+                "Approximate SQLite maintenance VM instructions; not rows or percent complete.",
+                "counter",
+                store.schema_vm_steps.load(Ordering::Relaxed),
+            ),
+        ] {
+            let _ = writeln!(
+                output,
+                "# HELP {name} {help}\n# TYPE {name} {kind}\n{name} {value}"
+            );
+        }
         let _ = writeln!(
             output,
             "# HELP fullnode_archive_prepared_bytes_total Encoded record and compressed body payload bytes prepared, including retries.\n# TYPE fullnode_archive_prepared_bytes_total counter\nfullnode_archive_prepared_bytes_total {}",

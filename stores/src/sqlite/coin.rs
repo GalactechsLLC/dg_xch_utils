@@ -375,14 +375,10 @@ impl CoinStore for SqliteStore {
     }
 
     async fn ensure_reorg_indexes(&self) -> Result<(), StoreError> {
-        for stmt in [
-            "CREATE INDEX IF NOT EXISTS coin_record_confirmed_index ON coin_record (confirmed_index)",
-            "CREATE INDEX IF NOT EXISTS coin_record_spent_index ON coin_record (spent_index)",
-        ] {
-            let mut guard = self.writer.lock().await;
-            sqlx::query(stmt).execute(&mut *guard).await?;
-        }
-        Ok(())
+        self.run_schema(crate::strip_sql_comments(include_str!(
+            "../../migrations/sqlite/0006_reorg_indexes.sql"
+        )))
+        .await
     }
 
     #[cfg(feature = "coin-index")]

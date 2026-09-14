@@ -470,6 +470,7 @@ async fn handle_connection(
     // connection (and not a peer that reconnected in the meantime) before removing it.
     let v3 = websocket.v3();
     let socket_peer = Arc::new(SocketPeer {
+        peer_peak: Arc::new(dg_xch_core::protocols::peer_peak::PeerPeak::default()),
         node_type: Arc::new(RwLock::new(NodeType::Unknown)),
         protocol_version: Arc::new(RwLock::new(ChiaProtocolVersion::default())),
         capabilities: Arc::new(RwLock::new(Vec::new())),

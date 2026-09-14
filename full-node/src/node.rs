@@ -127,7 +127,7 @@ pub use startup::open_backend;
 #[cfg(test)]
 use sync::{
     ConfirmedPeak, RECOVERY_CHANNEL_CAP, RESET_REPLY_TIMEOUT, RecoveryRequest, await_reset,
-    emit_confirmed_peak, follow_fill_claimed, frozen_frontier_is_wedge, prefetch_config,
+    emit_confirmed_peak, follow_fill_claimed, prefetch_config,
 };
 pub(crate) use sync::{reap_wallet_subscriptions_once, sync_driver, tip_follower};
 use workers::*;
@@ -227,16 +227,7 @@ pub struct FullNode<S = SqliteStore> {
     /// cannot deserialize a v2 proof). Off on a production node.
     pub wallet_compat: Arc<AtomicBool>,
     pub run: Arc<AtomicBool>,
-    // One-shot latch for the deferred secondary-index build fired on the not-synced -> synced
-    // edge in `update_synced`; reset on a failed build so a later edge retries, and by the
-    // falling-edge shed so the next tip edge rebuilds what the shed dropped.
-    deferred_indexes_started: Arc<AtomicBool>,
-    // One-shot latch for the falling-edge index shed fired when the node is deeper behind than
-    // SHED_TIP_LAG_BLOCKS in `update_synced`; reset by a successful rising-edge build (arming
-    // the next fall) or on a failed shed so the phase re-fires it.
-    service_indexes_shed: Arc<AtomicBool>,
-    // Bounded one-shot index maintenance jobs. The Portfu-owned node handle aborts and drains
-    // this set during shutdown, so no detached maintenance future outlives the server.
+    index_maintenance: Arc<runtime::IndexMaintenance>,
     maintenance_tasks: Mutex<tokio::task::JoinSet<()>>,
     constants: ConsensusConstants,
     claimed_peak: Arc<AtomicU32>,
@@ -362,6 +353,16 @@ fn in_near_tip_band(local: u32, claimed: u32, has_peak: bool) -> bool {
     }
     let gap = claimed.saturating_sub(local);
     gap > 0 && gap <= SHORT_SYNC_BLOCKS_BEHIND_THRESHOLD
+}
+
+fn database_near_tip(local: u32, claimed: u32, has_peak: bool, was_near_tip: bool) -> bool {
+    has_peak
+        && claimed.saturating_sub(local)
+            <= if was_near_tip {
+                64
+            } else {
+                SHORT_SYNC_BLOCKS_BEHIND_THRESHOLD
+            }
 }
 
 fn wants_fast_sync(local: u32, claimed: u32) -> bool {

@@ -5,6 +5,7 @@ pub mod full_node;
 pub mod harvester;
 pub mod introducer;
 pub mod outbound_limiter;
+pub mod peer_peak;
 pub mod pool;
 pub mod rate_limits;
 pub mod rate_limits_v3;
@@ -784,6 +785,7 @@ impl PendingRequests {
 pub type PeerMap = Arc<RwLock<HashMap<Bytes32, Arc<SocketPeer>>>>;
 
 pub struct SocketPeer {
+    pub peer_peak: Arc<peer_peak::PeerPeak>,
     pub node_type: Arc<RwLock<NodeType>>,
     pub protocol_version: Arc<RwLock<ChiaProtocolVersion>>,
     /// The capabilities the peer advertised in its handshake — the input to the per-connection rate

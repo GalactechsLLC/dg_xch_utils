@@ -3,6 +3,18 @@ use dg_xch_core::blockchain::coin_record::CoinRecord;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn database_phase_includes_caught_up_and_has_hysteresis() {
+    assert!(!database_near_tip(0, 0, false, false));
+    assert!(database_near_tip(100, 100, true, false));
+    assert!(database_near_tip(100, 120, true, false));
+    assert!(!database_near_tip(100, 121, true, false));
+    assert!(database_near_tip(100, 121, true, true));
+    assert!(database_near_tip(100, 164, true, true));
+    assert!(!database_near_tip(100, 165, true, true));
+    assert!(!in_near_tip_band(100, 100, true));
+}
+
+#[test]
 fn follow_step_timer_records_consumer_cycle_time() {
     let metric = std::sync::atomic::AtomicU64::new(0);
     let started = std::time::Instant::now() - std::time::Duration::from_millis(2);
@@ -364,12 +376,8 @@ async fn recovery_reply_timeout_unparks_the_consumer_when_the_driver_is_wedged()
     );
 }
 
-// The confirm consumer must NEVER block on the announcer. A raw `peak_tx.send().await` on a
-// full, undrained channel blocks (the first assertion proves it), so a wedged announcer stops
-// the consumer draining the BlockQueue and parks the producer — a permanent wedge.
-// `emit_confirmed_peak` drops the best-effort announcement under backpressure instead.
-#[tokio::test]
-async fn emit_confirmed_peak_never_blocks_the_consumer_on_a_wedged_announcer() {
+#[test]
+fn emit_confirmed_peak_never_blocks_the_consumer_on_a_wedged_announcer() {
     let (tx, _rx_wedged) = mpsc::channel::<ConfirmedPeak>(1); // never drained = stalled announcer
     tx.try_send(ConfirmedPeak {
         hash: Bytes32::default(),
@@ -377,21 +385,6 @@ async fn emit_confirmed_peak_never_blocks_the_consumer_on_a_wedged_announcer() {
     })
     .expect("first fits");
 
-    // A raw bounded send on the full channel blocks — the consumer wedge.
-    let blocked = tokio::time::timeout(
-        Duration::from_millis(200),
-        tx.send(ConfirmedPeak {
-            hash: Bytes32::default(),
-            height: 2,
-        }),
-    )
-    .await;
-    assert!(
-        blocked.is_err(),
-        "a raw send on a full channel blocks the consumer"
-    );
-
-    // emit_confirmed_peak returns immediately (drops under backpressure) and never awaits.
     let emitted = emit_confirmed_peak(
         &tx,
         ConfirmedPeak {
@@ -418,9 +411,6 @@ async fn emit_confirmed_peak_never_blocks_the_consumer_on_a_wedged_announcer() {
     );
 }
 
-// Red-first (Item 2, capabilities/version branching): a peer's unfinished-block announce type is
-// chosen by its negotiated protocol version, split at 0.0.35 — old peers get
-// v1 (NewUnfinishedBlock), new peers get v2 (NewUnfinishedBlock2).
 #[test]
 fn unfinished_announce_version_split_matches_chia_0_0_35_boundary() {
     assert!(
@@ -764,12 +754,6 @@ async fn sync_target_weight_gates_against_the_local_peak() {
     );
 }
 
-// Red-first (beyond-tip reservation wedge, idxphase pg leg): the FOLLOW producer must clamp its
-// fetch frontier to the SERVABLE outbound tip, not to the weight-heaviest claim. An inbound peer
-// over-announcing past the real tip becomes the weight-heaviest target, but no peer we fetch from
-// serves that range — driving the producer to it is a beyond-tip rejection spin (`claimed=9208323
-// > tip=9208311`) that also emits a false "reservation wedge" WARN. Before the clamp,
-// follow_fill_claimed returned the over-claim height; after, it clamps to the outbound tip.
 #[tokio::test]
 async fn follow_fill_clamps_the_frontier_to_the_servable_outbound_tip() {
     let nanos = SystemTime::now()
@@ -899,20 +883,6 @@ async fn follow_fill_opens_the_sync_from_band_once_anchored() {
         follow_fill_claimed(&node).await,
         Some(9_222_868),
         "once the anchor is staged the fill opens with no peak in the store",
-    );
-}
-
-// The wedge detector distinguishes the benign at-tip drain from the real pathology: frozen BELOW
-// the servable tip (fetchable work nothing is requesting) is a wedge; frozen AT the tip is not.
-#[test]
-fn frozen_frontier_is_wedge_only_below_the_tip() {
-    assert!(
-        frozen_frontier_is_wedge(9_169_638, 9_208_311),
-        "work below the tip left unrequested is a real wedge",
-    );
-    assert!(
-        !frozen_frontier_is_wedge(9_208_311, 9_208_311),
-        "frozen AT the servable tip is the benign drain-the-backlog state, not a wedge",
     );
 }
 
@@ -1983,12 +1953,6 @@ async fn ub_store_error_requeues_candidate_never_counts_it_as_prev_unknown() {
     );
 }
 
-// The two-edge index-phase controller in update_synced. Rising edge (not-synced -> synced):
-// build the deferred secondary indexes once. Falling edge (deep behind: tip_lag past the
-// hysteresis band): shed them once, so re-catch-up runs index-lean with HOT spends, and
-// re-arm the build latch so the next tip edge rebuilds. A shallow dip (a few blocks, a
-// restart wobble) must never churn a multi-GB drop/rebuild — only depth past
-// SHED_TIP_LAG_BLOCKS sheds.
 #[tokio::test]
 async fn deep_fall_behind_sheds_indexes_once_and_the_tip_edge_rebuilds() {
     use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
@@ -2090,7 +2054,6 @@ async fn deep_fall_behind_sheds_indexes_once_and_the_tip_edge_rebuilds() {
             .as_secs()
     };
 
-    // Rising edge at tip: the deferred build fires exactly once.
     confirm_at(&*store, 100, now()).await;
     node.claimed_peak.store(100, Ordering::Relaxed);
     node.update_synced().await;
@@ -2112,8 +2075,6 @@ async fn deep_fall_behind_sheds_indexes_once_and_the_tip_edge_rebuilds() {
         "a shallow dip below tip must never churn the index set"
     );
 
-    // A DEEP fall (tip_lag past the hysteresis band): shed fires exactly once, off the
-    // follow path, no matter how often update_synced re-observes the phase.
     node.claimed_peak.store(110 + 50_001, Ordering::Relaxed);
     node.update_synced().await;
     assert!(
@@ -2130,7 +2091,6 @@ async fn deep_fall_behind_sheds_indexes_once_and_the_tip_edge_rebuilds() {
         "the shed is one-shot per falling edge"
     );
 
-    // Back at tip: the rising edge re-fires the build (the shed re-armed the build latch).
     confirm_at(&*store, 200, now()).await;
     node.claimed_peak.store(200, Ordering::Relaxed);
     node.update_synced().await;
@@ -2338,6 +2298,5 @@ fn full_node_sp_and_eos_announces_carry_chia_fields() {
 // The block is a transaction block with a generator, 275 additions across 50 puzzle hashes, and 301
 // removals — so the served puzzle/solution, additions, removals, and header-block paths run on real
 // wire data, exactly what a light wallet pulls during trusted sync.
-#[cfg(feature = "coin-index")]
 #[cfg(feature = "coin-index")]
 mod wallet_queries;

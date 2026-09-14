@@ -8,7 +8,7 @@ use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::clvm::program::SerializedProgram;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
-use sqlx::{Connection, Row};
+use sqlx::{Connection, Row, TransactionManager};
 use std::io::Cursor;
 use std::sync::atomic::Ordering;
 
@@ -494,16 +494,10 @@ impl BlockStore for SqliteStore {
 
     async fn begin(&self) -> Result<BatchHandle, StoreError> {
         let wait = self.telemetry.writer_wait.start();
-        let mut guard = self.writer.clone().lock_owned().await;
+        let mut guard = crate::types::SqliteBatch(self.writer.clone().lock_owned().await);
         drop(wait);
         let timing = Some(self.telemetry.writer_hold.start());
-        // A BatchHandle dropped without a commit (e.g. a mid-window per-block confirm error) leaves
-        // its BEGIN open on the single writer connection; without this a later begin would fail with
-        // "cannot start a transaction within a transaction" and wedge the writer forever. Best-effort
-        // clear any such dangling transaction first (the ROLLBACK is a harmless no-op error when the
-        // connection is already clean), so begin can never wedge on a prior failure.
-        let _ = sqlx::query("ROLLBACK").execute(&mut *guard).await;
-        sqlx::query("BEGIN").execute(&mut *guard).await?;
+        sqlx::sqlite::SqliteTransactionManager::begin(&mut guard, None).await?;
         Ok(BatchHandle {
             inner: crate::types::BatchInner::Sqlite(guard),
             _timing: timing,
@@ -562,7 +556,7 @@ impl BlockStore for SqliteStore {
         // CURRENT phase — the near_tip flag at commit time. A batch begun just before a band flip is
         // mislabelled by at most that one commit; the trend queries this feeds are unaffected.
         let started = std::time::Instant::now();
-        sqlx::query("COMMIT").execute(&mut **conn).await?;
+        sqlx::sqlite::SqliteTransactionManager::commit(conn).await?;
         let phase_near_tip = self.near_tip.load(Ordering::Relaxed);
         let hist = if phase_near_tip {
             &self.telemetry.commit_near_tip
@@ -810,12 +804,7 @@ impl BlockStore for SqliteStore {
     }
 
     async fn build_indexes(&self) -> Result<(), StoreError> {
-        // Deferred index build at the sync->tip transition. One statement per writer-lock
-        // acquisition so confirms interleave between index builds instead of stalling behind
-        // one long guard. The reorg indexes (0006) back rollback_to's range predicates on
-        // every profile; the service tier (0003) only exists on a coin-index build.
-        // Comment lines are stripped BEFORE the ';' split — a ';' inside a comment must not cut
-        // a statement in half.
+        // Strip comments before run_schema splits statements: comments can contain semicolons.
         let sql = crate::strip_sql_comments(include_str!(
             "../../migrations/sqlite/0006_reorg_indexes.sql"
         ));
@@ -824,28 +813,16 @@ impl BlockStore for SqliteStore {
             + &crate::strip_sql_comments(include_str!(
                 "../../migrations/sqlite/0003_service_indexes.sql"
             ));
-        // The coin_hint secondary phases with the service tier (0-scan during sync, wallet-only
-        // at tip), so it is created HERE, not by 0004 at open — an at-open create would silently
-        // rebuild it on a restart mid-catch-up after a shed.
+        // Defer hint indexing too, so a restart mid-catch-up does not undo index shedding.
         #[cfg(feature = "hint")]
         let sql = sql + "CREATE INDEX IF NOT EXISTS coin_hint_coin_name ON coin_hint (coin_name);";
-        for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-            let mut guard = self.writer.lock().await;
-            sqlx::query(stmt).execute(&mut *guard).await?;
-        }
-        Ok(())
+        self.run_schema(sql).await
     }
 
     async fn shed_service_indexes(&self) -> Result<(), StoreError> {
-        // The falling-edge counterpart of `build_indexes` for a deep re-catch-up: return the
-        // store to the index-lean bulk-sync posture (coin_record pkey only). Unlike the
-        // Postgres twin, `confirmed_index` is shed too — SQLite has no BRIN, so here it is a
-        // full btree paying random maintenance per insert, exactly the write-amplification the
-        // shed exists to remove; `ensure_reorg_indexes` restores both reorg btrees on demand if
-        // a reorg is nonetheless requested while shed. One statement per writer-lock
-        // acquisition (the `build_indexes` pattern) so confirms interleave; a shed interrupted
-        // part-way leaves a subset absent, which the `IF NOT EXISTS` rebuild handles.
-        for stmt in [
+        // SQLite has no BRIN: shed both reorg btrees to avoid bulk write amplification.
+        // ensure_reorg_indexes restores them before rollback queries if needed.
+        let statements = [
             "DROP INDEX IF EXISTS coin_record_puzzle_hash",
             "DROP INDEX IF EXISTS coin_record_coin_parent",
             "DROP INDEX IF EXISTS coin_record_unspent_by_ph",
@@ -853,10 +830,7 @@ impl BlockStore for SqliteStore {
             "DROP INDEX IF EXISTS coin_record_confirmed_index",
             #[cfg(feature = "hint")]
             "DROP INDEX IF EXISTS coin_hint_coin_name",
-        ] {
-            let mut guard = self.writer.lock().await;
-            sqlx::query(stmt).execute(&mut *guard).await?;
-        }
-        Ok(())
+        ];
+        self.run_schema(statements.join(";")).await
     }
 }

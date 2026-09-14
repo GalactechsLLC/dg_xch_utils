@@ -188,7 +188,9 @@ where
         if peak.is_some() {
             self.update_synced().await;
         }
-        self.sync_metrics.post_confirm_total_micros.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+        self.sync_metrics
+            .post_confirm_total_micros
+            .fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
         Ok(peak)
     }
 
@@ -198,83 +200,32 @@ where
             Some((hash, _)) => self.chain_is_current(&hash).await,
             None => false,
         };
-        let was = self.synced.swap(synced, Ordering::Relaxed);
-        // The not-synced -> synced rising edge is the sync->tip transition: fire the deferred
-        // secondary-index build exactly once (during bulk sync the coin_record secondary
-        // indexes are pure write-amplification; a
-        // tip-serving node needs them). Off the follow path: Postgres builds CONCURRENTLY and
-        // SQLite yields the writer between statements, so confirms continue underneath. CREATE
-        // INDEX IF NOT EXISTS makes a restart-at-tip re-run a cheap no-op; on failure the latch
-        // resets so the next rising edge (or a restart) retries. A successful build re-arms the
-        // falling-edge shed below — the two latches alternate, so the drop/rebuild cycle can
-        // only run once per genuine fall-behind/re-catch-up excursion.
-        if synced && !was && !self.deferred_indexes_started.swap(true, Ordering::Relaxed) {
+        self.synced.store(synced, Ordering::Relaxed);
+        let local = peak.map_or(0, |(_, height)| height);
+        let tip_lag = self
+            .claimed_peak
+            .load(Ordering::Relaxed)
+            .saturating_sub(local);
+        let at_tip = synced && tip_lag <= SHORT_SYNC_BLOCKS_BEHIND_THRESHOLD;
+        let deep_behind = !synced && local > 0 && tip_lag > SHED_TIP_LAG_BLOCKS;
+        if let Some(job) = self.index_maintenance.schedule(at_tip, deep_behind) {
             let store = self.store.clone();
-            let latch = self.deferred_indexes_started.clone();
-            let shed_latch = self.service_indexes_shed.clone();
-            self.maintenance_tasks.lock().await.spawn(async move {
+            let mut tasks = self.maintenance_tasks.lock().await;
+            while tasks.try_join_next().is_some() {}
+            tasks.spawn(async move {
                 let started = std::time::Instant::now();
-                match store.build_indexes().await {
-                    Ok(()) => {
-                        shed_latch.store(false, Ordering::Relaxed);
-                        info!(
-                            "deferred secondary indexes built at tip elapsed_ms={}",
-                            started.elapsed().as_millis() as u64
-                        );
-                    }
-                    Err(e) => {
-                        latch.store(false, Ordering::Relaxed);
-                        warn!(
-                            "deferred index build failed; retrying on the next sync edge error={}",
-                            e
-                        );
-                    }
+                let action = job.action;
+                info!("index maintenance started action={action:?} tip_lag={tip_lag}");
+                let result = match action {
+                    super::maintenance::IndexAction::Build => store.build_indexes().await,
+                    super::maintenance::IndexAction::Shed => store.shed_service_indexes().await,
+                };
+                job.finish(result.is_ok());
+                match result {
+                    Ok(()) => info!("index maintenance completed action={action:?} elapsed_ms={}", started.elapsed().as_millis()),
+                    Err(error) => warn!("index maintenance failed action={action:?} retry_after_secs=30 error={error}"),
                 }
             });
-        }
-        // The FALLING edge: a node that reached tip (full index set built) and then fell DEEP
-        // behind re-applies settled history while maintaining every secondary index, which turns
-        // the confirm window into coin_record index/heap random reads with no HOT spend-updates.
-        // Shed the secondary indexes once, off the follow path, and re-arm the build latch so the
-        // rising edge rebuilds them at the next sync->tip transition, BEFORE the node re-enters
-        // the reorg-exposed zone. Keyed on tip_lag depth, not the raw synced bit: `synced` flips
-        // on a 1-block dip and would churn a multi-GB drop/rebuild. Arming by depth alone means a
-        // restart mid-deep-catch-up re-derives the shed from the live phase and re-enters it with
-        // a cheap idempotent re-drop instead of carrying stale state.
-        if !synced {
-            let local = peak.map_or(0, |(_, h)| h);
-            let tip_lag = self
-                .claimed_peak
-                .load(Ordering::Relaxed)
-                .saturating_sub(local);
-            if local > 0
-                && tip_lag > SHED_TIP_LAG_BLOCKS
-                && !self.service_indexes_shed.swap(true, Ordering::Relaxed)
-            {
-                let store = self.store.clone();
-                let build_latch = self.deferred_indexes_started.clone();
-                let latch = self.service_indexes_shed.clone();
-                self.maintenance_tasks.lock().await.spawn(async move {
-                    let started = std::time::Instant::now();
-                    match store.shed_service_indexes().await {
-                        Ok(()) => {
-                            build_latch.store(false, Ordering::Relaxed);
-                            info!(
-                                "secondary indexes shed for deep re-catch-up elapsed_ms={} tip_lag={}",
-                                started.elapsed().as_millis() as u64,
-                                tip_lag
-                            );
-                        }
-                        Err(e) => {
-                            latch.store(false, Ordering::Relaxed);
-                            warn!(
-                                "index shed failed; retrying while still deep behind error={}",
-                                e
-                            );
-                        }
-                    }
-                });
-            }
         }
     }
 

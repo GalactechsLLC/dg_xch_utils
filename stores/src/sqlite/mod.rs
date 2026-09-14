@@ -1,6 +1,7 @@
 mod block;
 mod checkpoint;
 mod coin;
+mod maintenance;
 
 use crate::error::StoreError;
 use crate::telemetry::StoreTelemetry;
@@ -29,6 +30,8 @@ pub struct SqliteStore {
     wal_path: PathBuf,
     bulk_cache_kib: Arc<AtomicU64>,
     checkpoint_notify: Arc<Notify>,
+    maintenance_options: SqliteConnectOptions,
+    schema_gate: Arc<Mutex<()>>,
 }
 
 impl Drop for SqliteStore {
@@ -119,7 +122,7 @@ impl SqliteStore {
         let writer = Arc::new(Mutex::new(writer));
         let checkpoint_notify = Arc::new(Notify::new());
         let checkpointer = checkpoint::spawn_checkpointer(
-            opts.busy_timeout(Duration::ZERO).connect().await?,
+            opts.clone().busy_timeout(Duration::ZERO).connect().await?,
             near_tip.clone(),
             telemetry.clone(),
             read.clone(),
@@ -127,6 +130,7 @@ impl SqliteStore {
             checkpoint_notify.clone(),
             wal_drain_trigger_bytes,
             page_size as u64,
+            wal_path.clone(),
         );
         Ok(Self {
             read,
@@ -137,6 +141,13 @@ impl SqliteStore {
             wal_path,
             bulk_cache_kib: Arc::new(AtomicU64::new(WRITER_CACHE_BULK_KIB as u64)),
             checkpoint_notify,
+            maintenance_options: opts
+                .pragma("temp_store", "FILE")
+                .pragma("cache_size", "-16384")
+                .pragma("mmap_size", "0")
+                .pragma("threads", "2")
+                .pragma("wal_autocheckpoint", "0"),
+            schema_gate: Arc::new(Mutex::new(())),
         })
     }
 

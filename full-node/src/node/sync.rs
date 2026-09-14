@@ -11,7 +11,7 @@ use processing::{block_processor, peak_announcer};
 use recovery::{follow_head, handle_recovery};
 
 #[cfg(test)]
-pub(super) use fetch::{follow_fill_claimed, frozen_frontier_is_wedge, prefetch_config};
+pub(super) use fetch::{follow_fill_claimed, prefetch_config};
 #[cfg(test)]
 pub(super) use processing::{FollowStepTimer, await_reset, emit_confirmed_peak};
 pub(crate) async fn reap_wallet_subscriptions_once<
@@ -53,21 +53,31 @@ pub(crate) async fn tip_follower<S: BlockStore + CoinStore + Send + Sync + 'stat
         if !in_near_tip_band(local, claimed, true) {
             continue;
         }
-        // Entering the near-tip band: per-block commits + the active WAL checkpointer keep the WAL tiny.
-        node.store.set_near_tip(true);
         let peers = registry.live_peers().await;
         if peers.is_empty() {
             continue;
         }
-        let peer = peers[rotation % peers.len()].clone();
-        rotation = rotation.wrapping_add(1);
-        let source: Arc<dyn BlockRangeSource> =
-            Arc::new(OutboundPeerSource::new(peer, REQUEST_TIMEOUT));
+        let sources: Vec<Arc<dyn BlockRangeSource>> = peers
+            .iter()
+            .map(|peer| {
+                Arc::new(OutboundPeerSource::new(peer.clone(), REQUEST_TIMEOUT))
+                    as Arc<dyn BlockRangeSource>
+            })
+            .collect();
+        let Some(index) =
+            dg_xch_node::sync::source::select_fetch_source(&sources, rotation, claimed, |_| {
+                Some(0)
+            })
+        else {
+            continue;
+        };
+        rotation = index.wrapping_add(1);
+        let source = &sources[index];
         // `new_peak` ladder: forward-extend [local+1, claimed] first (a direct child of the peak
         // is the common case and needs one forward fetch, no backward peak-refetch), and fall to
         // short_sync_backtrack only on the unknown-parent orphan — so the follower pins tip at lag 0-1.
         match node
-            .sync_tip_step(&source, local.saturating_add(1), claimed)
+            .sync_tip_step(source, local.saturating_add(1), claimed)
             .await
         {
             Ok(Some((hash, height))) => {
@@ -96,15 +106,8 @@ const PEAK_CHANNEL_CAP: usize = 256;
 // Bound on the consumer→driver recovery channel: recovery is rare (reorg / --sync-from ref miss / epoch
 // wall), one outstanding request at a time in practice; a small cap is ample and keeps it bounded.
 pub(super) const RECOVERY_CHANNEL_CAP: usize = 8;
-// Stall-reclaim bound for the DECOUPLED fetch/confirm pipeline (a whole-pipeline liveness backstop). The
-// bulk `download_worker` reclaims a per-reservation stall to the pool; the decoupled genesis/follow
-// pipeline (WindowReadahead + BlockQueue) has no such reclaim — every individual fetch is timeout-bounded
-// but nothing detects the pipeline AS A WHOLE ceasing to advance. This is that whole-pipeline watchdog
-// bound: if the confirmed frontier (`queue.low_water`) does not advance for this long WHILE work remains,
-// peers are live, and no confirm is legitimately in flight, the driver force-rebases to break the wedge.
-// 180s = 2× REQUEST_TIMEOUT (the longest a single window fetch can legitimately stall outside a
-// confirm); confirm time is excluded via `follow_inflight_since` so healthy — even slow —
-// validation never trips it.
+// Two request timeouts without confirmed progress trigger queue recovery. Active schema
+// maintenance and confirmations younger than this bound defer recovery.
 const RECLAIM_TIMEOUT: Duration = Duration::from_secs(180);
 // Bound on how long the peer-free consumer parks on a recovery reply before giving up and retrying the
 // window, so a stuck driver loop can never hang the confirm consumer forever. Set above the worst
@@ -266,11 +269,12 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
         let claimed = target.as_ref().map_or(0, |t| t.height);
         let peak = node.store.get_peak().await.ok().flatten();
         let local = peak.map_or(0, |(_, h)| h);
-        // Bulk catch-up (and startup): batch commits + a quiet checkpointer, so the full slow-disk write
-        // budget goes to the confirm writer. The tip_follower flips this to near-tip mode inside the band.
-        if !in_near_tip_band(local, claimed, peak.is_some()) {
-            node.store.set_near_tip(false);
-        }
+        node.store.set_near_tip(database_near_tip(
+            local,
+            claimed,
+            peak.is_some(),
+            node.store.near_tip(),
+        ));
         if !repaired {
             match node.resume_repair(&registry, false).await {
                 Ok(done) => repaired = done,
@@ -290,8 +294,12 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
         {
             let peers_live = !registry.live_peers().await.is_empty();
             let since = node.follow_inflight_since.load(Ordering::Relaxed);
-            let confirm_in_flight =
-                since != 0 && unix_secs().saturating_sub(since) < RECLAIM_TIMEOUT.as_secs();
+            let schema_active = node
+                .store
+                .telemetry()
+                .is_some_and(|telemetry| telemetry.schema_active.load(Ordering::Relaxed) != 0);
+            let confirm_in_flight = schema_active
+                || (since != 0 && unix_secs().saturating_sub(since) < RECLAIM_TIMEOUT.as_secs());
             if stall_watchdog.tick(
                 &queue,
                 &node.sync_metrics,
@@ -301,7 +309,7 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
                 confirm_in_flight,
             ) {
                 warn!(
-                    "decoupled sync pipeline stalled; forced queue rebase (stall reclaim) low_water={} next_fetch={} peak={} generation={} readahead_inflight={} resident_windows={} claimed={} outbound_tip={:?}",
+                    "decoupled sync pipeline stalled; forced queue rebase (stall reclaim) low_water={} next_fetch={} peak={} generation={} readahead_inflight={} queued_blocks={} claimed={} outbound_tip={:?}",
                     queue.low_water(),
                     queue.next_fetch_height(),
                     local,

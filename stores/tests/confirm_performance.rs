@@ -23,6 +23,73 @@ fn coin(index: u64) -> CoinRecord {
 }
 
 #[tokio::test]
+async fn dropped_batch_rolls_back_before_standalone_write() {
+    let store = common::new_store().await;
+    let abandoned = coin(700);
+    let committed = coin(701);
+    let mut batch = store.begin().await.unwrap();
+    store
+        .apply_block_in(&mut batch, 3, 30, &[abandoned], &[])
+        .await
+        .unwrap();
+    drop(batch);
+    store.apply_block(4, 40, &[committed], &[]).await.unwrap();
+    assert!(
+        store
+            .get_coin_record(&abandoned.coin.name())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_coin_record(&committed.coin.name())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let batch = store.begin().await.unwrap();
+    store.commit(batch).await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_batch_rolls_back_before_the_next_writer() {
+    let store = std::sync::Arc::new(common::new_store().await);
+    let writer = store.clone();
+    let abandoned = coin(710);
+    let committed = coin(711);
+    let (ready, received) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let mut batch = writer.begin().await.unwrap();
+        writer
+            .apply_block_in(&mut batch, 3, 30, &[abandoned], &[])
+            .await
+            .unwrap();
+        ready.send(()).unwrap();
+        std::future::pending::<()>().await;
+        writer.commit(batch).await.unwrap();
+    });
+    received.await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    store.apply_block(4, 40, &[committed], &[]).await.unwrap();
+    assert!(
+        store
+            .get_coin_record(&abandoned.coin.name())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_coin_record(&committed.coin.name())
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
 async fn coin_lookup_batches_preserve_order_duplicates_and_missing_names() {
     let store = common::new_store().await;
     let additions: Vec<_> = (0..600).map(coin).collect();

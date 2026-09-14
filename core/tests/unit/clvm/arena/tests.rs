@@ -304,3 +304,34 @@ fn rewind_preserves_live_interns_without_reusing_discarded_handles() {
     let fresh = arena.new_atom(&discarded_bytes).unwrap();
     assert_eq!(arena.atom(fresh).unwrap().as_ref(), discarded_bytes);
 }
+
+#[test]
+fn nested_rewinds_preserve_shared_atoms_and_substring_sources() {
+    let mut arena = Arena::new();
+    let outer = arena.checkpoint();
+    let original = arena.new_atom(&[0x55; 64]).unwrap();
+    let inner = arena.checkpoint();
+    assert_eq!(arena.new_atom(&[0x55; 64]).unwrap(), original);
+    arena.new_substr(original, 0, 64).unwrap();
+    arena.new_atom(&[0x66; 64]).unwrap();
+    let counters = arena.counters();
+    arena.restore(inner);
+    assert_eq!(arena.counters(), counters);
+    assert_eq!(arena.new_atom(&[0x55; 64]).unwrap(), original);
+    arena.new_atom(&[0x77; 64]).unwrap();
+    arena.restore(inner);
+    assert_eq!(arena.new_atom(&[0x55; 64]).unwrap(), original);
+    arena.restore(outer);
+    let replacement = arena.new_atom(&[0x88; 64]).unwrap();
+    assert_eq!(replacement, original);
+    let recreated = arena.new_atom(&[0x55; 64]).unwrap();
+    assert_ne!(recreated, replacement);
+    assert_eq!(arena.atom(recreated).unwrap().as_ref(), &[0x55; 64]);
+    arena.reset();
+    arena.new_atom(&[0x99; 64]).unwrap();
+    let checkpoint = arena.checkpoint();
+    arena.new_atom(&[0xaa; 64]).unwrap();
+    arena.restore(checkpoint);
+    let recreated = arena.new_atom(&[0xaa; 64]).unwrap();
+    assert_eq!(arena.atom(recreated).unwrap().as_ref(), &[0xaa; 64]);
+}

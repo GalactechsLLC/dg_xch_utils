@@ -88,6 +88,7 @@ fn test_version() {
 }
 
 pub struct WsClient {
+    pub peer_peak: Arc<dg_xch_core::protocols::peer_peak::PeerPeak>,
     pub connection: Arc<RwLock<WebsocketConnection>>,
     pub client_config: Arc<WsClientConfig>,
     pub handshake: Option<Handshake>,
@@ -264,11 +265,13 @@ impl WsClient {
             )),
         );
         let v3 = ws_con.v3();
+        let peer_peak = Arc::new(dg_xch_core::protocols::peer_peak::PeerPeak::default());
         let connection = Arc::new(RwLock::new(ws_con));
         let peer_capabilities = Arc::new(RwLock::new(Vec::new()));
         peers.write().await.insert(
             *peer_id.as_ref(),
             Arc::new(SocketPeer {
+                peer_peak: peer_peak.clone(),
                 node_type: Arc::new(RwLock::new(NodeType::Harvester)),
                 protocol_version: Arc::new(RwLock::new(ChiaProtocolVersion::default())),
                 capabilities: peer_capabilities.clone(),
@@ -282,6 +285,7 @@ impl WsClient {
         let handle_run = run.clone();
         let protocol_version = client_config.protocol_version;
         let mut ws_client = WsClient {
+            peer_peak,
             connection,
             client_config,
             handshake: None,

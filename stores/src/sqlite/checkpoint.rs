@@ -11,6 +11,7 @@ const BULK_INTERVAL: Duration = Duration::from_secs(2);
 const RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const STALL_INTERVAL: Duration = Duration::from_secs(30);
 const ESCALATION_INTERVAL: Duration = Duration::from_secs(60);
+const IDLE_WAL_RECLAIM_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 struct CheckpointOutcome {
@@ -116,6 +117,17 @@ impl Schedule {
         self.stalled_since
             .map_or(0, |since| now.duration_since(since).as_secs())
     }
+
+    fn may_reclaim_allocation(&self, now: Instant, near_tip: bool, allocated: u64) -> bool {
+        near_tip
+            && allocated >= IDLE_WAL_RECLAIM_BYTES
+            && self
+                .previous
+                .is_some_and(CheckpointOutcome::fully_checkpointed)
+            && self
+                .last_escalation
+                .is_none_or(|last| now.duration_since(last) >= ESCALATION_INTERVAL)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -128,6 +140,7 @@ pub(super) fn spawn_checkpointer(
     notify: Arc<Notify>,
     budget: u64,
     page_size: u64,
+    wal_path: std::path::PathBuf,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(MIN_PASS_INTERVAL);
@@ -172,7 +185,15 @@ pub(super) fn spawn_checkpointer(
             schedule.last_pass = now;
             schedule.writes_at_pass = writes;
             schedule.observe(now, passive);
-            if passive.is_some() && schedule.may_escalate(now, frame_bytes, budget) {
+            let allocated = std::fs::metadata(&wal_path).map_or(0, |metadata| metadata.len());
+            if passive.is_some()
+                && (schedule.may_escalate(now, frame_bytes, budget)
+                    || schedule.may_reclaim_allocation(
+                        now,
+                        near_tip.load(Ordering::Relaxed),
+                        allocated,
+                    ))
+            {
                 if let Ok(_writer_guard) = writer.try_lock() {
                     schedule.last_escalation = Some(now);
                     let outcome =

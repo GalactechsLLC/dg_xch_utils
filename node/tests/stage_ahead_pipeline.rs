@@ -164,3 +164,34 @@ async fn an_abandoned_dry_staged_window_leaves_no_trace_and_replays() {
         "the abandoned window replays to its tip"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn entering_tip_with_a_staged_window_preserves_the_confirmed_chain() {
+    let base = common::load_full_block(5_000_000);
+    let bulk = build_chain(&base, 100, 107, common::synth_hash(0xad, 99));
+    let follow = build_chain(&base, 108, 110, bulk.last().unwrap().header_hash().unwrap());
+    let store = Arc::new(common::new_store().await);
+    let mut chaser = Chaser::new(Engine::new(store.clone(), NativePrimitives, MAINNET), cfg());
+    let mut staged = chaser.stage_window_pre(bulk.clone(), None).await.unwrap();
+    store.set_near_tip(true);
+    let verdict = drain_staged_window(&NativePrimitives, &MAINNET, staged.take_drain_input());
+    let (peak, _) = chaser.confirm_window_pre(staged, verdict).await.unwrap();
+    assert_eq!(
+        peak,
+        Some((bulk.last().unwrap().header_hash().unwrap(), 107))
+    );
+    store.build_indexes().await.unwrap();
+    assert_eq!(
+        chaser.follow_blocks(&follow).await.unwrap(),
+        Some((follow.last().unwrap().header_hash().unwrap(), 110))
+    );
+    for block in bulk.iter().chain(&follow) {
+        assert!(
+            store
+                .get_block_record(&block.header_hash().unwrap())
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+}

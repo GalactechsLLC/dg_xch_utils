@@ -1,5 +1,6 @@
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use sqlx::SqliteConnection;
+use sqlx::{SqliteConnection, TransactionManager};
+use std::ops::{Deref, DerefMut};
 use tokio::sync::OwnedMutexGuard;
 
 pub struct CoinChanges<'a> {
@@ -192,8 +193,30 @@ pub(crate) struct StagedSweep {
     pub(crate) unspends: Vec<Bytes32>,
 }
 
+pub(crate) struct SqliteBatch(pub(crate) OwnedMutexGuard<SqliteConnection>);
+
+impl Deref for SqliteBatch {
+    type Target = SqliteConnection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SqliteBatch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for SqliteBatch {
+    fn drop(&mut self) {
+        sqlx::sqlite::SqliteTransactionManager::start_rollback(&mut self.0);
+    }
+}
+
 pub(crate) enum BatchInner {
-    Sqlite(OwnedMutexGuard<SqliteConnection>),
+    Sqlite(SqliteBatch),
     #[cfg(feature = "postgres")]
     Postgres(sqlx::Transaction<'static, sqlx::Postgres>),
     // The mmap backend's per-batch resource is the staged coin-link set; appends serialize on

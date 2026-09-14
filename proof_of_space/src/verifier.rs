@@ -228,6 +228,15 @@ pub fn validate_proof(
     proof: &[u8],
     challenge: &[u8],
 ) -> Result<Bytes32, Error> {
+    if !(18..=50).contains(&k)
+        || proof.len() != usize::from(k) * PROOF_X_COUNT / 8
+        || challenge.len() != 32
+    {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "invalid proof of space shape",
+        ));
+    }
     let mut fx = [0; PROOF_X_COUNT];
     let mut meta: Vec<BitReader> = Vec::with_capacity(PROOF_X_COUNT);
     let f7 = get_f7_from_proof(

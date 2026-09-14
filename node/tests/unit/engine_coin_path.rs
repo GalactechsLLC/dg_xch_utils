@@ -35,6 +35,57 @@ async fn engine() -> (tempfile::TempDir, Engine<SqliteStore, NativePrimitives>) 
 }
 
 #[tokio::test]
+async fn stale_precompute_cannot_verify_a_different_aggregate_signature() {
+    let (_directory, engine) = engine().await;
+    let mut block = block();
+    let (conds, agg_sig_verified) =
+        run_body_expensive(&NativePrimitives, &MAINNET, &block, &[], true).unwrap();
+    let pre = PrecomputedBody::new(&block, &MAINNET, conds, agg_sig_verified).unwrap();
+    block
+        .transactions_info
+        .as_mut()
+        .unwrap()
+        .aggregated_signature = dg_xch_core::blockchain::sized_bytes::Bytes96::default();
+    assert!(engine.validate_body(&block, &[], (0, None), None).is_err());
+    assert!(
+        engine
+            .validate_body(&block, &[], (0, None), Some(pre))
+            .is_err()
+    );
+}
+
+#[test]
+fn precompute_identity_binds_actual_inputs_not_only_header_commitments() {
+    let original = block();
+    let pre =
+        PrecomputedBody::new(&original, &MAINNET, SpendBundleConditions::default(), false).unwrap();
+    assert!(pre.matches(&original, &MAINNET));
+    let mut changed = original.clone();
+    changed.reward_chain_block.height += 1;
+    assert!(!pre.matches(&changed, &MAINNET));
+    changed = original.clone();
+    changed.foliage.prev_block_hash = Bytes32::default();
+    assert!(!pre.matches(&changed, &MAINNET));
+    changed = original.clone();
+    changed.transactions_generator =
+        Some(dg_xch_core::clvm::program::SerializedProgram::from_hex("80").unwrap());
+    assert_eq!(
+        changed.header_hash().unwrap(),
+        original.header_hash().unwrap()
+    );
+    assert!(!pre.matches(&changed, &MAINNET));
+    changed = original.clone();
+    changed.transactions_generator_ref_list.push(1);
+    assert!(!pre.matches(&changed, &MAINNET));
+    changed = original.clone();
+    changed.transactions_info.as_mut().unwrap().cost += 1;
+    assert!(!pre.matches(&changed, &MAINNET));
+    let mut constants = MAINNET;
+    constants.hard_fork_height = 0;
+    assert!(!pre.matches(&original, &constants));
+}
+
+#[tokio::test]
 async fn incremental_view_matches_reconstruction_including_ancestor_precedence() {
     let (_directory, mut engine) = engine().await;
     engine.stage_coins = Some(StageCoins::default());
@@ -221,10 +272,7 @@ async fn prefetch_is_bounded_and_excludes_same_block_ephemeral_coins() {
         .unwrap();
     let bodies = HashMap::from([(
         block.height(),
-        PrecomputedBody {
-            conds: conditions,
-            agg_sig_verified: false,
-        },
+        PrecomputedBody::new(&block, &MAINNET, conditions, false).unwrap(),
     )]);
     engine
         .preload_stage_coins(std::slice::from_ref(&block), &bodies)

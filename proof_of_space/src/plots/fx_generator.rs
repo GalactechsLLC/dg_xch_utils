@@ -209,13 +209,17 @@ pub fn forward_prop_f1_to_f7(
             let mut l_meta = &meta[i];
             let mut r_meta = &meta[i + 1];
             if y0 > y1 {
+                let Some(proof) = &mut proof else {
+                    return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        "proof is not in proof order",
+                    ));
+                };
                 swap(&mut y0, &mut y1);
                 swap(&mut l_meta, &mut r_meta);
-                if let Some(proof) = &mut proof {
-                    let count = 1 << (table as usize - 1);
-                    let (x, x_next) = (*proof)[i * count..].split_at_mut(count);
-                    x.swap_with_slice(&mut x_next[0..count]);
-                }
+                let count = 1 << (table as usize - 1);
+                let (left, right) = (*proof)[i * count..].split_at_mut(count);
+                left.swap_with_slice(&mut right[0..count]);
             }
             // Must be on the same group
             if !fx_match(&y0, &y1) {

@@ -88,9 +88,50 @@ fn download_progress_alone_is_healthy() {
     let hs = HealthState::new_at(BOOT);
     let t = BOOT + BOOT_GRACE_SECS + 10;
     hs.observe(0, 5000, t); // peak flat, only blocks_downloaded advanced
-    let v = hs.verdict(&below_tip_with_peers(), t + STALL_SECS - 1, 0);
+    let v = hs.verdict(
+        &MetricsSnapshot {
+            peak_height: 0,
+            ..below_tip_with_peers()
+        },
+        t + STALL_SECS - 1,
+        0,
+    );
     assert_eq!(v.status, "200 OK");
     assert!(v.body.contains("advancing"), "body: {}", v.body);
+}
+
+#[test]
+fn downloads_cannot_hide_stalled_confirmation_near_tip() {
+    let state = HealthState::new_at(BOOT);
+    state.observe(60, 100, BOOT + 10);
+    let now = BOOT + 10 + STALL_SECS + 1;
+    state.observe(60, 200, now);
+    let verdict = state.verdict(
+        &MetricsSnapshot {
+            peak_height: 60,
+            claimed_peak: 100,
+            outbound_peers: 5,
+            ..Default::default()
+        },
+        now,
+        0,
+    );
+    assert_eq!(verdict.status, "503 Service Unavailable");
+}
+
+#[test]
+fn index_maintenance_is_named_instead_of_claiming_confirmation_progress() {
+    let state = HealthState::new_at(BOOT);
+    let snapshot = MetricsSnapshot {
+        store: Some(StoreSnapshot {
+            schema_active: 1,
+            ..Default::default()
+        }),
+        ..below_tip_with_peers()
+    };
+    let verdict = state.verdict(&snapshot, BOOT + STALL_SECS * 10, 0);
+    assert_eq!(verdict.status, "200 OK");
+    assert!(verdict.body.contains("index maintenance"));
 }
 
 // A /debug/heap request against a process without ACTIVE jemalloc profiling
@@ -125,6 +166,7 @@ fn render_exposes_all_series_with_values() {
         sync_base_height: Some(4_575_000),
         store: Some(StoreSnapshot {
             wal_bytes: 487_000_000,
+            schema_active: 0,
             near_tip: 1,
             commit_catch_up: HistogramSnapshot::default(),
             commit_near_tip,

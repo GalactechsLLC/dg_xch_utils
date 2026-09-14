@@ -1,8 +1,5 @@
 use super::*;
 
-// The readahead/queue byte budget + fan-out config. Concurrency follows the outbound-peer target;
-// the explicit memory/in-flight knobs override its bounded defaults. Shared by the queue (its byte
-// ceiling) and the fetch scheduler (its lookahead depth + per-peer fan-out).
 pub(super) fn prefetch_config_for<S: BlockStore + CoinStore + Send + Sync + 'static>(
     node: &Arc<FullNode<S>>,
 ) -> dg_xch_node::sync::PrefetchConfig {
@@ -56,11 +53,7 @@ pub(in crate::node) async fn follow_fill_claimed<
     if in_near_tip_band(local, claimed, has_peak) {
         return None; // the event-driven tip_follower owns the near-tip band
     }
-    // Clamp the fetch frontier to what our fetch sources (outbound peers) actually advertise. The
-    // weight-heaviest target can ride an inbound/unfetchable claim past the servable tip; requesting
-    // past it is a beyond-tip range every peer rejects, spun every tick (the producer's `from >
-    // claimed` guard then idles at the tip while the validator drains the resident backlog). No
-    // outbound claim yet -> leave it unclamped, as before.
+    // Inbound claims can exceed what the outbound fetch sources can serve.
     Some(
         node.peak_book
             .outbound_tip()
@@ -68,25 +61,33 @@ pub(in crate::node) async fn follow_fill_claimed<
     )
 }
 
-// A frozen fetch frontier is a genuine reservation wedge only when fetchable work remains BELOW the
-// servable tip (windows nothing is requesting). Frozen AT the tip (`from == claimed`, `claimed`
-// already clamped to the servable outbound tip) is the benign drain-the-backlog state, not a wedge.
-pub(in crate::node) fn frozen_frontier_is_wedge(from: u32, claimed: u32) -> bool {
-    from < claimed
+fn fetch_retry_delay(failures: u32) -> Duration {
+    Duration::from_millis(250 << failures.saturating_sub(1).min(3))
 }
 
-/// The detached fetch producer. Owns the readahead engine and the peer
-/// sources (rebuilt when the live connection instances change),
-/// and keeps the [`BlockQueue`] filled to its byte budget across peers, biased to over-fill so the
-/// detached consumer is never starved. It touches neither the `Chaser` nor the recovery/announce
-/// paths — it only fetches and `complete`s into the queue.
-///
-/// Reorg coordination is lock-free through the queue generation: a [`BlockQueue::rebase`] (driven by the
-/// driver on a reorg or any driver-side peak change) bumps the generation, which is BOTH the stale-
-/// completion guard AND this producer's signal to abort its in-flight windows and replan on the new
-/// branch — so no separate coordination channel is needed. The dispatch generation is read just before
-/// the fetch and carried into `complete`, so a window whose fetch spans a concurrent rebase is dropped by
-/// the guard rather than admitted onto a superseded branch.
+async fn wait_fetch_retry(queue: &BlockQueue, generation: u64, delay: Duration) {
+    tokio::select! {
+        () = tokio::time::sleep(delay) => {}
+        () = queue.wait_replan(generation) => {}
+    }
+}
+
+async fn take_prefetched(
+    readahead: &mut dg_xch_node::sync::WindowReadahead,
+    from: u32,
+    to: u32,
+    claimed: u32,
+) -> Option<Vec<FullBlock>> {
+    if to == claimed && readahead.inflight() == 0 {
+        None
+    } else {
+        readahead.take(from, to).await
+    }
+}
+
+/// Fetches into the byte-bounded queue without taking the Chaser lock. Queue generations
+/// reject stale completions and cancel in-flight work after a rebase. Peer sources are
+/// rebuilt when connection instances change, including reconnections to the same endpoint.
 pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 'static>(
     node: Arc<FullNode<S>>,
     registry: Arc<dyn OutboundPeers>,
@@ -102,10 +103,7 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
     let mut last_gen = queue.current_gen();
     let mut peer_sources: Vec<Arc<dyn BlockRangeSource>> = Vec::new();
     let mut source_peers: Vec<Arc<OutboundPeer>> = Vec::new();
-    // Sync-stall diagnostics: track the fetch frontier across ticks to catch the decoupled-prefetch wedge
-    // (the frontier freezes while the confirm cursor / claimed tip keeps moving).
-    let mut last_from = 0u32;
-    let mut frozen_from_ticks = 0u32;
+    let mut failures = 0u32;
     while node.run.load(Ordering::Relaxed) {
         if !queue.can_admit() {
             tokio::select! {
@@ -127,40 +125,9 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
         if dispatch_gen != last_gen {
             readahead.abort_all();
             last_gen = dispatch_gen;
+            failures = 0;
         }
         let from = queue.next_fetch_height();
-        // Sync-stall diagnostics. A frozen fetch frontier is only a real wedge when fetchable work
-        // remains BELOW the servable tip (`from < claimed`): windows exist that nothing is
-        // requesting. A frontier frozen AT the tip (`from == claimed`, `claimed` already clamped to
-        // the servable outbound tip) is benign — nothing higher is fetchable and the validator is
-        // draining the resident backlog — so it must not raise the scary WARN.
-        if from == last_from && from <= claimed {
-            frozen_from_ticks += 1;
-            if frozen_frontier_is_wedge(from, claimed)
-                && (frozen_from_ticks == 3 || frozen_from_ticks.is_multiple_of(16))
-            {
-                warn!(
-                    "fetch frontier frozen below the tip while work remains — decoupled prefetch reservation wedge from={} claimed={} frozen_ticks={} low_water={} generation={} resident_windows={} readahead_inflight={}",
-                    from,
-                    claimed,
-                    frozen_from_ticks,
-                    queue.low_water(),
-                    queue.current_gen(),
-                    queue.len(),
-                    node.sync_metrics.readahead_inflight.load(Ordering::Relaxed)
-                );
-            } else if !frozen_frontier_is_wedge(from, claimed) && frozen_from_ticks == 3 {
-                debug!(
-                    "fetch frontier at the servable tip; validator draining resident backlog from={} claimed={} resident_windows={}",
-                    from,
-                    claimed,
-                    queue.len()
-                );
-            }
-        } else {
-            last_from = from;
-            frozen_from_ticks = 0;
-        }
         if from > claimed {
             tokio::time::sleep(DRIVER_TICK).await;
             continue;
@@ -189,17 +156,8 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
                 .collect();
             source_peers = peers.clone();
         }
-        let rotation_start = rotation % peer_sources.len();
-        rotation = rotation.wrapping_add(1);
-        // The direct-fetch fallback peer: rotation-ordered, preferring one without an in-flight
-        // readahead window so spare connections are used before a second V3 slot on a busy peer.
-        let source = (0..peer_sources.len())
-            .map(|i| &peer_sources[(rotation_start + i) % peer_sources.len()])
-            .find(|s| !readahead.busy_peer(s.peer_id()))
-            .cloned()
-            .unwrap_or_else(|| peer_sources[rotation_start % peer_sources.len()].clone());
         let prefetched = tokio::select! {
-            result = readahead.take(from, to) => result,
+            result = take_prefetched(&mut readahead, from, to, claimed) => result,
             () = queue.wait_replan(dispatch_gen) => {
                 readahead.abort_all();
                 continue;
@@ -211,6 +169,18 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
         let fetched = match prefetched {
             Some(blocks) => Some(blocks),
             None => {
+                let selected = dg_xch_node::sync::source::select_fetch_source(
+                    &peer_sources,
+                    rotation,
+                    to,
+                    |source| Some(usize::from(readahead.busy_peer(source.peer_id()))),
+                );
+                let Some(index) = selected else {
+                    wait_fetch_retry(&queue, dispatch_gen, DRIVER_TICK).await;
+                    continue;
+                };
+                rotation = index.wrapping_add(1);
+                let source = &peer_sources[index];
                 let started = std::time::Instant::now();
                 // Bound the whole operation, including websocket-lock acquisition and send. The
                 // guarded request ticket makes cancelling this future release correlation/V3 state.
@@ -236,10 +206,28 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
                         Some(blocks)
                     }
                     Err(e) => {
-                        warn!(
-                            "producer fetch failed, retrying next tick from={} to={} error={}",
-                            from, to, e
+                        failures = failures.saturating_add(1);
+                        let delay = fetch_retry_delay(failures);
+                        let tip_wait =
+                            to == claimed && matches!(e, SyncError::RangeRejected { .. });
+                        log::log!(
+                            if tip_wait {
+                                log::Level::Debug
+                            } else {
+                                log::Level::Warn
+                            },
+                            "producer fetch deferred peer={}:{} advertised_height={:?} from={} to={} tip_wait={} retry_ms={} queued_blocks={} error={}",
+                            source_peers[index].endpoint.0,
+                            source_peers[index].endpoint.1,
+                            source.advertised_height(),
+                            from,
+                            to,
+                            tip_wait,
+                            delay.as_millis(),
+                            queue.len(),
+                            e
                         );
+                        wait_fetch_retry(&queue, dispatch_gen, delay).await;
                         None
                     }
                 }
@@ -248,6 +236,7 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
         if let Some(blocks) = fetched
             && !blocks.is_empty()
         {
+            failures = 0;
             // FOLLOW-band download liveness: count delivered bodies into the same counter the bulk
             // download worker feeds at its write-through (sync/mod.rs download_worker). Without
             // this the follow band was a metrics blindspot — `fullnode_blocks_downloaded_total`
@@ -264,3 +253,7 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
     }
     readahead.abort_all();
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/node/fetch.rs"]
+mod tests;

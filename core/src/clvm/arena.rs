@@ -194,6 +194,7 @@ pub struct Arena {
     // Identical atom bodies share one span. Keyed by the bytes; inline small atoms are excluded
     // since they already cost no storage.
     atom_intern: std::collections::HashMap<Box<[u8]>, NodePtr>,
+    interned_atoms: Vec<NodePtr>,
     // grow-only byte heap for atom contents (atoms are immutable once created)
     u8_vec: Vec<u8>,
     // pair pool — 8 bytes per cons cell
@@ -227,6 +228,7 @@ impl Arena {
     pub fn new() -> Self {
         let mut arena = Self {
             atom_intern: std::collections::HashMap::new(),
+            interned_atoms: Vec::new(),
             u8_vec: Vec::new(),
             pair_vec: Vec::new(),
             atom_vec: Vec::new(),
@@ -260,20 +262,27 @@ impl Arena {
     /// are consensus, and the reference allocator only grows within a run, so a node minted and
     /// rewound must still count against them. Interned atoms preceding the checkpoint remain valid.
     pub fn restore(&mut self, cp: Checkpoint) {
+        while let Some(&node) = self.interned_atoms.last()
+            && node.index() as usize >= cp.atoms
+        {
+            let span = self.atom_vec[node.index() as usize];
+            self.atom_intern
+                .remove(&self.u8_vec[span.start as usize..span.end as usize]);
+            self.interned_atoms.pop();
+        }
         self.ghost_heap += self.u8_vec.len() - cp.heap;
         self.ghost_pairs += self.pair_vec.len() - cp.pairs;
         self.ghost_atoms += self.atom_vec.len() - cp.atoms;
         self.u8_vec.truncate(cp.heap);
         self.pair_vec.truncate(cp.pairs);
         self.atom_vec.truncate(cp.atoms);
-        self.atom_intern
-            .retain(|_, node| (node.index() as usize) < cp.atoms);
     }
 
     /// Truncate all pools (capacity retained) and reset the ghost counters to their initial
     /// state (2 ghost atoms + 1 ghost heap byte, standing in for nil/one).
     pub fn reset(&mut self) {
         self.atom_intern.clear();
+        self.interned_atoms.clear();
         self.u8_vec.clear();
         self.pair_vec.clear();
         self.atom_vec.clear();
@@ -338,6 +347,7 @@ impl Arena {
             let node = NodePtr::new(ObjectType::Bytes, idx);
             if v.len() >= INTERN_MIN_ATOM_BYTES {
                 self.atom_intern.insert(v.into(), node);
+                self.interned_atoms.push(node);
             }
             Ok(node)
         }

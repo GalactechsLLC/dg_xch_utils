@@ -211,6 +211,7 @@ pub struct HealthState {
     // primary sync-progress signal (mainnet infuses ~every 18.75s, so it moves on any healthy node).
     last_peak: AtomicU64,
     last_progress_unix: AtomicU64,
+    last_confirm_unix: AtomicU64,
     // Highest `blocks_downloaded` counter observed — a SECONDARY witness so the multi-minute fast-sync
     // BODY-download phase (confirmed peak does not move until the whole window lands) still counts as
     // progress. The one window this cannot cover is a pure CPU weight-proof verify with no I/O; the boot
@@ -250,6 +251,7 @@ impl HealthState {
             // Seed the progress clock to boot so a node that never advances still gets the full grace
             // window before the first possible failure (rather than reading stalled from second one).
             last_progress_unix: AtomicU64::new(now),
+            last_confirm_unix: AtomicU64::new(now),
             last_downloaded: AtomicU64::new(0),
             stall_dumped: AtomicBool::new(false),
         })
@@ -287,11 +289,21 @@ impl HealthState {
         if peak_advanced || dl_advanced {
             self.last_progress_unix.store(now, Ordering::Relaxed);
         }
+        if peak_advanced {
+            self.last_confirm_unix.store(now, Ordering::Relaxed);
+        }
     }
 
     fn verdict(&self, snap: &MetricsSnapshot, now: u64, follow_inflight_since: u64) -> Health {
         if now.saturating_sub(self.boot_unix) < BOOT_GRACE_SECS {
             return Health::ok("boot grace");
+        }
+        if snap
+            .store
+            .as_ref()
+            .is_some_and(|store| store.schema_active != 0)
+        {
+            return Health::ok("index maintenance: confirmations may be paused");
         }
         if snap.peak_height > 0 && snap.peak_height >= snap.claimed_peak {
             return Health::ok("caught up to peer tip");
@@ -299,7 +311,14 @@ impl HealthState {
         if snap.outbound_peers == 0 {
             return Health::ok("no outbound peers to sync from");
         }
-        let since = now.saturating_sub(self.last_progress_unix.load(Ordering::Relaxed));
+        let clock = if snap.peak_height > 0
+            && snap.claimed_peak.saturating_sub(snap.peak_height) <= 50_000
+        {
+            &self.last_confirm_unix
+        } else {
+            &self.last_progress_unix
+        };
+        let since = now.saturating_sub(clock.load(Ordering::Relaxed));
         if since <= STALL_SECS {
             return Health::ok("advancing");
         }
@@ -325,6 +344,7 @@ impl HealthState {
 /// the renderer skips the series instead of exporting misleading zeros).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct StoreSnapshot {
+    pub schema_active: u64,
     // The bounded-WAL witness: current `-wal` file size in bytes.
     pub wal_bytes: u64,
     // 1 = near-tip band (per-block commits + active checkpointer), 0 = catch-up band. Doubles as the
@@ -494,6 +514,7 @@ impl<S: BlockStore + Send + Sync> MetricsSources<S> {
         // Store telemetry snapshot (sqlite only today): cheap atomic loads plus one WAL-file
         // metadata stat per scrape.
         let store = self.store.telemetry().map(|t| StoreSnapshot {
+            schema_active: t.schema_active.load(Ordering::Relaxed),
             wal_bytes: self.store.wal_bytes(),
             near_tip: u64::from(self.store.near_tip()),
             commit_catch_up: t.commit_catch_up.snapshot(),

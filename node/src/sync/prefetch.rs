@@ -255,28 +255,12 @@ impl WindowReadahead {
             .max(next_from);
         while self.inflight.len() < admissible && from <= claimed && !sources.is_empty() {
             let to = claimed.min(from.saturating_add(batch.saturating_sub(1)));
-            let mut chosen = None;
-            // Prefer the peer with the fewest in-flight windows (still under its per-peer cap) so
-            // the fan-out spreads evenly across peers.
-            let mut best_count = self.cfg.per_peer;
-            for i in 0..sources.len() {
-                let idx = (self.rotation + i) % sources.len();
-                let s = &sources[idx];
-                if s.is_closed() {
-                    continue;
-                }
-                let count = self.peer_window_count(s.peer_id());
-                if count < best_count {
-                    best_count = count;
-                    chosen = Some((idx, s.clone()));
-                    // A wholly-idle peer is the ideal pick; take it immediately.
-                    if count == 0 {
-                        break;
-                    }
-                }
-            }
-            // Every live peer is at its per-peer cap — stop here.
-            let Some((idx, src)) = chosen else { break };
+            let chosen = super::source::select_fetch_source(sources, self.rotation, to, |source| {
+                let count = self.peer_window_count(source.peer_id());
+                (count < self.cfg.per_peer).then_some(count)
+            });
+            let Some(idx) = chosen else { break };
+            let src = sources[idx].clone();
             self.rotation = (idx + 1) % sources.len();
             let peer_id = src.peer_id();
             let timeout = self.request_timeout;

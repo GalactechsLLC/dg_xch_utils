@@ -1287,8 +1287,17 @@ where
     pub async fn stage_window_pre(
         &mut self,
         blocks: Vec<dg_xch_core::blockchain::full_block::FullBlock>,
-        provided: Option<std::collections::HashMap<u32, crate::engine::PrecomputedBody>>,
+        mut provided: Option<std::collections::HashMap<u32, crate::engine::PrecomputedBody>>,
     ) -> Result<StagedWindow, SyncError> {
+        if let Some(bodies) = provided.as_mut() {
+            let by_height: std::collections::HashMap<_, _> =
+                blocks.iter().map(|block| (block.height(), block)).collect();
+            bodies.retain(|height, body| {
+                by_height
+                    .get(height)
+                    .is_some_and(|block| body.matches(block, self.engine.constants()))
+            });
+        }
         {
             let (cache, pending, staged) = self.engine.collection_sizes();
             self.metrics
@@ -1304,7 +1313,7 @@ where
         // Window body precompute: the expensive pure half of body validation (CLVM generator run
         // + BLS aggregate verify) for every transaction block of the window runs across all cores
         // before the sequential stage loop. The engine accepts a precompute only when its own
-        // stage-time flag key matches; otherwise it recomputes inline.
+        // block inputs and consensus constants match; otherwise it recomputes inline.
         let mut pre_bodies: std::collections::HashMap<u32, crate::engine::PrecomputedBody> = {
             let by_height: std::collections::HashMap<u32, &FullBlock> =
                 blocks.iter().map(|b| (b.height(), b)).collect();
@@ -2139,14 +2148,10 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
         |(block, refs, verify_sig)| {
             crate::engine::run_body_expensive(primitives, constants, block, refs, *verify_sig)
                 .ok()
-                .map(|(conds, verified)| {
-                    (
-                        block.height(),
-                        crate::engine::PrecomputedBody {
-                            conds,
-                            agg_sig_verified: verified,
-                        },
-                    )
+                .and_then(|(conds, verified)| {
+                    crate::engine::PrecomputedBody::new(block, constants, conds, verified)
+                        .ok()
+                        .map(|body| (block.height(), body))
                 })
         },
     )
@@ -2160,7 +2165,7 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
 /// body pipeline. Generator refs resolve from the window itself or from `extra` (the driver's
 /// confirmed-store snapshot, [`Chaser::confirmed_ref_generators`]); a block with a ref neither
 /// can serve is skipped here and takes the engine's inline path, and the engine's stage-time
-/// flag-key check still guards every entry — a mismatch degrades to an inline recompute, never
+/// block-input check still guards every entry — a mismatch degrades to an inline recompute, never
 /// to a changed verdict.
 #[must_use]
 pub fn precompute_window_bodies_standalone<P: crate::primitives::ConsensusPrimitives + Sync>(

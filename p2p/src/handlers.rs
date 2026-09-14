@@ -954,7 +954,11 @@ impl FullNodeHandler {
                 Ok(())
             }
             ProtocolMessageTypes::NewPeak => {
-                self.api.on_new_peak(*peer_id, decode(msg, version)?).await;
+                let peak: NewPeak = decode(msg, version)?;
+                if let Some(peer) = peers.read().await.get(peer_id).cloned() {
+                    peer.peer_peak.record(peak.height);
+                }
+                self.api.on_new_peak(*peer_id, peak).await;
                 Ok(())
             }
             ProtocolMessageTypes::RequestBlock => {

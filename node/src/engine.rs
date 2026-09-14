@@ -54,12 +54,62 @@ use std::collections::{HashMap, HashSet};
 // mid-window, walling the node with GeneratorRefHasNoGenerator; the per-window clear cannot.)
 
 /// The expensive PURE half of body validation (CLVM generator run + BLS aggregate verify),
-/// precomputed off-thread by the window pipeline. The CLVM flag ladder keys on the block's OWN
-/// height — fully known at precompute time — so a precomputation is always valid and never
-/// discarded.
+/// precomputed off-thread by the window pipeline and bound to its block inputs and constants.
 pub struct PrecomputedBody {
     pub conds: SpendBundleConditions,
     pub agg_sig_verified: bool,
+    identity: BodyIdentity,
+}
+
+#[derive(PartialEq, Eq)]
+struct BodyIdentity {
+    header_hash: Bytes32,
+    height: u32,
+    transactions_info_hash: Bytes32,
+    generator_root: Bytes32,
+    generator_refs_root: Bytes32,
+    constants: ConsensusConstants,
+}
+
+impl BodyIdentity {
+    fn new(block: &FullBlock, constants: &ConsensusConstants) -> Result<Self, NodeError> {
+        let info = block.transactions_info.as_ref().ok_or_else(|| {
+            NodeError::Invalid("transaction block missing transactions_info".into())
+        })?;
+        let generator = block
+            .transactions_generator
+            .as_ref()
+            .ok_or_else(|| NodeError::Invalid("no generator to precompute".into()))?;
+        Ok(Self {
+            header_hash: block.header_hash()?,
+            height: block.height(),
+            transactions_info_hash: transactions_info_hash(info)?,
+            generator_root: transactions_generator_root(generator),
+            generator_refs_root: transactions_generator_refs_root(
+                &block.transactions_generator_ref_list,
+            )?,
+            constants: *constants,
+        })
+    }
+}
+
+impl PrecomputedBody {
+    pub(crate) fn new(
+        block: &FullBlock,
+        constants: &ConsensusConstants,
+        conds: SpendBundleConditions,
+        agg_sig_verified: bool,
+    ) -> Result<Self, NodeError> {
+        Ok(Self {
+            conds,
+            agg_sig_verified,
+            identity: BodyIdentity::new(block, constants)?,
+        })
+    }
+
+    pub(crate) fn matches(&self, block: &FullBlock, constants: &ConsensusConstants) -> bool {
+        BodyIdentity::new(block, constants).is_ok_and(|identity| identity == self.identity)
+    }
 }
 
 /// Run the pure expensive body ops for one transaction block: build the generator input exactly as
@@ -1144,6 +1194,7 @@ where
         vdf_sink: Option<&crate::header::HeaderSink>,
         pre: Option<PrecomputedBody>,
     ) -> Result<Option<BlockDelta>, NodeError> {
+        let pre = pre.filter(|body| body.matches(block, &self.constants));
         let header_hash = block.header_hash()?;
         if !self
             .stage_preload
@@ -1581,19 +1632,17 @@ where
         if sf9 && !block.transactions_generator_ref_list.is_empty() {
             return Err(ChiaError::TooManyGeneratorRefs.into());
         }
-        // The expensive pure half — either handed in by the window pipeline's parallel precompute
-        // (always valid: the flag ladder keys on the block's own height) or run
-        // inline via the same shared function.
-        let (conds, sig_already_verified) = match pre {
-            Some(p) => (p.conds, p.agg_sig_verified),
-            None => run_body_expensive(
-                &self.primitives,
-                &self.constants,
-                block,
-                generator_refs,
-                false,
-            )?,
-        };
+        let (conds, sig_already_verified) =
+            match pre.filter(|body| body.matches(block, &self.constants)) {
+                Some(p) => (p.conds, p.agg_sig_verified),
+                None => run_body_expensive(
+                    &self.primitives,
+                    &self.constants,
+                    block,
+                    generator_refs,
+                    false,
+                )?,
+            };
 
         // Generator identity + cost against the block's own transactions_info.
         let gen_root = transactions_generator_root(&generator);

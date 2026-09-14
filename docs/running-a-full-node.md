@@ -68,6 +68,23 @@ Supported database URLs are:
 
 The mmap directory must be writable by the node process.
 
+### SQLite's transition to tip
+
+Secondary coin indexes remain deferred during bulk sync to preserve ingestion speed.
+At tip they build on an isolated connection with disk-spillable sorting, a 16 MiB page-cache
+target and two auxiliary sort workers. This is not a total process-memory cap. Each SQLite
+index statement still holds the writer; confirmations can pause until it finishes.
+
+On small devices, keep both the database and sort scratch off tmpfs. Set `SQLITE_TMPDIR`
+before starting the process to a private, writable disk-backed directory with sufficient
+free space. Keep the existing DB on upgrade; do not clear it or force an index rebuild.
+
+Storage stays in its low-latency profile at zero lag, with hysteresis before returning to
+bulk mode. Large fully checkpointed WAL allocations are reclaimed opportunistically near
+tip. Monitor the dashboard's native SQLite memory and index-maintenance panels alongside
+confirmed height and host available memory; a maintenance liveness response is not proof
+of current-tip readiness.
+
 ## Sync Modes
 
 - The default mode validates a weight proof and then fully validates forward from its checkpoint.

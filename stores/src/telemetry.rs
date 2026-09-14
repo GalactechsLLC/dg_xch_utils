@@ -105,6 +105,13 @@ pub struct HistogramSnapshot {
 /// shared between the backend and the `/metrics` sampler; see [`crate::BlockStore::telemetry`].
 #[derive(Default, Debug)]
 pub struct StoreTelemetry {
+    pub schema_active: AtomicU64,
+    pub schema_started_unix: AtomicU64,
+    pub schema_progress_unix: AtomicU64,
+    pub schema_statements: AtomicU64,
+    pub schema_errors: AtomicU64,
+    pub schema_vm_steps: AtomicU64,
+    pub schema_seconds: DurationHistogram,
     pub coin_prepare: Arc<OperationMetrics>,
     pub coin_view: Arc<OperationMetrics>,
     pub coin_prefetch: Arc<OperationMetrics>,

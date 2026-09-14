@@ -178,6 +178,95 @@ async fn reused_wal_is_drained_again_without_truncation() {
     );
 }
 
+#[test]
+fn caught_up_reclaims_large_checkpointed_wal_without_bulk_truncation_churn() {
+    let now = Instant::now();
+    let mut schedule = Schedule::new(now);
+    schedule.observe(now, outcome(100, 100));
+    assert!(!schedule.may_reclaim_allocation(now, false, IDLE_WAL_RECLAIM_BYTES));
+    assert!(!schedule.may_reclaim_allocation(now, true, IDLE_WAL_RECLAIM_BYTES - 1));
+    assert!(schedule.may_reclaim_allocation(now, true, IDLE_WAL_RECLAIM_BYTES));
+    schedule.last_escalation = Some(now);
+    assert!(!schedule.may_reclaim_allocation(now, true, IDLE_WAL_RECLAIM_BYTES));
+    assert!(schedule.may_reclaim_allocation(
+        now + ESCALATION_INTERVAL,
+        true,
+        IDLE_WAL_RECLAIM_BYTES
+    ));
+    schedule.observe(now, outcome(200, 100));
+    assert!(!schedule.may_reclaim_allocation(
+        now + ESCALATION_INTERVAL,
+        true,
+        IDLE_WAL_RECLAIM_BYTES
+    ));
+}
+
+#[tokio::test]
+async fn near_tip_truncates_a_fully_checkpointed_large_wal() {
+    let (_directory, store) = open_probe(16 * 1024).await;
+    let bytes = IDLE_WAL_RECLAIM_BYTES as i64 + 4096;
+    write_probe(&store, bytes).await;
+    wait_for_pass(&store, 0).await;
+    assert!(store.wal_file_bytes() >= IDLE_WAL_RECLAIM_BYTES);
+    let passive_before = store
+        .telemetry
+        .checkpoint_passive
+        .calls
+        .load(Ordering::Relaxed);
+    assert_eq!(
+        store
+            .telemetry
+            .checkpoint_truncate
+            .calls
+            .load(Ordering::Relaxed),
+        0
+    );
+    store.set_near_tip(true);
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while store.wal_file_bytes() != 0
+            || store
+                .telemetry
+                .checkpoint_truncate
+                .calls
+                .load(Ordering::Relaxed)
+                == 0
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        store
+            .telemetry
+            .checkpoint_truncate
+            .calls
+            .load(Ordering::Relaxed)
+            > 0
+    );
+    assert!(
+        store
+            .telemetry
+            .checkpoint_passive
+            .calls
+            .load(Ordering::Relaxed)
+            > passive_before
+    );
+    assert_eq!(
+        store
+            .telemetry
+            .checkpoint_errors_total
+            .load(Ordering::Relaxed),
+        0
+    );
+    let stored_bytes: i64 =
+        sqlx::query_scalar("SELECT length(data) FROM checkpoint_probe WHERE id=1")
+            .fetch_one(&mut *store.writer.lock().await)
+            .await
+            .unwrap();
+    assert_eq!(stored_bytes, bytes);
+}
+
 #[tokio::test]
 async fn pinned_reader_does_not_trigger_immediate_truncate_or_stall_writer() {
     let (directory, store) = open_probe(16 * 1024).await;

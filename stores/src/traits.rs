@@ -639,16 +639,15 @@ pub trait BlockStore {
     /// Returns [`StoreError::Backend`] if the commit fails.
     async fn commit(&self, batch: BatchHandle) -> Result<(), StoreError>;
 
-    /// Whether the confirm pipeline should run in NEAR-TIP mode -- per-block commits plus an active
-    /// WAL checkpointer -- rather than CATCH-UP mode -- one big batch commit per window with the
-    /// checkpointer quiet. Default catch-up (false). Only the WAL backend (sqlite) acts on this; the
-    /// Postgres and mmap backends have no WAL checkpointer and ignore it.
+    /// Whether SQLite uses per-block commits and WAL reclamation near tip instead of
+    /// per-window commits and reusable WAL allocation during catch-up. Defaults to false;
+    /// PostgreSQL and mmap ignore this setting.
     fn near_tip(&self) -> bool {
         false
     }
 
     /// Set the near-tip phase (see [`Self::near_tip`]). The follow driver sets it from the
-    /// near-tip-band signal: false while bulk-catching-up, true once within a few blocks of the tip.
+    /// storage-phase signal: enter within 20 blocks, remain true at tip, leave beyond 64 blocks.
     fn set_near_tip(&self, _near_tip: bool) {}
 
     /// The backend's recorded [`StoreTelemetry`] (phase-labelled commit latency, WAL checkpoint
