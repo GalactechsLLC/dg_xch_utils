@@ -18,14 +18,38 @@ pub(crate) async fn sample_flamegraph(seconds: u64) -> Result<Vec<u8>, String> {
             .report()
             .build()
             .map_err(|e| format!("report build: {e}"))?;
-        let mut svg = Vec::new();
-        report
-            .flamegraph(&mut svg)
-            .map_err(|e| format!("flamegraph render: {e}"))?;
-        Ok(svg)
+        render_flamegraph(report.data.iter())
     })
     .await
     .map_err(|e| format!("profiler task join: {e}"))?
+}
+
+fn folded_stack(frames: &pprof::Frames, count: isize) -> String {
+    let mut stack = vec![frames.thread_name_or_id()];
+    for frame in frames.frames.iter().rev() {
+        for symbol in frame.iter().rev() {
+            stack.push(symbol.to_string());
+        }
+    }
+    format!("{} {count}", stack.join(";"))
+}
+
+fn render_flamegraph<'a>(
+    samples: impl Iterator<Item = (&'a pprof::Frames, &'a isize)>,
+) -> Result<Vec<u8>, String> {
+    let lines: Vec<_> = samples
+        .map(|(frames, count)| folded_stack(frames, *count))
+        .collect();
+    let mut svg = Vec::new();
+    if !lines.is_empty() {
+        inferno::flamegraph::from_lines(
+            &mut inferno::flamegraph::Options::default(),
+            lines.iter().map(String::as_str),
+            &mut svg,
+        )
+        .map_err(|error| format!("flamegraph render: {error}"))?;
+    }
+    Ok(svg)
 }
 
 // The decisive leak instrument: dump jemalloc's sampled heap profile (allocation-site stacks for the
@@ -91,4 +115,51 @@ pub(super) fn jemalloc_prof_dump() -> Result<Vec<u8>, String> {
     let prof = std::fs::read(&path).map_err(|e| format!("read dumped profile: {e}"));
     let _ = std::fs::remove_file(&path); // best-effort temp hygiene, success or not
     prof
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{folded_stack, render_flamegraph};
+
+    fn frames() -> pprof::Frames {
+        let symbol = |name: &str| pprof::Symbol {
+            name: Some(name.as_bytes().to_vec()),
+            addr: None,
+            lineno: None,
+            filename: None,
+        };
+        pprof::Frames {
+            frames: vec![
+                vec![symbol("leaf"), symbol("inlined")],
+                vec![symbol("root")],
+            ],
+            thread_name: "worker".to_string(),
+            thread_id: 42,
+            sample_timestamp: std::time::SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn folded_stack_preserves_frame_order_and_sample_count() {
+        let mut frames = frames();
+        assert_eq!(folded_stack(&frames, 7), "worker;root;inlined;leaf 7");
+        frames.thread_name.clear();
+        assert_eq!(folded_stack(&frames, 7), "42;root;inlined;leaf 7");
+    }
+
+    #[test]
+    fn flamegraph_renders_svg_and_escapes_labels() {
+        let mut frames = frames();
+        frames.thread_name = "<worker>".to_string();
+        let svg = render_flamegraph(std::iter::once((&frames, &7))).unwrap();
+        let svg = String::from_utf8(svg).unwrap();
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("&lt;worker&gt;"));
+        assert!(svg.contains("leaf"));
+    }
+
+    #[test]
+    fn empty_profile_preserves_empty_output() {
+        assert!(render_flamegraph(std::iter::empty()).unwrap().is_empty());
+    }
 }

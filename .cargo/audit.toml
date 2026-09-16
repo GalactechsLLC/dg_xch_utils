@@ -13,13 +13,6 @@ ignore = [
     # decryption/signing oracle whose timing an attacker can measure (TLS crypto is rustls/ring, not
     # `rsa`). No fixed `rsa` version exists yet. Bump `rsa` and drop this ID once a fix ships.
     "RUSTSEC-2023-0071",
-    # quick-xml quadratic-parse DoS (HIGH 7.5). Transitive via pprof -> inferno; used ONLY to WRITE
-    # the flamegraph SVG — the vulnerable XML PARSE path is never fed untrusted input. Fix
-    # (quick-xml >=0.41) needs an inferno/pprof bump (upstream).
-    "RUSTSEC-2026-0194",
-    # quick-xml unbounded namespace allocation. Same profiling-only dependency and unreachable
-    # XML reader as above. This ID is not the rsa Marvin advisory.
-    "RUSTSEC-2026-0195",
     # --- unmaintained: gtk-rs GTK3 bindings + glib (Tauri GUI only; not in the node binary) ---
     "RUSTSEC-2024-0413", "RUSTSEC-2024-0416", "RUSTSEC-2024-0412",
     "RUSTSEC-2024-0418", "RUSTSEC-2024-0411", "RUSTSEC-2024-0417", "RUSTSEC-2024-0414",

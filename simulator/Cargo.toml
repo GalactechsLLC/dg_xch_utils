@@ -31,7 +31,7 @@ dg_xch_node = { path = "../node", version = "3.0.0" }
 # the simulator's own store — a wallet syncs against the sim as if it were a mainnet node. `hint`
 # pulls the coin-index + hint secondary indexes a wallet needs to discover coins and CAT/NFT assets.
 dg_full_node = { path = "../full-node", features = ["hint"], optional = true }
-rustls = { version = "0.23", optional = true }
+rustls = { version = "0.23.45", optional = true }
 num-bigint = { version = "0.4.6", optional = true }
 async-trait = { version = "0.1.89", optional = true }
 dg_xch_pos = { path = "../proof_of_space", version = "3.0.0" }

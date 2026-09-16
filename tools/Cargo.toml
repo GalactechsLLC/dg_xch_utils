@@ -19,7 +19,7 @@ dg_xch_p2p = { path = "../p2p", version = "3.0.0" }
 dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
 dg_xch_stores = { path = "../stores", version = "3.0.0" }
 dg_xch_weight_proof = { path = "../weight-proof", version = "3.0.0" }
-rustls = { version = "0.23.37", features = ["ring"] }
+rustls = { version = "0.23.45", features = ["ring"] }
 uuid = { version = "1.21.0", features = ["v4"] }
 zstd = "0.13.2"
 sha2 = "0.10.9"

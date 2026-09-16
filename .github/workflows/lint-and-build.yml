@@ -80,3 +80,10 @@ jobs:
       # Fails the build on any RustSec advisory against the committed Cargo.lock (SSDF PW.7 / A03:2025).
       - name: Run cargo audit
         run: cargo audit
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Audit frontend dependencies
+        working-directory: gui
+        run: npm audit --package-lock-only --ignore-scripts

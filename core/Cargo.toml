@@ -34,7 +34,7 @@ parking_lot = "0.12.5"
 prometheus = {version="0.14.0", features=["protobuf"], optional = true}
 rand = "0.10.0"
 regex = "1.12.3"
-rustls = {version = "0.23.37" }
+rustls = {version = "0.23.45" }
 rustls-pemfile = "2.2.0"
 rsa = { version = "0.9.10", features = ["std", "pem", "sha2"] }
 secrecy = "0.10.3"
