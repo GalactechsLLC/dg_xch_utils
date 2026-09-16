@@ -41,11 +41,11 @@ where
         from: u32,
         to: u32,
     ) -> Result<Option<(Bytes32, u32)>, SyncError> {
-        let (peak, deltas) = {
+        let confirmed = {
             let mut chaser = self.chaser.lock().await;
             chaser.follow_to_reporting(source, from, to).await?
         };
-        self.finish_follow_step(peak, &deltas).await
+        self.finish_confirmed_window(confirmed).await
     }
 
     // Typed core of [`FullNode::sync_follow_blocks`].
@@ -63,11 +63,11 @@ where
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
         pre: Option<std::collections::HashMap<u32, dg_xch_node::engine::PrecomputedBody>>,
     ) -> Result<Option<(Bytes32, u32)>, SyncError> {
-        let (peak, deltas) = {
+        let confirmed = {
             let mut chaser = self.chaser.lock().await;
             chaser.follow_blocks_reporting_pre(blocks, pre).await?
         };
-        self.finish_follow_step(peak, &deltas).await
+        self.finish_confirmed_window(confirmed).await
     }
 
     // Stage half of the stage-ahead pipeline: window into the overlay, no writer, no drains —
@@ -90,11 +90,11 @@ where
         window: dg_xch_node::sync::StagedWindow,
         verdict: dg_xch_node::sync::WindowVerdict,
     ) -> Result<Option<(Bytes32, u32)>, SyncError> {
-        let (peak, deltas) = {
+        let confirmed = {
             let mut chaser = self.chaser.lock().await;
             chaser.confirm_window_pre(window, verdict).await?
         };
-        self.finish_follow_step(peak, &deltas).await
+        self.finish_confirmed_window(confirmed).await
     }
 
     /// The mirrored `short_sync_backtrack` step, driven when a follow
@@ -127,8 +127,8 @@ where
             chaser.follow_backtrack_reporting(source, from, to).await
         };
         self.follow_inflight_since.store(0, Ordering::Relaxed);
-        let (peak, deltas) = stepped?;
-        self.finish_follow_step(peak, &deltas).await
+        let confirmed = stepped?;
+        self.finish_confirmed_window(confirmed).await
     }
 
     /// One near-tip follow step via `new_peak` ladder: forward-extend first, backtrack only on
@@ -153,8 +153,21 @@ where
             chaser.follow_tip_step_reporting(source, from, to).await
         };
         self.follow_inflight_since.store(0, Ordering::Relaxed);
-        let (peak, deltas) = stepped?;
-        self.finish_follow_step(peak, &deltas).await
+        let confirmed = stepped?;
+        self.finish_confirmed_window(confirmed).await
+    }
+
+    pub(in crate::node) async fn finish_confirmed_window(
+        &self,
+        confirmed: dg_xch_node::sync::ConfirmedWindow,
+    ) -> Result<Option<(Bytes32, u32)>, SyncError> {
+        let peak = self
+            .finish_follow_step(confirmed.peak, &confirmed.deltas)
+            .await?;
+        match confirmed.rejection {
+            Some(error) => Err(error),
+            None => Ok(peak),
+        }
     }
 
     // Shared tail of every follow-shaped step: per-peak side effects + the synced flag.

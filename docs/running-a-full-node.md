@@ -91,6 +91,11 @@ of current-tip readiness.
 - `--genesis-sync` validates the chain from height zero.
 - `--sync-from <height>` selects an explicit validated starting height.
 
+Recovery of historical generator references checks their hash commitments and binds them to
+local chain records. References below the stored history require matching responses from two
+distinct peers; recovery waits if only one peer is available. Corroboration does not protect
+against colluding peers. Failed sync windows discard cached recovery references before retrying.
+
 ## Monitoring
 
 Prometheus metrics are served at `https://<listen-address>/metrics`. See [monitoring.md](monitoring.md) for the metric names and scrape configuration.

@@ -347,6 +347,10 @@ struct ValidatedTip {
     summaries: Arc<Vec<SubEpochSummary>>,
 }
 
+#[cfg(test)]
+#[path = "../tests/unit/node/hardening.rs"]
+mod hardening;
+
 fn in_near_tip_band(local: u32, claimed: u32, has_peak: bool) -> bool {
     if !has_peak {
         return false;

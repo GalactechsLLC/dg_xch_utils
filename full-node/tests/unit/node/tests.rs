@@ -155,9 +155,13 @@ async fn reorg_rollback_states_reach_subscribed_wallets() {
             ],
         }),
     };
-    node.finish_follow_step(None, std::slice::from_ref(&cd))
-        .await
-        .expect("confirm tail");
+    node.finish_confirmed_window(dg_xch_node::sync::ConfirmedWindow {
+        peak: None,
+        deltas: vec![cd],
+        rejection: Some(SyncError::Io(Error::other("rejected tail"))),
+    })
+    .await
+    .expect_err("the rejection surfaces after notifying wallets");
 
     let update = rx.try_recv().expect(
         "the subscriber must hear the rolled-back coin states (pre-threading it heard nothing)",

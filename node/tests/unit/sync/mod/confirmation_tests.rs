@@ -40,7 +40,7 @@ async fn split_confirmation_preserves_failure_prefix_and_restarts() {
     let chain = build_chain(&base, START, START + N - 1, Bytes32::from([0xab; 32]));
     for (boundary, mode) in [0, 3, 5, 7]
         .into_iter()
-        .flat_map(|boundary| (0..3).map(move |mode| (boundary, mode)))
+        .flat_map(|boundary| (0..4).map(move |mode| (boundary, mode)))
     {
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(
@@ -48,6 +48,7 @@ async fn split_confirmation_preserves_failure_prefix_and_restarts() {
                 .await
                 .unwrap(),
         );
+        store.set_near_tip(mode == 3);
         let mut engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
         engine.set_coalesce_coin_writes(true);
         let mut chaser = Chaser::new(engine, cfg());
@@ -65,7 +66,19 @@ async fn split_confirmation_preserves_failure_prefix_and_restarts() {
             vdf_micros: 0,
             sig_micros: 0,
         };
-        assert!(chaser.confirm_window_pre(window, verdict).await.is_err());
+        let confirmed = chaser.confirm_window_pre(window, verdict).await.unwrap();
+        assert!(confirmed.rejection.is_some());
+        assert_eq!(confirmed.deltas.len(), boundary);
+        assert_eq!(chaser.engine().collection_sizes().2, 0);
+        for block in &chain[boundary..] {
+            assert!(
+                store
+                    .get_block_record(&block.header_hash().unwrap())
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
         let expected = boundary
             .checked_sub(1)
             .map(|index| (chain[index].header_hash().unwrap(), chain[index].height()));

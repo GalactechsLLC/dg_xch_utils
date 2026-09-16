@@ -189,7 +189,9 @@ async fn backtrack_flips_a_wrong_block_at_the_peak_to_the_canonical_branch() {
     let (peak, _deltas) = chaser
         .follow_backtrack_reporting(&peer, PEAK + 1, B_TIP)
         .await
-        .expect("backtrack finds the fork at peak - 1 and converges");
+        .expect("backtrack finds the fork at peak - 1 and converges")
+        .into_result()
+        .expect("window accepted");
 
     assert_eq!(
         peak,

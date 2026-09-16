@@ -59,6 +59,7 @@ pub struct PrecomputedBody {
     pub conds: SpendBundleConditions,
     pub agg_sig_verified: bool,
     identity: BodyIdentity,
+    refs_digest: Bytes32,
 }
 
 #[derive(PartialEq, Eq)]
@@ -99,17 +100,29 @@ impl PrecomputedBody {
         constants: &ConsensusConstants,
         conds: SpendBundleConditions,
         agg_sig_verified: bool,
+        refs: &[GeneratorReference],
     ) -> Result<Self, NodeError> {
         Ok(Self {
             conds,
             agg_sig_verified,
             identity: BodyIdentity::new(block, constants)?,
+            refs_digest: generator_refs_digest(refs),
         })
     }
 
     pub(crate) fn matches(&self, block: &FullBlock, constants: &ConsensusConstants) -> bool {
         BodyIdentity::new(block, constants).is_ok_and(|identity| identity == self.identity)
     }
+}
+
+fn generator_refs_digest(refs: &[GeneratorReference]) -> Bytes32 {
+    let mut bytes = Vec::with_capacity(refs.len() * 40);
+    for reference in refs {
+        bytes.extend_from_slice(&reference.height.to_le_bytes());
+        bytes.extend_from_slice(&reference.index.to_le_bytes());
+        bytes.extend_from_slice(&hash_256(reference.generator.to_bytes()));
+    }
+    hash_256(bytes).into()
 }
 
 /// Run the pure expensive body ops for one transaction block: build the generator input exactly as
@@ -1236,18 +1249,9 @@ where
         // fetched from the confirmed chain, in ref-list order — empty for a block with no
         // ref-list. Body validation stays sync (derive_delta), so resolution — the only async,
         // store-touching step — happens here and the resolved refs are threaded down.
-        // ONLY for the inline body run: when the window pipeline hands a `PrecomputedBody`, the
-        // precompute already resolved these refs and `run_body_expensive` consumed them; the
-        // precomputed branch of `validate_body` never reads them again (the `generator_refs_root`
-        // identity keys on the raw ref-list HEIGHTS, not the resolved generators). Re-resolving
-        // here would re-read every referenced generator body from the store per staged block —
-        // dead sequential reads on the sync hot path.
-        let generator_refs = if pre.is_some() {
-            Vec::new()
-        } else {
-            self.resolve_generator_refs(&block.transactions_generator_ref_list)
-                .await?
-        };
+        let generator_refs = self
+            .resolve_generator_refs(&block.transactions_generator_ref_list)
+            .await?;
         // Previous-TRANSACTION-block context for the time-lock conditions: ASSERT_HEIGHT/SECONDS
         // validate against the previous transaction block's height/timestamp, never this block's
         // own.
@@ -1503,6 +1507,9 @@ where
         &self,
         ref_list: &[u32],
     ) -> Result<Vec<GeneratorReference>, NodeError> {
+        if ref_list.len() > self.constants.max_generator_ref_list_size as usize {
+            return Err(ChiaError::TooManyGeneratorRefs.into());
+        }
         let mut refs = Vec::with_capacity(ref_list.len());
         for (index, &height) in ref_list.iter().enumerate() {
             // Overlay first (`staged_generator` = in-window staged block, THEN the out-of-span seed
@@ -1632,17 +1639,19 @@ where
         if sf9 && !block.transactions_generator_ref_list.is_empty() {
             return Err(ChiaError::TooManyGeneratorRefs.into());
         }
-        let (conds, sig_already_verified) =
-            match pre.filter(|body| body.matches(block, &self.constants)) {
-                Some(p) => (p.conds, p.agg_sig_verified),
-                None => run_body_expensive(
-                    &self.primitives,
-                    &self.constants,
-                    block,
-                    generator_refs,
-                    false,
-                )?,
-            };
+        let (conds, sig_already_verified) = match pre.filter(|body| {
+            body.matches(block, &self.constants)
+                && body.refs_digest == generator_refs_digest(generator_refs)
+        }) {
+            Some(p) => (p.conds, p.agg_sig_verified),
+            None => run_body_expensive(
+                &self.primitives,
+                &self.constants,
+                block,
+                generator_refs,
+                false,
+            )?,
+        };
 
         // Generator identity + cost against the block's own transactions_info.
         let gen_root = transactions_generator_root(&generator);

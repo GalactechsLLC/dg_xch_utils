@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "../../../tests/unit/node/anchor_hardening.rs"]
+mod tests;
+
 impl<S> FullNode<S>
 where
     S: BlockStore + CoinStore + Send + Sync + 'static,
@@ -185,8 +189,8 @@ where
             chaser.long_sync_reland_reporting(&source, fork_point).await
         };
         self.follow_inflight_since.store(0, Ordering::Relaxed);
-        let (peak, deltas) = stepped.map_err(|e| Error::other(e.to_string()))?;
-        self.finish_follow_step(peak, &deltas)
+        let confirmed = stepped.map_err(|e| Error::other(e.to_string()))?;
+        self.finish_confirmed_window(confirmed)
             .await
             .map_err(|e| Error::other(e.to_string()))?;
         Ok(())
@@ -210,84 +214,79 @@ where
         let Some(validated) = self.validated_proof(&peers).await? else {
             return Ok(false);
         };
-        let start = h.saturating_sub(64);
-        let end = h.saturating_add(31);
-        // Peers reject RequestBlocks spans wider than 32, so the anchor span is fetched in
-        // 32-block chunks; a peer that fails any chunk is abandoned for the next peer.
-        let mut fetched = None;
-        'peers: for peer in &peers {
-            let source = OutboundPeerSource::new(peer.clone(), REQUEST_TIMEOUT);
-            let mut span = Vec::new();
-            let mut lo = start;
-            while lo <= end {
-                let hi = end.min(lo + 31);
-                match source.fetch_range(lo, hi).await {
-                    Ok(blocks) if !blocks.is_empty() => span.extend(blocks),
-                    Ok(_) | Err(_) => continue 'peers,
-                }
-                lo = hi + 1;
-            }
-            fetched = Some(span);
-            break;
-        }
-        let Some(mut blocks) = fetched else {
-            warn!(
-                "sync-from anchor: no peer served the anchor span; retrying start={} end={} peers={}",
-                start,
-                end,
-                peers.len()
-            );
-            return Ok(false);
-        };
-        blocks.sort_by_key(dg_xch_core::blockchain::full_block::FullBlock::height);
-        let headers: Vec<_> = blocks
-            .iter()
-            .map(dg_xch_node::header_block_from_full_block)
-            .collect();
-        let mut chaser = self.chaser.lock().await;
-        let schedule = chaser.epoch_schedule(&validated.summaries);
-        chaser
-            .sync_headers(&headers, &schedule, &validated.summaries)
-            .await
-            .map_err(|e| Error::other(e.to_string()))?;
-        // The proof's summary chain outlives the anchor span: the first included-SES block ABOVE
-        // the span has neither local ancestry nor a headers-first candidate to serve its summary
-        // — the engine falls back to this chain, hash-gated as ever.
-        chaser.seed_summary_chain(validated.summaries.to_vec());
-        // The anchor span alone cannot serve the FIRST epoch retarget the follow hits: its
-        // `get_second_to_last_transaction_block_in_previous_epoch` walk reads records back past
-        // the previous epoch surpass — up to a full epoch below the span (the 4,575,744-boundary
-        // wall: --sync-from=4575000 seeded [4574936, 4575031], staging 4,575,758 walked to
-        // 4,571,135 and died on "block record not found"). Backfill those records headers-first
-        // now, exactly as the from-zero bulk sync does after its weight-proof landing. Fail
-        // closed: without them the follow WILL wall at the boundary, so retry the anchor next
-        // tick rather than establish a known-incomplete one.
         let sources: Vec<Arc<dyn BlockRangeSource>> = peers
             .iter()
-            .map(|p| {
-                Arc::new(OutboundPeerSource::new(p.clone(), REQUEST_TIMEOUT))
+            .map(|peer| {
+                Arc::new(OutboundPeerSource::new(peer.clone(), REQUEST_TIMEOUT))
                     as Arc<dyn BlockRangeSource>
             })
             .collect();
-        match chaser
-            .backfill_epoch_depth(&sources, &validated.summaries, start)
-            .await
-        {
-            Ok(n) => info!("sync-from epoch-depth backfill complete records={}", n),
-            Err(e) => {
+        self.anchor_with_sources(&sources, &validated, h).await
+    }
+
+    async fn anchor_with_sources(
+        &self,
+        sources: &[Arc<dyn BlockRangeSource>],
+        validated: &ValidatedTip,
+        height: u32,
+    ) -> Result<bool, Error> {
+        let start = height.saturating_sub(64);
+        let end = height.saturating_add(31);
+        'sources: for source in sources {
+            let mut span = Vec::new();
+            let mut low = start;
+            while low <= end {
+                let high = end.min(low.saturating_add(31));
+                match source.fetch_range(low, high).await {
+                    Ok(blocks)
+                        if blocks.len() == (high - low + 1) as usize
+                            && blocks
+                                .iter()
+                                .enumerate()
+                                .all(|(index, block)| block.height() == low + index as u32) =>
+                    {
+                        span.extend(blocks)
+                    }
+                    _ => continue 'sources,
+                }
+                if high == end {
+                    break;
+                }
+                low = high + 1;
+            }
+            let headers: Vec<_> = span
+                .iter()
+                .map(dg_xch_node::header_block_from_full_block)
+                .collect();
+            let mut chaser = self.chaser.lock().await;
+            let schedule = chaser.epoch_schedule(&validated.summaries);
+            if let Err(error) = chaser
+                .sync_headers(&headers, &schedule, &validated.summaries)
+                .await
+            {
                 warn!(
-                    "sync-from epoch-depth backfill failed; retrying anchor next tick error={}",
-                    e
+                    "sync-from anchor rejected peer={} error={error}",
+                    source.peer_id()
                 );
+                continue;
+            }
+            chaser.seed_summary_chain(validated.summaries.to_vec());
+            if let Err(error) = chaser
+                .backfill_epoch_depth(sources, &validated.summaries, start)
+                .await
+            {
+                warn!("sync-from epoch-depth backfill failed error={error}");
                 return Ok(false);
             }
+            if let Err(error) = chaser.warm_engine_cache().await {
+                warn!("sync-from cache warm failed error={error}");
+            }
+            *self.sync_from_anchor.write().await = Some(start);
+            info!("sync-from anchor established anchor={start} target={height}");
+            return Ok(true);
         }
-        if let Err(e) = chaser.warm_engine_cache().await {
-            warn!("sync-from cache warm failed error={}", e);
-        }
-        *self.sync_from_anchor.write().await = Some(start);
-        info!("sync-from anchor established anchor={} target={}", start, h);
-        Ok(true)
+        warn!("sync-from anchor: no peer served a valid span start={start} end={end}");
+        Ok(false)
     }
 
     pub(in crate::node) async fn local_peak_weight(&self) -> Option<u128> {

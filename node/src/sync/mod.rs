@@ -241,6 +241,31 @@ impl Default for SyncConfig {
     }
 }
 
+/// Durable confirmation results, including a possible failure after the confirmed prefix.
+/// Consume `deltas` before surfacing `rejection` to preserve wallet and mempool updates.
+#[must_use]
+#[derive(Debug)]
+pub struct ConfirmedWindow {
+    pub peak: Option<(Bytes32, u32)>,
+    pub deltas: Vec<ConfirmedDelta>,
+    pub rejection: Option<SyncError>,
+}
+
+impl ConfirmedWindow {
+    /// Convert to the success-only form for callers that do not consume confirmation side effects.
+    ///
+    /// # Errors
+    /// Returns the rejection, discarding any committed-prefix deltas.
+    pub fn into_result(self) -> Result<ConfirmedBlocks, SyncError> {
+        match self.rejection {
+            Some(error) => Err(error),
+            None => Ok((self.peak, self.deltas)),
+        }
+    }
+}
+
+pub type ConfirmedBlocks = (Option<(Bytes32, u32)>, Vec<ConfirmedDelta>);
+
 /// One confirmed block the reporting follow paths hand the server for per-peak side effects
 /// (wallet coin-state push + mempool revalidation). `reorg` is `Some` exactly on the first delta
 /// of a reorg's re-applied branch. The server pushes the rolled-back states (with the true fork
@@ -928,7 +953,8 @@ where
     /// Returns the confirmed peak.
     ///
     /// # Errors
-    /// Returns [`SyncError`] if the peer cannot serve the delta or a block fails validation.
+    /// Returns [`SyncError`] if fetching or staging fails before confirmation. Consume returned
+    /// deltas before handling any rejection carried by the confirmed window.
     pub async fn follow_to(
         &mut self,
         source: &Arc<dyn BlockRangeSource>,
@@ -957,7 +983,7 @@ where
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
     ) -> Result<Option<(Bytes32, u32)>, SyncError> {
         // The window pipeline lives in follow_blocks_reporting; this caller drops the deltas.
-        Ok(self.follow_blocks_reporting(blocks).await?.0)
+        Ok(self.follow_blocks_reporting(blocks).await?.into_result()?.0)
     }
 
     /// Short sync that also returns the per-block deltas of newly confirmed blocks. The server feeds
@@ -971,7 +997,7 @@ where
         source: &Arc<dyn BlockRangeSource>,
         from_height: u32,
         to_height: u32,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         // As in `follow_to`, the span covers only the fetch+sort.
         log::debug!("sync.short from={} to={}", from_height, to_height);
         let blocks = async {
@@ -1002,7 +1028,7 @@ where
         source: &Arc<dyn BlockRangeSource>,
         from_height: u32,
         to_height: u32,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         let peak_height = from_height.saturating_sub(1);
         let floor = peak_height.saturating_sub(BACKTRACK_MAX_DEPTH);
         // The span covers only the collection; follow_blocks_reporting emits its own window.* spans.
@@ -1075,11 +1101,21 @@ where
         source: &Arc<dyn BlockRangeSource>,
         from_height: u32,
         to_height: u32,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         match self
             .follow_to_reporting(source, from_height, to_height)
             .await
         {
+            Ok(confirmed)
+                if confirmed.deltas.is_empty()
+                    && confirmed
+                        .rejection
+                        .as_ref()
+                        .is_some_and(SyncError::is_orphan) =>
+            {
+                self.follow_backtrack_reporting(source, from_height, to_height)
+                    .await
+            }
             Err(e) if e.is_orphan() => {
                 self.follow_backtrack_reporting(source, from_height, to_height)
                     .await
@@ -1103,7 +1139,7 @@ where
         &mut self,
         source: &Arc<dyn BlockRangeSource>,
         fork_point: u32,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         let Some((entry_hash, entry_height)) = self.engine.store().get_peak().await? else {
             return Err(SyncError::Io(std::io::Error::other(
                 "long-sync reland requires a confirmed peak (from-zero is the fast-sync band)",
@@ -1129,16 +1165,26 @@ where
                     return Err(SyncError::Exhausted(lo));
                 }
                 blocks.sort_by_key(FullBlock::height);
-                let (window_peak, mut window_deltas) =
-                    self.follow_blocks_reporting(&blocks).await?;
-                deltas.append(&mut window_deltas);
-                if let Some(p) = window_peak {
+                let mut confirmed = self.follow_blocks_reporting(&blocks).await?;
+                deltas.append(&mut confirmed.deltas);
+                if confirmed.rejection.is_some() {
+                    return Ok(ConfirmedWindow {
+                        peak: confirmed.peak,
+                        deltas,
+                        rejection: confirmed.rejection,
+                    });
+                }
+                if let Some(p) = confirmed.peak {
                     peak = Some(p);
                 }
                 if let Some((hash, _)) = peak
                     && hash != entry_hash
                 {
-                    return Ok((peak, deltas));
+                    return Ok(ConfirmedWindow {
+                        peak,
+                        deltas,
+                        rejection: None,
+                    });
                 }
                 lo = hi.saturating_add(1);
             }
@@ -1165,6 +1211,11 @@ where
             .collect();
         let mut missing = std::collections::BTreeSet::new();
         for block in blocks {
+            if block.transactions_generator_ref_list.len()
+                > self.engine.constants().max_generator_ref_list_size as usize
+            {
+                continue;
+            }
             for r in &block.transactions_generator_ref_list {
                 if in_span.contains(r)
                     || missing.contains(r)
@@ -1199,6 +1250,11 @@ where
             .collect();
         let mut out = std::collections::HashMap::new();
         for block in blocks {
+            if block.transactions_generator_ref_list.len()
+                > self.engine.constants().max_generator_ref_list_size as usize
+            {
+                continue;
+            }
             for r in &block.transactions_generator_ref_list {
                 if in_span.contains(r) || out.contains_key(r) {
                     continue;
@@ -1232,11 +1288,12 @@ where
     /// the driver overlaps the next window's download with this window's validation.
     ///
     /// # Errors
-    /// Returns [`SyncError`] if a block fails validation or the store errors.
+    /// Returns [`SyncError`] before confirmation; failures after a committed prefix are carried
+    /// in the returned window so its deltas can still be consumed.
     pub async fn follow_blocks_reporting(
         &mut self,
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         self.follow_blocks_reporting_pre(blocks, None).await
     }
 
@@ -1253,7 +1310,7 @@ where
         &mut self,
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
         provided: Option<std::collections::HashMap<u32, crate::engine::PrecomputedBody>>,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         let mut window = match self.stage_window_pre(blocks.to_vec(), provided).await {
             Ok(w) => w,
             Err(e) => {
@@ -1273,8 +1330,8 @@ where
     /// Stage a whole window into the engine's overlay WITHOUT touching the writer or running the
     /// deferred drains: the first third of the follow step, separable so the server can stage
     /// window N+1 while window N's drain still owns the CPU and window N's confirm still owns the
-    /// writer. Near the tip the per-block staging path (its own archive commit per block) runs
-    /// instead and the returned window is marked `archive_written`.
+    /// writer. Archive rows are persisted only after verification; near-tip confirmation still
+    /// commits one block per transaction.
     ///
     /// A mid-window stage rejection is carried IN the returned window (`stage_err`) — the staged
     /// prefix still confirms. An `Err` here (a poisoned sink, a preload/store failure) leaves the
@@ -1328,6 +1385,11 @@ where
                     continue;
                 }
                 tx_total += 1;
+                if block.transactions_generator_ref_list.len()
+                    > self.engine.constants().max_generator_ref_list_size as usize
+                {
+                    continue;
+                }
                 if provided
                     .as_ref()
                     .is_some_and(|m| m.contains_key(&block.height()))
@@ -1413,11 +1475,6 @@ where
         // that block's deferred work, so the batch attributes the failing height precisely.
         let mut staged: Vec<(BlockDelta, usize, usize, usize)> = Vec::new();
         let mut stage_err: Option<SyncError> = None;
-        // Phase-aware staging: near the tip each staged block commits its own archive transaction
-        // (unchanged); during bulk catch-up NO archive row is written here — the confirm persists
-        // them inside its single window transaction, so a concurrently-open confirm never contends
-        // this staging for the writer.
-        let per_block_staging = self.engine.store().near_tip();
         let stage_started = std::time::Instant::now();
         // Batch the loop's per-block store reads for the whole window (one candidate multi-get +
         // one peak read) so the staging loop awaits no per-block point reads.
@@ -1428,11 +1485,7 @@ where
         }
         for (bi, block) in blocks.iter().enumerate() {
             let pre = pre_bodies.remove(&block.height());
-            let outcome = if per_block_staging {
-                self.engine.stage_block_pre(block, &sink, pre).await
-            } else {
-                self.engine.stage_block_pre_dry(block, &sink, pre).await
-            };
+            let outcome = self.engine.stage_block_pre_dry(block, &sink, pre).await;
             match outcome {
                 Ok(Some(delta)) => {
                     let vdf_mark = sink.vdf.lock().map(|q| q.len()).unwrap_or(0);
@@ -1472,7 +1525,6 @@ where
             queue,
             sig_queue,
             stage_err,
-            archive_written: per_block_staging,
         })
     }
 
@@ -1481,13 +1533,34 @@ where
     /// a bulk window is one part; the configured transaction limit splits it in height order.
     ///
     /// # Errors
-    /// Returns [`SyncError`] if a block failed validation in stage or drain, or the store errors.
+    /// Store errors before any confirmation return an error. A rejected suffix or a later
+    /// transaction failure is returned in `ConfirmedWindow::rejection` alongside committed deltas.
     pub async fn confirm_window_pre(
         &mut self,
         window: StagedWindow,
         verdict: WindowVerdict,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
-        let limit = self.confirm_transaction_blocks.unwrap_or(usize::MAX);
+    ) -> Result<ConfirmedWindow, SyncError> {
+        let result = self.confirm_window_inner(window, verdict).await;
+        if result.is_err()
+            || result
+                .as_ref()
+                .is_ok_and(|confirmed| confirmed.rejection.is_some())
+        {
+            self.engine.clear_staged_overlay();
+        }
+        result
+    }
+
+    async fn confirm_window_inner(
+        &mut self,
+        window: StagedWindow,
+        verdict: WindowVerdict,
+    ) -> Result<ConfirmedWindow, SyncError> {
+        let limit = if self.engine.store().near_tip() {
+            1
+        } else {
+            self.confirm_transaction_blocks.unwrap_or(usize::MAX)
+        };
         let coin_limit = self.confirm_transaction_coin_changes.unwrap_or(usize::MAX);
         let byte_limit = self.confirm_transaction_coin_bytes.unwrap_or(usize::MAX);
         let mut ranges = Vec::new();
@@ -1514,7 +1587,7 @@ where
         if count > 0 {
             ranges.push(count);
         }
-        if window.archive_written || ranges.len() <= 1 {
+        if ranges.len() <= 1 {
             return self.confirm_window_part(window, verdict).await;
         }
         let StagedWindow {
@@ -1558,7 +1631,6 @@ where
                 queue: Vec::new(),
                 sig_queue: Vec::new(),
                 stage_err: None,
-                archive_written: false,
             };
             let subverdict = WindowVerdict {
                 confirm_upto: boundary,
@@ -1566,19 +1638,40 @@ where
                 vdf_micros: verdict.vdf_micros,
                 sig_micros: verdict.sig_micros,
             };
-            let (next_peak, deltas) = self.confirm_window_part(subwindow, subverdict).await?;
-            peak = next_peak;
-            reported.extend(deltas);
+            let confirmed = match self.confirm_window_part(subwindow, subverdict).await {
+                Ok(confirmed) => confirmed,
+                Err(error) if !reported.is_empty() => {
+                    return Ok(ConfirmedWindow {
+                        peak,
+                        deltas: reported,
+                        rejection: Some(error),
+                    });
+                }
+                Err(error) => return Err(error),
+            };
+            peak = confirmed.peak;
+            reported.extend(confirmed.deltas);
+            if confirmed.rejection.is_some() {
+                return Ok(ConfirmedWindow {
+                    peak,
+                    deltas: reported,
+                    rejection: confirmed.rejection,
+                });
+            }
             offset += count;
         }
-        Ok((peak, reported))
+        Ok(ConfirmedWindow {
+            peak,
+            deltas: reported,
+            rejection: None,
+        })
     }
 
     async fn confirm_window_part(
         &mut self,
         window: StagedWindow,
         verdict: WindowVerdict,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         self.metrics
             .window_vdf_micros
             .store(verdict.vdf_micros, Ordering::Relaxed);
@@ -1589,7 +1682,6 @@ where
             blocks,
             mut staged,
             stage_err,
-            archive_written,
             ..
         } = window;
         let confirm_upto = verdict.confirm_upto.min(staged.len());
@@ -1604,12 +1696,13 @@ where
                     .collect::<Vec<_>>(),
             )
             .await?;
-        // Deferred archive persistence: EVERY staged row lands (the confirmed prefix plus any
-        // rejected tail's candidates — matching the batch the staging loop used to carry), before
-        // coins + set_peak in the same transaction.
         let mut window_batch: Option<dg_xch_stores::BatchHandle> = None;
-        if !archive_written && !staged.is_empty() {
-            window_batch = Some(self.engine.persist_archive_window(blocks, &staged).await?);
+        if confirm_upto > 0 {
+            window_batch = Some(
+                self.engine
+                    .persist_archive_window(blocks, &staged[..confirm_upto])
+                    .await?,
+            );
         }
         // One store batch confirms the whole window; the engine falls back to per-block fork
         // choice the moment a delta isn't a plain extension.
@@ -1678,13 +1771,20 @@ where
             || self.engine.pop_reorg_report(),
             &mut deltas,
         );
-        if let Some(e) = vdf_err.or(stage_err) {
-            // Unconfirmed staged blocks retry next tick and re-stage; their overlay entries
-            // must not linger meanwhile.
-            self.engine.clear_staged_overlay();
-            return Err(e);
-        }
-        Ok((self.engine.store().get_peak().await?, deltas))
+        let mut rejection = vdf_err.or(stage_err);
+        let peak = match self.engine.store().get_peak().await {
+            Ok(peak) => peak,
+            Err(error) if !deltas.is_empty() => {
+                rejection = Some(error.into());
+                None
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(ConfirmedWindow {
+            peak,
+            deltas,
+            rejection,
+        })
     }
 }
 
@@ -1970,7 +2070,6 @@ pub struct StagedWindow {
     queue: Vec<crate::header::QueuedVdf>,
     sig_queue: Vec<crate::header::QueuedSig>,
     stage_err: Option<SyncError>,
-    archive_written: bool,
 }
 
 impl StagedWindow {
@@ -2149,7 +2248,7 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
             crate::engine::run_body_expensive(primitives, constants, block, refs, *verify_sig)
                 .ok()
                 .and_then(|(conds, verified)| {
-                    crate::engine::PrecomputedBody::new(block, constants, conds, verified)
+                    crate::engine::PrecomputedBody::new(block, constants, conds, verified, refs)
                         .ok()
                         .map(|body| (block.height(), body))
                 })
@@ -2184,6 +2283,11 @@ pub fn precompute_window_bodies_standalone<P: crate::primitives::ConsensusPrimit
     )> = Vec::new();
     for block in blocks {
         if !block.is_transaction_block() || block.transactions_generator.is_none() {
+            continue;
+        }
+        if block.transactions_generator_ref_list.len()
+            > constants.max_generator_ref_list_size as usize
+        {
             continue;
         }
         let mut refs = Vec::with_capacity(block.transactions_generator_ref_list.len());

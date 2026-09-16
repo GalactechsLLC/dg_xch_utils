@@ -37,6 +37,6 @@ jobs:
             libxdo-dev \
             libzstd-dev
       - name: Run workspace tests
-        run: cargo test --workspace --exclude dg_xch_tests --locked
+        run: cargo test --workspace --locked
       - name: Run wallet service-tier tests
-        run: cargo test -p full-node --features hint --test puzzle_state --locked
+        run: cargo test -p dg_full_node --features hint --test puzzle_state --locked

@@ -24,6 +24,86 @@ use std::time::Duration;
 
 const BASE_WEIGHT: u128 = 1_000_000;
 
+#[tokio::test]
+async fn a_precompute_cannot_smuggle_past_an_unresolvable_ref() {
+    use dg_xch_core::consensus::block_generator::transactions_generator_refs_root;
+    use dg_xch_node::sync::precompute_window_bodies_standalone;
+
+    let base = common::load_full_block(5_000_000);
+    let mut chain = build_chain(&base, 100, 107, common::synth_hash(0xad, 99));
+    let victim = chain.last_mut().unwrap();
+    victim.transactions_generator_ref_list = vec![99];
+    victim
+        .transactions_info
+        .as_mut()
+        .unwrap()
+        .generator_refs_root = transactions_generator_refs_root(&[99]).unwrap();
+    let extra = std::collections::HashMap::from([(99, base.transactions_generator.unwrap())]);
+    let provided = precompute_window_bodies_standalone(
+        &NativePrimitives,
+        &MAINNET,
+        10_000_000,
+        &chain,
+        &extra,
+    );
+    assert!(provided.contains_key(&107));
+    let store = Arc::new(common::new_store().await);
+    store.set_near_tip(false);
+    let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
+    let confirmed = chaser
+        .follow_blocks_reporting_pre(&chain, Some(provided))
+        .await
+        .unwrap();
+    assert!(format!("{:?}", confirmed.rejection).contains("GeneratorRefHasNoGenerator"));
+    assert_eq!(confirmed.deltas.len(), 7);
+}
+
+#[tokio::test]
+async fn a_confirm_store_failure_retracts_the_staged_overlay() {
+    let base = common::load_full_block(5_000_000);
+    let chain = build_chain(&base, 100, 107, common::synth_hash(0xae, 99));
+    let (store, fail_apply, _) = common::fault::FaultStore::new(common::new_store().await);
+    let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
+    let mut staged = chaser.stage_window_pre(chain, None).await.unwrap();
+    let verdict = drain_staged_window(&NativePrimitives, &MAINNET, staged.take_drain_input());
+    fail_apply.store(true, Ordering::Relaxed);
+    chaser
+        .confirm_window_pre(staged, verdict)
+        .await
+        .expect_err("store fault");
+    assert_eq!(chaser.engine().collection_sizes().2, 0);
+}
+
+#[tokio::test]
+async fn a_later_transaction_failure_preserves_committed_prefix_deltas() {
+    for near_tip in [false, true] {
+        let base = common::load_full_block(5_000_000);
+        let chain = build_chain(&base, 100, 107, common::synth_hash(0xaf, 99));
+        let store = common::new_store().await;
+        store.set_near_tip(near_tip);
+        let (store, _, _) = common::fault::FaultStore::new(store);
+        let mut chaser = Chaser::new(
+            Engine::new(store.with_apply_failure_at(103), NativePrimitives, MAINNET),
+            cfg(),
+        );
+        chaser.set_confirm_transaction_blocks(Some(3));
+        let confirmed = chaser.follow_blocks_reporting(&chain).await.unwrap();
+        assert!(confirmed.rejection.is_some());
+        assert_eq!(confirmed.peak.unwrap().1, 102);
+        assert_eq!(confirmed.deltas.len(), 3);
+        assert_eq!(chaser.engine().collection_sizes().2, 0);
+        assert!(
+            chaser
+                .engine()
+                .store()
+                .get_block_record(&chain[3].header_hash().unwrap())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
 fn build_chain(base: &FullBlock, start: u32, end: u32, prev0: Bytes32) -> Vec<FullBlock> {
     let mut prev = prev0;
     let mut out = Vec::new();
@@ -77,9 +157,19 @@ async fn staging_the_next_window_before_the_confirm_matches_the_serial_path() {
         .expect("w2 stages against w1's uncommitted overlay");
     let constants = MAINNET;
     let v1 = drain_staged_window(&NativePrimitives, &constants, s1.take_drain_input());
-    let (p1, _) = piped.confirm_window_pre(s1, v1).await.expect("w1 confirms");
+    let (p1, _) = piped
+        .confirm_window_pre(s1, v1)
+        .await
+        .expect("w1 confirms")
+        .into_result()
+        .expect("window accepted");
     let v2 = drain_staged_window(&NativePrimitives, &constants, s2.take_drain_input());
-    let (p2, _) = piped.confirm_window_pre(s2, v2).await.expect("w2 confirms");
+    let (p2, _) = piped
+        .confirm_window_pre(s2, v2)
+        .await
+        .expect("w2 confirms")
+        .into_result()
+        .expect("window accepted");
 
     assert_eq!(p1, serial_p1, "window 1's confirmed peak diverges");
     assert_eq!(p2, serial_p2, "window 2's confirmed peak diverges");
@@ -109,12 +199,16 @@ async fn pipelined_windows_still_cost_one_writer_transaction_each() {
     chaser
         .confirm_window_pre(s1, v1)
         .await
-        .expect("w1 confirms");
+        .expect("w1 confirms")
+        .into_result()
+        .expect("window accepted");
     let v2 = drain_staged_window(&NativePrimitives, &constants, s2.take_drain_input());
     chaser
         .confirm_window_pre(s2, v2)
         .await
-        .expect("w2 confirms");
+        .expect("w2 confirms")
+        .into_result()
+        .expect("window accepted");
     let commits = telemetry.commit_catch_up.count.load(Ordering::Relaxed) - before;
     assert_eq!(
         commits, 2,
@@ -175,7 +269,12 @@ async fn entering_tip_with_a_staged_window_preserves_the_confirmed_chain() {
     let mut staged = chaser.stage_window_pre(bulk.clone(), None).await.unwrap();
     store.set_near_tip(true);
     let verdict = drain_staged_window(&NativePrimitives, &MAINNET, staged.take_drain_input());
-    let (peak, _) = chaser.confirm_window_pre(staged, verdict).await.unwrap();
+    let (peak, _) = chaser
+        .confirm_window_pre(staged, verdict)
+        .await
+        .unwrap()
+        .into_result()
+        .expect("window accepted");
     assert_eq!(
         peak,
         Some((bulk.last().unwrap().header_hash().unwrap(), 107))

@@ -1263,6 +1263,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "tempfile",
  "tikv-jemalloc-ctl",
  "tokio",
  "tokio-rustls",

@@ -438,7 +438,9 @@ async fn crash_at_the_bulk_entry_peak_flip_recovers_across_a_restart() {
     let (peak, deltas) = chaser
         .follow_tip_step_reporting(&peer, A_TIP + 1, B_TIP)
         .await
-        .expect("the recovery follow re-lands the reorg from the durable store");
+        .expect("the recovery follow re-lands the reorg from the durable store")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(
         peak,
         Some((chain_b.last().unwrap().header_hash().unwrap(), B_TIP)),

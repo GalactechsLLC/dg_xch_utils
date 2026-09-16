@@ -40,7 +40,7 @@ async fn stale_precompute_cannot_verify_a_different_aggregate_signature() {
     let mut block = block();
     let (conds, agg_sig_verified) =
         run_body_expensive(&NativePrimitives, &MAINNET, &block, &[], true).unwrap();
-    let pre = PrecomputedBody::new(&block, &MAINNET, conds, agg_sig_verified).unwrap();
+    let pre = PrecomputedBody::new(&block, &MAINNET, conds, agg_sig_verified, &[]).unwrap();
     block
         .transactions_info
         .as_mut()
@@ -57,8 +57,14 @@ async fn stale_precompute_cannot_verify_a_different_aggregate_signature() {
 #[test]
 fn precompute_identity_binds_actual_inputs_not_only_header_commitments() {
     let original = block();
-    let pre =
-        PrecomputedBody::new(&original, &MAINNET, SpendBundleConditions::default(), false).unwrap();
+    let pre = PrecomputedBody::new(
+        &original,
+        &MAINNET,
+        SpendBundleConditions::default(),
+        false,
+        &[],
+    )
+    .unwrap();
     assert!(pre.matches(&original, &MAINNET));
     let mut changed = original.clone();
     changed.reward_chain_block.height += 1;
@@ -83,6 +89,28 @@ fn precompute_identity_binds_actual_inputs_not_only_header_commitments() {
     let mut constants = MAINNET;
     constants.hard_fork_height = 0;
     assert!(!pre.matches(&original, &constants));
+}
+
+#[tokio::test]
+async fn precompute_with_different_resolved_refs_recomputes_inline() {
+    let (_directory, mut engine) = engine().await;
+    engine.assume_valid = 10_000_000;
+    let block = block();
+    let (mut conditions, _) =
+        run_body_expensive(&NativePrimitives, &MAINNET, &block, &[], false).unwrap();
+    conditions.cost += 1;
+    let references = vec![GeneratorReference {
+        height: 99,
+        index: 0,
+        generator: dg_xch_core::clvm::program::SerializedProgram::from(vec![0x80]),
+    }];
+    let pre = PrecomputedBody::new(&block, &MAINNET, conditions, false, &references).unwrap();
+    assert!(engine.validate_body(&block, &[], (0, None), None).is_ok());
+    assert!(
+        engine
+            .validate_body(&block, &[], (0, None), Some(pre))
+            .is_ok()
+    );
 }
 
 #[tokio::test]
@@ -272,7 +300,7 @@ async fn prefetch_is_bounded_and_excludes_same_block_ephemeral_coins() {
         .unwrap();
     let bodies = HashMap::from([(
         block.height(),
-        PrecomputedBody::new(&block, &MAINNET, conditions, false).unwrap(),
+        PrecomputedBody::new(&block, &MAINNET, conditions, false, &[]).unwrap(),
     )]);
     engine
         .preload_stage_coins(std::slice::from_ref(&block), &bodies)

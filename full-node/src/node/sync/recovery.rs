@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "../../../tests/unit/node/recovery_hardening.rs"]
+mod tests;
+
 // The confirmed head the queue should rebase to = engine peak + 1, or the follow base when no peak yet.
 pub(super) async fn follow_head<S: BlockStore + CoinStore + Send + Sync + 'static>(
     node: &Arc<FullNode<S>>,
@@ -28,9 +32,39 @@ async fn recovery_source(
     )
 }
 
+fn verified_seed_generator(
+    block: &FullBlock,
+    height: u32,
+) -> Option<(Bytes32, dg_xch_core::clvm::program::SerializedProgram)> {
+    use dg_xch_core::consensus::block_generator::{
+        transactions_generator_root, transactions_info_hash,
+    };
+    use dg_xch_core::utils::hash_256;
+    use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
+
+    if block.height() != height {
+        return None;
+    }
+    let info = block.transactions_info.as_ref()?;
+    let foliage = block.foliage_transaction_block.as_ref()?;
+    let generator = block.transactions_generator.as_ref()?;
+    let version = ChiaProtocolVersion::default();
+    if transactions_generator_root(generator) != info.generator_root
+        || transactions_info_hash(info).ok()? != foliage.transactions_info_hash
+        || Some(Bytes32::from(hash_256(foliage.to_bytes(version).ok()?)))
+            != block.foliage.foliage_transaction_block_hash
+        || Bytes32::from(hash_256(block.reward_chain_block.to_bytes(version).ok()?))
+            != block.foliage.reward_block_hash
+    {
+        return None;
+    }
+    Some((block.header_hash().ok()?, generator.clone()))
+}
+
 async fn fetch_seed_refs<S: BlockStore + CoinStore + Send + Sync + 'static>(
     node: &Arc<FullNode<S>>,
     source: &Arc<dyn BlockRangeSource>,
+    witness: Option<&Arc<dyn BlockRangeSource>>,
     heights: &[u32],
 ) -> Vec<(u32, dg_xch_core::clvm::program::SerializedProgram)> {
     let mut out = Vec::with_capacity(heights.len());
@@ -51,10 +85,9 @@ async fn fetch_seed_refs<S: BlockStore + CoinStore + Send + Sync + 'static>(
                     warn!("recovery peer failed to serve ref block height={}", h);
                     continue;
                 };
-                let Some(generator) = fetched
-                    .into_iter()
-                    .find(|b| b.height() == h)
-                    .and_then(|b| b.transactions_generator)
+                let Some((header_hash, generator)) = fetched
+                    .iter()
+                    .find_map(|block| verified_seed_generator(block, h))
                 else {
                     warn!(
                         "recovery peer served no generator for ref block height={}",
@@ -62,6 +95,36 @@ async fn fetch_seed_refs<S: BlockStore + CoinStore + Send + Sync + 'static>(
                     );
                     continue;
                 };
+                match node.store.get_block_record_by_height(h).await {
+                    Ok(Some(record)) if record.header_hash == header_hash => {}
+                    Ok(Some(_)) => {
+                        warn!("recovery peer served an off-chain ref block height={h}");
+                        continue;
+                    }
+                    Ok(None) => {
+                        let Some(witness) =
+                            witness.filter(|peer| peer.peer_id() != source.peer_id())
+                        else {
+                            warn!("recovery ref needs an independent witness height={h}");
+                            continue;
+                        };
+                        let corroborated =
+                            witness.fetch_range(h, h).await.ok().is_some_and(|blocks| {
+                                blocks
+                                    .iter()
+                                    .filter_map(|block| verified_seed_generator(block, h))
+                                    .any(|(hash, bytes)| hash == header_hash && bytes == generator)
+                            });
+                        if !corroborated {
+                            warn!("recovery peers disagree on ref block height={h}");
+                            continue;
+                        }
+                    }
+                    Err(error) => {
+                        warn!("recovery ref record lookup failed height={h} error={error}");
+                        continue;
+                    }
+                }
                 info!(
                     "fetched out-of-span generator ref for the consumer height={}",
                     h
@@ -86,6 +149,7 @@ async fn rebase_to_peak<S: BlockStore + CoinStore + Send + Sync + 'static>(
     node: &Arc<FullNode<S>>,
     queue: &Arc<BlockQueue>,
 ) {
+    node.seed_ref_cache.lock().await.clear();
     let head = follow_head(node).await;
     queue.rebase(head);
 }
@@ -102,7 +166,18 @@ pub(super) async fn handle_recovery<S: BlockStore + CoinStore + Send + Sync + 's
     match req {
         RecoveryRequest::SeedRefs { heights, reply } => {
             let generators = match recovery_source(registry, rotation).await {
-                Some(source) => fetch_seed_refs(node, &source, &heights).await,
+                Some(source) => {
+                    let witness = registry
+                        .live_peers()
+                        .await
+                        .into_iter()
+                        .map(|peer| {
+                            Arc::new(OutboundPeerSource::new(peer, REQUEST_TIMEOUT))
+                                as Arc<dyn BlockRangeSource>
+                        })
+                        .find(|peer| peer.peer_id() != source.peer_id());
+                    fetch_seed_refs(node, &source, witness.as_ref(), &heights).await
+                }
                 None => Vec::new(),
             };
             let _ = reply.send(generators);
