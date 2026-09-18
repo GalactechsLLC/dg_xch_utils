@@ -782,12 +782,6 @@ impl<'a> Compiler<'a> {
             b"include" => {
                 let _results = parse_include(&mut conditions_queue, &[])?;
             }
-            // b"defmacro" => {
-            //     todo!()
-            // }
-            // b"lambda" => {
-            //     todo!()
-            // }
             _ => {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,

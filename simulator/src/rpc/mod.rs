@@ -17,5 +17,5 @@ pub async fn start_simulator() -> Result<(), Error> {
         .unwrap_or(8080u16);
     let server = ServerBuilder::default().host(hostname).port(port).build();
     info!("Starting Server");
-    server.run().await
+    server.run().await.map_err(|e| Error::other(e.to_string()))
 }

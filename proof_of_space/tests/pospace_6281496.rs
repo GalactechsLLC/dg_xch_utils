@@ -35,3 +35,54 @@ fn k41_block_6281496_validates() {
         "0x515fac0a1c958a26856dfeae617220c7f8ce6e5552fe68fd59b1fb6c3c2e2002",
     );
 }
+#[test]
+fn swapped_proof_subtrees_are_rejected_but_explicit_reordering_still_works() {
+    let size = FIXTURE[0];
+    let plot_id: [u8; 32] = FIXTURE[1..33].try_into().unwrap();
+    let challenge = &FIXTURE[33..65];
+    let original = dg_xch_pos::verifier::uncompress_proof(&FIXTURE[65..], usize::from(size));
+    for width in [1, 2, 4, 8, 16, 32] {
+        let mut values = original.clone();
+        values[..2 * width].rotate_left(width);
+        let proof = dg_xch_pos::plots::plot_writer::proof_bytes(size, &values);
+        let result = validate_proof(&plot_id, size, &proof, challenge);
+        assert!(result.is_err() || result.unwrap() == Bytes32::default());
+        let mut outputs = [0; 64];
+        let mut metadata = Vec::new();
+        dg_xch_pos::plots::fx_generator::get_proof_f1_and_meta(
+            u32::from(size),
+            &plot_id,
+            &values,
+            &mut outputs,
+            &mut metadata,
+        )
+        .unwrap();
+        dg_xch_pos::plots::fx_generator::forward_prop_f1_to_f7(
+            Some(&mut values),
+            &mut outputs,
+            &mut metadata,
+            u32::from(size),
+        )
+        .unwrap();
+        assert_eq!(values, original);
+    }
+}
+
+#[test]
+fn malformed_proof_shapes_return_errors_without_panicking() {
+    let size = FIXTURE[0];
+    let plot_id: [u8; 32] = FIXTURE[1..33].try_into().unwrap();
+    let challenge = &FIXTURE[33..65];
+    let proof = &FIXTURE[65..];
+    let mut extended = proof.to_vec();
+    extended.push(0);
+    for malformed in [&proof[..0], &proof[..proof.len() - 1], extended.as_slice()] {
+        assert!(validate_proof(&plot_id, size, malformed, challenge).is_err());
+    }
+    for malformed in [&challenge[..0], &challenge[..31], &[0; 33][..]] {
+        assert!(validate_proof(&plot_id, size, proof, malformed).is_err());
+    }
+    for invalid_size in [0, 1, 5, 59, 64, 255] {
+        assert!(validate_proof(&plot_id, invalid_size, proof, challenge).is_err());
+    }
+}

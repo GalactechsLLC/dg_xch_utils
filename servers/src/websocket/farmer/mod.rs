@@ -63,14 +63,15 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
             full_node_client,
             additional_headers,
         )));
+        let server = WebsocketServer::new(
+            &config.websocket,
+            shared_state.harvester_peers.clone(),
+            handles,
+        )?;
+        #[cfg(feature = "metrics")]
+        let server = server.with_metrics(metrics);
         Ok(Self {
-            server: WebsocketServer::new(
-                &config.websocket,
-                shared_state.harvester_peers.clone(),
-                handles,
-                #[cfg(feature = "metrics")]
-                metrics,
-            )?,
+            server,
             shared_state,
             pool_client,
             config,

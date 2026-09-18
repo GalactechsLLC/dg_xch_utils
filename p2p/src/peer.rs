@@ -26,6 +26,21 @@ pub struct OutboundPeer {
     pub client: WsClient,
     pub run: Arc<AtomicBool>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DialIdentity {
+    pub network_id: String,
+    pub server_port: u16,
+}
+
+impl Default for DialIdentity {
+    fn default() -> Self {
+        Self {
+            network_id: "mainnet".to_string(),
+            server_port: 8444,
+        }
+    }
+}
 impl OutboundPeer {
     #[must_use]
     pub fn is_closed(&self) -> bool {
@@ -148,7 +163,7 @@ pub fn empty_handlers() -> Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>> {
 
 /// Builds a FRESH per-connection handler map on each dial. A fresh map per connection is required: the
 /// oneshot request machinery subscribes/unsubscribes temporary handlers on the same map, so sharing one map
-/// across peers would cross-deliver responses. The daemon supplies `full_node_handlers_client` here so
+/// across peers would cross-deliver responses. The server supplies `full_node_handlers_client` here so
 /// outbound peers dispatch NewPeak/RequestBlock/gossip; `None` falls back to `empty_handlers`.
 pub type HandlerFactory = Arc<dyn Fn() -> HashMap<Uuid, Arc<ChiaMessageHandler>> + Send + Sync>;
 
@@ -169,10 +184,30 @@ pub async fn dial(
     run: Arc<AtomicBool>,
     settings: &P2pSettings,
 ) -> Result<WsClient, Error> {
+    dial_with_identity(
+        host,
+        port,
+        handlers,
+        run,
+        settings,
+        &DialIdentity::default(),
+    )
+    .await
+}
+
+pub async fn dial_with_identity(
+    host: &str,
+    port: u16,
+    handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+    run: Arc<AtomicBool>,
+    settings: &P2pSettings,
+    identity: &DialIdentity,
+) -> Result<WsClient, Error> {
     let config = Arc::new(WsClientConfig {
         host: host.to_string(),
         port,
-        network_id: "mainnet".to_string(),
+        server_port: identity.server_port,
+        network_id: identity.network_id.clone(),
         ssl_info: None::<ClientSSLConfig>,
         software_version: None,
         protocol_version: ChiaProtocolVersion::default(),
@@ -184,7 +219,7 @@ pub async fn dial(
     });
     let timeout = settings.connect_timeout.as_secs();
     let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || {
+    let client = tokio::task::spawn_blocking(move || {
         runtime.block_on(WsClient::with_ca(
             config,
             NodeType::FullNode,
@@ -196,7 +231,8 @@ pub async fn dial(
         ))
     })
     .await
-    .map_err(|error| Error::other(format!("connection task failed: {error}")))?
+    .map_err(|error| Error::other(format!("connection task failed: {error}")))??;
+    Ok(client)
 }
 
 impl dg_xch_core::errors::ErrorCode for AdmitError {
@@ -214,73 +250,5 @@ impl dg_xch_core::errors::ErrorCode for AdmitError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ep(p: u16) -> Endpoint {
-        ("10.0.0.1".to_string(), p)
-    }
-
-    #[tokio::test]
-    async fn inbound_cap_is_enforced() {
-        let reg = PeerRegistry::new(P2pSettings {
-            target_peer_count: 2,
-            ..P2pSettings::default()
-        });
-        assert!(reg.admit_inbound(&ep(1)).await.is_ok());
-        assert!(reg.admit_inbound(&ep(2)).await.is_ok());
-        assert_eq!(
-            reg.admit_inbound(&ep(3)).await.unwrap_err(),
-            AdmitError::InboundCapReached
-        );
-        reg.release_inbound(&ep(1)).await;
-        assert!(reg.admit_inbound(&ep(3)).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn inbound_flood_plateaus_flat_at_the_cap() {
-        let reg = PeerRegistry::new(P2pSettings {
-            target_peer_count: 80,
-            ..P2pSettings::default()
-        });
-        let mut accepted = 0usize;
-        let mut rejected = 0usize;
-        for i in 0..10_000u32 {
-            let o = i.to_le_bytes();
-            let e = (format!("{}.{}.{}.{}", o[0], o[1], o[2], o[3]), 8444);
-            match reg.admit_inbound(&e).await {
-                Ok(()) => accepted += 1,
-                Err(AdmitError::InboundCapReached) => rejected += 1,
-                Err(_) => {}
-            }
-        }
-        // the tracked set never grows past the cap: bounded memory under flood (flat RSS)
-        assert_eq!(accepted, 80);
-        assert_eq!(reg.inbound_count().await, 80);
-        assert_eq!(rejected, 10_000 - 80);
-    }
-
-    #[tokio::test]
-    async fn duplicate_endpoint_is_rejected() {
-        let reg = PeerRegistry::new(P2pSettings::default());
-        assert!(reg.admit_inbound(&ep(1)).await.is_ok());
-        assert_eq!(
-            reg.admit_inbound(&ep(1)).await.unwrap_err(),
-            AdmitError::DuplicateEndpoint
-        );
-    }
-
-    #[tokio::test]
-    async fn self_authority_is_rejected_both_directions() {
-        let reg = PeerRegistry::new(P2pSettings::default());
-        reg.add_self(ep(8444)).await;
-        assert_eq!(
-            reg.admit_inbound(&ep(8444)).await.unwrap_err(),
-            AdmitError::SelfConnection
-        );
-        assert_eq!(
-            reg.reserve_outbound(&ep(8444)).await.unwrap_err(),
-            AdmitError::SelfConnection
-        );
-    }
-}
+#[path = "../tests/unit/peer/tests.rs"]
+mod tests;

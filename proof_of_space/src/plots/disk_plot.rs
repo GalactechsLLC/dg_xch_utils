@@ -103,12 +103,6 @@ impl DiskPlot<fs::File> {
                 format!("Minimum buckets is {K_MIN_BUCKETS}"),
             ));
         } else if num_buckets > K_MAX_BUCKETS {
-            // if num_buckets_input != 0 {
-            //     return Err(Box::new(InvalidValueException(format!(
-            //         "Maximum buckets is {}",
-            //         K_MAX_BUCKETS
-            //     ))));
-            // }
             let required_mem =
                 (max_table_size / K_MAX_BUCKETS as f64) / K_MEM_SORT_PROPORTION / (1024.0 * 1024.0)
                     + sub_mbytes as f64;
@@ -185,9 +179,6 @@ impl DiskPlot<fs::File> {
         }
         info!("Starting phase 1/4: Forward Propagation into tmp files: {final_dir:?}");
         let phase_1_start = Instant::now();
-        // let table_size = phase1(
-        //
-        // ).await?;
         info!(
             "Phase 1 Completed in: {:.8} seconds",
             phase_1_start.elapsed().as_secs_f64()

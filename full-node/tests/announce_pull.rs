@@ -4,13 +4,14 @@
 // OUTBOUND links, so the production StoreApi hooks run on the CLIENT side and the pull request
 // must go back out on the client's own socket. This test stands up exactly that: a mock peer
 // serves; the node under test dials it with its production outbound handler stack
-// (`Node::outbound_handler_factory`); the peer pushes `NewSignagePointOrEndOfSubSlot`; the test
+// (`FullNode::outbound_handler_factory`); the peer pushes `NewSignagePointOrEndOfSubSlot`; the test
 // asserts the CLIENT socket emits `RequestSignagePointOrEndOfSubSlot` back (the announce →
 // pull round trip).
 
 mod common;
 
 use async_trait::async_trait;
+use dg_full_node::{Backend, Config, FullNode};
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
@@ -22,7 +23,6 @@ use dg_xch_p2p::{FullNodeApi, P2pSettings, SignagePointResponse, full_node_handl
 use dg_xch_serialize::ChiaProtocolVersion;
 use dg_xch_servers::websocket::{WebsocketServer, WebsocketServerConfig};
 use dg_xch_stores::BlockStore;
-use full_node::{Backend, Config, Node};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -39,7 +39,7 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         std::process::id()
     ));
     Config {
-        rpc_tls: full_node::RpcTlsMode::Local,
+        rpc_tls: dg_full_node::RpcTlsMode::Local,
         debug_endpoints: false,
         p2p: Default::default(),
         listen,
@@ -49,13 +49,13 @@ fn config(listen: SocketAddr, rpc: SocketAddr) -> Config {
         advertise: None,
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
-        metrics: None,
         capture_dir: None,
         genesis_sync: false,
         sync_from: 0,
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
     }
@@ -121,7 +121,7 @@ async fn client_link_pulls_announced_signage_point() {
 
     // ---- the node under test dials OUT with its production outbound handler stack ----
     let node = Arc::new(
-        Node::boot(config(free_addr(), free_addr()))
+        FullNode::boot(config(free_addr(), free_addr()))
             .await
             .expect("boot"),
     );
@@ -199,7 +199,7 @@ async fn client_link_pulls_announced_signage_point() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn synced_flag_requires_a_current_chain_tip() {
     let node = Arc::new(
-        Node::boot(config(free_addr(), free_addr()))
+        FullNode::boot(config(free_addr(), free_addr()))
             .await
             .expect("boot"),
     );

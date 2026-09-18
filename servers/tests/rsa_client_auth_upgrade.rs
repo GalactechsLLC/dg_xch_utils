@@ -39,8 +39,6 @@ fn spawn_server() -> (u16, Arc<AtomicBool>) {
         &config,
         Arc::new(RwLock::new(HashMap::new())),
         Arc::new(RwLock::new(HashMap::new())),
-        #[cfg(feature = "metrics")]
-        Arc::new(None),
     )
     .expect("server");
     let run = Arc::new(AtomicBool::new(true));

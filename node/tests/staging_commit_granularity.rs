@@ -43,10 +43,98 @@ fn cfg() -> SyncConfig {
     }
 }
 
-// CATCH-UP band: following one N-block window costs exactly TWO writer commits — one staging
-// transaction for the whole window's archive rows, one confirm transaction for coins + peak
-// (t160 already pins the confirm half). N per-block staging commits is the defect: N sequential
-// fsync round-trips of dead time per window on the single sqlite writer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn coin_budgets_split_on_block_boundaries_and_allow_one_oversized_block() {
+    let base = common::load_full_block(5_000_000);
+    let chain = build_chain(&base, START, START + N - 1, common::synth_hash(0xaa, 99));
+    let mut probe = Engine::new(common::new_store().await, NativePrimitives, MAINNET)
+        .with_assume_valid(10_000_000);
+    let delta = probe
+        .stage_block(&chain[0], &dg_xch_node::header::HeaderSink::default())
+        .await
+        .unwrap()
+        .unwrap();
+    for byte_budget in [false, true] {
+        for oversized in [false, true] {
+            let store = Arc::new(common::new_store().await);
+            let mut engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
+            engine.set_coalesce_coin_writes(true);
+            let mut chaser = Chaser::new(engine, cfg());
+            let limit = if oversized {
+                1
+            } else if byte_budget {
+                delta.estimated_coin_bytes() * 3
+            } else {
+                delta.coin_mutations() * 3
+            };
+            chaser.set_confirm_transaction_coin_limits(
+                (!byte_budget).then_some(limit),
+                byte_budget.then_some(limit),
+            );
+            let before = store
+                .telemetry()
+                .unwrap()
+                .commit_catch_up
+                .count
+                .load(Ordering::Relaxed);
+            chaser.follow_blocks(&chain).await.unwrap();
+            let commits = store
+                .telemetry()
+                .unwrap()
+                .commit_catch_up
+                .count
+                .load(Ordering::Relaxed)
+                - before;
+            assert_eq!(commits, if oversized { N as u64 } else { 3 });
+            assert_eq!(
+                chaser
+                    .metrics()
+                    .confirm_oversized_coin_blocks
+                    .load(Ordering::Relaxed),
+                if oversized { N as u64 } else { 0 }
+            );
+            assert!(
+                store
+                    .telemetry()
+                    .unwrap()
+                    .coin_prepare
+                    .calls
+                    .load(Ordering::Relaxed)
+                    > 0
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn transaction_limit_is_independent_of_validation_window() {
+    let base = common::load_full_block(5_000_000);
+    let chain = build_chain(&base, START, START + N - 1, common::synth_hash(0xaa, 99));
+    for coalesce in [false, true] {
+        let store = Arc::new(common::new_store().await);
+        let telemetry = store.telemetry().unwrap();
+        let mut engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
+        engine.set_coalesce_coin_writes(coalesce);
+        let mut chaser = Chaser::new(engine, cfg());
+        chaser.set_confirm_transaction_blocks(Some(3));
+        let peak = chaser.follow_blocks(&chain).await.unwrap();
+        assert_eq!(
+            peak,
+            Some((chain.last().unwrap().header_hash().unwrap(), START + N - 1))
+        );
+        assert_eq!(telemetry.commit_catch_up.count.load(Ordering::Relaxed), 3);
+        for block in &chain {
+            assert!(
+                store
+                    .get_block(&block.header_hash().unwrap())
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn catch_up_window_stages_in_one_commit() {
     let base = common::load_full_block(5_000_000);
@@ -125,19 +213,15 @@ async fn window_staging_read_amplification_is_bounded() {
     );
 }
 
-// NEAR-TIP band: staging keeps its per-block commit (durability per block is CORRECT at tip — the
-// liveness clock and the active WAL checkpointer both key on it, exactly as the confirm side's
-// per-block near-tip transactions do). One N-block window near tip pays N staging commits + N
-// per-block confirm commits.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn near_tip_window_still_stages_per_block() {
+async fn near_tip_window_persists_per_block() {
     let base = common::load_full_block(5_000_000);
     let chain = build_chain(&base, START, START + N - 1, common::synth_hash(0xaa, 99));
 
     let store = Arc::new(common::new_store().await);
     let telemetry = store.telemetry().expect("sqlite store exposes telemetry");
     store.set_near_tip(true);
-    let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
+    let mut chaser = Chaser::new(Engine::new(store.clone(), NativePrimitives, MAINNET), cfg());
 
     let before = telemetry.commit_near_tip.count.load(Ordering::Relaxed);
     let peak = chaser.follow_blocks(&chain).await.expect("window confirms");
@@ -149,7 +233,17 @@ async fn near_tip_window_still_stages_per_block() {
     let commits = telemetry.commit_near_tip.count.load(Ordering::Relaxed) - before;
     assert_eq!(
         commits,
-        u64::from(N) * 2,
-        "near-tip: per-block staging commit + per-block confirm commit ({N} blocks)"
+        u64::from(N),
+        "near-tip: one atomic archive + coins + peak commit per block ({N} blocks)"
     );
+    assert_eq!(store.get_peak().await.unwrap(), peak);
+    for block in &chain {
+        assert!(
+            store
+                .get_block(&block.header_hash().unwrap())
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
 }

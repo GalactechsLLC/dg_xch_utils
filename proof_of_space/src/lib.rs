@@ -3,8 +3,8 @@ use crate::plots::plot_reader::PlotReader;
 use crate::verifier::validate_proof;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::proof_of_space::{
-    ProofOfSpace, calculate_pos_challenge, calculate_prefix_bits, calculate_prefix_bits_v2,
-    passes_plot_filter,
+    ProofOfSpace, calculate_plot_filter_input, calculate_prefix_bits, calculate_prefix_bits_v2,
+    passes_plot_filter_input,
 };
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::consensus::constants::ConsensusConstants;
@@ -85,8 +85,9 @@ pub fn verify_and_get_quality_string(
         return None;
     }
     if let Some(plot_id) = pos.get_plot_id() {
-        if pos.challenge != calculate_pos_challenge(plot_id, original_challenge_hash, signage_point)
-        {
+        let filter_input =
+            calculate_plot_filter_input(plot_id, original_challenge_hash, signage_point);
+        if pos.challenge != Bytes32::new(dg_xch_core::utils::hash_256(filter_input)) {
             warn!("Failed to Verify ProofOfSpace: New challenge is not challenge");
             return None;
         }
@@ -96,7 +97,7 @@ pub fn verify_and_get_quality_string(
         } else {
             calculate_prefix_bits_v2(constants, height)
         };
-        if !passes_plot_filter(prefix_bits, plot_id, original_challenge_hash, signage_point) {
+        if !passes_plot_filter_input(prefix_bits, filter_input) {
             warn!("Failed to Verify ProofOfSpace: Plot Failed to Pass Filter");
             return None;
         }

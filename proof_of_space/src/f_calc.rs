@@ -106,7 +106,6 @@ impl F1Calculator {
         let mut start_bit: u32 =
             (first_x * u64::from(self.k) % u64::from(K_F1_BLOCK_SIZE_BITS)) as u32;
         let x_shift: u8 = self.k - K_EXTRA_BITS;
-        //assert(n <= (1U << kBatchSizes));
         let mut ciphertext_bytes: Vec<u8> = Vec::new();
         chacha8_get_keystream(
             &self.enc_ctx_,

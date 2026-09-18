@@ -292,15 +292,5 @@ pub(crate) fn validate_recent_blocks(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn c() -> ConsensusConstants {
-        dg_xch_core::consensus::constants::MAINNET
-    }
-
-    #[test]
-    fn deficit_genesis_is_min_minus_one() {
-        assert_eq!(calculate_deficit(&c(), 0, None, false, 0), 15);
-    }
-}
+#[path = "../tests/unit/recent_blocks/tests.rs"]
+mod tests;

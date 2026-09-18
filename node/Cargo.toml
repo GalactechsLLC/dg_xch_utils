@@ -34,7 +34,7 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-rustls = { version = "0.23.37", features = ["ring"] }
+rustls = { version = "0.23.45", features = ["ring"] }
 uuid = { version = "1.24.0", features = ["v4"] }
 libc = "0.2.189"
 sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite"] }
@@ -42,7 +42,6 @@ tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "time", "ma
 # t080 block assembly: real AGG_SIG_UNSAFE test keys/signatures (AugScheme, portable — matching
 # core's blst). Test-only; production code reaches blst through dg_xch_core's bls bindings.
 blst = { version = "0.3.16", features = ["portable"] }
-pprof = { version = "0.14", features = ["flamegraph"] }
 
 [features]
 # Per-batch measurement probe for the window VDF drain: DGXCH_DRAIN_PROBE=wall|serial.

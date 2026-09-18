@@ -1,29 +1,20 @@
 # cargo-audit (RustSec) configuration for the `cargo audit` CI gate.
 #
 # The gate FAILS the build on any NEW advisory. The IDs below are the reviewed, accepted current
-# baseline as of 2026-08-26; each is either an `unmaintained`/`unsound` INFORMATIONAL advisory in a
-# GUI-/build-/i18n-only transitive dependency (no security impact on the node), or a real advisory
-# that has NO upstream fix and is NOT reachable in this node's usage. Re-review when an upstream fix
-# ships (drop the ID so the gate re-fires) — this is a documented, justified risk acceptance
+# baseline re-reviewed 2026-09-06; each is either an `unmaintained`/`unsound` INFORMATIONAL advisory in a
+# GUI-/build-/i18n transitive dependency, or a real advisory whose vulnerable path was not found
+# reachable in the inspected node usage. Re-review when dependencies or call paths change and
+# remove suppressions when fixes can be adopted — this is documented risk acceptance
 # (SSDF PW.4/RV.1). A NEW advisory not on this list turns the gate red.
 [advisories]
 ignore = [
-    # --- REAL advisory, risk-accepted (see docs/security-audit-2026-08.md, finding F2) ---
     # rsa "Marvin Attack" timing sidechannel. `rsa` is used ONLY in core/src/ssl.rs for offline,
     # startup-time CA/leaf cert GENERATION and PKCS#1v1.5 SIGNING — there is no attacker-facing RSA
     # decryption/signing oracle whose timing an attacker can measure (TLS crypto is rustls/ring, not
     # `rsa`). No fixed `rsa` version exists yet. Bump `rsa` and drop this ID once a fix ships.
-    "RUSTSEC-2026-0195",
-    # protobuf uncontrolled-recursion crash (DoS). Transitive via prometheus -> portfu; used ONLY to
-    # ENCODE the /metrics exposition format — the vulnerable protobuf DECODE path is never fed
-    # untrusted input by the node. Fix (protobuf >=3.7.2) needs a prometheus major bump (upstream).
-    "RUSTSEC-2024-0437",
-    # quick-xml quadratic-parse DoS (HIGH 7.5). Transitive via pprof -> inferno; used ONLY to WRITE
-    # the flamegraph SVG — the vulnerable XML PARSE path is never fed untrusted input. Fix
-    # (quick-xml >=0.41) needs an inferno/pprof bump (upstream). See report findings F3/F4.
-    "RUSTSEC-2026-0194",
+    "RUSTSEC-2023-0071",
     # --- unmaintained: gtk-rs GTK3 bindings + glib (Tauri GUI only; not in the node binary) ---
-    "RUSTSEC-2023-0071", "RUSTSEC-2024-0413", "RUSTSEC-2024-0416", "RUSTSEC-2024-0412",
+    "RUSTSEC-2024-0413", "RUSTSEC-2024-0416", "RUSTSEC-2024-0412",
     "RUSTSEC-2024-0418", "RUSTSEC-2024-0411", "RUSTSEC-2024-0417", "RUSTSEC-2024-0414",
     "RUSTSEC-2024-0415", "RUSTSEC-2024-0420", "RUSTSEC-2024-0429",
     # --- unmaintained: unic-* Unicode/i18n crates (transitive) ---

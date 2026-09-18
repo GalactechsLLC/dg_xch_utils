@@ -159,25 +159,25 @@ pub fn get_proof_f1_and_meta(
     enc_key[1..].clone_from_slice(&plot_id[0..31]);
     chacha8_keysetup(&mut enc_ctx, &enc_key, None);
     // Enough to hold 2 cha-cha blocks since a value my span over 2 blocks
-    let mut blocks = vec![];
+    let mut blocks = Vec::with_capacity(2 * K_F1_BLOCK_SIZE_BITS as usize / 8);
     for (x, fx) in proof.iter().zip(fx.iter_mut()).take(PROOF_X_COUNT) {
         let block_index_bits = *x as u128 * k as u128;
         let block_index = (block_index_bits / K_F1_BLOCK_SIZE_BITS as u128) as u64;
         let prefix_bits = (block_index_bits % K_F1_BLOCK_SIZE_BITS as u128) as u32;
-        let first_block_bits = min(u32::from(K_F1_BLOCK_SIZE_BITS) - prefix_bits, k);
         blocks.clear();
-        chacha8_get_keystream(&enc_ctx, block_index, 1, &mut blocks);
-        let first_block = BitReader::from_bytes_be(&blocks, K_F1_BLOCK_SIZE_BITS as usize);
-        let mut output_bits = if first_block_bits < k {
-            blocks.clear();
-            chacha8_get_keystream(&enc_ctx, block_index + 1, 1, &mut blocks);
-            let second_block = BitReader::from_bytes_be(&blocks, K_F1_BLOCK_SIZE_BITS as usize);
-            first_block.slice(prefix_bits as usize)
-                + second_block.range(0, (prefix_bits + k) as usize)
-        } else {
-            first_block.range(prefix_bits as usize, (prefix_bits + k) as usize)
-        };
-        let mut y = output_bits.read_u64(k as usize)?;
+        if k > 64 {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "F1 value exceeds 64 bits",
+            ));
+        }
+        chacha8_get_keystream(
+            &enc_ctx,
+            block_index,
+            (prefix_bits + k).div_ceil(u32::from(K_F1_BLOCK_SIZE_BITS)),
+            &mut blocks,
+        );
+        let mut y = crate::utils::slice_u64from_bytes_full(&blocks, prefix_bits, k);
         y = (y << K_EXTRA_BITS) | (*x >> x_shift);
         *fx = y;
         meta.push(BitReader::new(*x, k as usize));
@@ -209,13 +209,17 @@ pub fn forward_prop_f1_to_f7(
             let mut l_meta = &meta[i];
             let mut r_meta = &meta[i + 1];
             if y0 > y1 {
+                let Some(proof) = &mut proof else {
+                    return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        "proof is not in proof order",
+                    ));
+                };
                 swap(&mut y0, &mut y1);
                 swap(&mut l_meta, &mut r_meta);
-                if let Some(proof) = &mut proof {
-                    let count = 1 << (table as usize - 1);
-                    let (x, x_next) = (*proof)[i * count..].split_at_mut(count);
-                    x.swap_with_slice(&mut x_next[0..count]);
-                }
+                let count = 1 << (table as usize - 1);
+                let (left, right) = (*proof)[i * count..].split_at_mut(count);
+                left.swap_with_slice(&mut right[0..count]);
             }
             // Must be on the same group
             if !fx_match(&y0, &y1) {

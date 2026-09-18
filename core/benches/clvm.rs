@@ -15,6 +15,8 @@ const BLOCK_4671894: &str =
     include_str!("../tests/fixtures/chia_generator_tests/block-4671894.txt");
 const BLOCK_4671894_REF: &str =
     include_str!("../tests/fixtures/chia_generator_tests/block-4671894.env");
+const BLOCK_6755796: &str =
+    include_str!("../tests/fixtures/chia_generator_tests/block-6755796.txt");
 
 parse_program_hex!(
     SIMPLE_MATH_TEST,
@@ -59,7 +61,7 @@ fn generator_input(
         generator_refs,
         constants: MAINNET,
         height,
-        flags: BlockGeneratorFlags::default(),
+        flags: BlockGeneratorFlags::for_height(&MAINNET, height),
     }
 }
 
@@ -71,6 +73,10 @@ fn bench_block_generator(c: &mut Criterion) {
         (
             "block-834752",
             generator_input(BLOCK_834752, 834_752, vec![]),
+        ),
+        (
+            "block-6755796",
+            generator_input(BLOCK_6755796, 6_755_796, vec![]),
         ),
         (
             "block-4671894",

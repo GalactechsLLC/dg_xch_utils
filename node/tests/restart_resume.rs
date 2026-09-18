@@ -8,7 +8,7 @@
 //
 // The kill is modeled at the store seam: dropping the store handle (and any open batch) without
 // commit is the crash-consistency contract SQLite's WAL gives a killed process; the reopen path
-// is the daemon's restart path (SqliteStore::open on the same file + Chaser::warm_engine_cache).
+// is the server's restart path (SqliteStore::open on the same file + Chaser::warm_engine_cache).
 
 mod common;
 

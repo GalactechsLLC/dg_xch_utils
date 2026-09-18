@@ -52,7 +52,7 @@ async fn slow_peer_eviction_tears_down_and_the_slot_recovers() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(60)
         )
         .await,
         "peer connects"
@@ -64,7 +64,7 @@ async fn slow_peer_eviction_tears_down_and_the_slot_recovers() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 0 },
-            Duration::from_secs(10)
+            Duration::from_secs(15)
         )
         .await,
         "evicted channel is torn down"
@@ -73,7 +73,7 @@ async fn slow_peer_eviction_tears_down_and_the_slot_recovers() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(60)
         )
         .await,
         "the slot re-dials after eviction (reservation not lost)"

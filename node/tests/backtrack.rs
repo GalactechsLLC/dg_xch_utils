@@ -199,7 +199,9 @@ async fn backtrack_converges_to_the_fork_branch_tip() {
     let (peak, _deltas) = chaser
         .follow_backtrack_reporting(&peer, A_TIP + 1, B_TIP)
         .await
-        .expect("backtrack finds the fork point and converges");
+        .expect("backtrack finds the fork point and converges")
+        .into_result()
+        .expect("window accepted");
 
     assert_eq!(
         peak,
@@ -325,7 +327,9 @@ async fn backtrack_arm_refetches_the_peak_even_for_a_direct_child() {
     let (peak, _deltas) = chaser
         .follow_backtrack_reporting(&source, A_TIP + 1, A_TIP + 1)
         .await
-        .expect("backtrack confirms the child too");
+        .expect("backtrack confirms the child too")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(peak, Some((child[0].header_hash().unwrap(), A_TIP + 1)));
     // The deviation: the arm reached BELOW peak+1 (it probed the peak at from-1).
     assert!(
@@ -348,7 +352,9 @@ async fn tip_step_extends_a_direct_child_forward_only() {
     let (peak, _deltas) = chaser
         .follow_tip_step_reporting(&source, A_TIP + 1, A_TIP + 1)
         .await
-        .expect("the direct child extends via the forward arm");
+        .expect("the direct child extends via the forward arm")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(
         peak,
         Some((child[0].header_hash().unwrap(), A_TIP + 1)),
@@ -370,7 +376,9 @@ async fn tip_step_falls_back_to_backtrack_on_a_real_reorg() {
     let (peak, _deltas) = chaser
         .follow_tip_step_reporting(&peer, A_TIP + 1, B_TIP)
         .await
-        .expect("the ladder recovers the reorg via the backtrack arm");
+        .expect("the ladder recovers the reorg via the backtrack arm")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(
         peak,
         Some((chain_b.last().unwrap().header_hash().unwrap(), B_TIP)),

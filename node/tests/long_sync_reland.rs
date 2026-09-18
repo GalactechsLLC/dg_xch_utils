@@ -153,7 +153,9 @@ async fn reland_reorgs_across_the_gap_onto_the_heavier_branch() {
     let (peak, deltas) = chaser
         .long_sync_reland_reporting(&peer, FORK)
         .await
-        .expect("reland must converge through the engine reorg");
+        .expect("reland must converge through the engine reorg")
+        .into_result()
+        .expect("window accepted");
 
     // The reland stops as soon as the peak leaves the stale branch: the first window
     // [FORK+1, FORK+32] carries B(140), the first block to outweigh A(145).
@@ -176,7 +178,7 @@ async fn reland_reorgs_across_the_gap_onto_the_heavier_branch() {
         30,
         "reorg depth = reorging block height (140) - fork height (110)"
     );
-    // The reorg deltas surfaced for the daemon's wallet/mempool feed.
+    // The reorg deltas surfaced for the server's wallet/mempool feed.
     assert!(
         deltas.iter().any(|d| d.delta.height == 140),
         "the reorged branch's deltas must be reported"
@@ -225,7 +227,9 @@ async fn reland_over_our_own_chain_is_already_have_then_extends() {
     let (peak, _) = chaser
         .long_sync_reland_reporting(&peer, A_TIP - 5)
         .await
-        .expect("reland over our own chain must extend");
+        .expect("reland over our own chain must extend")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(
         peak,
         Some((ext.last().unwrap().header_hash().unwrap(), A_TIP + 5)),

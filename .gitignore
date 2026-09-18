@@ -6,6 +6,9 @@ config.yaml
 node_modules
 gui/src-tauri/gen/schemas
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 __pycache__/
 *.py[cod]
 temp/

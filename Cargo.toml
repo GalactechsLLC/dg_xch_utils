@@ -16,13 +16,11 @@ members = [
     "parser_macro",
     "proof_of_space",
     "puzzles",
-    "roots",
     "serialize",
     "servers",
     "simulator",
     "stores",
-    "tools/dev-tools",
-    "tests",
+    "tools",
     "vdf",
     "weight-proof"
 ]
@@ -38,3 +36,10 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 [profile.bench]
 debug = true
 strip = "debuginfo"
+
+[profile.release-perf]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+debug = 1
+strip = "none"

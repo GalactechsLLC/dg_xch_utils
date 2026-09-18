@@ -13,7 +13,7 @@ name = "dg_xch_cli_lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "dg_xch_cli"
+name = "dg"
 path = "src/main.rs"
 
 [dependencies]
@@ -27,8 +27,10 @@ dg_logger = { path="../logging", version="3.0.0" }
 dg_xch_clients = {path = "../clients", version="3.0.0"}
 dg_xch_core = {path = "../core", version = "3.0.0", default-features = false, features = ["bls"]}
 dg_xch_keys = {path = "../keys", version="3.0.0"}
+dg_xch_p2p = { path = "../p2p", version = "3.0.0" }
 dg_xch_puzzles = {path = "../puzzles", version="3.0.0"}
 dg_xch_serialize= {path = "../serialize", version="3.0.0"}
+dg_full_node = { path = "../full-node", version = "3.0.0", default-features = false }
 hex = "0.4.3"
 lazy_static = "1.5.0"
 log = "0.4.29"
@@ -36,3 +38,18 @@ num-traits = "0.2.19"
 rand = "0.10.0"
 serde_json = "1.0.149"
 tokio = {version = "1.50.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tikv-jemallocator = "0.6"
+
+[features]
+default = ["sqlite"]
+sqlite = ["dg_full_node/sqlite"]
+coin-index = ["dg_full_node/coin-index"]
+hint = ["coin-index", "dg_full_node/hint"]
+postgres = ["dg_full_node/postgres"]
+mmap = ["dg_full_node/mmap"]
+profiling = ["dg_full_node/profiling", "tikv-jemallocator/profiling"]

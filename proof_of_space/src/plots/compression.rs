@@ -182,9 +182,7 @@ fn gen_compression_table(r_value: f64, out_size: &mut usize) -> Result<CTable, E
     let normalized_count = create_normalized_count(r_value)?;
     let max_symbol_value = normalized_count.len() - 1;
     let table_log = 14;
-    // let ct  = build_ctable( normalized_count, max_symbol_value, table_log );
     *out_size = fse_ctable_size(table_log, max_symbol_value as u32) as usize;
-    // ct
     todo!()
 }
 

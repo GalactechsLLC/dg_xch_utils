@@ -1,5 +1,5 @@
 // The ONE spend-bundle admission seam. Every transaction ingress shares it: HTTP `push_tx`
-// (rpc.rs), the gossip validator worker (daemon.rs `spawn_tx_validator`), and the wallet's p2p
+// (rpc.rs), the gossip validator worker, and the wallet's p2p
 // `SendTransaction` (code 48). One path means one set of semantics: the bundle→conditions CLVM
 // run (mempool mode, next-block height) + aggregate-signature check happen server-side,
 // admission goes through `Mempool::admit`, and a NEWLY resident item queues its `NewTransaction`
@@ -97,7 +97,7 @@ pub(crate) async fn admit_spend_bundle<S>(
     bundle: SpendBundle,
 ) -> Result<Bytes32, TxAdmissionError>
 where
-    S: BlockStore + CoinStore + Sync,
+    S: BlockStore + CoinStore + Sync + ?Sized,
 {
     let name = bundle
         .name()

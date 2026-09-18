@@ -5,7 +5,6 @@ use chacha20poly1305::{
 use lifehash_lib::Version::Version2;
 use lifehash_lib::lifehash;
 use log::info;
-// use petname::{Generator, Petnames};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use shared_types::RgbaImage;
@@ -15,13 +14,6 @@ use std::io::Write;
 use tauri::Manager;
 
 pub fn petname(_data: &[u8]) -> Result<String, String> {
-    // use sha2::{Digest, Sha256};
-    // use rand_chacha::ChaCha20Rng;
-    // use rand_chacha::rand_core::SeedableRng;
-    // let sha256: [u8; 32] = Sha256::digest(data).into();
-    // Petnames::medium()
-    //     .generate(&mut ChaCha20Rng::from_seed(sha256), 2, "-")
-    //     .ok_or("Failed to generate petname".to_string())
     Err("Not Implemented".to_string())
 }
 

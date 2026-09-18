@@ -2,7 +2,7 @@
 // (`BACKTRACK_MAX_DEPTH` = 5) and the WP-anchored long-sync band: a fork ~6-50 below our
 // confirmed peak. The new-peak ladder answers it by falling through the failed backtrack to batch
 // sync, whose downloads re-enter weight-only fork choice. Here the backtrack
-// signals `SyncError::DeepFork` (the escalation, pinned in backtrack.rs), and the daemon's
+// signals `SyncError::DeepFork` (the escalation, pinned in backtrack.rs), and the server's
 // deep-fork arm re-enters through the BULK pipeline — headers-first candidates + the
 // reservation-window out-of-order body download + per-block confirm (`Chaser::sync_range`, the
 // exact path `Node::bulk_sync`'s `fast_sync_with_summaries` drives) — where the engine's
@@ -438,7 +438,9 @@ async fn crash_at_the_bulk_entry_peak_flip_recovers_across_a_restart() {
     let (peak, deltas) = chaser
         .follow_tip_step_reporting(&peer, A_TIP + 1, B_TIP)
         .await
-        .expect("the recovery follow re-lands the reorg from the durable store");
+        .expect("the recovery follow re-lands the reorg from the durable store")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(
         peak,
         Some((chain_b.last().unwrap().header_hash().unwrap(), B_TIP)),

@@ -35,13 +35,11 @@ impl Parse for Args {
 pub fn parse_program_hex(input: TokenStream) -> TokenStream {
     let Args { base, hex_expr, .. } = syn::parse_macro_input!(input as Args);
 
-    // decide by expression shape
     let input_kind = match eval_expr(&hex_expr) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error().into(),
     };
 
-    // read bytes
     let (hex_str, bytes) = match input_kind {
         InputKind::RawHex(s) => {
             let b = match decode_hex(s.trim()) {
@@ -71,7 +69,7 @@ pub fn parse_program_hex(input: TokenStream) -> TokenStream {
                     ));
                 }
             };
-            // NEW: keep only hex digits; ignore whitespace/newlines/comments, etc.
+            // Puzzle source files may contain whitespace and comments around the hex payload.
             let cleaned: String = contents.chars().filter(|c| c.is_ascii_hexdigit()).collect();
             if !cleaned.len().is_multiple_of(2) {
                 return compile_error("hex file has odd number of hex digits after cleanup");
@@ -84,7 +82,6 @@ pub fn parse_program_hex(input: TokenStream) -> TokenStream {
         }
     };
 
-    // your existing pipeline
     let mut cursor = Cursor::new(bytes.as_slice());
     let dag = match parse_clvm(&mut cursor) {
         Ok(d) => d,

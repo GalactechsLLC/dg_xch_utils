@@ -238,7 +238,6 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
     #[allow(clippy::cast_possible_wrap)]
     async fn sync(&self) -> Result<bool, Error> {
         let standard_coins_arc = self.wallet_store().lock().await.standard_coins().clone();
-        // let cat_coins_arc = self.wallet_store().lock().await.cat_coins().clone();
         let puzzle_hashes = self
             .wallet_store()
             .lock()
@@ -254,55 +253,6 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
             arc_mut.clear();
             arc_mut.extend(standard_coins);
         }
-        // let hinted_coins = self
-        //     .fullnode_client
-        //     .get_coin_records_by_hints(&puzzle_hashes, Some(true), None, None)
-        //     .await?;
-        // let mut cat_records = vec![];
-        // for hinted_coin in hinted_coins {
-        //     if let Some(parent_coin) = self
-        //         .fullnode_client
-        //         .get_coin_record_by_name(&hinted_coin.coin.parent_coin_info)
-        //         .await?
-        //     {
-        //         if let Ok(parent_coin_spend) =
-        //             self.fullnode_client.get_coin_spend(&parent_coin).await
-        //         {
-        //             let (cat_program, args) =
-        //                 parent_coin_spend.puzzle_reveal.to_program().uncurry()?;
-        //             let is_cat_v1 = cat_program == *CAT_1_PROGRAM;
-        //             let is_cat_v2 = !is_cat_v1 && cat_program == *CAT_2_PROGRAM;
-        //             if is_cat_v1 || is_cat_v2 {
-        //                 let asset_id: Bytes32 = args.rest()?.first()?.try_into()?;
-        //                 let inner_puzzle: Bytes32 = args.rest()?.rest()?.first()?.try_into()?;
-        //                 let lineage_proof = Program::to(vec![
-        //                     parent_coin_spend.coin.parent_coin_info.to_sexp(),
-        //                     inner_puzzle.to_sexp(),
-        //                     parent_coin_spend.coin.amount.to_sexp(),
-        //                 ]);
-        //                 cat_records.push(CatCoinRecord {
-        //                     delegate: hinted_coin,
-        //                     version: if is_cat_v1 {
-        //                         CatVersion::V1
-        //                     } else {
-        //                         CatVersion::V2
-        //                     },
-        //                     asset_id,
-        //                     cat_program,
-        //                     lineage_proof,
-        //                     parent_coin_spend,
-        //                 });
-        //             } else {
-        //                 error!("Error Parsing Coin as CAT: {hinted_coin:?}");
-        //             }
-        //         }
-        //     }
-        // }
-        // {
-        //     let mut arc_mut = cat_coins_arc.lock().await;
-        //     arc_mut.clear();
-        //     arc_mut.extend(cat_records);
-        // }
         Ok(true)
     }
 

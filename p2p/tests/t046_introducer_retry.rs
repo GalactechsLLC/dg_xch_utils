@@ -89,3 +89,35 @@ async fn introducer_is_quiet_once_the_outbound_target_is_met() {
     sup.stop().await;
     intro.run.store(false, Ordering::Relaxed);
 }
+
+#[tokio::test]
+async fn introducer_refreshes_while_all_pooled_candidates_are_cooling() {
+    let intro_port = free_port();
+    let (intro, queries) = spawn_introducer_on(intro_port, vec![peer("2.2.2.2", 8444, 42)]).await;
+    let settings = fast_settings();
+    let mut sup = Supervisor::new(settings);
+    sup.seed_addresses(&[peer("1.1.1.1", 8444, 42)]).await;
+    let cooling = sup.book.lock().await.take().expect("seeded candidate");
+    sup.book
+        .lock()
+        .await
+        .cooldown(&cooling, Duration::from_secs(30));
+
+    sup.start_introducer("127.0.0.1", intro_port);
+    let book = sup.book.clone();
+    assert!(
+        wait_until(
+            || {
+                let book = book.clone();
+                async move { book.lock().await.len() == 2 }
+            },
+            Duration::from_secs(15),
+        )
+        .await,
+        "a non-empty book with no ready candidates must not suppress introducer refresh"
+    );
+    assert!(queries.load(std::sync::atomic::Ordering::Relaxed) > 0);
+
+    sup.stop().await;
+    intro.run.store(false, std::sync::atomic::Ordering::Relaxed);
+}

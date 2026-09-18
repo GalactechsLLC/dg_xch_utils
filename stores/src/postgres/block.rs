@@ -137,6 +137,48 @@ async fn set_peak_on(conn: &mut sqlx::PgConnection, new_peak: &Bytes32) -> Resul
     Ok(links)
 }
 
+async fn extend_peak_on(
+    conn: &mut sqlx::PgConnection,
+    extension: &[Bytes32],
+    new_height: u32,
+) -> Result<u64, StoreError> {
+    let Some(new_peak) = extension.last() else {
+        return Ok(0);
+    };
+    let mut links = 0u64;
+    for chunk in extension.chunks(10_000) {
+        let mut qb = sqlx::QueryBuilder::new(
+            "UPDATE block_record SET in_main_chain = 1 WHERE header_hash IN (",
+        );
+        let mut separated = qb.separated(", ");
+        for hash in chunk {
+            separated.push_bind(*hash);
+        }
+        qb.push(")");
+        links += qb
+            .build()
+            .persistent(false)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+    }
+    if links != extension.len() as u64 {
+        return Err(StoreError::Corrupt(format!(
+            "extend_peak: expected {} validated records, updated {links}",
+            extension.len()
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO current_peak (id, header_hash, height) VALUES (0, $1, $2) \
+         ON CONFLICT(id) DO UPDATE SET header_hash = excluded.header_hash, height = excluded.height",
+    )
+    .bind(*new_peak)
+    .bind(i64::from(new_height))
+    .execute(conn)
+    .await?;
+    Ok(links)
+}
+
 #[async_trait]
 impl BlockStore for PostgresStore {
     async fn get_block_record(&self, hh: &Bytes32) -> Result<Option<BlockRecord>, StoreError> {
@@ -245,6 +287,7 @@ impl BlockStore for PostgresStore {
         let tx = self.pool.begin().await?;
         Ok(BatchHandle {
             inner: BatchInner::Postgres(tx),
+            _timing: None,
         })
     }
 
@@ -306,6 +349,15 @@ impl BlockStore for PostgresStore {
         new_peak: &Bytes32,
     ) -> Result<u64, StoreError> {
         set_peak_on(batch.pg_conn()?, new_peak).await
+    }
+
+    async fn extend_peak_in(
+        &self,
+        batch: &mut BatchHandle,
+        extension: &[Bytes32],
+        new_height: u32,
+    ) -> Result<u64, StoreError> {
+        extend_peak_on(batch.pg_conn()?, extension, new_height).await
     }
 
     async fn get_status(&self, hh: &Bytes32) -> Result<BlockStatus, StoreError> {

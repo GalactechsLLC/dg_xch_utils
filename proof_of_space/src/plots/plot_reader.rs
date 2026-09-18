@@ -102,13 +102,6 @@ impl<
         // read-in all C1 entries and ensure we hit an empty one,
         // to ensure we don't run into dead/alignment-space
         self.get_maximum_c1_entries()
-        // Or just do this:
-        //  Same thing, but we use it
-        //  because we want to validate the plot for farming,
-        //  and farming goes to C1 tables before it goes to C3
-        // let c3_park_size  = calculate_c3size();
-        // let c3_table_size = self.file.table_size(PlotTable::C3);
-        // let c3_park_count = c3_table_size / c3_park_size;
     }
 
     pub fn get_max_f7entry_count(&self) -> u64 {
@@ -806,7 +799,6 @@ impl<
         // Grab as many matches as we can
         let c3start_index = c3park * u64::from(K_CHECKPOINT1INTERVAL);
         let out_index;
-        // let iterator =
         for i in 0..first_c3_buffer.len() {
             if first_c3_buffer[i] == f7 {
                 let mut match_count = 1;

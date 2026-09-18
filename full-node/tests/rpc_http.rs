@@ -1,20 +1,18 @@
-// The HTTP RPC envelope and the 8555 TLS posture.
+// The HTTP RPC envelope and unified Portfu TLS posture.
 //
 // Envelope: every response is `{"<named_key>": ..., "success": true}` and every application
 // error is an HTTP-200 `{"success": false, "error": ...}`. The
-// envelope tests drive `NodeRpcHandler` directly; the shape assertions deserialize through
-// dg_xch_clients' REAL response wrappers (the exact structs a Rust RPC client
-// parses).
+// envelope tests exercise the Portfu routes and deserialize through dg_xch_clients' REAL
+// response wrappers (the exact structs a Rust RPC client parses).
 //
-// TLS: `build_rpc_tls_context` serves the 8555 posture — server
-// cert generated from the CA chain, client certificate REQUIRED and verified against that CA.
-// The end-to-end tests run the real `RpcServer` accept loop and connect with the real
+// TLS: Portfu selects a private-CA trust store on each RPC route.
+// The end-to-end tests run the real Portfu accept loop and connect with the real
 // `FullnodeClient` (client certs + https + envelope parse); the negative
 // tests prove a no-cert client and a wrong-CA client are refused at the handshake.
 
 mod common;
 
-use bytes::Bytes;
+use dg_full_node::{Node, build_portfu_rpc_tls_context};
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_clients::api::responses::full_node_responses::{
     BlockRecordResp, CoinRecordAryResp, FullBlockResp, TXResp,
@@ -24,27 +22,24 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::consensus::constants::MAINNET;
 use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
-use dg_xch_core::ssl::generate_ca_signed_cert_data;
+use dg_xch_core::ssl::{
+    generate_ca_signed_cert_data, load_certs_from_bytes, load_private_key_from_bytes,
+};
 use dg_xch_node::Mempool;
-use dg_xch_servers::rpc::{RequestType, RpcHandler, RpcRequest, RpcServer, RpcServerConfig};
-use dg_xch_stores::SqliteStore;
-use full_node::{NodeRpc, NodeRpcHandler, build_rpc_tls_context};
-use http::HeaderMap;
-use http_body_util::{BodyExt, Full};
-use hyper::{Request, Response, StatusCode};
+use http::StatusCode;
+use portfu::prelude::{ServerBuilder, ServerHandle};
 use serde_json::{Value, json};
-use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
-async fn seeded_rpc() -> (Arc<NodeRpc<SqliteStore>>, Arc<Mutex<Mempool>>) {
+async fn seeded_rpc() -> (Arc<Node>, Arc<Mutex<Mempool>>) {
     let store = Arc::new(common::open_store().await);
     common::seed_peak(&store).await;
     let mempool = Arc::new(Mutex::new(Mempool::new(&MAINNET)));
-    let node = NodeRpc::new(
+    let node = Node::new(
         store,
         mempool.clone(),
         MAINNET,
@@ -54,40 +49,77 @@ async fn seeded_rpc() -> (Arc<NodeRpc<SqliteStore>>, Arc<Mutex<Mempool>>) {
     (Arc::new(node), mempool)
 }
 
-// Drive the handler exactly as the RpcServer service does: a sized request in, a JSON body out.
-async fn call(
-    handler: &NodeRpcHandler<SqliteStore>,
-    path: &str,
-    body: Value,
-) -> (StatusCode, Value) {
-    call_raw(handler, path, body.to_string().into_bytes()).await
+async fn call(port: u16, path: &str, body: Value) -> (StatusCode, Value) {
+    call_raw(port, path, body.to_string().into_bytes()).await
 }
 
-async fn call_raw(
-    handler: &NodeRpcHandler<SqliteStore>,
-    path: &str,
-    body: Vec<u8>,
-) -> (StatusCode, Value) {
-    let request = Request::builder()
-        .method("POST")
-        .uri(path)
-        .body(Full::new(Bytes::from(body)))
-        .expect("request");
-    let rpc_request = RpcRequest {
-        request_type: RequestType::Sized(request),
-        response_headers: HeaderMap::new(),
-    };
-    let response = Response::builder()
-        .body(Full::new(Bytes::new()))
-        .expect("response");
-    let addr: SocketAddr = "127.0.0.1:9999".parse().expect("addr");
-    let out = handler
-        .handle(rpc_request, response, &addr)
+async fn call_raw(port: u16, path: &str, body: Vec<u8>) -> (StatusCode, Value) {
+    let (crt, key) = generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
+        .expect("local RPC client cert");
+    let verifier = Arc::new(dg_xch_core::protocols::shared::NoCertificateVerification);
+    let config = Arc::new(
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_client_auth_cert(
+                load_certs_from_bytes(&crt).expect("client certs"),
+                load_private_key_from_bytes(&key).expect("client key"),
+            )
+            .expect("client auth"),
+    );
+    let connector = tokio_rustls::TlsConnector::from(config);
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
-        .expect("handler never errors at the transport level");
-    let status = out.status();
-    let bytes = out.into_body().collect().await.expect("body").to_bytes();
-    let value = serde_json::from_slice(&bytes).expect("json body");
+        .expect("connect RPC");
+    let server_name = rustls::pki_types::ServerName::try_from("localhost").expect("name");
+    let mut tls = connector.connect(server_name, tcp).await.expect("RPC TLS");
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    tls.write_all(request.as_bytes())
+        .await
+        .expect("write headers");
+    tls.write_all(&body).await.expect("write body");
+
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let body_end = loop {
+        let read = tls.read(&mut chunk).await.expect("read response");
+        assert_ne!(read, 0, "response ended before its body was complete");
+        response.extend_from_slice(&chunk[..read]);
+        let Some(header_end) = response.windows(4).position(|w| w == b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = std::str::from_utf8(&response[..header_end]).expect("response headers");
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+            })
+            .expect("content length");
+        let end = header_end + 4 + content_length;
+        if response.len() >= end {
+            break end;
+        }
+    };
+    let header_end = response
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("header terminator");
+    let status = std::str::from_utf8(&response[..header_end])
+        .expect("response headers")
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .and_then(|code| StatusCode::from_u16(code).ok())
+        .expect("response status");
+    let response_body = &response[header_end + 4..body_end];
+    let value = serde_json::from_slice(response_body)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(response_body).into_owned()));
     (status, value)
 }
 
@@ -97,9 +129,8 @@ async fn call_raw(
 // (peak as a full block record, sync sub-object, mempool gauges, average_block_time).
 #[tokio::test]
 async fn envelope_blockchain_state_named_key_and_success() {
-    let (rpc, _mp) = seeded_rpc().await;
-    let handler = NodeRpcHandler::new(rpc);
-    let (status, v) = call(&handler, "/get_blockchain_state", json!({})).await;
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
+    let (status, v) = call(port, "/get_blockchain_state", json!({})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["success"], Value::from(true));
     let state = &v["blockchain_state"];
@@ -118,16 +149,16 @@ async fn envelope_blockchain_state_named_key_and_success() {
         "the average_block_time key is present"
     );
     assert!(state.as_object().expect("obj").contains_key("node_id"));
+    run.shutdown();
 }
 
 // Error envelope: an application error is HTTP-200 `{"success": false, "error": ...}` with the
 // traceback/structuredError keys — never an HTTP 4xx/5xx.
 #[tokio::test]
 async fn envelope_errors_are_http_200_success_false() {
-    let (rpc, _mp) = seeded_rpc().await;
-    let handler = NodeRpcHandler::new(rpc);
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
     let bogus = Bytes32::from([0x42u8; 32]);
-    let (status, v) = call(&handler, "/get_block", json!({"header_hash": bogus})).await;
+    let (status, v) = call(port, "/get_block", json!({"header_hash": bogus})).await;
     assert_eq!(status, StatusCode::OK, "app errors are HTTP 200");
     assert_eq!(v["success"], Value::from(false));
     assert!(
@@ -142,64 +173,58 @@ async fn envelope_errors_are_http_200_success_false() {
     assert!(obj.contains_key("structuredError"));
 
     // A malformed / missing-parameter body is the same envelope.
-    let (status, v) = call(&handler, "/get_block", json!({})).await;
+    let (status, v) = call(port, "/get_block", json!({})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["success"], Value::from(false));
+    run.shutdown();
 }
 
 // Unknown endpoints are HTTP 404.
 #[tokio::test]
 async fn unknown_endpoint_is_404() {
-    let (rpc, _mp) = seeded_rpc().await;
-    let handler = NodeRpcHandler::new(rpc);
-    let (status, v) = call(&handler, "/get_nonexistent", json!({})).await;
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
+    let (status, _v) = call(port, "/get_nonexistent", json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(v["success"], Value::from(false));
+    run.shutdown();
 }
 
 // An oversize body is refused with 413 (the 1 MiB body cap).
 #[tokio::test]
 async fn oversize_body_is_413() {
-    let (rpc, _mp) = seeded_rpc().await;
-    let handler = NodeRpcHandler::new(rpc);
-    let body = vec![b'{'; full_node::rpc::MAX_RPC_BODY_BYTES + 1];
-    let (status, _v) = call_raw(&handler, "/get_blockchain_state", body).await;
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
+    let body = vec![b'{'; dg_full_node::rpc::MAX_RPC_BODY_BYTES + 1];
+    let (status, _v) = call_raw(port, "/get_blockchain_state", body).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    run.shutdown();
 }
 
 // The client-shaped assertion: the coin_records envelope parses through dg_xch_clients'
 // real response wrapper (`response["coin_records"]` + `response["success"]`).
 #[tokio::test]
 async fn envelope_coin_records_parse_as_chia_client_shape() {
-    let (rpc, _mp) = seeded_rpc().await;
-    let handler = NodeRpcHandler::new(rpc);
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
     let name = common::additions()[0].coin.name();
-    let (status, v) = call(
-        &handler,
-        "/get_coin_records_by_names",
-        json!({"names": [name]}),
-    )
-    .await;
+    let (status, v) = call(port, "/get_coin_records_by_names", json!({"names": [name]})).await;
     assert_eq!(status, StatusCode::OK);
     let parsed: CoinRecordAryResp = serde_json::from_value(v).expect("client shape");
     assert!(parsed.success);
     assert_eq!(parsed.coin_records.len(), 1);
     assert_eq!(parsed.coin_records[0].coin.name(), name);
+    run.shutdown();
 }
 
 // get_block / get_block_record envelopes parse through the client wrappers.
 #[tokio::test]
 async fn envelope_block_and_record_parse_as_chia_client_shape() {
-    let (rpc, _mp) = seeded_rpc().await;
-    let handler = NodeRpcHandler::new(rpc);
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
     let hh = common::peak_record().header_hash;
-    let (_s, v) = call(&handler, "/get_block", json!({"header_hash": hh})).await;
+    let (_s, v) = call(port, "/get_block", json!({"header_hash": hh})).await;
     let parsed: FullBlockResp = serde_json::from_value(v).expect("block shape");
     assert!(parsed.success);
     assert_eq!(parsed.block.header_hash().expect("hh"), hh);
 
     let (_s, v) = call(
-        &handler,
+        port,
         "/get_block_record_by_height",
         json!({"height": common::PEAK_HEIGHT}),
     )
@@ -207,57 +232,57 @@ async fn envelope_block_and_record_parse_as_chia_client_shape() {
     let parsed: BlockRecordResp = serde_json::from_value(v).expect("record shape");
     assert!(parsed.success);
     assert_eq!(parsed.block_record.header_hash, hh);
+    run.shutdown();
 }
 
 // push_tx answers `{"status": "SUCCESS"}`, idempotent on a duplicate; the status parses
 // through the client's TXResp.
 #[tokio::test]
 async fn envelope_push_tx_status_success_and_idempotent() {
-    let (rpc, mempool) = seeded_rpc().await;
+    let (port, run, mempool, rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
     mempool.lock().await.set_peak(common::PEAK_HEIGHT, 0);
-    let coin = common::seed_easy_coin(rpc.store(), 1_000).await;
+    let coin = common::seed_easy_coin(rpc.store.as_ref(), 1_000).await;
     let bundle = common::easy_bundle(&coin, 1);
-    let handler = NodeRpcHandler::new(rpc);
     let body = json!({"spend_bundle": bundle});
-    let (status, v) = call(&handler, "/push_tx", body.clone()).await;
+    let (status, v) = call(port, "/push_tx", body.clone()).await;
     assert_eq!(status, StatusCode::OK);
     let parsed: TXResp = serde_json::from_value(v).expect("tx shape");
     assert!(parsed.success);
     assert_eq!(parsed.status, TXStatus::SUCCESS);
     // Duplicate: SUCCESS again, still one resident item.
-    let (_s, v) = call(&handler, "/push_tx", body).await;
+    let (_s, v) = call(port, "/push_tx", body).await;
     let parsed: TXResp = serde_json::from_value(v).expect("tx shape");
     assert_eq!(parsed.status, TXStatus::SUCCESS);
     assert_eq!(mempool.lock().await.len(), 1);
+    run.shutdown();
 }
 
 // The utility endpoints: healthz, get_routes, get_version, get_network_info,
 // get_aggsig_additional_data (plain hex, `.hex()`), get_connections (empty sans live).
 #[tokio::test]
 async fn envelope_utility_endpoints() {
-    let (rpc, _mp) = seeded_rpc().await;
-    let handler = NodeRpcHandler::new(rpc);
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
 
-    let (status, v) = call(&handler, "/healthz", json!({})).await;
+    let (status, v) = call(port, "/healthz", json!({})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v, json!({"success": true}));
 
-    let (_s, v) = call(&handler, "/get_routes", json!({})).await;
+    let (_s, v) = call(port, "/get_routes", json!({})).await;
     assert_eq!(v["success"], Value::from(true));
     let routes: Vec<String> = serde_json::from_value(v["routes"].clone()).expect("routes list");
     assert!(routes.contains(&"/get_blockchain_state".to_string()));
     assert!(routes.contains(&"/push_tx".to_string()));
 
-    let (_s, v) = call(&handler, "/get_version", json!({})).await;
+    let (_s, v) = call(port, "/get_version", json!({})).await;
     assert_eq!(v["version"].as_str(), Some(env!("CARGO_PKG_VERSION")));
 
-    let (_s, v) = call(&handler, "/get_network_info", json!({})).await;
+    let (_s, v) = call(port, "/get_network_info", json!({})).await;
     assert_eq!(v["network_name"].as_str(), Some("mainnet"));
     assert_eq!(v["network_prefix"].as_str(), Some("xch"));
     let genesis = v["genesis_challenge"].as_str().expect("genesis");
     assert!(!genesis.starts_with("0x"), "plain hex is served here");
 
-    let (_s, v) = call(&handler, "/get_aggsig_additional_data", json!({})).await;
+    let (_s, v) = call(port, "/get_aggsig_additional_data", json!({})).await;
     let data = v["additional_data"].as_str().expect("additional data");
     assert!(!data.starts_with("0x"), "no 0x prefix on this field");
     assert_eq!(
@@ -265,23 +290,24 @@ async fn envelope_utility_endpoints() {
         MAINNET.agg_sig_me_additional_data.to_string()
     );
 
-    let (_s, v) = call(&handler, "/get_connections", json!({})).await;
+    let (_s, v) = call(port, "/get_connections", json!({})).await;
     assert_eq!(v["success"], Value::from(true));
     assert!(v["connections"].as_array().expect("array").is_empty());
+    run.shutdown();
 }
 
 // The empty body of a GET-style probe reads as `{}` for all-optional endpoints and errors
 // cleanly (not panics) for required-parameter endpoints.
 #[tokio::test]
 async fn empty_body_handling() {
-    let (rpc, _mp) = seeded_rpc().await;
-    let handler = NodeRpcHandler::new(rpc);
-    let (status, v) = call_raw(&handler, "/get_connections", Vec::new()).await;
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
+    let (status, v) = call_raw(port, "/get_connections", Vec::new()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["success"], Value::from(true));
-    let (status, v) = call_raw(&handler, "/get_block", Vec::new()).await;
+    let (status, v) = call_raw(port, "/get_block", Vec::new()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["success"], Value::from(false));
+    run.shutdown();
 }
 
 // ---- TLS posture over the real accept loop ----------------------------------------------------
@@ -334,46 +360,30 @@ fn write_client_certs(tag: &str) -> ClientSSLConfig {
     }
 }
 
-async fn spawn_tls_server() -> (
-    u16,
-    Arc<AtomicBool>,
-    Arc<Mutex<Mempool>>,
-    Arc<NodeRpc<SqliteStore>>,
-) {
-    spawn_tls_server_mode(full_node::RpcTlsMode::PrivateCa {
+async fn spawn_tls_server() -> (u16, ServerHandle, Arc<Mutex<Mempool>>, Arc<Node>) {
+    spawn_tls_server_mode(dg_full_node::RpcTlsMode::PrivateCa {
         ssl_dir: ensure_test_private_ca(),
     })
     .await
 }
 
 async fn spawn_tls_server_mode(
-    mode: full_node::RpcTlsMode,
-) -> (
-    u16,
-    Arc<AtomicBool>,
-    Arc<Mutex<Mempool>>,
-    Arc<NodeRpc<SqliteStore>>,
-) {
+    mode: dg_full_node::RpcTlsMode,
+) -> (u16, ServerHandle, Arc<Mutex<Mempool>>, Arc<Node>) {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let (rpc, mempool) = seeded_rpc().await;
     let port = free_port();
-    let bind: SocketAddr = format!("127.0.0.1:{port}").parse().expect("bind addr");
-    let tls = build_rpc_tls_context(&mode, bind).expect("tls context");
-    let handler = Arc::new(NodeRpcHandler::new(rpc.clone()));
-    let server = RpcServer::new_with_server_config(
-        &RpcServerConfig {
-            host: "127.0.0.1".to_string(),
-            port,
-            ssl_info: None,
-        },
-        tls.server_config,
-        handler,
-    )
-    .expect("server");
-    let run = Arc::new(AtomicBool::new(true));
-    let run_c = run.clone();
+    let tls = build_portfu_rpc_tls_context(&mode).expect("tls context");
+    let server = ServerBuilder::new()
+        .host("127.0.0.1")
+        .port(port)
+        .tls(tls.tls_config)
+        .shutdown_grace_period(Duration::from_millis(100))
+        .global_state::<dg_full_node::Node>(rpc.clone())
+        .build();
+    let run = server.handle();
     tokio::spawn(async move {
-        let _ = server.run(run_c).await;
+        let _ = server.run().await;
     });
     tokio::time::sleep(Duration::from_millis(150)).await;
     (port, run, mempool, rpc)
@@ -385,7 +395,7 @@ async fn spawn_tls_server_mode(
 async fn tls_e2e_chia_client_four_endpoints() {
     let (port, run, mempool, rpc) = spawn_tls_server().await;
     mempool.lock().await.set_peak(common::PEAK_HEIGHT, 0);
-    let coin = common::seed_easy_coin(rpc.store(), 1_000).await;
+    let coin = common::seed_easy_coin(rpc.store.as_ref(), 1_000).await;
 
     let ssl = write_client_certs("e2e");
     let client = FullnodeClient::new("127.0.0.1", port, 15, Some(ssl), &None).expect("client");
@@ -430,24 +440,22 @@ async fn tls_e2e_chia_client_four_endpoints() {
         "server error string reaches the client"
     );
 
-    run.store(false, Ordering::Relaxed);
+    run.shutdown();
 }
 
-// Private-CA mode requires a client certificate.
+// Listener-level presentation is optional for public routes, but protected RPC still requires the
+// route's private-CA trust store even from loopback.
 #[tokio::test]
-async fn tls_no_client_cert_is_refused() {
+async fn tls_no_client_cert_is_rejected_by_rpc_route() {
     let (port, run, _mp, _rpc) = spawn_tls_server().await;
     let verifier = Arc::new(dg_xch_core::protocols::shared::NoCertificateVerification);
     let cfg = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
-    let refused = raw_request_fails(port, Arc::new(cfg)).await;
-    assert!(
-        refused,
-        "a certificate-less client must not get an HTTP response"
-    );
-    run.store(false, Ordering::Relaxed);
+    let failed = raw_request_fails(port, Arc::new(cfg)).await;
+    assert!(failed, "a protected RPC route must require a certificate");
+    run.shutdown();
 }
 
 // TLS-posture negative: a client certificate from the WRONG CA (here: signed by a mere leaf,
@@ -471,7 +479,7 @@ async fn tls_wrong_ca_client_cert_is_refused() {
         .expect("client auth");
     let refused = raw_request_fails(port, Arc::new(cfg)).await;
     assert!(refused, "a wrong-CA client must not get an HTTP response");
-    run.store(false, Ordering::Relaxed);
+    run.shutdown();
 }
 
 // Positive control for the raw path: the SAME raw client WITH a CA-chained cert gets an HTTP
@@ -494,11 +502,11 @@ async fn tls_raw_client_with_valid_cert_succeeds() {
         .expect("client auth");
     let refused = raw_request_fails(port, Arc::new(cfg)).await;
     assert!(!refused, "a CA-chained client cert is accepted");
-    run.store(false, Ordering::Relaxed);
+    run.shutdown();
 }
 
-// Issue one GET /healthz over TLS with the given client config; true = no HTTP response came
-// back (handshake or IO refused), false = a well-formed HTTP response arrived.
+// Issue one POST /healthz over TLS with the given client config; true means the handshake failed or
+// the RPC route returned a non-200 response.
 async fn raw_request_fails(port: u16, cfg: Arc<rustls::ClientConfig>) -> bool {
     let connector = tokio_rustls::TlsConnector::from(cfg);
     let Ok(tcp) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
@@ -508,7 +516,7 @@ async fn raw_request_fails(port: u16, cfg: Arc<rustls::ClientConfig>) -> bool {
     let Ok(mut tls) = connector.connect(server_name, tcp).await else {
         return true;
     };
-    let req = "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    let req = "POST /healthz HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
     if tls.write_all(req.as_bytes()).await.is_err() {
         return true;
     }
@@ -525,7 +533,7 @@ async fn raw_request_fails(port: u16, cfg: Arc<rustls::ClientConfig>) -> bool {
 }
 
 #[tokio::test]
-async fn tls_public_chia_ca_client_is_an_auth_bypass() {
+async fn tls_public_chia_ca_client_is_rejected() {
     use dg_xch_core::ssl::{load_certs_from_bytes, load_private_key_from_bytes};
     let (port, run, _mp, _rpc) = spawn_tls_server().await;
     let (crt, key_bytes) =
@@ -544,7 +552,7 @@ async fn tls_public_chia_ca_client_is_an_auth_bypass() {
         refused,
         "a client whose cert merely chains to the world-public Chia CA must NOT reach the RPC"
     );
-    run.store(false, Ordering::Relaxed);
+    run.shutdown();
 }
 
 // A client cert signed by the node's private CA is accepted.
@@ -569,13 +577,13 @@ async fn tls_private_ca_client_is_accepted() {
         !refused,
         "a client cert chained to the node's private CA must be accepted"
     );
-    run.store(false, Ordering::Relaxed);
+    run.shutdown();
 }
 
-// `--rpc-tls local` on a loopback bind requires no client cert.
+// Local mode uses the Chia CA as its development-only RPC trust store.
 #[tokio::test]
-async fn tls_local_mode_allows_no_client_cert_on_loopback() {
-    let (port, run, _mp, _rpc) = spawn_tls_server_mode(full_node::RpcTlsMode::Local).await;
+async fn tls_local_mode_requires_client_cert_on_loopback() {
+    let (port, run, _mp, _rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
     let verifier = Arc::new(dg_xch_core::protocols::shared::NoCertificateVerification);
     let cfg = rustls::ClientConfig::builder()
         .dangerous()
@@ -583,47 +591,8 @@ async fn tls_local_mode_allows_no_client_cert_on_loopback() {
         .with_no_client_auth();
     let refused = raw_request_fails(port, Arc::new(cfg)).await;
     assert!(
-        !refused,
-        "local mode on loopback must serve a cert-less client"
+        refused,
+        "local mode must still authenticate protected routes"
     );
-    run.store(false, Ordering::Relaxed);
-}
-
-// `--rpc-tls local` is unauthenticated, so it must refuse to build on a routable (non-loopback)
-// bind: an unauthenticated RPC can never be exposed to the network.
-#[test]
-fn tls_local_mode_refuses_non_loopback_bind() {
-    let bind: SocketAddr = "0.0.0.0:8555".parse().expect("addr");
-    match build_rpc_tls_context(&full_node::RpcTlsMode::Local, bind) {
-        Ok(_) => panic!("local mode on a 0.0.0.0 bind must fail closed"),
-        Err(err) => assert!(
-            err.to_string().contains("loopback"),
-            "the error must name the loopback requirement, got: {err}"
-        ),
-    }
-}
-
-#[test]
-fn local_mode_downgrades_routable_bind_to_loopback() {
-    use full_node::RpcTlsMode;
-    let routable: SocketAddr = "0.0.0.0:8555".parse().unwrap();
-    let (bind, downgraded) = RpcTlsMode::Local.resolve_bind(routable);
-    assert!(
-        downgraded,
-        "a routable local-mode bind must be flagged downgraded"
-    );
-    assert!(bind.ip().is_loopback(), "downgraded bind must be loopback");
-    assert_eq!(bind.port(), 8555, "port is preserved");
-    // A loopback bind is left untouched.
-    let loop_in: SocketAddr = "127.0.0.1:8555".parse().unwrap();
-    let (b2, d2) = RpcTlsMode::Local.resolve_bind(loop_in);
-    assert!(!d2 && b2 == loop_in, "loopback local bind is untouched");
-    let (b3, d3) = RpcTlsMode::PrivateCa {
-        ssl_dir: std::path::PathBuf::from("ssl"),
-    }
-    .resolve_bind(routable);
-    assert!(
-        !d3 && b3 == routable,
-        "private CA binds exactly as configured"
-    );
+    run.shutdown();
 }
