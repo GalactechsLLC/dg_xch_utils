@@ -29,7 +29,7 @@ use hyper_util::rt::TokioIo;
 use log::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
-use std::io::{Cursor, Error};
+use std::io::{Cursor, Error, ErrorKind};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -658,14 +658,18 @@ pub struct PendingRequest {
 }
 
 impl PendingRequest {
-    fn new(pending: Arc<PendingRequests>, v3: Arc<rate_limits_v3::V3Link>) -> Self {
-        let (id, receiver) = pending.register();
-        Self {
+    fn new(
+        pending: Arc<PendingRequests>,
+        v3: Arc<rate_limits_v3::V3Link>,
+        filter: Option<Arc<ChiaMessageFilter>>,
+    ) -> Result<Self, Error> {
+        let (id, receiver) = pending.register_matching(filter)?;
+        Ok(Self {
             id,
             receiver,
             pending,
             v3,
-        }
+        })
     }
 
     #[must_use]
@@ -691,12 +695,17 @@ impl Drop for PendingRequest {
 struct PendingInner {
     /// Last id handed out; the next allocation is `wrapping_add(1)`, skipping `0` and any live id.
     last_id: u16,
-    waiters: HashMap<u16, tokio::sync::oneshot::Sender<Arc<ChiaMessage>>>,
+    waiters: HashMap<u16, PendingWaiter>,
     /// Recently cancelled request ids. A slow peer may still answer after the caller's timeout;
     /// retaining a bounded tombstone lets the read loop recognize and discard that valid-but-late
     /// block reply instead of treating it as an unsolicited protocol violation.
     retired_order: VecDeque<u16>,
     retired: HashSet<u16>,
+}
+
+struct PendingWaiter {
+    sender: tokio::sync::oneshot::Sender<Arc<ChiaMessage>>,
+    filter: Option<Arc<ChiaMessageFilter>>,
 }
 
 const RETIRED_REQUEST_CAP: usize = 4096;
@@ -711,22 +720,36 @@ enum PendingDelivery {
 impl PendingRequests {
     /// Reserve a connection-unique, non-zero correlation id and the one-shot receiver for its reply.
     /// The id skips any id currently in flight, so reuse can never alias a live waiter.
-    #[must_use]
-    pub fn register(&self) -> (u16, tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>) {
+    pub fn register(
+        &self,
+    ) -> Result<(u16, tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>), Error> {
+        self.register_matching(None)
+    }
+
+    fn register_matching(
+        &self,
+        filter: Option<Arc<ChiaMessageFilter>>,
+    ) -> Result<(u16, tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>), Error> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let mut guard = self
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let id = loop {
+        let mut available = None;
+        for _ in 0..=u16::MAX {
             let cand = guard.last_id.wrapping_add(1);
             guard.last_id = cand;
             if cand != 0 && !guard.waiters.contains_key(&cand) && !guard.retired.contains(&cand) {
-                break cand;
+                available = Some(cand);
+                break;
             }
-        };
-        guard.waiters.insert(id, tx);
-        (id, rx)
+        }
+        let id =
+            available.ok_or_else(|| Error::new(ErrorKind::WouldBlock, "request IDs exhausted"))?;
+        guard
+            .waiters
+            .insert(id, PendingWaiter { sender: tx, filter });
+        Ok((id, rx))
     }
 
     /// Drop a waiter without delivery (its request timed out or the send failed). Keep a bounded
@@ -757,6 +780,14 @@ impl PendingRequests {
                 .inner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.waiters.get(&id).is_some_and(|waiter| {
+                waiter
+                    .filter
+                    .as_ref()
+                    .is_some_and(|filter| !filter.matches(&msg))
+            }) {
+                return PendingDelivery::Unmatched;
+            }
             let waiter = guard.waiters.remove(&id);
             let retired = waiter.is_none()
                 && guard.retired.contains(&id)
@@ -769,15 +800,34 @@ impl PendingRequests {
                 );
             (waiter, retired)
         };
-        if let Some(tx) = waiter {
+        if let Some(waiter) = waiter {
             // The receiver may already be gone (its own timeout won the race); dropping the send is
             // then correct — the caller has moved on.
-            let _ = tx.send(msg);
+            let _ = waiter.sender.send(msg);
             PendingDelivery::Delivered
         } else if retired {
             PendingDelivery::Retired
         } else {
             PendingDelivery::Unmatched
+        }
+    }
+}
+
+pub struct MessageSubscription {
+    id: Uuid,
+    handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
+}
+
+impl Drop for MessageSubscription {
+    fn drop(&mut self) {
+        if let Ok(mut handlers) = self.handlers.try_write() {
+            handlers.remove(&self.id);
+        } else if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let handlers = self.handlers.clone();
+            let id = self.id;
+            runtime.spawn(async move {
+                handlers.write().await.remove(&id);
+            });
         }
     }
 }
@@ -991,16 +1041,23 @@ impl WebsocketConnection {
     /// caller stamps the id onto the outgoing [`ChiaMessage`] and awaits the receiver; the read loop
     /// delivers the matching reply to exactly this waiter. Takes `&self` (only the pending table is
     /// touched), so it composes under a read lock without contending the write half.
-    #[must_use]
-    pub fn register_request(&self) -> (u16, tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>) {
+    pub fn register_request(
+        &self,
+    ) -> Result<(u16, tokio::sync::oneshot::Receiver<Arc<ChiaMessage>>), Error> {
         self.pending.register()
     }
 
     /// Register a request whose correlation and V3 window state are released
     /// even when its waiting future is cancelled by an outer timeout or abort.
-    #[must_use]
-    pub fn register_guarded_request(&self) -> PendingRequest {
-        PendingRequest::new(self.pending.clone(), self.v3.clone())
+    pub fn register_guarded_request(&self) -> Result<PendingRequest, Error> {
+        PendingRequest::new(self.pending.clone(), self.v3.clone(), None)
+    }
+
+    pub fn register_guarded_request_matching(
+        &self,
+        filter: Arc<ChiaMessageFilter>,
+    ) -> Result<PendingRequest, Error> {
+        PendingRequest::new(self.pending.clone(), self.v3.clone(), Some(filter))
     }
 
     /// Release a reserved correlation id whose reply never arrived (timeout / send failure).
@@ -1013,6 +1070,15 @@ impl WebsocketConnection {
 
     pub async fn subscribe(&self, uuid: Uuid, handle: Arc<ChiaMessageHandler>) {
         self.message_handlers.write().await.insert(uuid, handle);
+    }
+
+    pub async fn subscribe_guarded(&self, handle: Arc<ChiaMessageHandler>) -> MessageSubscription {
+        let id = Uuid::new_v4();
+        self.message_handlers.write().await.insert(id, handle);
+        MessageSubscription {
+            id,
+            handlers: self.message_handlers.clone(),
+        }
     }
 
     pub async fn unsubscribe(&self, uuid: Uuid) -> Option<Arc<ChiaMessageHandler>> {

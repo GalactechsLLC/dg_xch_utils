@@ -27,6 +27,8 @@ where
         let ub_inbox = self.ub_inbox.clone();
         let ip_inbox = self.ip_inbox.clone();
         let synced_flag = self.synced.clone();
+        let allow_chain_bootstrap = self.config.allows_chain_bootstrap();
+        let follow_inflight_since = self.follow_inflight_since.clone();
         let tx_inbox = self.tx_inbox.clone();
         let tx_announce = self.tx_announce.clone();
         let tx_origin = self.tx_origin.clone();
@@ -40,13 +42,18 @@ where
         let trust = self.trust.clone();
         let wallet_sync_sem = self.wallet_sync_sem.clone();
         let net = self.net.clone();
-        let network_id = self.config.network_id.clone();
+        let network_id = self
+            .config
+            .handshake_network_id()
+            .expect("validated network definition");
         let port = self.config.listen.port();
         let record_window = self.record_window.clone();
         let sync_metrics = self.sync_metrics.clone();
         let wallet_compat = self.wallet_compat.clone();
         Arc::new(move || {
             let api: Arc<dyn FullNodeApi> = Arc::new(StoreApi {
+                allow_chain_bootstrap,
+                follow_inflight_since: follow_inflight_since.clone(),
                 store: store.clone(),
                 mempool: mempool.clone(),
                 constants,

@@ -1,11 +1,6 @@
 # cargo-audit (RustSec) configuration for the `cargo audit` CI gate.
 #
-# The gate FAILS the build on any NEW advisory. The IDs below are the reviewed, accepted current
-# baseline re-reviewed 2026-09-06; each is either an `unmaintained`/`unsound` INFORMATIONAL advisory in a
-# GUI-/build-/i18n transitive dependency, or a real advisory whose vulnerable path was not found
-# reachable in the inspected node usage. Re-review when dependencies or call paths change and
-# remove suppressions when fixes can be adopted — this is documented risk acceptance
-# (SSDF PW.4/RV.1). A NEW advisory not on this list turns the gate red.
+# Re-reviewed 2026-09-19. Informational advisories remain visible.
 [advisories]
 ignore = [
     # rsa "Marvin Attack" timing sidechannel. `rsa` is used ONLY in core/src/ssl.rs for offline,
@@ -13,13 +8,4 @@ ignore = [
     # decryption/signing oracle whose timing an attacker can measure (TLS crypto is rustls/ring, not
     # `rsa`). No fixed `rsa` version exists yet. Bump `rsa` and drop this ID once a fix ships.
     "RUSTSEC-2023-0071",
-    # --- unmaintained: gtk-rs GTK3 bindings + glib (Tauri GUI only; not in the node binary) ---
-    "RUSTSEC-2024-0413", "RUSTSEC-2024-0416", "RUSTSEC-2024-0412",
-    "RUSTSEC-2024-0418", "RUSTSEC-2024-0411", "RUSTSEC-2024-0417", "RUSTSEC-2024-0414",
-    "RUSTSEC-2024-0415", "RUSTSEC-2024-0420", "RUSTSEC-2024-0429",
-    # --- unmaintained: unic-* Unicode/i18n crates (transitive) ---
-    "RUSTSEC-2025-0134", "RUSTSEC-2025-0081", "RUSTSEC-2025-0075", "RUSTSEC-2025-0080",
-    "RUSTSEC-2025-0100", "RUSTSEC-2025-0098",
-    # --- unmaintained: build-time macro crates + rustls-pemfile (transitive) ---
-    "RUSTSEC-2024-0419", "RUSTSEC-2024-0436", "RUSTSEC-2024-0370",
 ]

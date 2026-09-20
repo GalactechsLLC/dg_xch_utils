@@ -1,0 +1,24 @@
+[package]
+name = "dg_xch_plotter"
+description = "Proof of space 2 plotting and independently verified proving"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+vulkan = ["dg_xch_pos2/vulkan"]
+
+[dependencies]
+blst = { version = "0.3.16", features = ["portable"] }
+clap = { version = "4.5.60", features = ["derive"] }
+dg_xch_core = { path = "../core", default-features = false, features = ["bls"] }
+dg_xch_keys = { path = "../keys" }
+dg_xch_pos2 = { path = "../proof_of_space/pos2" }
+dg_xch_pos_common = { path = "../proof_of_space/pos_common" }
+hex = "0.4.3"
+rand = "0.10.0"
+tempfile = "3"
+zeroize = "1.9.0"

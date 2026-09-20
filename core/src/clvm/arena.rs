@@ -7,6 +7,7 @@ use crate::clvm::sexp_ext::SExpNumber;
 use crate::errors::ClvmError;
 use crate::formatting::{bigint_to_bytes, number_from_slice};
 use num_bigint::{BigInt, Sign};
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -657,22 +658,38 @@ impl Arena {
     pub fn import(&mut self, sexp: &SExp) -> Result<NodePtr, ClvmError> {
         enum Job<'x> {
             Visit(&'x SExp<'x>),
-            Build,
+            Build(*const SExp<'x>),
         }
         let mut jobs: Vec<Job> = vec![Job::Visit(sexp)];
         let mut out: Vec<NodePtr> = Vec::new();
+        let mut imported = HashMap::new();
         while let Some(job) = jobs.pop() {
             match job {
-                Job::Visit(SExp::Atom(a)) => out.push(self.new_atom(a.as_ref())?),
-                Job::Visit(SExp::Pair(p)) => {
-                    jobs.push(Job::Build);
-                    jobs.push(Job::Visit(p.rest()));
-                    jobs.push(Job::Visit(p.first()));
+                Job::Visit(value) => {
+                    let identity = std::ptr::from_ref(value);
+                    if let Some(node) = imported.get(&identity) {
+                        out.push(*node);
+                        continue;
+                    }
+                    match value {
+                        SExp::Atom(atom) => {
+                            let node = self.new_atom(atom.as_ref())?;
+                            imported.insert(identity, node);
+                            out.push(node);
+                        }
+                        SExp::Pair(pair) => {
+                            jobs.push(Job::Build(identity));
+                            jobs.push(Job::Visit(pair.rest()));
+                            jobs.push(Job::Visit(pair.first()));
+                        }
+                    }
                 }
-                Job::Build => {
+                Job::Build(identity) => {
                     let rest = out.pop().ok_or(ClvmError::ValueStackEmpty)?;
                     let first = out.pop().ok_or(ClvmError::ValueStackEmpty)?;
-                    out.push(self.new_pair(first, rest)?);
+                    let node = self.new_pair(first, rest)?;
+                    imported.insert(identity, node);
+                    out.push(node);
                 }
             }
         }
@@ -685,50 +702,94 @@ impl Arena {
     pub fn export(&self, node: NodePtr) -> SExp<'static> {
         enum Job {
             Visit(NodePtr),
-            Build,
+            Build(NodePtr),
         }
         let mut jobs: Vec<Job> = vec![Job::Visit(node)];
-        let mut out: Vec<SExp<'static>> = Vec::new();
+        let mut out: Vec<Arc<SExp<'static>>> = Vec::new();
+        let mut exported = HashMap::<NodePtr, Arc<SExp<'static>>>::new();
         while let Some(job) = jobs.pop() {
             match job {
-                Job::Visit(ptr) => match self.node_kind(ptr) {
-                    NodeKind::Atom => {
-                        let bytes = self
-                            .atom(ptr)
-                            .expect("node_kind atom has bytes")
-                            .as_ref()
-                            .to_vec();
-                        out.push(SExp::Atom(AtomBuf::new(bytes)));
+                Job::Visit(ptr) => {
+                    if let Some(value) = exported.get(&ptr) {
+                        out.push(value.clone());
+                        continue;
                     }
-                    NodeKind::Pair(first, rest) => {
-                        jobs.push(Job::Build);
-                        jobs.push(Job::Visit(rest));
-                        jobs.push(Job::Visit(first));
+                    match self.node_kind(ptr) {
+                        NodeKind::Atom => {
+                            let bytes = self
+                                .atom(ptr)
+                                .expect("node_kind atom has bytes")
+                                .as_ref()
+                                .to_vec();
+                            let value = Arc::new(SExp::Atom(AtomBuf::new(bytes)));
+                            exported.insert(ptr, value.clone());
+                            out.push(value);
+                        }
+                        NodeKind::Pair(first, rest) => {
+                            jobs.push(Job::Build(ptr));
+                            jobs.push(Job::Visit(rest));
+                            jobs.push(Job::Visit(first));
+                        }
                     }
-                },
-                Job::Build => {
+                }
+                Job::Build(ptr) => {
                     let rest = out.pop().expect("build has rest");
                     let first = out.pop().expect("build has first");
-                    out.push(SExp::Pair(PairBuf::Owned((
-                        Arc::new(first),
-                        Arc::new(rest),
-                    ))));
+                    let value = Arc::new(SExp::Pair(PairBuf::Owned((first, rest))));
+                    exported.insert(ptr, value.clone());
+                    out.push(value);
                 }
             }
         }
-        out.pop().expect("export produced a node")
+        Arc::unwrap_or_clone(out.pop().expect("export produced a node"))
+    }
+
+    fn diagnostic_is_bounded(&self, node: NodePtr) -> bool {
+        let mut pending = vec![(node, 0usize)];
+        let mut remaining_nodes = 256usize;
+        let mut remaining_bytes = 1024usize;
+        while let Some((current, depth)) = pending.pop() {
+            if remaining_nodes == 0 || depth > 64 {
+                return false;
+            }
+            remaining_nodes -= 1;
+            match self.node_kind(current) {
+                NodeKind::Atom => {
+                    let Some(atom) = self.atom(current) else {
+                        return false;
+                    };
+                    let Some(remaining) = remaining_bytes.checked_sub(atom.as_ref().len()) else {
+                        return false;
+                    };
+                    remaining_bytes = remaining;
+                }
+                NodeKind::Pair(first, rest) => {
+                    pending.push((rest, depth + 1));
+                    pending.push((first, depth + 1));
+                }
+            }
+        }
+        true
     }
 
     /// Render a subtree with the crate's canonical `SExp` `Display` — error paths only.
     #[must_use]
     pub fn display(&self, node: NodePtr) -> String {
-        self.export(node).to_string()
+        if self.diagnostic_is_bounded(node) {
+            self.export(node).to_string()
+        } else {
+            "<CLVM expression exceeds diagnostic limits>".to_string()
+        }
     }
 
     /// Render a subtree with the crate's canonical `SExp` `Debug` — error paths only.
     #[must_use]
     pub fn debug_fmt(&self, node: NodePtr) -> String {
-        format!("{:?}", self.export(node))
+        if self.diagnostic_is_bounded(node) {
+            format!("{:?}", self.export(node))
+        } else {
+            "<CLVM expression exceeds diagnostic limits>".to_string()
+        }
     }
 
     /// Allocation counters (allocated + ghost: atoms, pairs, heap bytes), for probes and

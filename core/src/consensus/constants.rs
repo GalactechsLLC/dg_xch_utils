@@ -40,6 +40,8 @@ impl FromStr for ChiaNetwork {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusConstants {
+    #[serde(default)]
+    pub rewards: crate::consensus::block_rewards::RewardSchedule,
     pub slot_blocks_target: u32, //How many blocks to target per sub-slot
     pub min_blocks_per_challenge_block: u8, //How many blocks must be created per slot (to make challenge sb)
     //Max number of blocks that can be infused into a sub-slot.
@@ -164,6 +166,7 @@ impl From<ChiaNetwork> for ConsensusConstants {
     }
 }
 pub const MAINNET: ConsensusConstants = ConsensusConstants {
+    rewards: crate::consensus::block_rewards::RewardSchedule::CHIA,
     slot_blocks_target: 32,
     min_blocks_per_challenge_block: 16,
     max_sub_slot_blocks: 128,

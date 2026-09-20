@@ -22,6 +22,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Checkout submodules
         run: git submodule update --init --recursive
       - name: Install system dependencies
@@ -29,14 +30,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes \
             build-essential \
-            libayatana-appindicator3-dev \
-            libglib2.0-dev \
-            librsvg2-dev \
             libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
             libzstd-dev
       - name: Run workspace tests
         run: cargo test --workspace --locked
       - name: Run wallet service-tier tests
         run: cargo test -p dg_full_node --features hint --test puzzle_state --locked
+      - name: Test authenticated diagnostics and transport
+        run: |
+          cargo test -p dg_full_node --features coin-index --test rpc_http --locked
+          cargo test -p dg_xch_core --test peer_tls_signatures --locked
+          cargo test -p dg_xch_servers --locked
+      - name: Test portable GPU shader and service paths without GPU workloads
+        run: |
+          cargo test -p dg_xch_pos2 -p dg_xch_plotter --features vulkan --locked
+          cargo test -p dg_xch_wallet -p dg_xch_farmer -p dg_xch_timelord -p dg_xch_introducer --locked
+      - name: Validate Compose topology
+        run: docker compose -f compose.yaml config --quiet

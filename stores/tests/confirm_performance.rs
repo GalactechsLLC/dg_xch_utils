@@ -215,7 +215,7 @@ async fn coalesced_coin_window_matches_sequential_writes_and_rollback() {
         .iter()
         .map(|record| record.coin.name())
         .collect();
-    let replacement = [initial[0].clone()];
+    let replacement = [initial[0]];
     let hints = [(Bytes32::from([3; 32]), additions[2].coin.name())];
     let changes = [
         CoinChanges {

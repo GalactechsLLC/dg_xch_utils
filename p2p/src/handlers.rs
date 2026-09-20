@@ -813,10 +813,20 @@ impl FullNodeHandler {
         match msg.msg_type {
             ProtocolMessageTypes::Handshake => {
                 let hs = decode::<Handshake>(msg, version)?;
+                let peer_type = NodeType::from(hs.node_type);
+                if hs.network_id != self.network_id
+                    || (!self.respond_handshake && peer_type != NodeType::FullNode)
+                    || (peer_type == NodeType::Timelord
+                        && !self
+                            .api
+                            .accept_inbound_timelord(peer_host(peers, peer_id).await))
+                {
+                    return close_peer(peers, peer_id, None).await;
+                }
                 let negotiated = ChiaProtocolVersion::from_str(&hs.protocol_version)
-                    .expect("ChiaProtocolVersion::from_str is Infallible");
+                    .unwrap_or_else(|never| match never {});
                 if let Some(peer) = peers.read().await.get(peer_id).cloned() {
-                    *peer.node_type.write().await = NodeType::from(hs.node_type);
+                    *peer.node_type.write().await = peer_type;
                     *peer.protocol_version.write().await = negotiated;
                     // Record the peer's advertised capabilities so the read loop's inbound rate
                     // limiter selects the v1/v2 numbers this peer negotiated. Server-role links
@@ -872,19 +882,6 @@ impl FullNodeHandler {
                         negotiated,
                     )
                     .await?;
-                }
-                // An inbound TIMELORD is accepted only from localhost or an exempt network. The
-                // refusal happens right after the handshake completes and BEFORE any greeting,
-                // and closes WITHOUT banning.
-                if NodeType::from(hs.node_type) == NodeType::Timelord {
-                    let host = peer_host(peers, peer_id).await;
-                    if !self.api.accept_inbound_timelord(host) {
-                        log::info!(
-                            "Not accepting inbound TIMELORD connection from {host:?}: \
-                             localhost/exempt networks only"
-                        );
-                        return close_peer(peers, peer_id, None).await;
-                    }
                 }
                 // Greet the new peer by type the moment its handshake completes. No peak
                 // (empty store / blind api) sends nothing.

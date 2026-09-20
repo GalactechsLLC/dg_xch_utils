@@ -64,7 +64,13 @@ impl Stream for PortfuPeerTransport {
             let socket = self.socket.clone();
             self.read = Some(Box::pin(async move { socket.next_message().await }));
         }
-        let future = self.read.as_mut().expect("read future initialized");
+        let Some(future) = self.read.as_mut() else {
+            return Poll::Ready(Some(Err(
+                portfu::prelude::tokio_tungstenite::tungstenite::Error::Io(Error::other(
+                    "websocket read future unavailable",
+                )),
+            )));
+        };
         match future.as_mut().poll(cx) {
             Poll::Ready(Ok(Some(message))) => {
                 self.read = None;
@@ -122,7 +128,11 @@ impl Sink<Message> for PortfuPeerTransport {
             let socket = self.socket.clone();
             self.close = Some(Box::pin(async move { socket.close().await }));
         }
-        let future = self.close.as_mut().expect("close future initialized");
+        let Some(future) = self.close.as_mut() else {
+            return Poll::Ready(Err(Self::Error::Io(Error::other(
+                "websocket close future unavailable",
+            ))));
+        };
         match future.as_mut().poll(cx) {
             Poll::Ready(result) => {
                 self.close = None;

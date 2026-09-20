@@ -14,31 +14,50 @@ use dg_xch_core::constants::{FARMING_TO_POOL, POOL_PROTOCOL_VERSION, SELF_POOLIN
 use dg_xch_core::plots::PlotNft;
 use dg_xch_core::pool::PoolState;
 use dg_xch_core::protocols::pool::GetPoolInfoResponse;
-use dg_xch_core::traits::SizedBytes;
 use dg_xch_keys::{
     BLS_SPEC_NUMBER, CHIA_BLOCKCHAIN_NUMBER, FARMER_PATH, POOL_PATH, encode_puzzle_hash,
-    fingerprint, key_from_mnemonic_str, master_sk_to_farmer_sk, master_sk_to_pool_sk,
-    master_sk_to_wallet_sk,
+    fingerprint, key_from_mnemonic, key_from_mnemonic_str, master_sk_to_farmer_sk,
+    master_sk_to_pool_sk, master_sk_to_wallet_sk,
 };
 use dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::{
     DEFAULT_HIDDEN_PUZZLE_TREE_HASH, calculate_synthetic_secret_key, puzzle_hash_for_pk,
 };
 use log::{debug, error, info};
 use std::collections::{HashMap, HashSet};
-use std::io::{Error, ErrorKind};
+use std::io::{Error, ErrorKind, IsTerminal, Write};
 use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub fn create_cold_wallet(network: &ConsensusConstants) -> Result<(), Error> {
+    let mut output = std::io::stdout().lock();
+    let is_terminal = output.is_terminal();
+    create_cold_wallet_with_output(network, &mut output, is_terminal)
+}
+
+fn create_cold_wallet_with_output(
+    network: &ConsensusConstants,
+    output: &mut impl Write,
+    is_terminal: bool,
+) -> Result<(), Error> {
+    if !is_terminal {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "cold-wallet recovery phrases require an interactive terminal; output cannot be redirected",
+        ));
+    }
     let mnemonic = Mnemonic::generate(24)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
-    let master_secret_key = key_from_mnemonic_str(&mnemonic.to_string())?;
+    let master_secret_key = key_from_mnemonic(&mnemonic)?;
     let master_public_key = master_secret_key.sk_to_pk();
     let fp = fingerprint(&master_public_key);
     info!("Fingerprint: {fp}");
-    info!("Mnemonic Phrase: {}", mnemonic);
-    info!("Master SK: {}", Bytes32::new(master_secret_key.to_bytes()));
+    writeln!(
+        output,
+        "Keep this recovery phrase private and store it offline. It is not saved by this command."
+    )?;
+    writeln!(output, "Mnemonic Phrase: {mnemonic}")?;
+    output.flush()?;
     info!(
         "Master public key (m): {}",
         Bytes48::from(master_public_key.to_bytes())
@@ -90,9 +109,6 @@ pub fn keys_for_coinspends(
             let puz_hash = puzzle_hash_for_pk(pub_key.into())?;
             let synthetic_secret_key =
                 calculate_synthetic_secret_key(&sec_key, DEFAULT_HIDDEN_PUZZLE_TREE_HASH)?;
-            info!("MasterSK: {master_sk:?}");
-            info!("WalletSK: {sec_key:?}");
-            info!("SyntheticSK: {synthetic_secret_key:?}");
             key_cache.insert(pub_key.into(), synthetic_secret_key.clone());
             puz_key_cache.insert(puz_hash);
             if c.coin.puzzle_hash == puz_hash {
@@ -385,7 +401,7 @@ async fn create_and_validate_target_state(
 }
 
 async fn get_pool_info(pool_url: &str) -> Result<GetPoolInfoResponse, Error> {
-    let pool_info = DefaultPoolClient::new()
+    let pool_info = DefaultPoolClient::new()?
         .get_pool_info(pool_url)
         .await
         .map_err(|e| Error::other(format!("Failed to load pool info: {e:?}")))?;
@@ -440,5 +456,36 @@ pub async fn get_plotnft_ready_state(
             );
             Ok(peak.height >= test_height)
         }
+    }
+}
+
+#[cfg(test)]
+mod cold_wallet_output_tests {
+    use super::create_cold_wallet_with_output;
+    use dg_xch_core::consensus::constants::MAINNET;
+    use std::io::ErrorKind;
+
+    #[test]
+    fn cold_wallet_refuses_redirected_secret_output() {
+        let mut output = Vec::new();
+        let error = create_cold_wallet_with_output(&MAINNET, &mut output, false).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn cold_wallet_outputs_only_the_recovery_phrase_to_the_terminal() {
+        let mut output = Vec::new();
+        create_cold_wallet_with_output(&MAINNET, &mut output, true).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert_eq!(text.lines().count(), 2);
+        let phrase = text
+            .lines()
+            .nth(1)
+            .unwrap()
+            .strip_prefix("Mnemonic Phrase: ")
+            .unwrap();
+        assert_eq!(bip39::Mnemonic::parse(phrase).unwrap().word_count(), 24);
+        assert!(!text.contains("Master SK"));
     }
 }

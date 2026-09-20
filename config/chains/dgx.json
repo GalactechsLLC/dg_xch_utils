@@ -1,0 +1,12 @@
+{
+  "network_id": "dgx",
+  "genesis_seed": "dg_xch/dgx/no-prefarm/v1",
+  "rewards": {
+    "genesis_pool": 0,
+    "genesis_farmer": 0,
+    "initial_pool": 1750000000000,
+    "initial_farmer": 250000000000,
+    "halving_interval": 5045760,
+    "max_halvings": 4
+  }
+}

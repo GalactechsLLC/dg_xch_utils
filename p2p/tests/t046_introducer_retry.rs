@@ -1,5 +1,28 @@
 mod common;
 
+#[tokio::test]
+async fn registration_runs_even_when_outbound_target_is_already_met() {
+    let intro_port = common::free_port();
+    let (introducer, queries) = common::spawn_introducer_on(intro_port, vec![]).await;
+    let settings = dg_xch_p2p::P2pSettings {
+        target_outbound: 0,
+        ..common::fast_settings()
+    };
+    let mut supervisor = dg_xch_p2p::Supervisor::new(settings);
+    supervisor.start_introducer_registration("127.0.0.1", intro_port);
+    assert!(
+        common::wait_until(
+            || async { queries.load(std::sync::atomic::Ordering::Relaxed) > 0 },
+            std::time::Duration::from_secs(15),
+        )
+        .await
+    );
+    supervisor.stop().await;
+    introducer
+        .run
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 use common::{fast_settings, free_port, peer, spawn_introducer_on, wait_until};
 use dg_xch_p2p::Supervisor;
 use std::sync::atomic::Ordering;

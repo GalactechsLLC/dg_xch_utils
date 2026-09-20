@@ -52,14 +52,14 @@ pub struct DefaultPoolClient {
     pub client: Client,
 }
 impl DefaultPoolClient {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Result<Self, Error> {
+        Ok(Self {
             client: Client::builder()
-                .danger_accept_invalid_certs(true)
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(30))
                 .build()
-                .unwrap_or_default(),
-        }
+                .map_err(Error::other)?,
+        })
     }
 }
 #[async_trait]
@@ -157,8 +157,7 @@ async fn send_request<
                 error_code: PoolErrorCode::RequestFailed as u8,
                 error_message: e.to_string(),
             })?;
-            debug!("Sending request {request:?}");
-            debug!("Request Data {t:?}");
+            debug!("Sending pool request: {method}");
             client.execute(request)
         }
         RequestMode::Query(t) => {
@@ -167,8 +166,7 @@ async fn send_request<
                 error_code: PoolErrorCode::RequestFailed as u8,
                 error_message: e.to_string(),
             })?;
-            debug!("Sending request {request:?}");
-            debug!("Request Data {t:?}");
+            debug!("Sending pool request: {method}");
             client.execute(request)
         }
         RequestMode::Send => {
@@ -177,32 +175,27 @@ async fn send_request<
                 error_code: PoolErrorCode::RequestFailed as u8,
                 error_message: e.to_string(),
             })?;
-            debug!("Sending request {request:?}");
+            debug!("Sending pool request: {method}");
             client.execute(request)
         }
     };
     match future.await {
         Ok(resp) => {
             if resp.status() == reqwest::StatusCode::OK {
-                match resp.text().await {
-                    Ok(body) => {
-                        debug!("Got Response from Pool: {body}");
-                        match serde_json::from_str::<PoolError>(body.as_str()) {
-                            Ok(e) => Err(e),
-                            Err(_) => match serde_json::from_str(&body) {
-                                Ok(r) => Ok(r),
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to parse {method} response, Invalid Json: {e:?}, {body}"
-                                    );
-                                    Err(PoolError {
-                                        error_code: PoolErrorCode::RequestFailed as u8,
-                                        error_message: e.to_string(),
-                                    })
-                                }
-                            },
-                        }
-                    }
+                match crate::http::bounded_body(resp, 1024 * 1024).await {
+                    Ok(body) => match serde_json::from_slice::<PoolError>(&body) {
+                        Ok(e) => Err(e),
+                        Err(_) => match serde_json::from_slice(&body) {
+                            Ok(r) => Ok(r),
+                            Err(e) => {
+                                warn!("Failed to parse {method} response, Invalid Json: {e:?}");
+                                Err(PoolError {
+                                    error_code: PoolErrorCode::RequestFailed as u8,
+                                    error_message: e.to_string(),
+                                })
+                            }
+                        },
+                    },
                     Err(e) => {
                         warn!("Failed to {method}, Invalid Body: {e:?}");
                         Err(PoolError {
@@ -213,16 +206,10 @@ async fn send_request<
                 }
             } else {
                 let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                warn!(
-                    "Failed to {method}, Bad Status Code: {:?}, {}",
-                    status, text
-                );
+                warn!("Failed to {method}, Bad Status Code: {status:?}");
                 Err(PoolError {
                     error_code: PoolErrorCode::RequestFailed as u8,
-                    error_message: format!(
-                        "Failed to {method}, Bad Status Code: {status:?}, {text}"
-                    ),
+                    error_message: format!("Failed to {method}, Bad Status Code: {status:?}"),
                 })
             }
         }
@@ -264,13 +251,13 @@ pub async fn create_pool_login_parts(
     target_pool: &str,
     keys_and_launcher_ids: &[(SecretKey, Bytes32)],
 ) -> Result<PoolLoginParts, Error> {
-    let pool_client = DefaultPoolClient::new();
+    let pool_client = DefaultPoolClient::new()?;
     let pool_info = pool_client
         .get_pool_info(target_pool)
         .await
         .map_err(|e| Error::other(format!("{e:?}")))?;
     let current_auth_token =
-        get_current_authentication_token(pool_info.authentication_token_timeout);
+        get_current_authentication_token(pool_info.authentication_token_timeout)?;
     let mut sigs = vec![];
     for (sec_key, launcher_id) in keys_and_launcher_ids {
         let payload = AuthenticationPayload {

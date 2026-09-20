@@ -41,6 +41,7 @@ impl FullNode<SqliteStore> {
     /// Returns an I/O error if the backend cannot be opened.
     pub async fn boot(config: Config) -> Result<Self, Error> {
         config.performance.validate().map_err(Error::other)?;
+        config.bind_chain_identity()?;
         let store = open_backend(&config.backend).await?;
         if let Some(mebibytes) = config.performance.sqlite_writer_cache_mb {
             store
@@ -61,7 +62,7 @@ where
     /// # Errors
     /// Infallible today; kept fallible so store-dependent wiring can fail cleanly later.
     pub fn boot_with_store(config: Config, store: Arc<S>) -> Result<Self, Error> {
-        let constants = constants_for(&config.network_id);
+        let constants = config.consensus_constants().map_err(Error::other)?;
         Self::boot_with_store_constants(config, store, constants)
     }
 
@@ -72,6 +73,10 @@ where
         constants: ConsensusConstants,
     ) -> Result<Self, Error> {
         config.performance.validate().map_err(Error::other)?;
+        constants
+            .rewards
+            .validate(constants.max_coin_amount)
+            .map_err(Error::other)?;
         if let Some(workers) = config.performance.compute_workers {
             dg_xch_core::compute::configure(workers).map_err(Error::other)?;
         }
@@ -220,12 +225,17 @@ where
     /// Returns an I/O error if a protocol server fails to start.
     pub async fn start_services(self: &Arc<Self>) -> Result<crate::server::NodeServices, Error> {
         install_crypto_provider();
+        if self.config.allows_chain_bootstrap()
+            && let Some((hash, _)) = self.store.get_peak().await.map_err(Error::other)?
+        {
+            update_slot_state_on_peak(self, hash).await;
+        }
         let (peer_server, peer_run, inbound_peers) = self.build_peer_server()?;
 
         let mut supervisor = Supervisor::with_identity(
             self.config.p2p,
             dg_xch_p2p::DialIdentity {
-                network_id: self.config.network_id.clone(),
+                network_id: self.config.handshake_network_id().map_err(Error::other)?,
                 server_port: self
                     .config
                     .advertise

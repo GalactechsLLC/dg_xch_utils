@@ -15,7 +15,10 @@ use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::protocols::PeerMap;
 pub use dg_xch_core::protocols::full_node::CoinQueryWindow;
 use dg_xch_core::protocols::full_node::NewTransaction;
-use dg_xch_core::ssl::{generate_ca_signed_cert_data, load_certs_from_bytes, make_ca_cert};
+use dg_xch_core::ssl::{
+    generate_ca_signed_cert_data_for_host, load_certs_from_bytes, load_ssl_cert_and_key,
+    make_ca_cert,
+};
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_core::utils::hash_256;
 use dg_xch_node::slots::SlotState;
@@ -337,7 +340,7 @@ pub struct PortfuRpcTlsContext {
 /// remain usable. Protected routes select one of these named stores and require a matching cert:
 /// `chia-peers` for the Chia protocol and `rpc-clients` for administrative APIs.
 pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsContext, IoError> {
-    let rpc_ca = match mode {
+    let (rpc_ca, identity_key) = match mode {
         RpcTlsMode::PrivateCa { ssl_dir } => {
             let (ca_crt, ca_key) = resolve_private_ca(ssl_dir)?;
             if ca_crt == CHIA_CA_CRT.as_bytes() {
@@ -345,10 +348,12 @@ pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsCon
                     "refusing to root RPC client-auth at the public network CA; supply a private CA",
                 ));
             }
-            let _ = ca_key;
-            ca_crt
+            (ca_crt, ca_key)
         }
-        RpcTlsMode::Local => CHIA_CA_CRT.as_bytes().to_vec(),
+        RpcTlsMode::Local => (
+            CHIA_CA_CRT.as_bytes().to_vec(),
+            CHIA_CA_KEY.as_bytes().to_vec(),
+        ),
     };
     let client_auth = ClientAuthConfig {
         presentation: ClientCertificateMode::Optional,
@@ -358,7 +363,7 @@ pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsCon
         ],
     };
     let (cert_bytes, key_bytes) =
-        generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())?;
+        generate_ca_signed_cert_data_for_host(&rpc_ca, &identity_key, "localhost")?;
     let certs = load_certs_from_bytes(&cert_bytes)?;
     let node_id = Bytes32::new(hash_256(
         certs.first().map(AsRef::as_ref).unwrap_or_default(),
@@ -383,19 +388,13 @@ fn resolve_private_ca(ssl_dir: &Path) -> Result<(Vec<u8>, Vec<u8>), IoError> {
     let ca_dir = ssl_dir.join("ca");
     let crt_path = ca_dir.join("private_ca.crt");
     let key_path = ca_dir.join("private_ca.key");
-    if crt_path.exists() && key_path.exists() {
-        return Ok((std::fs::read(&crt_path)?, std::fs::read(&key_path)?));
+    if crt_path.try_exists()? || key_path.try_exists()? {
+        return load_ssl_cert_and_key(&crt_path, &key_path);
     }
     std::fs::create_dir_all(&ca_dir)?;
     // Generate a unique private CA ONCE and persist it. Distribute <ssl_dir>/ca/private_ca.crt to
     // RPC tooling and sign client certs with the paired key.
-    let (crt, key) = make_ca_cert(&crt_path, &key_path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok((crt, key))
+    make_ca_cert(&crt_path, &key_path)
 }
 
 impl dg_xch_core::errors::ErrorCode for RpcError {
@@ -434,4 +433,40 @@ pub(crate) fn apply_coin_query_window(
                     .is_none_or(|end| record.confirmed_block_index < end)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod private_ca_tests {
+    use super::resolve_private_ca;
+    use dg_xch_core::constants::CHIA_CA_CRT;
+    #[cfg(unix)]
+    use dg_xch_core::constants::CHIA_CA_KEY;
+
+    #[test]
+    fn partial_private_ca_is_not_silently_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let ca_directory = directory.path().join("ca");
+        std::fs::create_dir(&ca_directory).unwrap();
+        let certificate = ca_directory.join("private_ca.crt");
+        std::fs::write(&certificate, CHIA_CA_CRT.as_bytes()).unwrap();
+        assert!(resolve_private_ca(directory.path()).is_err());
+        assert_eq!(std::fs::read(certificate).unwrap(), CHIA_CA_CRT.as_bytes());
+        assert!(!ca_directory.join("private_ca.key").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_ca_rejects_world_readable_existing_key() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let ca_directory = directory.path().join("ca");
+        std::fs::create_dir(&ca_directory).unwrap();
+        let certificate = ca_directory.join("private_ca.crt");
+        let private_key = ca_directory.join("private_ca.key");
+        std::fs::write(certificate, CHIA_CA_CRT.as_bytes()).unwrap();
+        std::fs::write(&private_key, CHIA_CA_KEY.as_bytes()).unwrap();
+        std::fs::set_permissions(&private_key, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let error = resolve_private_ca(directory.path()).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    }
 }

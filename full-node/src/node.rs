@@ -22,7 +22,9 @@ use dg_xch_core::consensus::block_generator::GeneratorReference;
 use dg_xch_core::consensus::block_header_validation::{
     ValidationState, validate_unfinished_header_block,
 };
-use dg_xch_core::consensus::constants::{ConsensusConstants, MAINNET, TESTNET_11};
+use dg_xch_core::consensus::constants::ConsensusConstants;
+#[cfg(test)]
+use dg_xch_core::consensus::constants::MAINNET;
 use dg_xch_core::consensus::difficulty_adjustment::get_next_sub_slot_iters_and_difficulty;
 use dg_xch_core::consensus::make_sub_epoch_summary::next_sub_epoch_summary;
 use dg_xch_core::consensus::producer::{
@@ -197,15 +199,6 @@ const SHED_TIP_LAG_BLOCKS: u32 = 50_000;
 const TIP_FOLLOW_IDLE: Duration = Duration::from_secs(2);
 // Weight-proof fetch deadline: the proof is ~14 MB and the peer assembles it; generous vs the block timeout.
 const WEIGHT_PROOF_TIMEOUT: Duration = Duration::from_secs(120);
-
-// Select consensus constants by network id. A fork's own constants would enter here (a later
-// constants/genesis swap in core), touching no other crate boundary.
-fn constants_for(network_id: &str) -> ConsensusConstants {
-    match network_id {
-        "testnet11" => TESTNET_11,
-        _ => MAINNET,
-    }
-}
 
 // The running node process: one shared store fanned out to the engine, Portfu state, and peer
 // server, plus the mempool, wallet notifier, and sync state updated by the new-peak path.

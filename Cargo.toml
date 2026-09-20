@@ -7,7 +7,9 @@ members = [
     "clients",
     "core",
     "full-node",
-    "gui/src-tauri",
+    "gui",
+    "farmer",
+    "wallet",
     "keys",
     "logging",
     "macros",
@@ -15,15 +17,25 @@ members = [
     "p2p",
     "parser_macro",
     "proof_of_space",
+    "proof_of_space/pos1",
+    "proof_of_space/pos2",
+    "proof_of_space/pos_common",
     "puzzles",
     "serialize",
     "servers",
     "simulator",
     "stores",
     "tools",
+    "timelord",
+    "introducer",
+    "plotter",
     "vdf",
     "weight-proof"
 ]
+
+[workspace.dependencies]
+blake3 = "1.8.3"
+dg_xch_core = { path = "core", version = "3.0.0", default-features = false }
 
 [workspace.package]
 version = "3.0.0"

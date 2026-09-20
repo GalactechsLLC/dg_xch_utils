@@ -1,0 +1,22 @@
+[package]
+name = "dg_xch_plotter_cuda"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+cuda-device = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "b9847e9515ed3a23096f22567d3eaf0a6e3e440c" }
+cuda-host = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "b9847e9515ed3a23096f22567d3eaf0a6e3e440c" }
+cuda-core = "=0.3.1"
+dg_xch_plotter = { path = ".." }
+dg_xch_pos2 = { path = "../../proof_of_space/pos2" }
+clap = { version = "4.5.60", features = ["derive"] }
+hex = "0.4.3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+overflow-checks = true

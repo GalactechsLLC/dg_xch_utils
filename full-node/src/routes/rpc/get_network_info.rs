@@ -24,7 +24,7 @@ pub async fn route(
                 },
                 |live| live.network_id.clone(),
             );
-            let prefix = if name == "mainnet" { "xch" } else { "txch" };
+            let prefix = node.constants.bech32_prefix;
             let mut m = Map::new();
             m.insert("network_name".to_string(), Value::from(name));
             m.insert("network_prefix".to_string(), Value::from(prefix));

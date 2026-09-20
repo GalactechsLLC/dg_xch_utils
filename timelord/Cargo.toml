@@ -1,0 +1,22 @@
+[package]
+name = "dg_xch_timelord"
+description = "Native VDF workers and authenticated compact-proof timelord service"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+dg_xch_core = { path = "../core", version = "3.0.0", default-features = false }
+dg_xch_servers = { path = "../servers" }
+dg_xch_vdf = { path = "../vdf" }
+clap = { version = "4.5.60", features = ["derive"] }
+futures-util = "0.3.32"
+rustls = "0.23.45"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "process", "io-util"] }
+tokio-rustls = "0.26.4"
+tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }

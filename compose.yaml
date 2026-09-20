@@ -1,0 +1,196 @@
+name: dgx-development
+
+x-service: &service
+  image: dgx-development:local
+  build:
+    context: .
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  mem_limit: 2g
+  cpus: 2
+  logging:
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-node-command: &node-command
+  - --listen
+  - 0.0.0.0:8444
+  - --rpc-tls
+  - private-ca
+  - --ssl-dir
+  - /data/ssl
+  - --chain-config
+  - /common/chain.json
+  - --db
+  - sqlite:///data/chain.db
+  - --introducer
+  - introducer:8445
+  - --target-outbound
+  - "2"
+  - --target-peer-count
+  - "16"
+  - --compute-workers
+  - "1"
+  - --sqlite-writer-cache-mb
+  - "64"
+  - --uncompact
+
+x-node-health: &node-health
+  test: [CMD, curl, --silent, --fail, --cacert, /data/ssl/ca/private_ca.crt, https://localhost:8444/metrics]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 30s
+
+services:
+  init-stack:
+    <<: *service
+    restart: "no"
+    entrypoint: [dg_xch_stack_init, --root, /stack]
+    network_mode: none
+    volumes:
+      - common:/stack/common
+      - node-cpu:/stack/node-cpu
+      - node-nvidia:/stack/node-nvidia
+      - node-amd:/stack/node-amd
+      - farmer-cpu:/stack/farmer-cpu
+      - farmer-nvidia:/stack/farmer-nvidia
+      - farmer-amd:/stack/farmer-amd
+      - introducer:/stack/introducer
+      - timelord:/stack/timelord
+
+  introducer:
+    <<: *service
+    entrypoint: [dg_xch_introducer, --config, /service/config.json]
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+    volumes:
+      - introducer:/service:ro
+    networks: [chain]
+    mem_limit: 256m
+    cpus: 0.5
+
+  node-cpu:
+    <<: *service
+    command: *node-command
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+      introducer:
+        condition: service_started
+    volumes:
+      - common:/common:ro
+      - node-cpu:/data
+    networks: [chain]
+    healthcheck: *node-health
+
+  node-nvidia:
+    <<: *service
+    command: *node-command
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+      introducer:
+        condition: service_started
+    volumes:
+      - common:/common:ro
+      - node-nvidia:/data
+    networks: [chain]
+    healthcheck: *node-health
+
+  node-amd:
+    <<: *service
+    command: *node-command
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+      introducer:
+        condition: service_started
+    volumes:
+      - common:/common:ro
+      - node-amd:/data
+    networks: [chain]
+    healthcheck: *node-health
+
+  farmer-cpu:
+    <<: *service
+    entrypoint: [dg_xch_farmer, --config, /service/config.yaml]
+    depends_on:
+      node-cpu:
+        condition: service_healthy
+    network_mode: service:node-cpu
+    volumes:
+      - farmer-cpu:/service:ro
+      - ${DGX_CPU_PLOTS:-./docker/plots/cpu}:/plots:ro
+
+  farmer-nvidia:
+    <<: *service
+    profiles: [nvidia]
+    entrypoint: [dg_xch_farmer, --config, /service/config.yaml]
+    depends_on:
+      node-nvidia:
+        condition: service_healthy
+    network_mode: service:node-nvidia
+    volumes:
+      - farmer-nvidia:/service:ro
+      - ${DGX_NVIDIA_PLOTS:-./docker/plots/nvidia}:/plots:ro
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${DGX_NVIDIA_DEVICE:-0}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${DGX_NVIDIA_DEVICE:-0}"]
+              capabilities: [gpu]
+
+  farmer-amd:
+    <<: *service
+    profiles: [amd]
+    entrypoint: [dg_xch_farmer, --config, /service/config.yaml]
+    depends_on:
+      node-amd:
+        condition: service_healthy
+    network_mode: service:node-amd
+    volumes:
+      - farmer-amd:/service:ro
+      - ${DGX_AMD_PLOTS:-./docker/plots/amd}:/plots:ro
+    devices:
+      - ${DGX_AMD_RENDER_NODE:-/dev/dri/renderD128}:/dev/dri/renderD128
+    group_add:
+      - "${DGX_RENDER_GID:-109}"
+
+  timelord:
+    <<: *service
+    entrypoint: [dg_xch_timelord, compact, --config, /service/config.json]
+    depends_on:
+      node-cpu:
+        condition: service_healthy
+    network_mode: service:node-cpu
+    volumes:
+      - timelord:/service:ro
+    mem_limit: 1g
+    cpus: 1
+
+networks:
+  chain:
+    internal: true
+
+volumes:
+  common:
+  node-cpu:
+  node-nvidia:
+  node-amd:
+  farmer-cpu:
+  farmer-nvidia:
+  farmer-amd:
+  introducer:
+  timelord:

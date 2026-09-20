@@ -111,6 +111,8 @@ fn api_trust(
     wallet_sync_sem: Arc<LimitedSemaphore>,
 ) -> StoreApi<SqliteStore> {
     StoreApi {
+        allow_chain_bootstrap: false,
+        follow_inflight_since: Arc::default(),
         store,
         mempool: Arc::new(Mutex::new(Mempool::new(&MAINNET))),
         constants: MAINNET,

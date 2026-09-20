@@ -194,6 +194,7 @@ async fn node_with_slice_records() -> (Arc<FullNode<SqliteStore>>, Vec<HeaderBlo
                 uncompact: false,
                 prefetch_memory_mb: None,
                 prefetch_max_inflight: None,
+                chain_definition: None,
                 performance: Default::default(),
                 trusted_peers: Vec::new(),
                 trusted_cidrs: Vec::new(),

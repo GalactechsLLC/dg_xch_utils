@@ -29,8 +29,12 @@ pub struct FullNodeArgs {
     #[arg(long, default_value = "sqlite:///data/chain.db")]
     db: String,
     /// Network id selecting consensus constants.
-    #[arg(long, default_value = "mainnet")]
-    network: String,
+    #[arg(long)]
+    network: Option<String>,
+    #[arg(long)]
+    chain_config: Option<std::path::PathBuf>,
+    #[arg(long)]
+    print_chain_info: bool,
     /// Directory used to capture sync data for offline replay and profiling.
     #[arg(long)]
     capture_dir: Option<String>,
@@ -128,6 +132,23 @@ pub struct FullNodeArgs {
 
 impl FullNodeArgs {
     fn config(self) -> Result<Config, Error> {
+        let chain_definition: Option<dg_xch_core::consensus::chain_definition::ChainDefinition> =
+            self.chain_config
+                .as_ref()
+                .map(|path| {
+                    let file = std::fs::File::open(path)?;
+                    serde_json::from_reader(file).map_err(Error::other)
+                })
+                .transpose()?;
+        let network = self
+            .network
+            .as_deref()
+            .or_else(|| {
+                chain_definition
+                    .as_ref()
+                    .map(|definition| definition.network_id.as_str())
+            })
+            .unwrap_or("mainnet");
         let defaults = P2pSettings::default();
         let p2p = P2pSettings {
             target_outbound: self.target_outbound.unwrap_or(defaults.target_outbound),
@@ -151,7 +172,7 @@ impl FullNodeArgs {
             &self.peer,
             self.advertise.as_deref(),
             &self.db,
-            &self.network,
+            network,
             self.capture_dir.as_deref(),
             self.genesis_sync,
             self.sync_from,
@@ -163,6 +184,8 @@ impl FullNodeArgs {
             &self.trusted_cidr,
         )
         .map_err(Error::other)?;
+        config.chain_definition = chain_definition;
+        config.consensus_constants().map_err(Error::other)?;
         if config.rpc != config.listen {
             return Err(Error::other(format!(
                 "--rpc no longer opens a second listener; omit it or set it to --listen ({})",
@@ -186,7 +209,27 @@ impl FullNodeArgs {
 }
 
 pub async fn run(args: FullNodeArgs, logger: Arc<DruidGardenLogger>) -> Result<(), Error> {
-    dg_full_node::server::run(args.config()?, logger)
+    let print_chain_info = args.print_chain_info;
+    let config = args.config()?;
+    if print_chain_info {
+        #[derive(serde::Serialize)]
+        struct ChainInfo {
+            network_id: String,
+            handshake_network_id: String,
+            constants: dg_xch_core::consensus::constants::ConsensusConstants,
+        }
+        let info = ChainInfo {
+            network_id: config.network_id.clone(),
+            handshake_network_id: config.handshake_network_id().map_err(Error::other)?,
+            constants: config.consensus_constants().map_err(Error::other)?,
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&info).map_err(Error::other)?
+        );
+        return Ok(());
+    }
+    dg_full_node::server::run(config, logger)
         .await
         .map_err(|error| Error::other(error.to_string()))
 }

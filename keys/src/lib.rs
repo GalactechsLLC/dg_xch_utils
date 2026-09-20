@@ -12,6 +12,7 @@ use sha2::Sha256;
 use std::io::{Error, ErrorKind};
 use std::mem::size_of;
 use std::str::FromStr;
+use zeroize::Zeroizing;
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -199,23 +200,19 @@ pub fn master_sk_to_pooling_authentication_sk(
 pub fn key_from_mnemonic_str(mnemonic: &str) -> Result<SecretKey, Error> {
     let mnemonic = Mnemonic::from_str(mnemonic)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
-    let seed = mnemonic.to_seed("");
-    SecretKey::key_gen_v3(&seed, &[])
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
+    key_from_mnemonic(&mnemonic)
 }
 
 pub fn key_from_mnemonic(mnemonic: &Mnemonic) -> Result<SecretKey, Error> {
-    let seed = mnemonic.to_seed("");
-    SecretKey::key_gen_v3(&seed, &[])
+    let seed = Zeroizing::new(mnemonic.to_seed(""));
+    SecretKey::key_gen_v3(seed.as_ref(), &[])
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
 pub fn random_key() -> Result<SecretKey, Error> {
-    let seed = Mnemonic::generate(24)
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?
-        .to_seed("");
-    SecretKey::key_gen_v3(&seed, &[])
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
+    let mnemonic = Mnemonic::generate(24)
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
+    key_from_mnemonic(&mnemonic)
 }
 
 #[must_use]
@@ -269,5 +266,33 @@ pub fn parse_payout_address(s: &str) -> Result<String, Error> {
             ErrorKind::InvalidInput,
             "String does not appear to be a valid XCH Payout Address",
         ))
+    }
+}
+
+#[cfg(test)]
+mod mnemonic_tests {
+    use super::{key_from_mnemonic, key_from_mnemonic_str};
+    use bip39::Mnemonic;
+    use blst::min_pk::SecretKey;
+
+    #[test]
+    fn zeroized_seed_handling_preserves_key_derivation() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let mnemonic = phrase.parse::<Mnemonic>().unwrap();
+        let expected = SecretKey::key_gen_v3(&mnemonic.to_seed(""), &[]).unwrap();
+        assert_eq!(
+            key_from_mnemonic(&mnemonic).unwrap().to_bytes(),
+            expected.to_bytes()
+        );
+        assert_eq!(
+            key_from_mnemonic_str(phrase).unwrap().to_bytes(),
+            expected.to_bytes()
+        );
+    }
+
+    #[test]
+    fn mnemonic_objects_are_zeroized_on_drop() {
+        fn requires_zeroize_on_drop<Secret: zeroize::ZeroizeOnDrop>() {}
+        requires_zeroize_on_drop::<Mnemonic>();
     }
 }

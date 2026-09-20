@@ -161,7 +161,7 @@ impl NodeServices {
                 return;
             };
             if let Some((host, port)) = &self.introducer {
-                supervisor.start_introducer(host, *port);
+                supervisor.start_introducer_registration(host, *port);
             }
             supervisor.start_outbound();
         }
@@ -196,6 +196,7 @@ pub async fn run(
     config: Config,
     logger: Arc<DruidGardenLogger>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    config.bind_chain_identity()?;
     let server_bind = config.listen;
     if config.rpc != server_bind {
         return Err(std::io::Error::new(

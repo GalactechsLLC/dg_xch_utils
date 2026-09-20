@@ -37,7 +37,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
+use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::error::TlsError;
@@ -92,6 +93,7 @@ pub struct WebsocketServer {
     /// misbehaving peer's host here (via the registry injected into each [`SocketPeer`]). One
     /// registry per server instance, shared across all its connections.
     pub bans: Arc<BanRegistry>,
+    pub inbound_limit: Arc<Semaphore>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<Option<WebSocketMetrics>>,
 }
@@ -135,6 +137,7 @@ impl WebsocketServer {
             message_handlers,
             rate_limited: false,
             bans: Arc::new(BanRegistry::default()),
+            inbound_limit: Arc::new(Semaphore::new(128)),
             #[cfg(feature = "metrics")]
             metrics: Arc::new(None),
         })
@@ -171,6 +174,7 @@ impl WebsocketServer {
             message_handlers,
             rate_limited: false,
             bans: Arc::new(BanRegistry::default()),
+            inbound_limit: Arc::new(Semaphore::new(128)),
             #[cfg(feature = "metrics")]
             metrics: Arc::new(None),
         })
@@ -179,8 +183,8 @@ impl WebsocketServer {
     pub async fn run(&self, run: Arc<AtomicBool>) -> Result<(), Error> {
         let listener = TcpListener::bind(self.socket_address).await?;
         let acceptor = TlsAcceptor::from(self.server_config.clone());
-        let mut http = Builder::new();
-        http.keep_alive(true);
+        let handshakes = Arc::new(Semaphore::new(64));
+        let mut connections = JoinSet::new();
         while run.load(Ordering::Relaxed) {
             let run = run.clone();
             let peers = self.peers.clone();
@@ -191,14 +195,25 @@ impl WebsocketServer {
             select!(
                 res = listener.accept() => {
                     match res {
-                        Ok((stream, _)) => {
+                        Ok((stream, address)) => {
+                            if bans.is_banned(&address.ip()) {
+                                continue;
+                            }
+                            let Ok(permit) = handshakes.clone().try_acquire_owned() else {
+                                continue;
+                            };
+                            let acceptor = acceptor.clone();
                             let peers = peers.clone();
                             let message_handlers = handlers.clone();
                             let bans = bans.clone();
                             #[cfg(feature = "metrics")]
                             let metrics = metrics.clone();
-                            match acceptor.accept(stream).await {
-                                Ok(stream) => {
+                            let rate_limited = self.rate_limited;
+                            let inbound_limit = self.inbound_limit.clone();
+                            connections.spawn(async move {
+                            let _permit = permit;
+                            match tokio::time::timeout(Duration::from_secs(5), acceptor.accept(stream)).await {
+                                Ok(Ok(stream)) => {
                                     let addr = stream.get_ref().0.peer_addr().ok();
                                     let mut peer_id = None;
                                     if let Some(certs) = stream.get_ref().1.peer_certificates()
@@ -206,7 +221,6 @@ impl WebsocketServer {
                                             peer_id = Some(Bytes32::new(hash_256(&certs[0])));
                                     }
                                     let peer_id = Arc::new(peer_id);
-                                    let rate_limited = self.rate_limited;
                                     let service = service_fn(move |req| {
                                         let data = ConnectionData {
                                             addr,
@@ -217,6 +231,7 @@ impl WebsocketServer {
                                             run: run.clone(),
                                             rate_limited,
                                             bans: bans.clone(),
+                                            inbound_limit: inbound_limit.clone(),
                                         };
                                         #[cfg(feature = "metrics")]
                                         let metrics = metrics.clone();
@@ -228,27 +243,33 @@ impl WebsocketServer {
                                             )
                                         }
                                     });
+                                    let http = Builder::new();
                                     let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
-                                    tokio::spawn( async move {
-                                        if let Err(e) = connection.await {
-                                            log_connection_error("Error serving connection", &format!("{e:?}"));
-                                        }
-                                        Ok::<(), Error>(())
-                                    });
+                                    if let Ok(Err(error)) = tokio::time::timeout(Duration::from_secs(15), connection).await {
+                                        log_connection_error("Error serving connection", &format!("{error:?}"));
+                                    }
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     log_connection_error("Error accepting connection", &format!("{e:?}"));
                                 }
+                                Err(_) => debug!("Peer TLS handshake timed out"),
                             }
+                            });
                         }
                         Err(e) => {
                             log_connection_error("Error accepting connection", &format!("{e:?}"));
                         }
                     }
                 },
+                Some(result) = connections.join_next(), if !connections.is_empty() => {
+                    if let Err(error) = result {
+                        log_connection_error("Connection task failed", &error.to_string());
+                    }
+                },
                 () = tokio::time::sleep(Duration::from_millis(10)) => {}
             );
         }
+        connections.shutdown().await;
         Ok(())
     }
 
@@ -263,6 +284,11 @@ impl WebsocketServer {
         if self.bans.is_banned(&peer_addr.ip()) {
             return Err(tungstenite::error::Error::ConnectionClosed);
         }
+        let _permit = self
+            .inbound_limit
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| tungstenite::error::Error::ConnectionClosed)?;
         handle_connection(
             peer_addr,
             Arc::new(peer_id),
@@ -333,6 +359,7 @@ struct ConnectionData {
     pub run: Arc<AtomicBool>,
     pub rate_limited: bool,
     pub bans: Arc<BanRegistry>,
+    pub inbound_limit: Arc<Semaphore>,
 }
 
 fn connection_handler(
@@ -340,6 +367,15 @@ fn connection_handler(
     #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
 ) -> Result<Response<Full<Bytes>>, Error> {
     if is_upgrade_request(&data.req) {
+        let permit = match data.inbound_limit.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                return Response::builder()
+                    .status(503)
+                    .body(Full::new(Bytes::from("Peer capacity reached")))
+                    .map_err(Error::other);
+            }
+        };
         // Refuse a host that is banned and not yet expired, BEFORE completing the websocket
         // upgrade. Returns HTTP 403 so the dialing client's handshake fails fast; a banned
         // spammer that closes and immediately reconnects is turned away for the rest of its
@@ -368,17 +404,6 @@ fn connection_handler(
             .ok_or_else(|| Error::other("Invalid SocketAddr"))?;
         let peer_id = Arc::new(
             data.peer_id
-                .or_else(|| {
-                    if let Some(key) = data.req.headers().get("ssl-client-cert") {
-                        debug!("Using ssl-client header");
-                        Some(Bytes32::new(hash_256(key.as_bytes())))
-                    } else if let Some(key) = data.req.headers().get("chia-client-cert") {
-                        Some(Bytes32::new(hash_256(key.as_bytes())))
-                    } else {
-                        error!("Invalid Peer - No Cert or Header");
-                        None
-                    }
-                })
                 .ok_or_else(|| {
                     tungstenite::error::Error::Tls(TlsError::Rustls(Box::new(
                         rustls::Error::NoCertificatesPresented,
@@ -393,6 +418,7 @@ fn connection_handler(
             gauge.add(1);
         }
         tokio::spawn(async move {
+            let _permit = permit;
             let websocket = match websocket.await {
                 Ok(websocket) => WebsocketMsgStream::TokioIo(Box::new(websocket)),
                 Err(error) => {

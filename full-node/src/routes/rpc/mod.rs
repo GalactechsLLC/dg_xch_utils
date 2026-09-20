@@ -102,6 +102,7 @@ mod get_mempool_item_by_tx_id;
 mod get_mempool_items_by_coin_name;
 mod get_network_info;
 mod get_network_space;
+mod get_node_details;
 mod get_puzzle_and_solution;
 mod get_recent_signage_point_or_eos;
 mod get_routes;
@@ -260,6 +261,7 @@ pub fn route_names() -> Vec<&'static str> {
         get_fee_estimate::PATH,
         get_aggsig_additional_data::PATH,
         get_network_info::PATH,
+        get_node_details::PATH,
         get_connections::PATH,
         get_routes::PATH,
         get_version::PATH,

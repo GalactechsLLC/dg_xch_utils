@@ -1,7 +1,7 @@
 use bip39::Mnemonic;
 use clap::{Parser, Subcommand, ValueEnum};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use dialoguer::Input;
+use dialoguer::Password;
 use dialoguer::theme::ColorfulTheme;
 use std::io::{Error, ErrorKind};
 use std::str::FromStr;
@@ -361,8 +361,10 @@ pub enum WalletAction {
 
 pub fn prompt_for_mnemonic() -> Result<Mnemonic, Error> {
     Mnemonic::from_str(
-        &Input::<String>::with_theme(&ColorfulTheme::default())
+        &Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Please Input Your Mnemonic: ")
+            .allow_empty_password(false)
+            .report(false)
             .validate_with(|input: &String| -> Result<(), &str> {
                 if Mnemonic::from_str(input).is_ok() {
                     Ok(())
@@ -370,7 +372,7 @@ pub fn prompt_for_mnemonic() -> Result<Mnemonic, Error> {
                     Err("You did not input a valid Mnemonic, Please try again.")
                 }
             })
-            .interact_text()
+            .interact()
             .map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,

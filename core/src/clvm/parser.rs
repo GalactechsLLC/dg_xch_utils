@@ -16,7 +16,6 @@ enum ParserOp {
 
 const BACK_REFERENCE: u8 = 0xfe;
 
-#[allow(clippy::cast_possible_truncation)]
 pub fn sexp_from_bytes(stream: &mut Cursor<&[u8]>) -> Result<SExp<'static>, ClvmError> {
     if !stream.has_remaining() {
         return Ok(NULL_SEXP);
@@ -37,18 +36,8 @@ pub fn sexp_from_bytes(stream: &mut Cursor<&[u8]>) -> Result<SExp<'static>, Clvm
                     op_buf.push(ParserOp::Cons);
                     op_buf.push(ParserOp::Exp);
                     op_buf.push(ParserOp::Exp);
-                } else if byte_buf[0] == 0x80 {
-                    val_buf.push(NULL_SEXP);
-                } else if byte_buf[0] <= MAX_SINGLE_BYTE {
-                    val_buf.push(SExp::Atom(AtomBuf::new(byte_buf.to_vec())));
                 } else {
-                    let blob_size = decode_size(stream, byte_buf[0])?;
-                    if stream.remaining() < blob_size as usize {
-                        Err(ClvmError::BadEncoding)?;
-                    }
-                    let mut blob: Vec<u8> = vec![0; blob_size as usize];
-                    stream.read_exact(&mut blob)?;
-                    val_buf.push(SExp::Atom(AtomBuf::new(blob)));
+                    val_buf.push(parse_atom_from_first_byte(stream, byte_buf[0])?);
                 }
             }
             ParserOp::Cons => {
@@ -69,7 +58,6 @@ pub fn sexp_from_bytes(stream: &mut Cursor<&[u8]>) -> Result<SExp<'static>, Clvm
         .ok_or_else(|| ClvmError::InvalidSyntax("Failed to Parse SExp".to_string()))
 }
 
-#[allow(clippy::cast_possible_truncation)]
 pub fn sexp_from_bytes_backrefs(stream: &mut Cursor<&[u8]>) -> Result<SExp<'static>, ClvmError> {
     if !stream.has_remaining() {
         return Ok(NULL_SEXP);
@@ -127,11 +115,15 @@ fn parse_atom_from_first_byte(
     } else if first_byte <= MAX_SINGLE_BYTE {
         Ok(SExp::Atom(AtomBuf::new(vec![first_byte])))
     } else {
-        let blob_size = decode_size(stream, first_byte)?;
-        if stream.remaining() < blob_size as usize {
+        let blob_size = usize::try_from(decode_size(stream, first_byte)?)
+            .map_err(|_| ClvmError::BadEncoding)?;
+        if stream.remaining() < blob_size {
             return Err(ClvmError::BadEncoding);
         }
-        let mut blob: Vec<u8> = vec![0; blob_size as usize];
+        let mut blob = Vec::new();
+        blob.try_reserve_exact(blob_size)
+            .map_err(|_| ClvmError::OutOfMemory)?;
+        blob.resize(blob_size, 0);
         stream.read_exact(&mut blob)?;
         Ok(SExp::Atom(AtomBuf::new(blob)))
     }
@@ -150,10 +142,10 @@ fn parse_backref_path(stream: &mut Cursor<&[u8]>) -> Result<Vec<u8>, ClvmError> 
             "Backreference path must be an atom".to_string(),
         ));
     }
-    Ok(match parse_atom_from_first_byte(stream, byte_buf[0])? {
-        SExp::Atom(atom) => atom.as_ref().to_vec(),
-        SExp::Pair(_) => unreachable!("parse_atom_from_first_byte only returns atoms"),
-    })
+    match parse_atom_from_first_byte(stream, byte_buf[0])? {
+        SExp::Atom(atom) => Ok(atom.as_ref().to_vec()),
+        SExp::Pair(_) => Err(ClvmError::BadEncoding),
+    }
 }
 
 fn traverse_backref_path(

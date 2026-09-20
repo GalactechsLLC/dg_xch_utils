@@ -18,7 +18,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         );
         // `full_node_api.declare_proof_of_space` — declare validation is tip-context; a
         // syncing node has no consistent slot state to check against, so it drops the message.
-        if !self.synced.load(Ordering::Relaxed) {
+        if !self.production_ready().await {
             // Promoted trace!->info! for bring-up: at default level the operator must
             // see this wall.
             self.producer.validated("not_synced");
@@ -195,7 +195,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
     pub(super) async fn on_new_infusion_point_vdf(&self, peer: Bytes32, req: NewInfusionPointVDF) {
         // `full_node_api.new_infusion_point_vdf` — `if sync_store.get_sync_mode(): return None`.
         // A syncing node has no consistent slot/unfinished state to finish a block against.
-        if !self.synced.load(Ordering::Relaxed) {
+        if !self.production_ready().await {
             return;
         }
         // Queue only — the assembly (unfinished-block lookup + reward-chain backtrack + finished-sub-slot
@@ -209,7 +209,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
     }
 
     pub(super) async fn on_new_signage_point_vdf(&self, peer: Bytes32, req: NewSignagePointVDF) {
-        if !self.synced.load(Ordering::Relaxed) {
+        if !self.production_ready().await {
             return;
         }
         let sp = RespondSignagePoint {
@@ -223,7 +223,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
     }
 
     pub(super) async fn on_new_end_of_sub_slot_vdf(&self, peer: Bytes32, req: NewEndOfSubSlotVDF) {
-        if !self.synced.load(Ordering::Relaxed) {
+        if !self.production_ready().await {
             return;
         }
         let Ok(cc_hash) = req.end_of_sub_slot_bundle.challenge_chain.hash() else {

@@ -486,6 +486,25 @@ impl Supervisor {
         ));
     }
 
+    pub fn start_introducer_registration(&mut self, host: &str, port: u16) {
+        self.start_introducer(host, port);
+        let host = host.to_owned();
+        let book = self.book.clone();
+        let settings = self.settings;
+        let identity = self.identity.clone();
+        let run = self.run.clone();
+        self.tasks.spawn(async move {
+            while run.load(Ordering::Relaxed) {
+                if let Err(error) =
+                    seed_once_with_identity(&host, port, book.clone(), &settings, &identity).await
+                {
+                    log::warn!("introducer registration failed ({host}:{port}): {error}");
+                }
+                nap(std::time::Duration::from_secs(900), &run).await;
+            }
+        });
+    }
+
     pub fn start_manual(&mut self, host: &str, port: u16) {
         self.tasks.spawn(manual_slot(
             (host.to_string(), port),

@@ -221,7 +221,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
     ) -> Option<RequestSignagePointOrEndOfSubSlot> {
         // Gated on sync mode: a syncing node's slot list anchors at its local
         // peak, so tip-context objects can never validate — skip the round trip.
-        if !self.synced.load(Ordering::Relaxed) {
+        if !self.production_ready().await {
             return None;
         }
         // Pull only what the slot state does not hold and is not outdated. (A walk-up-to-30-EOS
@@ -313,7 +313,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         _peer: Bytes32,
         ann: NewUnfinishedBlock,
     ) -> Option<RequestUnfinishedBlock> {
-        if !self.synced.load(Ordering::Relaxed) {
+        if !self.production_ready().await {
             return None;
         }
         // The v1 announce carries no foliage hash — pull only when we hold and request nothing
@@ -337,7 +337,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         _peer: Bytes32,
         ann: NewUnfinishedBlock2,
     ) -> Option<RequestUnfinishedBlock2> {
-        if !self.synced.load(Ordering::Relaxed) {
+        if !self.production_ready().await {
             return None;
         }
         // `new_unfinished_block2`'s admission ladder: already held, a better variant held,

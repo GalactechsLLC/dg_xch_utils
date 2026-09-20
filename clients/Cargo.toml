@@ -9,6 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+zeroize = "1.9.0"
 async-trait = "0.1.89"
 blst = { version = "0.3.16", features = ["portable"] }
 dg_xch_core = {path = "../core", version = "3.0.0", default-features = false, features = ["bls"]}

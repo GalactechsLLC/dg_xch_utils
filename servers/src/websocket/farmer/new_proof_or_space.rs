@@ -329,7 +329,7 @@ impl<T: PoolClient + Sized + Sync + Send + 'static> NewProofOfSpaceHandle<T> {
         let is_eos = new_pos.signage_point_index == 0;
         let payload = PostPartialPayload {
             launcher_id,
-            authentication_token: get_current_authentication_token(auth_token_timeout),
+            authentication_token: get_current_authentication_token(auth_token_timeout)?,
             proof_of_space: new_pos.proof.clone(),
             sp_hash: new_pos.sp_hash,
             end_of_sub_slot: is_eos,

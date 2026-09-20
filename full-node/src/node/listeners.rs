@@ -24,6 +24,8 @@ where
     /// Returns an I/O error if the TLS config or socket cannot be initialized.
     pub fn build_peer_server(&self) -> Result<(WebsocketServer, Arc<AtomicBool>, PeerMap), Error> {
         let api: Arc<dyn FullNodeApi> = Arc::new(StoreApi {
+            allow_chain_bootstrap: self.config.allows_chain_bootstrap(),
+            follow_inflight_since: self.follow_inflight_since.clone(),
             store: self.store.clone(),
             mempool: self.mempool.clone(),
             constants: self.constants,
@@ -59,7 +61,7 @@ where
         });
         let handlers = full_node_handlers_counted(
             api,
-            self.config.network_id.clone(),
+            self.config.handshake_network_id().map_err(Error::other)?,
             self.config.listen.port(),
             self.net.clone(),
         );
@@ -78,6 +80,12 @@ where
         // Police inbound peers against the composed rate limits: a compliant peer
         // stays within budget, a flooding/oversize peer is closed and evicted at the read loop.
         server.rate_limited = true;
+        server.inbound_limit = Arc::new(tokio::sync::Semaphore::new(
+            self.config
+                .p2p
+                .target_peer_count
+                .saturating_sub(self.config.p2p.target_outbound),
+        ));
         let run = Arc::new(AtomicBool::new(true));
         // Hand the shared inbound map back so /metrics can gauge its live length — the
         // retention bisect instrument for the inbound peer sessions (the collection whose

@@ -284,6 +284,12 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
                 continue;
             }
         }
+        if node.config.allows_chain_bootstrap()
+            && let Ok(Some((hash, _))) = node.store.get_peak().await
+            && node.slot_state.lock().await.peak_hash() != Some(hash)
+        {
+            update_slot_state_on_peak(&node, hash).await;
+        }
         // Stall-reclaim watchdog: the decoupled pipeline has no per-reservation reclaim, so bound ANY
         // whole-pipeline stall here. If the confirmed frontier has not advanced for RECLAIM_TIMEOUT while
         // work remains, peers are live, and no confirm is legitimately in flight, force a rebase (bumps the
@@ -331,11 +337,6 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
                 ));
                 info!("fetch scheduler restarted after stall reclaim");
             }
-        }
-        // Caught up = no claim strictly heavier than our confirmed peak — a height comparison
-        // would chase a longer-but-lighter fork forever.
-        if target.is_none() && peak.is_some() {
-            continue;
         }
         // Far-behind from a near-empty store: tip-follow (FOLLOW_BATCH/step) can never converge on a ~6.9M
         // tip. Drive the weight-proof bulk sync to the recent chain, then fall through to tip-follow.

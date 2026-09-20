@@ -15,6 +15,64 @@ fn ph(byte: u8) -> Bytes32 {
     Bytes32::new([byte; 32])
 }
 
+#[test]
+fn fork_foliage_claims_no_prefarm_and_uses_configured_rewards() {
+    let mut definition = crate::consensus::chain_definition::ChainDefinition::default();
+    definition.rewards.initial_pool = 700;
+    definition.rewards.initial_farmer = 100;
+    let constants = definition.constants().unwrap();
+    let secret = plot_sk(0x33);
+    for (height, fees, pool, farmer) in [(0, 0, 0, 0), (1, 55, 700, 155)] {
+        let claim = RewardBlockClaim {
+            height,
+            pool_puzzle_hash: ph(0x43),
+            farmer_puzzle_hash: ph(0x44),
+            fees,
+        };
+        let result = create_foliage(
+            &constants,
+            ph(0xAA),
+            height + 1,
+            true,
+            std::slice::from_ref(&claim),
+            None,
+            ph(0xBB),
+            ph(0xCC),
+            PoolTarget {
+                puzzle_hash: ph(0x01),
+                max_height: 0,
+            },
+            None,
+            plot_pk_bytes(&secret),
+            ph(0xDD),
+            1_600_000_000,
+            b"fork-rewards",
+            real_signer(&secret),
+        )
+        .unwrap();
+        let claims = result.transactions_info.unwrap().reward_claims_incorporated;
+        assert_eq!(claims.len(), 2);
+        assert_eq!(
+            claims[0],
+            create_pool_coin(
+                height,
+                claim.pool_puzzle_hash,
+                pool,
+                constants.genesis_challenge
+            )
+        );
+        assert_eq!(
+            claims[1],
+            create_farmer_coin(
+                height,
+                claim.farmer_puzzle_hash,
+                farmer,
+                constants.genesis_challenge
+            )
+        );
+    }
+}
+
 /// A deterministic plot secret key for tests. The plot
 /// public key `sk.sk_to_pk()` is the G1 handed to the signer and verified against — the single-key
 /// straightforward AugScheme case (taproot/pool aggregation is a farmer/harvester concern; see the

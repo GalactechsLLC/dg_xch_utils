@@ -24,7 +24,6 @@ use dg_xch_core::consensus::block_generator::{
 use dg_xch_core::consensus::block_header_validation::{
     ValidationState, validate_pospace_and_get_required_iters,
 };
-use dg_xch_core::consensus::block_rewards::{calculate_base_farmer_reward, calculate_pool_reward};
 use dg_xch_core::consensus::coinbase::{create_farmer_coin, create_pool_coin};
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::consensus::deficit::calculate_deficit;
@@ -1845,7 +1844,7 @@ where
                 return Err(ChiaError::ReserveFeeConditionFailed.into());
             }
             // Rule 18: fees + this block's base farmer reward stays a representable coin amount.
-            if fees + u128::from(calculate_base_farmer_reward(height))
+            if fees + u128::from(self.constants.rewards.farmer_reward(height))
                 > u128::from(self.constants.max_coin_amount)
             {
                 return Err(ChiaError::CoinAmountExceedsMaximum.into());
@@ -1937,14 +1936,17 @@ where
                 return Ok(());
             };
             let fees = prev_tx_block.fees.unwrap_or(0);
-            let farmer_amount = calculate_base_farmer_reward(prev_tx_block.height)
+            let farmer_amount = self
+                .constants
+                .rewards
+                .farmer_reward(prev_tx_block.height)
                 .checked_add(fees)
                 .ok_or(ChiaError::InvalidRewardCoins)?;
             expected.insert(
                 create_pool_coin(
                     prev_tx_block.height,
                     prev_tx_block.pool_puzzle_hash,
-                    calculate_pool_reward(prev_tx_block.height),
+                    self.constants.rewards.pool_reward(prev_tx_block.height),
                     self.constants.genesis_challenge,
                 )
                 .name(),
@@ -1979,7 +1981,7 @@ where
                         create_pool_coin(
                             curr.height,
                             curr.pool_puzzle_hash,
-                            calculate_pool_reward(curr.height),
+                            self.constants.rewards.pool_reward(curr.height),
                             self.constants.genesis_challenge,
                         )
                         .name(),
@@ -1988,7 +1990,7 @@ where
                         create_farmer_coin(
                             curr.height,
                             curr.farmer_puzzle_hash,
-                            calculate_base_farmer_reward(curr.height),
+                            self.constants.rewards.farmer_reward(curr.height),
                             self.constants.genesis_challenge,
                         )
                         .name(),

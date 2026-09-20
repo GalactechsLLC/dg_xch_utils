@@ -66,8 +66,8 @@ pub async fn run_cli() -> Result<(), Error> {
     let timeout = cli.timeout.unwrap_or(60);
     let ssl = cli.ssl_path.map(|v| ClientSSLConfig {
         ssl_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
-        ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
-        ssl_ca_crt_path: format!("{}/{}", v, "full_node/private_full_node.crt"),
+        ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.key"),
+        ssl_ca_crt_path: format!("{}/{}", v, "ca/private_ca.crt"),
     });
     let constants = if let Some(network) = cli.network {
         CONSENSUS_CONSTANTS[ChiaNetwork::from_str(&network).unwrap_or(Mainnet) as usize]

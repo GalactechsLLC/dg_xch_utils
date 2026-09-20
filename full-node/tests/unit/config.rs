@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn custom_chain_identity_is_bound_to_database_and_rules() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = cfg(&[]).unwrap();
+    config.network_id = "dgx".into();
+    config.backend = Backend::Sqlite(directory.path().join("chain.db"));
+    config.bind_chain_identity().unwrap();
+    config.bind_chain_identity().unwrap();
+    let mut changed = ChainDefinition::default();
+    changed.rewards.initial_farmer += 1;
+    config.chain_definition = Some(changed);
+    assert!(config.bind_chain_identity().is_err());
+    config.chain_definition = None;
+    config.network_id = "mainnet".into();
+    assert!(config.bind_chain_identity().is_err());
+}
+
+#[test]
+fn custom_chain_rejects_unmarked_existing_database_and_unknown_network() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("chain.db");
+    std::fs::write(&path, b"existing chain data").unwrap();
+    let mut config = cfg(&[]).unwrap();
+    config.backend = Backend::Sqlite(path);
+    config.network_id = "dgx".into();
+    assert!(config.bind_chain_identity().is_err());
+    config.network_id = "typo".into();
+    assert!(config.consensus_constants().is_err());
+    config.network_id = "mainnet".into();
+    config.chain_definition = Some(ChainDefinition::default());
+    assert!(config.consensus_constants().is_err());
+}
+
+#[test]
 fn performance_bounds_reject_zero_and_unbounded_work() {
     assert!(PerformanceConfig::default().validate().is_ok());
     for invalid in [

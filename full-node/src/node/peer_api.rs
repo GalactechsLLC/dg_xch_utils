@@ -5,6 +5,8 @@ use super::*;
 // The store-backed peer protocol surface: peers pull blocks from us (RequestBlock/RequestBlocks), fetch a
 // mempool transaction, and announce their tip (NewPeak → recorded as a sync target). Blind to consensus.
 pub(super) struct StoreApi<S> {
+    pub(super) allow_chain_bootstrap: bool,
+    pub(super) follow_inflight_since: Arc<std::sync::atomic::AtomicU64>,
     pub(super) store: Arc<S>,
     pub(super) mempool: Arc<Mutex<Mempool>>,
     pub(super) constants: ConsensusConstants,
@@ -92,6 +94,40 @@ pub(super) struct StoreApi<S> {
     // additions/removals, hence unread (not unbounded) without that feature.
     #[cfg_attr(not(feature = "coin-index"), allow(dead_code))]
     pub(super) wallet_sync_sem: Arc<LimitedSemaphore>,
+}
+
+impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
+    pub(super) async fn production_ready(&self) -> bool {
+        if !self.allow_chain_bootstrap {
+            return self.synced.load(Ordering::Relaxed);
+        }
+        if self.follow_inflight_since.load(Ordering::Relaxed) != 0
+            || self.sync_metrics.queue_len.load(Ordering::Relaxed) != 0
+        {
+            return false;
+        }
+        let Ok(peak) = self.store.get_peak().await else {
+            return false;
+        };
+        let local = match peak {
+            None => None,
+            Some((hash, height)) => match self.store.get_block_record(&hash).await {
+                Ok(Some(record)) if record.height == height => Some((hash, record.weight)),
+                _ => return false,
+            },
+        };
+        let claimed = self.peak_book.heaviest();
+        if self.slot_state.lock().await.peak_hash() != local.map(|(hash, _)| hash) {
+            return false;
+        }
+        match (local, claimed) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some((hash, weight)), Some(claim)) => {
+                claim.weight < weight || (claim.weight == weight && claim.header_hash == hash)
+            }
+        }
+    }
 }
 
 // `max_duplicate_unfinished_blocks`: variants of one reward hash worth fetching.

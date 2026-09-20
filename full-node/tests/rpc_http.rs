@@ -296,6 +296,30 @@ async fn envelope_utility_endpoints() {
     run.shutdown();
 }
 
+#[tokio::test]
+async fn node_details_reports_live_counters_and_exact_consensus() {
+    let (port, server, _, _) = spawn_tls_server().await;
+    let mut ssl = write_client_certs("node_details");
+    ssl.ssl_ca_crt_path = ensure_test_private_ca()
+        .join("ca/private_ca.crt")
+        .to_string_lossy()
+        .into_owned();
+    let client =
+        FullnodeClient::new_verified("127.0.0.1", port, 10, Some(ssl.clone()), &None).unwrap();
+    let details = client.get_node_details().await.unwrap();
+    assert_eq!(details["mempool_items"], 0);
+    assert_eq!(details["transaction_announcements_queued"], 0);
+    assert_eq!(
+        details["consensus"]["difficulty_constant_factor"],
+        MAINNET.difficulty_constant_factor.to_string()
+    );
+    assert!(details.get("inbound_peer_count").is_none());
+    ssl.ssl_ca_crt_path = write_client_certs("not_a_ca").ssl_crt_path;
+    let untrusted = FullnodeClient::new_verified("127.0.0.1", port, 10, Some(ssl), &None).unwrap();
+    assert!(untrusted.get_node_details().await.is_err());
+    server.shutdown();
+}
+
 // The empty body of a GET-style probe reads as `{}` for all-optional endpoints and errors
 // cleanly (not panics) for required-parameter endpoints.
 #[tokio::test]
@@ -352,11 +376,19 @@ fn write_client_certs(tag: &str) -> ClientSSLConfig {
     let crt_path = dir.join(format!("rpc_http_{}_{tag}.crt", std::process::id()));
     let key_path = dir.join(format!("rpc_http_{}_{tag}.key", std::process::id()));
     std::fs::write(&crt_path, &crt).expect("write crt");
-    std::fs::write(&key_path, &key).expect("write key");
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    std::io::Write::write_all(&mut options.open(&key_path).expect("open key"), &key)
+        .expect("write key");
     ClientSSLConfig {
         ssl_crt_path: crt_path.to_string_lossy().to_string(),
         ssl_key_path: key_path.to_string_lossy().to_string(),
-        ssl_ca_crt_path: String::new(),
+        ssl_ca_crt_path: ca_dir.join("private_ca.crt").to_string_lossy().into_owned(),
     }
 }
 

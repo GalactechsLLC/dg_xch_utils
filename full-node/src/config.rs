@@ -1,3 +1,5 @@
+use dg_xch_core::consensus::chain_definition::ChainDefinition;
+use dg_xch_core::consensus::constants::{ChiaNetwork, ConsensusConstants};
 use dg_xch_p2p::P2pSettings;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -63,6 +65,7 @@ impl RpcTlsMode {
 // one unified listener; `rpc` remains in this shared config for simulator compatibility.
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub chain_definition: Option<ChainDefinition>,
     pub performance: PerformanceConfig,
     pub listen: SocketAddr,
     pub rpc: SocketAddr,
@@ -112,6 +115,98 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn bind_chain_identity(&self) -> Result<(), std::io::Error> {
+        use std::io::{Error, ErrorKind, Write};
+        let constants = self.consensus_constants().map_err(Error::other)?;
+        let custom = self.allows_chain_bootstrap();
+        let (marker, occupied) = match &self.backend {
+            Backend::Sqlite(path) => {
+                let mut marker = path.as_os_str().to_os_string();
+                marker.push(".chain-identity");
+                let occupied = match std::fs::metadata(path) {
+                    Ok(metadata) => metadata.len() != 0,
+                    Err(error) if error.kind() == ErrorKind::NotFound => false,
+                    Err(error) => return Err(error),
+                };
+                (PathBuf::from(marker), occupied)
+            }
+            Backend::Mmap(path) => {
+                let occupied = match std::fs::read_dir(path) {
+                    Ok(mut entries) => entries.next().transpose()?.is_some(),
+                    Err(error) if error.kind() == ErrorKind::NotFound => false,
+                    Err(error) => return Err(error),
+                };
+                (path.join("chain-identity"), occupied)
+            }
+            Backend::Postgres(_) if custom => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "custom chains currently require SQLite or mmap storage for persisted chain identity",
+                ));
+            }
+            Backend::Postgres(_) => return Ok(()),
+        };
+        let identity = constants.genesis_challenge.to_string();
+        match std::fs::read_to_string(&marker) {
+            Ok(stored) if stored == identity => return Ok(()),
+            Ok(_) => {
+                return Err(Error::other(
+                    "database belongs to a different chain definition; use a separate database",
+                ));
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        if !custom {
+            return Ok(());
+        }
+        if occupied {
+            return Err(Error::other(
+                "custom chain requires an empty database or an existing matching chain-identity marker",
+            ));
+        }
+        if let Some(parent) = marker
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(marker)?;
+        file.write_all(identity.as_bytes())?;
+        file.sync_all()
+    }
+
+    pub fn consensus_constants(&self) -> Result<ConsensusConstants, String> {
+        if let Some(definition) = &self.chain_definition {
+            if self.network_id != definition.network_id {
+                return Err("network id does not match chain definition".into());
+            }
+            definition.constants()
+        } else if self.network_id == "dgx" {
+            ChainDefinition::default().constants()
+        } else {
+            ChiaNetwork::from_str(&self.network_id).map(ConsensusConstants::from)
+        }
+    }
+
+    pub fn handshake_network_id(&self) -> Result<String, String> {
+        match &self.chain_definition {
+            Some(definition) => definition.handshake_network_id(),
+            None if self.network_id == "dgx" => ChainDefinition::default().handshake_network_id(),
+            None => {
+                self.consensus_constants()?;
+                Ok(self.network_id.clone())
+            }
+        }
+    }
+
+    pub fn allows_chain_bootstrap(&self) -> bool {
+        self.chain_definition.is_some() || self.network_id == "dgx"
+    }
+
     /// Build a config from the parsed CLI strings.
     ///
     /// # Errors
@@ -148,6 +243,7 @@ impl Config {
             .transpose()?;
         p2p.validate()?;
         Ok(Self {
+            chain_definition: None,
             performance: PerformanceConfig::default(),
             listen,
             rpc,

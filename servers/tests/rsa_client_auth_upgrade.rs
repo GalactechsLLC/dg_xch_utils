@@ -29,18 +29,23 @@ fn free_port() -> u16 {
 }
 
 fn spawn_server() -> (u16, Arc<AtomicBool>) {
+    spawn_server_with_limit(128)
+}
+
+fn spawn_server_with_limit(limit: usize) -> (u16, Arc<AtomicBool>) {
     let port = free_port();
     let config = WebsocketServerConfig {
         host: "127.0.0.1".to_string(),
         port,
         ssl_info: None,
     };
-    let server = WebsocketServer::new(
+    let mut server = WebsocketServer::new(
         &config,
         Arc::new(RwLock::new(HashMap::new())),
         Arc::new(RwLock::new(HashMap::new())),
     )
     .expect("server");
+    server.inbound_limit = Arc::new(tokio::sync::Semaphore::new(limit));
     let run = Arc::new(AtomicBool::new(true));
     let run_c = run.clone();
     tokio::spawn(async move {
@@ -123,4 +128,45 @@ async fn rsa_client_cert_upgrades_through_the_default_serve_path() {
         status.contains("101"),
         "default serve path must answer the websocket upgrade with 101 for an RSA client cert, got: {status}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn exhausted_peer_capacity_refuses_websocket_upgrade() {
+    install_test_provider();
+    let (port, run) = spawn_server_with_limit(0);
+    let status = ws_upgrade_via_tls(
+        port,
+        CHIA_CA_CRT.as_bytes(),
+        (CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes()),
+    )
+    .await;
+    run.store(false, Ordering::Relaxed);
+    assert!(
+        status.contains("503"),
+        "capacity must be enforced: {status}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_tcp_peer_does_not_block_other_tls_handshakes() {
+    install_test_provider();
+    let (port, run) = spawn_server();
+    let mut idle = None;
+    for _ in 0..50 {
+        if let Ok(stream) = TcpStream::connect(("127.0.0.1", port)).await {
+            idle = Some(stream);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let idle = idle.expect("server listening");
+    let status = ws_upgrade_via_tls(
+        port,
+        CHIA_CA_CRT.as_bytes(),
+        (CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes()),
+    )
+    .await;
+    drop(idle);
+    run.store(false, Ordering::Relaxed);
+    assert!(status.contains("101"));
 }

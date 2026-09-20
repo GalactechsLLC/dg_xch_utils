@@ -20,7 +20,6 @@ use crate::consensus::block_generator::{
     canonical_additions_root, canonical_removals_root, transactions_generator_refs_root,
     transactions_generator_root, transactions_info_hash,
 };
-use crate::consensus::block_rewards::{calculate_base_farmer_reward, calculate_pool_reward};
 use crate::consensus::coinbase::{create_farmer_coin, create_pool_coin};
 use crate::consensus::constants::ConsensusConstants;
 use crate::errors::ChiaError;
@@ -360,11 +359,13 @@ fn create_foliage_inner(
                 let pool_coin = create_pool_coin(
                     claim.height,
                     claim.pool_puzzle_hash,
-                    calculate_pool_reward(claim.height),
+                    constants.rewards.pool_reward(claim.height),
                     constants.genesis_challenge,
                 );
-                // calculate_base_farmer_reward(curr.height) + curr.fees, overflow-checked.
-                let farmer_amount = calculate_base_farmer_reward(claim.height)
+                // constants.rewards.farmer_reward(curr.height) + curr.fees, overflow-checked.
+                let farmer_amount = constants
+                    .rewards
+                    .farmer_reward(claim.height)
                     .checked_add(claim.fees)
                     .ok_or(ChiaError::BadFarmerCoinAmount)?;
                 let farmer_coin = create_farmer_coin(

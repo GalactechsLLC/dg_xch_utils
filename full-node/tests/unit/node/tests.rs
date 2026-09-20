@@ -75,6 +75,7 @@ async fn reorg_rollback_states_reach_subscribed_wallets() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        chain_definition: None,
         performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
@@ -462,6 +463,8 @@ async fn peak_test_api(
         .await
         .expect("open store");
     StoreApi {
+        allow_chain_bootstrap: false,
+        follow_inflight_since: Arc::default(),
         store,
         mempool: Arc::new(Mutex::new(Mempool::new(&MAINNET))),
         constants: MAINNET,
@@ -500,6 +503,194 @@ async fn peak_test_api(
         record_window: Arc::new(Mutex::new(BlockRecordCache::new(64))),
         sync_metrics: Arc::new(SyncMetrics::default()),
     }
+}
+
+#[tokio::test]
+async fn custom_chain_bootstrap_keeps_sync_status_and_blocks_catchup() {
+    let claimed = Arc::new(AtomicU32::new(0));
+    let book = Arc::new(PeakBook::new(claimed.clone()));
+    let mut api = peak_test_api(&claimed, &book, None).await;
+    api.synced.store(false, Ordering::Relaxed);
+    assert!(!api.production_ready().await);
+    api.allow_chain_bootstrap = true;
+    api.constants = dg_xch_core::consensus::chain_definition::ChainDefinition::default()
+        .constants()
+        .unwrap();
+    assert!(api.production_ready().await);
+    assert!(!api.synced.load(Ordering::Relaxed));
+    assert!(
+        FullNodeApi::on_new_unfinished_block(
+            &api,
+            Bytes32::default(),
+            NewUnfinishedBlock {
+                unfinished_reward_hash: Bytes32::new([0x42; 32]),
+            }
+        )
+        .await
+        .is_some()
+    );
+    api.follow_inflight_since.store(1, Ordering::Relaxed);
+    assert!(!api.production_ready().await);
+    api.follow_inflight_since.store(0, Ordering::Relaxed);
+    api.sync_metrics.queue_len.store(1, Ordering::Relaxed);
+    assert!(!api.production_ready().await);
+    api.sync_metrics.queue_len.store(0, Ordering::Relaxed);
+    let peer = Bytes32::new([0x53; 32]);
+    book.record(
+        peer,
+        true,
+        PeakClaim {
+            header_hash: Bytes32::new([0x54; 32]),
+            height: 0,
+            weight: 7,
+        },
+    );
+    assert!(!api.production_ready().await);
+    book.retract(&peer);
+    assert!(api.production_ready().await);
+}
+
+#[tokio::test]
+async fn caught_up_driver_continues_servicing_production_and_gossip() {
+    struct EmptyPeers;
+    #[async_trait]
+    impl OutboundPeers for EmptyPeers {
+        async fn first_live(&self) -> Option<Arc<OutboundPeer>> {
+            None
+        }
+        async fn live_peers(&self) -> Vec<Arc<OutboundPeer>> {
+            Vec::new()
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::build(
+        "127.0.0.1:0",
+        "127.0.0.1:0",
+        None,
+        &[],
+        None,
+        directory.path().join("chain.db").to_str().unwrap(),
+        "mainnet",
+        None,
+        false,
+        0,
+        false,
+        None,
+        None,
+        dg_xch_p2p::P2pSettings::default(),
+        &[],
+        &[],
+    )
+    .unwrap();
+    let node = Arc::new(FullNode::boot(config).await.unwrap());
+    let records: Vec<BlockRecord> =
+        serde_json::from_str(include_str!("../../fixtures/block_records.json")).unwrap();
+    let mut record = records[0].clone();
+    record.height = 0;
+    record.prev_hash = MAINNET.genesis_challenge;
+    node.store
+        .add_block_records(std::slice::from_ref(&record))
+        .await
+        .unwrap();
+    node.store.set_peak(&record.header_hash).await.unwrap();
+    node.tx_announce.lock().await.push(NewTransaction {
+        transaction_id: Bytes32::new([0x57; 32]),
+        cost: 1,
+        fees: 1,
+    });
+    node.sp_farmer_announce.lock().await.push(NewSignagePoint {
+        challenge_hash: MAINNET.genesis_challenge,
+        challenge_chain_sp: MAINNET.genesis_challenge,
+        reward_chain_sp: MAINNET.genesis_challenge,
+        difficulty: MAINNET.difficulty_starting,
+        sub_slot_iters: MAINNET.sub_slot_iters_starting,
+        signage_point_index: 0,
+        peak_height: 0,
+        last_tx_height: 0,
+        sp_source_data: None,
+    });
+    let driver = tokio::spawn(sync_driver(
+        node.clone(),
+        Arc::new(EmptyPeers),
+        Arc::default(),
+    ));
+    let serviced = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if node.tx_announce.lock().await.is_empty()
+                && node.sp_farmer_announce.lock().await.is_empty()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    node.run.store(false, Ordering::Relaxed);
+    tokio::time::timeout(Duration::from_secs(5), driver)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        serviced.is_ok(),
+        "caught-up node must service farmer and transaction queues"
+    );
+}
+
+#[tokio::test]
+async fn custom_chain_stale_tip_can_resume_unless_a_competing_peak_needs_sync() {
+    let claimed = Arc::new(AtomicU32::new(0));
+    let book = Arc::new(PeakBook::new(claimed.clone()));
+    let mut api = peak_test_api(&claimed, &book, None).await;
+    api.synced.store(false, Ordering::Relaxed);
+    api.allow_chain_bootstrap = true;
+    let records: Vec<BlockRecord> =
+        serde_json::from_str(include_str!("../../fixtures/block_records.json")).unwrap();
+    let record = &records[0];
+    api.store
+        .add_block_records(std::slice::from_ref(record))
+        .await
+        .unwrap();
+    api.store.set_peak(&record.header_hash).await.unwrap();
+    assert!(!api.production_ready().await);
+    api.slot_state.lock().await.new_peak(
+        record,
+        PeakSlotContext {
+            sp_sub_slot: None,
+            ip_sub_slot: None,
+            fork_block: None,
+        },
+        &HashMap::new(),
+        MAINNET.sub_slot_iters_starting,
+        MAINNET.difficulty_starting,
+        false,
+    );
+    assert!(api.production_ready().await);
+    assert!(!api.synced.load(Ordering::Relaxed));
+    let peer = Bytes32::new([0x55; 32]);
+    book.record(
+        peer,
+        true,
+        PeakClaim {
+            header_hash: record.header_hash,
+            height: record.height,
+            weight: record.weight,
+        },
+    );
+    assert!(api.production_ready().await);
+    book.record(
+        peer,
+        true,
+        PeakClaim {
+            header_hash: Bytes32::new([0x56; 32]),
+            height: record.height + 1,
+            weight: record.weight + 1,
+        },
+    );
+    assert!(!api.production_ready().await);
+    book.retract(&peer);
+    assert!(api.production_ready().await);
+    api.allow_chain_bootstrap = false;
+    assert!(!api.production_ready().await);
 }
 
 // An outbound peer's NewPeak records its per-connection claim (hash, height, WEIGHT —
@@ -696,6 +887,7 @@ async fn sync_target_weight_gates_against_the_local_peak() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        chain_definition: None,
         performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
@@ -784,6 +976,7 @@ async fn follow_fill_clamps_the_frontier_to_the_servable_outbound_tip() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        chain_definition: None,
         performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
@@ -857,6 +1050,7 @@ async fn follow_fill_opens_the_sync_from_band_once_anchored() {
         uncompact: false,
         prefetch_memory_mb: None,
         prefetch_max_inflight: None,
+        chain_definition: None,
         performance: Default::default(),
         trusted_peers: Vec::new(),
         trusted_cidrs: Vec::new(),
@@ -1000,6 +1194,8 @@ async fn signed_values_splices_farmer_sigs_and_queues_for_broadcast() {
     let candidates = Arc::new(Mutex::new(CandidateBlockStore::default()));
     candidates.lock().await.insert(quality_string, 0, candidate);
     let api = StoreApi {
+        allow_chain_bootstrap: false,
+        follow_inflight_since: Arc::default(),
         store,
         mempool: Arc::new(Mutex::new(Mempool::new(&MAINNET))),
         constants: MAINNET,
@@ -1317,6 +1513,8 @@ async fn infusion_return_handlers_queue_only_when_synced() {
     let sp_inbox = Arc::new(Mutex::new(Vec::new()));
     let synced = Arc::new(AtomicBool::new(true));
     let make_api = |synced: Arc<AtomicBool>| StoreApi {
+        allow_chain_bootstrap: false,
+        follow_inflight_since: Arc::default(),
         store: store.clone(),
         mempool: Arc::new(Mutex::new(Mempool::new(&MAINNET))),
         constants: MAINNET,
@@ -1475,6 +1673,7 @@ async fn infusion_point_finishes_cached_genesis_unfinished_block() {
             uncompact: false,
             prefetch_memory_mb: None,
             prefetch_max_inflight: None,
+            chain_definition: None,
             performance: Default::default(),
             trusted_peers: Vec::new(),
             trusted_cidrs: Vec::new(),
@@ -1903,6 +2102,7 @@ async fn ub_store_error_requeues_candidate_never_counts_it_as_prev_unknown() {
                 uncompact: false,
                 prefetch_memory_mb: None,
                 prefetch_max_inflight: None,
+                chain_definition: None,
                 performance: Default::default(),
                 trusted_peers: Vec::new(),
                 trusted_cidrs: Vec::new(),
@@ -2041,6 +2241,7 @@ async fn deep_fall_behind_sheds_indexes_once_and_the_tip_edge_rebuilds() {
                 uncompact: false,
                 prefetch_memory_mb: None,
                 prefetch_max_inflight: None,
+                chain_definition: None,
                 performance: Default::default(),
                 trusted_peers: Vec::new(),
                 trusted_cidrs: Vec::new(),

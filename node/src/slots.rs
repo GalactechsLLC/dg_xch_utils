@@ -79,6 +79,7 @@ pub struct PeakSlotContext<'a> {
 }
 
 pub struct SlotState {
+    peak_hash: Option<Bytes32>,
     constants: ConsensusConstants,
     finished_sub_slots: Vec<FinishedSubSlot>,
     // End-of-sub-slots that chain onto an infusion we have not seen, keyed by that infusion's
@@ -92,6 +93,7 @@ impl SlotState {
     #[must_use]
     pub fn new(constants: ConsensusConstants) -> Self {
         let mut state = Self {
+            peak_hash: None,
             constants,
             finished_sub_slots: Vec::new(),
             future_eos: KeyedCache::new(FUTURE_CACHE_MAX_KEYS, FUTURE_EOS_MAX_PER_KEY),
@@ -106,11 +108,16 @@ impl SlotState {
     }
 
     pub fn initialize_genesis_sub_slot(&mut self) {
+        self.peak_hash = None;
         self.finished_sub_slots = vec![FinishedSubSlot {
             eos: None,
             sps: self.empty_sps(),
             start_total_iters: 0,
         }];
+    }
+
+    pub fn peak_hash(&self) -> Option<Bytes32> {
+        self.peak_hash
     }
 
     // The finished sub-slot whose challenge-chain hash is `challenge_hash`, with its index and
@@ -922,6 +929,7 @@ impl SlotState {
                 new_sps.push((index, sp));
             }
         }
+        self.peak_hash = Some(peak.header_hash);
         (new_eos, new_sps)
     }
 
