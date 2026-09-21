@@ -117,7 +117,7 @@ pub fn build_dtable(
     dt.header.table_log = table_log as u16;
     dt.header.fast_mode = 1;
     let large_limit = (1 << (table_log - 1)) as i16;
-    let mut high_threshold = table_size - 1;
+    let mut high_threshold: u32 = table_size - 1;
     for (index, (normalize, symbol_next)) in normalized_counter
         .iter()
         .zip(symbol_next.iter_mut())
@@ -126,7 +126,7 @@ pub fn build_dtable(
     {
         if *normalize == -1 {
             dt.table[high_threshold as usize].symbol = index as u8;
-            high_threshold -= 1;
+            high_threshold = high_threshold.wrapping_sub(1);
             *symbol_next = 1;
         } else {
             if *normalize >= large_limit {
@@ -189,6 +189,12 @@ pub fn fse_decompress_using_dtable_generic(
     dt: Arc<DTable>,
     fast: bool,
 ) -> Result<usize, Error> {
+    if dst_size < 3 || dst_size > dst.len() || src_size > src.len() {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "invalid FSE buffer sizes",
+        ));
+    }
     let mut bit_d = match BitDstream::new(src, src_size) {
         Ok(b) => b,
         Err(e) => {
@@ -267,5 +273,32 @@ impl SymbolFn for FastDecodeSymbol {
         let low_bits: usize = bit_d.read_bits_fast(u32::from(entry.nb_bits));
         state.state = entry.new_state as usize + low_bits;
         entry.symbol
+    }
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    fn plot_decoder_rejects_small_or_mismatched_buffers() {
+        let normalized = [16, 16];
+        let table = Arc::new(build_dtable(&normalized, 1, 5).unwrap());
+        for size in 0..3 {
+            assert!(decompress_using_dtable(vec![0; size], size, [128], 1, table.clone()).is_err());
+        }
+        assert!(decompress_using_dtable([0; 3], 4, [128], 1, table.clone()).is_err());
+        assert!(decompress_using_dtable([0; 3], 3, [128], 2, table).is_err());
+    }
+
+    #[test]
+    fn all_low_probability_symbols_build_without_unsigned_underflow() {
+        let table = build_dtable(&[-1; 32], 31, 5).unwrap();
+        let mut symbols = table.table[..32]
+            .iter()
+            .map(|entry| entry.symbol)
+            .collect::<Vec<_>>();
+        symbols.sort_unstable();
+        assert_eq!(symbols, (0..32).collect::<Vec<_>>());
     }
 }

@@ -241,6 +241,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
+name = "bytemuck"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1f896587b6f2c069c73d2f0913e2d590c3990285cd2f0b6aa02b786b4c679c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -695,6 +715,7 @@ dependencies = [
 name = "dg_xch_plotter_cuda"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "clap",
  "cuda-core",
  "cuda-device",
@@ -711,7 +732,9 @@ version = "3.0.0"
 dependencies = [
  "aes",
  "blake3",
+ "bytemuck",
  "dg_xch_core",
+ "rayon",
 ]
 
 [[package]]

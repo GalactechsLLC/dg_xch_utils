@@ -14,7 +14,7 @@ dg_xch_clients = { path = "../clients" }
 dg_xch_core = { path = "../core", default-features = false, features = ["bls"] }
 dg_xch_farmer = { path = "../farmer" }
 dg_xch_keys = { path = "../keys" }
-dg_xch_plotter = { path = "../plotter" }
+dg_xch_plotter = { path = "../plotter", features = ["vulkan"] }
 dg_xch_pos2 = { path = "../proof_of_space/pos2", features = ["vulkan"] }
 dg_xch_wallet = { path = "../wallet" }
 directories = "6.0.0"

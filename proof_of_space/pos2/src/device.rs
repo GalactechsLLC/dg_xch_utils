@@ -60,42 +60,76 @@ const fn substitutions() -> [u8; 256] {
 
 const SBOX: [u8; 256] = substitutions();
 
-fn twice(value: u8) -> u8 {
-    (value << 1) ^ if value & 128 != 0 { 27 } else { 0 }
+const fn aes_table() -> [u32; 256] {
+    let mut output = [0; 256];
+    let mut index = 0;
+    while index < 256 {
+        let value = SBOX[index] as u32;
+        let doubled = ((value << 1) ^ if value & 128 != 0 { 27 } else { 0 }) & 255;
+        output[index] = doubled | (value << 8) | (value << 16) | ((value ^ doubled) << 24);
+        index += 1;
+    }
+    output
+}
+
+pub const AES_TABLE: [u32; 256] = aes_table();
+
+#[inline]
+fn aes_column(table: &[u32; 256], first: u32, second: u32, third: u32, fourth: u32) -> u32 {
+    table[(first & 255) as usize]
+        ^ table[((second >> 8) & 255) as usize].rotate_left(8)
+        ^ table[((third >> 16) & 255) as usize].rotate_left(16)
+        ^ table[(fourth >> 24) as usize].rotate_left(24)
+}
+
+#[inline]
+fn aes_round(state: [u32; 4], key: [u32; 4], table: &[u32; 256]) -> [u32; 4] {
+    [
+        aes_column(table, state[0], state[1], state[2], state[3]) ^ key[0],
+        aes_column(table, state[1], state[2], state[3], state[0]) ^ key[1],
+        aes_column(table, state[2], state[3], state[0], state[1]) ^ key[2],
+        aes_column(table, state[3], state[0], state[1], state[2]) ^ key[3],
+    ]
+}
+
+fn key_word(config: Config, offset: usize) -> u32 {
+    u32::from_le_bytes([
+        config.plot_id[offset],
+        config.plot_id[offset + 1],
+        config.plot_id[offset + 2],
+        config.plot_id[offset + 3],
+    ])
 }
 
 pub fn hash(config: Config, words: [u32; 4], rounds: u32) -> [u32; 4] {
-    let mut state = [0u8; 16];
-    for index in 0..16 {
-        state[index] = (words[index / 4] >> ((index % 4) * 8)) as u8;
-    }
+    let first_key = [
+        key_word(config, 0),
+        key_word(config, 4),
+        key_word(config, 8),
+        key_word(config, 12),
+    ];
+    let second_key = [
+        key_word(config, 16),
+        key_word(config, 20),
+        key_word(config, 24),
+        key_word(config, 28),
+    ];
+    hash_with_keys([first_key, second_key], words, rounds, &AES_TABLE)
+}
+
+#[inline]
+pub fn hash_with_keys(
+    keys: [[u32; 4]; 2],
+    words: [u32; 4],
+    rounds: u32,
+    table: &[u32; 256],
+) -> [u32; 4] {
+    let mut state = words;
     for _ in 0..rounds {
-        for key in 0..2 {
-            let mut shifted = [0u8; 16];
-            for column in 0..4 {
-                for row in 0..4 {
-                    shifted[column * 4 + row] =
-                        SBOX[state[((column + row) % 4) * 4 + row] as usize];
-                }
-            }
-            for column in 0..4 {
-                let base = column * 4;
-                let total =
-                    shifted[base] ^ shifted[base + 1] ^ shifted[base + 2] ^ shifted[base + 3];
-                for row in 0..4 {
-                    state[base + row] = shifted[base + row]
-                        ^ total
-                        ^ twice(shifted[base + row] ^ shifted[base + (row + 1) % 4])
-                        ^ config.plot_id[key * 16 + base + row];
-                }
-            }
-        }
+        state = aes_round(state, keys[0], table);
+        state = aes_round(state, keys[1], table);
     }
-    let mut output = [0u32; 4];
-    for index in 0..16 {
-        output[index / 4] |= u32::from(state[index]) << ((index % 4) * 8);
-    }
-    output
+    state
 }
 
 fn mask(bits: u32) -> u64 {
@@ -111,6 +145,7 @@ pub fn generate(config: Config, value: u32) -> Record {
     generate_from_hash(config, value, hash(config, [input, 0, 0, 0], 16))
 }
 
+#[inline]
 pub fn generate_from_hash(config: Config, value: u32, lanes: [u32; 4]) -> Record {
     let mut record = Record {
         meta: u64::from(value),
@@ -139,6 +174,7 @@ pub fn target(config: Config, table: u32, left: Record, key: u32) -> u32 {
     target_from_hash(config, table, left, key, value)
 }
 
+#[inline]
 pub fn target_from_hash(config: Config, table: u32, left: Record, key: u32, value: u32) -> u32 {
     let sections = if config.k < 28 { 2 } else { config.k - 26 };
     let count = 1u32 << sections;
@@ -151,44 +187,70 @@ pub fn target_from_hash(config: Config, table: u32, left: Record, key: u32, valu
     (partner << (config.k - sections)) | (key << target_bits) | (value & mask(target_bits) as u32)
 }
 
-fn rotate(value: u64, shift: u32, bits: u32) -> u64 {
-    ((value << shift) & mask(bits)) | (value >> (bits - shift))
+fn rotate(value: u32, shift: u32, bits: u32) -> u32 {
+    ((value << shift) & mask(bits) as u32) | (value >> (bits - shift))
 }
 
-pub fn fragment(config: Config, input: u64) -> u64 {
-    let mut left = input >> config.k;
-    let mut right = input & mask(config.k);
-    for round in 0..4 {
-        let start = round * (256 - 3 * config.k) / 3;
-        let offset = start % 8;
-        let bytes = (offset + 3 * config.k).div_ceil(8);
-        let mut segment = 0u64;
-        for index in 0..bytes {
-            segment = (segment << 8) | u64::from(config.plot_id[(start / 8 + index) as usize]);
-        }
-        let key = (segment >> (bytes * 8 - offset - 3 * config.k))
-            & if config.k * 3 >= 64 {
-                u64::MAX
-            } else {
-                mask(config.k * 3)
-            };
-        let mut first = right;
-        let mut second = key & mask(config.k);
-        let mut third = key.wrapping_shr(config.k) & mask(config.k);
-        let mut fourth = key.wrapping_shr(2 * config.k) & mask(config.k);
-        first = first.wrapping_add(second) & mask(config.k);
-        fourth = rotate(fourth ^ first, 16, config.k);
-        third = third.wrapping_add(fourth) & mask(config.k);
-        second = rotate(second ^ third, 12, config.k);
-        first = first.wrapping_add(second) & mask(config.k);
-        fourth = rotate(fourth ^ first, 8, config.k);
-        third = third.wrapping_add(fourth) & mask(config.k);
-        second = rotate(second ^ third, 7, config.k);
-        let next = (left ^ second) & mask(config.k);
-        left = right;
-        right = next;
+#[inline]
+fn fragment_round_key(config: Config, round: u32) -> [u32; 4] {
+    let start = round * (256 - 3 * config.k) / 3;
+    let offset = start % 8;
+    let bytes = (offset + 3 * config.k).div_ceil(8);
+    let mut segment = 0u64;
+    for index in 0..bytes {
+        segment = (segment << 8) | u64::from(config.plot_id[(start / 8 + index) as usize]);
     }
-    (left << config.k) | right
+    let key = (segment >> (bytes * 8 - offset - 3 * config.k))
+        & if config.k * 3 >= 64 {
+            u64::MAX
+        } else {
+            mask(config.k * 3)
+        };
+    [
+        (key & mask(config.k)) as u32,
+        (key.wrapping_shr(config.k) & mask(config.k)) as u32,
+        (key.wrapping_shr(2 * config.k) & mask(config.k)) as u32,
+        0,
+    ]
+}
+
+#[inline]
+pub fn fragment_round_keys(config: Config) -> [[u32; 4]; 4] {
+    [
+        fragment_round_key(config, 0),
+        fragment_round_key(config, 1),
+        fragment_round_key(config, 2),
+        fragment_round_key(config, 3),
+    ]
+}
+
+#[inline]
+pub fn fragment_round_halves(bits: u32, left: u32, right: u32, key: [u32; 4]) -> (u32, u32) {
+    let bitmask = mask(bits) as u32;
+    let mut first = right;
+    let mut second = key[0];
+    let mut third = key[1];
+    let mut fourth = key[2];
+    first = first.wrapping_add(second) & bitmask;
+    fourth = rotate(fourth ^ first, 16, bits);
+    third = third.wrapping_add(fourth) & bitmask;
+    second = rotate(second ^ third, 12, bits);
+    first = first.wrapping_add(second) & bitmask;
+    fourth = rotate(fourth ^ first, 8, bits);
+    third = third.wrapping_add(fourth) & bitmask;
+    second = rotate(second ^ third, 7, bits);
+    (right, (left ^ second) & bitmask)
+}
+
+#[inline]
+pub fn fragment(config: Config, input: u64) -> u64 {
+    let mut left = (input >> config.k) as u32;
+    let mut right = (input & mask(config.k)) as u32;
+    for round in 0..4 {
+        (left, right) =
+            fragment_round_halves(config.k, left, right, fragment_round_key(config, round));
+    }
+    (u64::from(left) << config.k) | u64::from(right)
 }
 
 pub fn pair(config: Config, table: u32, left: Record, right: Record) -> Record {
@@ -210,7 +272,27 @@ pub fn pair(config: Config, table: u32, left: Record, right: Record) -> Record {
     pair_from_hash(config, table, left, right, lanes)
 }
 
+#[inline]
 pub fn pair_from_hash(
+    config: Config,
+    table: u32,
+    left: Record,
+    right: Record,
+    lanes: [u32; 4],
+) -> Record {
+    let mut result = pair_fields_from_hash(config, table, left, right, lanes);
+    if result.valid != 0 {
+        let width = 1usize << (table - 1);
+        for index in 0..width {
+            result.xs[index] = left.xs[index];
+            result.xs[index + width] = right.xs[index];
+        }
+    }
+    result
+}
+
+#[inline]
+pub fn pair_fields_from_hash(
     config: Config,
     table: u32,
     left: Record,
@@ -231,11 +313,6 @@ pub fn pair_from_hash(
         return result;
     }
     result.valid = 1;
-    let width = 1usize << (table - 1);
-    for index in 0..width {
-        result.xs[index] = left.xs[index];
-        result.xs[index + width] = right.xs[index];
-    }
     if table == 1 {
         result.meta = (left.meta << config.k) | right.meta;
     } else {

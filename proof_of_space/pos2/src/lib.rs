@@ -4,6 +4,8 @@ pub mod aes_hash;
 pub mod bits;
 pub mod blake_hash;
 pub mod chainer;
+pub mod compact;
+pub mod compute;
 pub mod constants;
 pub mod core;
 pub mod device;
@@ -13,9 +15,17 @@ pub mod hashing;
 pub mod params;
 pub mod plotting;
 pub mod quality;
+mod radix;
+pub mod solver;
 pub mod validator;
 #[cfg(feature = "vulkan")]
 pub mod vulkan;
+#[cfg(feature = "vulkan")]
+pub mod vulkan_full;
+#[cfg(feature = "vulkan")]
+mod vulkan_packing;
+#[cfg(feature = "vulkan")]
+mod vulkan_radix;
 
 pub use aes_hash::AesHash;
 pub use chainer::{Chain, Chainer, QualityChainLinks};

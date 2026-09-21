@@ -54,6 +54,7 @@ pub struct Desktop {
     plot_meta: u8,
     plot_testnet: bool,
     plot_memory_mib: u64,
+    plot_max_work: u64,
     plot_directory: String,
     plot_gpu: bool,
     proof_challenge: String,
@@ -94,6 +95,7 @@ impl Desktop {
             plot_meta: 0,
             plot_testnet: false,
             plot_memory_mib: 512,
+            plot_max_work: 10_000_000_000,
             plot_directory: String::new(),
             plot_gpu: false,
             proof_challenge: String::new(),
@@ -489,7 +491,10 @@ impl Desktop {
 
     fn plots(&mut self, ui: &mut Ui, state: &State) {
         heading(ui, "PLOT WORKSHOP", "Turn storage into proof.");
-        ui.colored_label(Color32::from_rgb(219, 160, 96), "Development PoS2 plotter · bounded RAM · k18 default · not a production k28 plot pipeline");
+        ui.colored_label(
+            Color32::from_rgb(219, 160, 96),
+            "PoS2 RAM plotter · even k18–k32 · configure memory and work budgets for larger plots",
+        );
         field(
             ui,
             "Output .plot file (must not exist)",
@@ -514,7 +519,14 @@ impl Desktop {
                     .speed(2),
             );
             ui.label("Strength");
-            ui.add(egui::DragValue::new(&mut self.plot_strength).range(2..=25));
+            let maximum = self.plot_k
+                - if self.plot_k < 28 {
+                    2
+                } else {
+                    self.plot_k - 26
+                }
+                - 1;
+            ui.add(egui::DragValue::new(&mut self.plot_strength).range(2..=maximum));
         });
         ui.horizontal(|ui| {
             ui.label("Index");
@@ -529,7 +541,11 @@ impl Desktop {
         );
         ui.horizontal(|ui| {
             ui.label("RAM budget (MiB)");
-            ui.add(egui::DragValue::new(&mut self.plot_memory_mib).range(128..=32768));
+            ui.add(egui::DragValue::new(&mut self.plot_memory_mib).range(128..=524288));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Work budget (16-round AES evaluations)");
+            ui.add(egui::DragValue::new(&mut self.plot_max_work).range(1..=u64::MAX));
         });
         ui.horizontal(|ui| {
             if ui.button("Create plot").clicked() {
@@ -540,7 +556,11 @@ impl Desktop {
                             output: PathBuf::from(&self.plot_output),
                             limits: PlotLimits {
                                 memory_bytes: self.plot_memory_mib * 1024 * 1024,
-                                ..Default::default()
+                                max_entries: usize::try_from(
+                                    (1u64 << self.plot_k) + (1u64 << self.plot_k) / 8 + 65_536,
+                                )
+                                .unwrap_or(usize::MAX),
+                                max_work: self.plot_max_work,
                             },
                             gpu: self.plot_gpu,
                         })
@@ -557,12 +577,12 @@ impl Desktop {
             ui.label(job);
         }
         ui.collapsing("Check an existing PoS2 plot against a challenge", |ui| {
-            ui.label("Uses the output path above as an existing input file. Reconstructs all tables on CPU or GPU, verifies every file byte, then returns proofs. This is a development prover, not an efficient production disk solver.");
+            ui.label("Uses the output path and resource budgets above. Reads challenge fragments and recovers independently validated proofs on CPU or GPU. Unread chunks are not verified and proofs are not submitted to the network.");
             field(ui, "Challenge (32-byte hex)", &mut self.proof_challenge);
             if ui.button("Run proof check").clicked() {
                 use std::str::FromStr;
                 match dg_xch_core::blockchain::sized_bytes::Bytes32::from_str(&self.proof_challenge) {
-                    Ok(challenge) => self.backend.command(Command::ProvePlot { path: PathBuf::from(&self.plot_output), challenge, testnet: self.plot_testnet, gpu: self.plot_gpu }),
+                    Ok(challenge) => self.backend.command(Command::ProvePlot { path: PathBuf::from(&self.plot_output), challenge, testnet: self.plot_testnet, gpu: self.plot_gpu, memory_bytes: self.plot_memory_mib * 1024 * 1024, max_work: self.plot_max_work }),
                     Err(error) => self.message = error.to_string(),
                 }
             }

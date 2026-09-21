@@ -84,6 +84,8 @@ pub enum Command {
         challenge: Bytes32,
         testnet: bool,
         gpu: bool,
+        memory_bytes: u64,
+        max_work: u64,
     },
     CancelPlot,
 }
@@ -437,7 +439,7 @@ async fn command_worker(
                     update(&state, |state| state.plot_job = Some(format!("Running {job_label}")));
                     plot = Some(tokio::task::spawn_blocking(move || {
                         let result = if let Some(selection) = selection {
-                            dg_xch_plotter::create_with_engine(&request, &output, limits, &cancelled, |params, limits, cancelled| dg_xch_pos2::vulkan::build(params, limits, cancelled, selection.device.ordinal))
+                            dg_xch_plotter::vulkan::create(&request, &output, limits, &cancelled, selection.device.ordinal)
                         } else {
                             dg_xch_plotter::create(&request, &output, limits, &cancelled)
                         };
@@ -448,16 +450,20 @@ async fn command_worker(
                     }));
                 },
                 Command::CancelPlot => { cancelled.store(true, Ordering::Release); },
-                Command::ProvePlot { path, challenge, testnet, gpu } => {
+                Command::ProvePlot { path, challenge, testnet, gpu, memory_bytes, max_work } => {
                     if plot.as_ref().is_some_and(|job| !job.is_finished()) { return Err(Error::other("a plot job is already running")); }
+                    let info = dg_xch_plotter::inspect(&path)?;
+                    let proof_limits = PlotLimits { memory_bytes, max_work, max_entries: 256usize << (info.k / 2) };
                     cancelled.store(false, Ordering::Release);
                     let cancelled = cancelled.clone();
                     let state = state.clone();
                     update(&state, |state| state.plot_job = Some("Selecting development proof-check backend".into()));
                     let (selection, job_label) = resolve_execution(&settings, gpu, &cancelled).await?;
-                    update(&state, |state| state.plot_job = Some(format!("{job_label}: development proof check reconstructs the entire plot under resource limits")));
+                    update(&state, |state| state.plot_job = Some(format!("{job_label}: reading challenge fragments and reconstructing candidate proofs")));
                     if selection.as_ref().is_some_and(|selection| selection.backend == SelectedGpuBackend::Cuda) {
-                        let mut args = vec!["--prove-plot".into(), path.into_os_string(), "--challenge".into(), hex::encode(challenge).into()];
+                        let mut args = vec!["--prove-plot".into(), path.into_os_string(), "--challenge".into(), hex::encode(challenge).into(),
+                            "--memory-mib".into(), (memory_bytes / 1024 / 1024).to_string().into(),
+                            "--max-entries".into(), proof_limits.max_entries.to_string().into(), "--max-work".into(), max_work.to_string().into()];
                         if testnet { args.push("--testnet".into()); }
                         plot = Some(tokio::spawn(async move {
                             let result = run_cuda(&settings, args, &cancelled, Duration::from_secs(3600)).await;
@@ -466,13 +472,15 @@ async fn command_worker(
                     } else {
                         plot = Some(tokio::task::spawn_blocking(move || {
                             let result = (|| {
-                                let harvester = if let Some(selection) = selection {
-                                    dg_xch_farmer::harvesters::pos2::DevelopmentHarvester::open_with_engine(&path, testnet, PlotLimits::default(), &cancelled, |params, limits, cancelled| dg_xch_pos2::vulkan::build(params, limits, cancelled, selection.device.ordinal))?
+                                let mut harvester = dg_xch_farmer::harvesters::pos2::DiskHarvester::open(&path, testnet, proof_limits, &cancelled)?;
+                                let limits = dg_xch_pos2::chainer::SearchLimits { max_hashes: 100_000_000, max_results: 1024 };
+                                let proofs = if let Some(selection) = selection {
+                                    let mut engine = dg_xch_pos2::vulkan::Hasher::for_params(harvester.params(), selection.device.ordinal)?;
+                                    harvester.challenge_with_engine(challenge, limits, &cancelled, &mut engine)?
                                 } else {
-                                    dg_xch_farmer::harvesters::pos2::DevelopmentHarvester::open(&path, testnet, PlotLimits::default(), &cancelled)?
+                                    harvester.challenge(challenge, limits, &cancelled)?
                                 };
-                                let proofs = harvester.challenge(challenge, dg_xch_pos2::chainer::SearchLimits { max_hashes: 100_000_000, max_results: 1024 }, &cancelled)?;
-                                Ok::<_, Error>(format!("Canonical plot verified. {} independently validated candidate proofs; not submitted to the network.", proofs.len()))
+                                Ok::<_, Error>(format!("{} independently validated candidate proofs from stored fragments; not submitted to the network.", proofs.len()))
                             })();
                             update(&state, |state| state.plot_job = Some(format!("{job_label}: {}", result.unwrap_or_else(|error| error.to_string()))));
                         }));

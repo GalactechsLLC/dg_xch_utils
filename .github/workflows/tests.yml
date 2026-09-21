@@ -47,5 +47,9 @@ jobs:
         run: |
           cargo test -p dg_xch_pos2 -p dg_xch_plotter --features vulkan --locked
           cargo test -p dg_xch_wallet -p dg_xch_farmer -p dg_xch_timelord -p dg_xch_introducer --locked
+      - name: Test compact RAM plotting and fragment recovery on CPU
+        env:
+          RAYON_NUM_THREADS: 2
+        run: cargo test -p dg_xch_plotter --release --test compact --locked -- --include-ignored
       - name: Validate Compose topology
         run: docker compose -f compose.yaml config --quiet

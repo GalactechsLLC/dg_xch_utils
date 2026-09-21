@@ -18,8 +18,8 @@ impl Default for PlotLimits {
     fn default() -> Self {
         Self {
             memory_bytes: 512 * 1024 * 1024,
-            max_entries: 2_097_152,
-            max_work: 100_000_000,
+            max_entries: 4_194_304,
+            max_work: 1_000_000_000,
         }
     }
 }

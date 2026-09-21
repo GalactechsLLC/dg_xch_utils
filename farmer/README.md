@@ -4,7 +4,7 @@ Integrated farmer and harvester, imported from `GalactechsLLC/dg_fast_farmer` at
 
 ## Status
 
-PoS1 plot reading, signage handling, signing, and pool communication are integrated. Each farmer runs independently and connects to its configured full node; there is no required central fleet farmer. PoS2 proof reconstruction exists as a bounded development path, including CPU/CUDA/Vulkan engines, but is not connected to production signage submission. It rebuilds tables and is not an efficient compact-plot disk solver.
+PoS1 plot reading, signage handling, signing, and pool communication are integrated. Each farmer runs independently and connects to its configured full node; there is no required central fleet farmer. PoS2 `DiskHarvester` reads challenge fragments and recovers independently verified proofs without rebuilding full plotting tables. CPU/CUDA/Vulkan proof engines exist, but production PoS2 signage submission is not connected yet.
 
 ## Run
 
@@ -41,7 +41,7 @@ For a custom chain, set `selected_network` to its network ID and supply the comp
 
 ## PoS2 and GPUs
 
-Use [plotter proof checks](../plotter/README.md) for development PoS2 files. NVIDIA CUDA has Rust device kernels in a separate executable. AMD-capable Vulkan uses a WGSL AES shader and Rust matching/writing. Neither backend currently provides timely production network farming. Do not route production PoS2 plots to this service expecting accepted partials or blocks.
+Use [plotter proof checks](../plotter/README.md) for PoS2 files. `DiskHarvester::qualities` separates quality discovery from `prove_with_engine`, so callers can check eligibility before spending time on proof recovery. NVIDIA CUDA has Rust device kernels in a separate executable. AMD-capable Vulkan uses a WGSL AES shader and Rust host matching. Recovery deadlines and network integration still need deployment validation. Do not route production PoS2 plots to this service expecting accepted partials or blocks.
 
 ## Validation
 

@@ -6,10 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-const BATCH_SIZE: usize = 4096;
-const BUFFER_BYTES: u64 = (BATCH_SIZE * size_of::<[u32; 4]>()) as u64;
-const BATCH_MEMORY_BYTES: u64 = 2 * 1024 * 1024;
+const BATCH_SIZE: usize = crate::compute::BATCH_SIZE;
+const GPU_BATCH_SIZE: usize = crate::compute::GPU_BATCH_SIZE;
+const BUFFER_BYTES: u64 = (GPU_BATCH_SIZE * size_of::<[u32; 4]>()) as u64;
+const BATCH_MEMORY_BYTES: u64 = crate::compute::SCRATCH_BYTES;
 const HASH_TIMEOUT: Duration = Duration::from_secs(30);
+const CANCELLATION_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug)]
 pub struct AdapterInfo {
@@ -19,7 +21,7 @@ pub struct AdapterInfo {
     pub device: u32,
 }
 
-fn instance() -> Option<wgpu::Instance> {
+pub(crate) fn instance() -> Option<wgpu::Instance> {
     if !wgpu::Instance::enabled_backend_features().contains(wgpu::Backends::VULKAN) {
         return None;
     }
@@ -29,7 +31,7 @@ fn instance() -> Option<wgpu::Instance> {
     }))
 }
 
-fn hardware_adapters(instance: &wgpu::Instance) -> Vec<wgpu::Adapter> {
+pub(crate) fn hardware_adapters(instance: &wgpu::Instance) -> Vec<wgpu::Adapter> {
     pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN))
         .into_iter()
         .filter(|adapter| {
@@ -83,18 +85,12 @@ fn allocation<T>(capacity: usize) -> Result<Vec<T>, Error> {
 }
 
 fn capacity(params: &ProofParams, limits: PlotLimits) -> Result<usize, Error> {
-    if params.strength() > 8 {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            "bounded Vulkan development backend supports strength 2 through 8",
-        ));
-    }
     let available = limits.memory_bytes.saturating_sub(BATCH_MEMORY_BYTES);
     let capacity = limits
         .max_entries
         .min((available / (2 * size_of::<Record>()) as u64) as usize);
     let initial = 1u64 << params.k();
-    if initial > capacity as u64 || initial > u64::from(u32::MAX) {
+    if initial > capacity as u64 {
         return Err(Error::new(
             ErrorKind::InvalidInput,
             "Vulkan in-memory plot exceeds memory, entry or index limits",
@@ -109,7 +105,8 @@ fn capacity(params: &ProofParams, limits: PlotLimits) -> Result<usize, Error> {
     Ok(capacity)
 }
 
-struct Hasher {
+pub struct Hasher {
+    ordinal: usize,
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
@@ -123,6 +120,10 @@ struct Hasher {
 }
 
 impl Hasher {
+    pub fn for_params(params: &ProofParams, ordinal: usize) -> Result<Self, Error> {
+        Self::new(crate::compute::config(params), ordinal)
+    }
+
     fn new(config: Config, ordinal: usize) -> Result<Self, Error> {
         let instance = instance().ok_or_else(|| {
             Error::new(
@@ -158,7 +159,14 @@ impl Hasher {
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PoS2 AES WGSL"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("vulkan.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("vulkan_aes.wgsl"),
+                    "\n",
+                    include_str!("vulkan.wgsl")
+                )
+                .into(),
+            ),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("PoS2 AES hashing"),
@@ -198,6 +206,13 @@ impl Hasher {
             "PoS2 hash readback",
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
+        let aes_table = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PoS2 AES lookup table"),
+            size: std::mem::size_of_val(&device::AES_TABLE) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&aes_table, 0, bytemuck::cast_slice(&device::AES_TABLE));
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("PoS2 hash bindings"),
             layout: &pipeline.get_bind_group_layout(0),
@@ -213,6 +228,10 @@ impl Hasher {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: outputs.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: aes_table.as_entire_binding(),
                 },
             ],
         });
@@ -231,6 +250,7 @@ impl Hasher {
             ])
         });
         Ok(Self {
+            ordinal,
             device,
             queue,
             pipeline,
@@ -261,14 +281,42 @@ impl Hasher {
         rounds: u32,
         cancelled: &AtomicBool,
     ) -> Result<Vec<[u32; 4]>, Error> {
-        cancelled_check(cancelled)?;
-        self.check_error()?;
-        if inputs.is_empty() || inputs.len() > BATCH_SIZE || !(16..=1024).contains(&rounds) {
+        if inputs.is_empty() {
+            return Ok(Vec::new());
+        }
+        if inputs.len() > GPU_BATCH_SIZE || rounds < 16 || !rounds.is_multiple_of(16) {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 "invalid Vulkan hash batch",
             ));
         }
+        let step = ((4_194_304 / inputs.len() as u32).clamp(16, 1024) / 16) * 16;
+        let count = rounds.min(step);
+        let mut state = self.hash_once(inputs, count, cancelled)?;
+        let mut remaining = rounds - count;
+        while remaining > 0 {
+            let count = remaining.min(step);
+            state = self.hash_once(&state, count, cancelled)?;
+            remaining -= count;
+        }
+        Ok(state)
+    }
+
+    fn hash_once(
+        &self,
+        inputs: &[[u32; 4]],
+        rounds: u32,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<[u32; 4]>, Error> {
+        cancelled_check(cancelled)?;
+        self.check_error()?;
+        if inputs.is_empty() || inputs.len() > GPU_BATCH_SIZE || !(16..=1024).contains(&rounds) {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "invalid Vulkan hash batch",
+            ));
+        }
+        let mut values = allocation(inputs.len())?;
         let mut parameters = [0u32; 12];
         parameters[..8].copy_from_slice(&self.key_words);
         parameters[8] = rounds;
@@ -293,7 +341,7 @@ impl Hasher {
         }
         let byte_count = std::mem::size_of_val(inputs) as u64;
         encoder.copy_buffer_to_buffer(&self.outputs, 0, &self.readback, 0, byte_count);
-        self.queue.submit([encoder.finish()]);
+        let submission_index = self.queue.submit([encoder.finish()]);
         self.check_error()?;
         let slice = self.readback.slice(..byte_count);
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -305,8 +353,18 @@ impl Hasher {
             if let Err(error) = cancelled_check(cancelled).and_then(|()| self.check_error()) {
                 break Err(error);
             }
-            if let Err(error) = self.device.poll(wgpu::PollType::Poll) {
-                break Err(gpu_error(error));
+            let Some(remaining) = HASH_TIMEOUT.checked_sub(started.elapsed()) else {
+                break Err(Error::new(
+                    ErrorKind::TimedOut,
+                    "Vulkan hash batch timed out",
+                ));
+            };
+            match self.device.poll(wgpu::PollType::Wait {
+                submission_index: Some(submission_index.clone()),
+                timeout: Some(remaining.min(CANCELLATION_INTERVAL)),
+            }) {
+                Ok(_) | Err(wgpu::PollError::Timeout) => {}
+                Err(error) => break Err(gpu_error(error)),
             }
             match receiver.try_recv() {
                 Ok(result) => break result.map_err(gpu_error),
@@ -315,20 +373,18 @@ impl Hasher {
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
-            if started.elapsed() >= HASH_TIMEOUT {
-                break Err(Error::new(
-                    ErrorKind::TimedOut,
-                    "Vulkan hash batch timed out",
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(1));
         };
         if let Err(error) = mapped {
             self.readback.unmap();
             return Err(error);
         }
-        let output = slice.get_mapped_range().map_err(gpu_error)?;
-        let mut values = allocation(inputs.len())?;
+        let output = match slice.get_mapped_range() {
+            Ok(output) => output,
+            Err(error) => {
+                self.readback.unmap();
+                return Err(gpu_error(error));
+            }
+        };
         for bytes in output.as_chunks::<16>().0 {
             values.push(std::array::from_fn(|index| {
                 let offset = index * 4;
@@ -344,6 +400,35 @@ impl Hasher {
         self.readback.unmap();
         self.check_error()?;
         Ok(values)
+    }
+}
+
+impl crate::compute::HashEngine for Hasher {
+    fn build_compact(
+        &mut self,
+        params: &ProofParams,
+        limits: PlotLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<crate::compact::CompactPlot>, Error> {
+        if let Some(plot) =
+            crate::vulkan_full::build_device(params, self.ordinal, limits, cancelled)?
+        {
+            return plot.download(cancelled).map(Some);
+        }
+        crate::compact::gpu::build(params, limits, cancelled, self.ordinal)
+    }
+
+    fn is_accelerated(&self) -> bool {
+        true
+    }
+
+    fn hash(
+        &mut self,
+        inputs: &[[u32; 4]],
+        rounds: u32,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<[u32; 4]>, Error> {
+        Hasher::hash(self, inputs, rounds, cancelled)
     }
 }
 

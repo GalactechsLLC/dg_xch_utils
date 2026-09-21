@@ -9,14 +9,16 @@ homepage.workspace = true
 repository.workspace = true
 
 [features]
-vulkan = ["dep:bytemuck", "dep:pollster", "dep:wgpu"]
+resident = ["dep:bytemuck"]
+vulkan = ["resident", "dep:pollster", "dep:wgpu"]
 
 [dependencies]
 aes = { version = "0.8.4", features = ["hazmat"] }
 blake3 = { workspace = true }
-bytemuck = { version = "1.25", optional = true }
+bytemuck = { version = "1.25", features = ["derive"], optional = true }
 dg_xch_core = { workspace = true }
 pollster = { version = "1.0.1", optional = true }
+rayon = "1.12.0"
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "vulkan", "wgsl"], optional = true }
 
 [dev-dependencies]

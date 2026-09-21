@@ -118,6 +118,76 @@ fn the_batch_and_scalar_paths_agree() {
 }
 
 #[test]
+fn complete_state_batches_match_portable_and_scalar_paths() {
+    let hasher = AesHash::new(&regression_plot_id(), 28);
+    let inputs: Vec<[u32; 4]> = (0..37u32)
+        .map(|index| {
+            [
+                index.wrapping_mul(0x9E37_79B9),
+                index.wrapping_mul(0xCA01_F9DD),
+                index.rotate_left(13) ^ 0xDEAD_BEEF,
+                u32::MAX.wrapping_sub(index),
+            ]
+        })
+        .collect();
+    for length in [0, 1, 7, 8, 9, 16, 37] {
+        for rounds in [1, 16, 32, 64, 1024] {
+            let inputs = &inputs[..length];
+            let mut actual = vec![[0; 4]; length];
+            let mut portable = vec![[0; 4]; length];
+            hasher.hash_words_batch(inputs, rounds, &mut actual);
+            hasher.hash_words_batch_portable(inputs, rounds, &mut portable);
+            assert_eq!(actual, portable, "length {length}, rounds {rounds}");
+            for (input, actual) in inputs.iter().zip(actual) {
+                let state = AesHash::state(input[0], input[1], input[2], input[3]);
+                let expected = hasher.apply_portable(state, rounds);
+                assert_eq!(
+                    actual,
+                    std::array::from_fn(|index| AesHash::lane(&expected, index)),
+                    "length {length}, rounds {rounds}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn serial_hashing_validates_output_length_and_cancellation() {
+    use crate::compute::{CpuHasher, HashEngine};
+    use crate::params::ProofParams;
+    use std::sync::atomic::AtomicBool;
+
+    let params = ProofParams::new(regression_plot_id(), 28, 2, false).unwrap();
+    let mut hasher = CpuHasher::new(&params);
+    let inputs: Vec<[u32; 4]> = (0..8193u32)
+        .map(|index| [index, index.rotate_left(13), 17, u32::MAX])
+        .collect();
+    let cancelled = AtomicBool::new(false);
+    let mut actual = vec![[0; 4]; inputs.len()];
+    hasher
+        .hash_into_serial(&inputs, 16, &mut actual, &cancelled)
+        .unwrap();
+    assert_eq!(actual, hasher.hash(&inputs, 16, &cancelled).unwrap());
+    assert!(
+        hasher
+            .hash_into_serial(&inputs, 16, &mut actual[..3], &cancelled)
+            .is_err()
+    );
+    for rounds in [0, 1025] {
+        assert!(
+            hasher
+                .hash_into_serial(&inputs, rounds, &mut actual, &cancelled)
+                .is_err()
+        );
+    }
+    assert!(
+        hasher
+            .hash_into_serial(&inputs, 16, &mut actual, &AtomicBool::new(true))
+            .is_err()
+    );
+}
+
+#[test]
 fn g_x_is_masked_to_k_bits() {
     for k in [16u8, 20, 28, 30] {
         let hasher = AesHash::new(&regression_plot_id(), k);

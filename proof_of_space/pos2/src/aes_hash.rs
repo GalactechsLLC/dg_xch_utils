@@ -44,6 +44,128 @@ pub struct AesHash {
 }
 
 impl AesHash {
+    pub(crate) fn hash_words_batch(
+        &self,
+        inputs: &[[u32; 4]],
+        rounds: u32,
+        output: &mut [[u32; 4]],
+    ) {
+        if self.native {
+            #[cfg(target_arch = "x86_64")]
+            return unsafe { self.hash_words_batch_x86(inputs, rounds, output) };
+            #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+            return unsafe { self.hash_words_batch_aarch64(inputs, rounds, output) };
+        }
+        self.hash_words_batch_portable(inputs, rounds, output);
+    }
+
+    fn hash_words_batch_portable(&self, inputs: &[[u32; 4]], rounds: u32, output: &mut [[u32; 4]]) {
+        let mut first_keys = aes::Block8::default();
+        let mut second_keys = aes::Block8::default();
+        for key in &mut first_keys {
+            key.copy_from_slice(&self.key1);
+        }
+        for key in &mut second_keys {
+            key.copy_from_slice(&self.key2);
+        }
+        for (inputs, output) in inputs.chunks(8).zip(output.chunks_mut(8)) {
+            let mut blocks = aes::Block8::default();
+            for (input, block) in inputs.iter().zip(blocks.iter_mut()) {
+                block.copy_from_slice(&Self::state(input[0], input[1], input[2], input[3]));
+            }
+            for _ in 0..rounds {
+                aes::hazmat::cipher_round_par(&mut blocks, &first_keys);
+                aes::hazmat::cipher_round_par(&mut blocks, &second_keys);
+            }
+            for (block, output) in blocks.iter().zip(output) {
+                for (bytes, word) in block.as_chunks::<4>().0.iter().zip(output) {
+                    *word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "aes")]
+    unsafe fn hash_words_batch_x86(
+        &self,
+        inputs: &[[u32; 4]],
+        rounds: u32,
+        output: &mut [[u32; 4]],
+    ) {
+        unsafe {
+            let key1 = _mm_loadu_si128(self.key1.as_ptr().cast::<__m128i>());
+            let key2 = _mm_loadu_si128(self.key2.as_ptr().cast::<__m128i>());
+            let (input_chunks, input_tail) = inputs.as_chunks::<8>();
+            let (output_chunks, output_tail) = output.as_chunks_mut::<8>();
+            for (inputs, output) in input_chunks.iter().zip(output_chunks) {
+                let mut blocks: [__m128i; 8] = std::array::from_fn(|index| {
+                    _mm_loadu_si128(inputs[index].as_ptr().cast::<__m128i>())
+                });
+                for _ in 0..rounds {
+                    for block in &mut blocks {
+                        *block = _mm_aesenc_si128(*block, key1);
+                    }
+                    for block in &mut blocks {
+                        *block = _mm_aesenc_si128(*block, key2);
+                    }
+                }
+                for (block, output) in blocks.into_iter().zip(output) {
+                    _mm_storeu_si128(output.as_mut_ptr().cast::<__m128i>(), block);
+                }
+            }
+            for (input, output) in input_tail.iter().zip(output_tail) {
+                let mut block = _mm_loadu_si128(input.as_ptr().cast::<__m128i>());
+                for _ in 0..rounds {
+                    block = _mm_aesenc_si128(block, key1);
+                    block = _mm_aesenc_si128(block, key2);
+                }
+                _mm_storeu_si128(output.as_mut_ptr().cast::<__m128i>(), block);
+            }
+        }
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+    #[target_feature(enable = "aes")]
+    unsafe fn hash_words_batch_aarch64(
+        &self,
+        inputs: &[[u32; 4]],
+        rounds: u32,
+        output: &mut [[u32; 4]],
+    ) {
+        unsafe {
+            let zero = vdupq_n_u8(0);
+            let key1 = std::ptr::read_unaligned(self.key1.as_ptr().cast::<uint8x16_t>());
+            let key2 = std::ptr::read_unaligned(self.key2.as_ptr().cast::<uint8x16_t>());
+            let (input_chunks, input_tail) = inputs.as_chunks::<8>();
+            let (output_chunks, output_tail) = output.as_chunks_mut::<8>();
+            for (inputs, output) in input_chunks.iter().zip(output_chunks) {
+                let mut blocks: [uint8x16_t; 8] = std::array::from_fn(|index| {
+                    std::ptr::read_unaligned(inputs[index].as_ptr().cast::<uint8x16_t>())
+                });
+                for _ in 0..rounds {
+                    for block in &mut blocks {
+                        *block = veorq_u8(vaesmcq_u8(vaeseq_u8(*block, zero)), key1);
+                    }
+                    for block in &mut blocks {
+                        *block = veorq_u8(vaesmcq_u8(vaeseq_u8(*block, zero)), key2);
+                    }
+                }
+                for (block, output) in blocks.into_iter().zip(output) {
+                    std::ptr::write_unaligned(output.as_mut_ptr().cast::<uint8x16_t>(), block);
+                }
+            }
+            for (input, output) in input_tail.iter().zip(output_tail) {
+                let mut block = std::ptr::read_unaligned(input.as_ptr().cast::<uint8x16_t>());
+                for _ in 0..rounds {
+                    block = veorq_u8(vaesmcq_u8(vaeseq_u8(block, zero)), key1);
+                    block = veorq_u8(vaesmcq_u8(vaeseq_u8(block, zero)), key2);
+                }
+                std::ptr::write_unaligned(output.as_mut_ptr().cast::<uint8x16_t>(), block);
+            }
+        }
+    }
+
     #[must_use]
     pub fn new(plot_id: &Bytes32, k: u8) -> Self {
         let bytes = plot_id.bytes();

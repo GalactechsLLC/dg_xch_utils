@@ -11,7 +11,8 @@ cuda-device = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "b9847e9
 cuda-host = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "b9847e9515ed3a23096f22567d3eaf0a6e3e440c" }
 cuda-core = "=0.3.1"
 dg_xch_plotter = { path = ".." }
-dg_xch_pos2 = { path = "../../proof_of_space/pos2" }
+dg_xch_pos2 = { path = "../../proof_of_space/pos2", features = ["resident"] }
+bytemuck = "1.25"
 clap = { version = "4.5.60", features = ["derive"] }
 hex = "0.4.3"
 

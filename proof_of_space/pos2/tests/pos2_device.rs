@@ -1,6 +1,36 @@
 use dg_xch_pos2::{core::ProofCore, device, params::ProofParams};
 
 #[test]
+fn compact_matching_supports_every_reference_size_and_strength() {
+    for k in (18..=32).step_by(2) {
+        let maximum = k - if k < 28 { 2 } else { k - 26 } - 1;
+        for strength in 2..=maximum {
+            for testnet in [false, true] {
+                let params = ProofParams::new([0xa5; 32].into(), k, strength, testnet).unwrap();
+                let config = dg_xch_pos2::compute::config(&params);
+                let core = ProofCore::new(params.clone()).unwrap();
+                let left = device::Record {
+                    meta: u64::MAX >> (64 - 2 * k),
+                    info: u32::MAX >> (32 - k),
+                    ..Default::default()
+                };
+                for table in 2..=3 {
+                    for key in [0, (params.num_match_keys(table as usize) - 1) as u32] {
+                        let target = device::target(config, table, left, key);
+                        assert!(core.validate_match_info_pairing(
+                            table as usize,
+                            left.meta,
+                            left.info,
+                            target
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn device_hashes_targets_and_fragments_match_native_cpu() {
     for k in [18, 20, 22, 24, 26, 28, 30, 32] {
         for strength in [2, 3, 5] {

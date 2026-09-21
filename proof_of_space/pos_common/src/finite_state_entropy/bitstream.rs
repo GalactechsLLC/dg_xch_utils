@@ -208,7 +208,9 @@ impl<'a> BitDstream<'a> {
     pub fn bit_look_bits(&mut self, nb_bits: u32) -> usize {
         get_middle_bits(
             self.bit_container,
-            usize::BITS - self.bits_consumed - nb_bits,
+            usize::BITS
+                .wrapping_sub(self.bits_consumed)
+                .wrapping_sub(nb_bits),
             nb_bits,
         )
     }

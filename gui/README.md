@@ -4,7 +4,7 @@ Native Rust desktop for node diagnostics, accounts, farming, and development plo
 
 ## Status
 
-The desktop is functional but still under development. Standard-coin wallets, multiple unlocked accounts, background polling, live node details, and embedded PoS1 farming are available. PoS2 plotting/proof checks are bounded development workloads, not production-size network farming. CATs, NFTs, offers, hardware signing, and complete transaction recovery are not exposed. Use test funds.
+The desktop is functional but still under development. Standard-coin wallets, multiple unlocked accounts, background polling, live node details, and embedded PoS1 farming are available. PoS2 RAM plotting and fragment proof recovery use explicit resource budgets; PoS2 network farming is not connected yet. CATs, NFTs, offers, hardware signing, and complete transaction recovery are not exposed. Use test funds.
 
 ## Run
 
@@ -29,7 +29,7 @@ Settings and themes use the platform's per-user configuration directory. Encrypt
 
 ## Plotting and GPUs
 
-Use Plot Workshop for k18 development plots and proof checks. New settings default to **Auto** GPU selection; saved explicit CUDA/Vulkan preferences remain unchanged. Auto first probes the configured NVIDIA CUDA device through the separately built trusted [CUDA executable](../plotter/cuda/README.md). Supply an absolute executable path; the desktop never searches `PATH` or downloads a helper. Probing has a five-second deadline and bounded output. It initializes a CUDA context, not a plotting workload or performance benchmark.
+Plot Workshop defaults to k18 and supports the pinned reference's even k18–k32 domain and size-dependent strength range. Set sufficient RAM and work budgets before choosing a larger plot; k32 needs substantially more than 64 GiB of RAM. New settings default to **Auto** GPU selection; saved explicit CUDA/Vulkan preferences remain unchanged. Auto first probes the configured NVIDIA CUDA device through the separately built trusted [CUDA executable](../plotter/cuda/README.md). Supply an absolute executable path; the desktop never searches `PATH` or downloads a helper. Probing has a five-second deadline and bounded output. The current helper loads its CUDA module and checks one GPU hash against the CPU; it does not run a plotting workload or performance benchmark.
 
 If that probe succeeds, Auto uses native Rust CUDA. Otherwise it selects the lowest-ordinal non-NVIDIA hardware Vulkan adapter, or the lowest-ordinal NVIDIA Vulkan adapter if no other vendor is available. This vendor policy preserves the more extensive native CUDA pipeline; it is **not a measured claim that CUDA is faster on every device**. The selected backend, name, ordinal, and any CUDA preflight failure are displayed with the job. Once selected, a backend failure stops the job; it does not retry on another GPU or CPU.
 

@@ -31,9 +31,9 @@ struct Cli {
 struct Resources {
     #[arg(long, default_value_t = 512)]
     memory_mib: u64,
-    #[arg(long, default_value_t = 2_097_152)]
+    #[arg(long, default_value_t = 4_194_304)]
     max_entries: usize,
-    #[arg(long, default_value_t = 100_000_000)]
+    #[arg(long, default_value_t = 1_000_000_000)]
     max_work: u64,
 }
 
@@ -52,6 +52,76 @@ struct Engine {
 }
 
 impl Engine {
+    fn create(
+        &self,
+        request: &PlotRequest,
+        destination: &std::path::Path,
+        limits: PlotLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<dg_xch_plotter::PlotInfo, Error> {
+        #[cfg(feature = "vulkan")]
+        if matches!(self.backend, Backend::Vulkan) {
+            return dg_xch_plotter::vulkan::create(
+                request,
+                destination,
+                limits,
+                cancelled,
+                self.device,
+            );
+        }
+        dg_xch_plotter::create_compact_with_engine(
+            request,
+            destination,
+            limits,
+            cancelled,
+            |params, limits, cancelled| self.compact(params, limits, cancelled),
+        )
+    }
+
+    fn compact(
+        &self,
+        params: ProofParams,
+        limits: PlotLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<dg_xch_pos2::compact::CompactPlot, Error> {
+        if matches!(self.backend, Backend::Cpu) && self.device == 0 {
+            return dg_xch_pos2::compact::CompactPlot::build(params, limits, cancelled);
+        }
+        let mut engine = self.hasher(&params)?;
+        dg_xch_pos2::compact::CompactPlot::build_with_engine(params, limits, cancelled, &mut engine)
+    }
+
+    fn hasher(
+        &self,
+        params: &ProofParams,
+    ) -> Result<Box<dyn dg_xch_pos2::compute::HashEngine>, Error> {
+        match self.backend {
+            Backend::Cpu if self.device == 0 => {
+                Ok(Box::new(dg_xch_pos2::compute::CpuHasher::new(params)))
+            }
+            Backend::Cpu => Err(Error::new(
+                ErrorKind::InvalidInput,
+                "--device requires --backend vulkan",
+            )),
+            Backend::Vulkan => {
+                #[cfg(feature = "vulkan")]
+                {
+                    Ok(Box::new(dg_xch_pos2::vulkan::Hasher::for_params(
+                        params,
+                        self.device,
+                    )?))
+                }
+                #[cfg(not(feature = "vulkan"))]
+                {
+                    Err(Error::new(
+                        ErrorKind::Unsupported,
+                        "rebuild dg_xch_plotter with --features vulkan",
+                    ))
+                }
+            }
+        }
+    }
+
     fn build(
         &self,
         params: ProofParams,
@@ -103,7 +173,7 @@ enum Command {
     #[command(about = "List hardware Vulkan devices; software adapters are excluded")]
     Devices,
     #[command(
-        about = "Development prover: reconstruct bounded native tables and verify the entire canonical plot before proving"
+        about = "Read challenge fragments and reconstruct independently verified proofs with bounded memory"
     )]
     ProvePlot {
         path: PathBuf,
@@ -221,13 +291,12 @@ fn main() -> Result<(), Error> {
             resources,
             engine,
         } => {
-            let plot = dg_xch_plotter::proving::ReconstructedPlot::open_with_engine(
+            let mut plot = dg_xch_plotter::reader::PlotReader::open(
                 &path,
                 testnet,
-                resources.limits()?,
-                &cancelled,
-                |params, limits, cancelled| engine.build(params, limits, cancelled),
+                resources.limits()?.memory_bytes,
             )?;
+            let mut hasher = engine.hasher(plot.params())?;
             let challenge = bytes::<32>(&challenge)?.into();
             for chain in plot.qualities(
                 challenge,
@@ -240,7 +309,13 @@ fn main() -> Result<(), Error> {
                 println!(
                     "quality={} proof={}",
                     dg_xch_pos2::quality::quality_hash(&chain.fragments, plot.info.strength),
-                    hex::encode(plot.prove(&chain, challenge)?)
+                    hex::encode(plot.prove_with_engine(
+                        &chain,
+                        challenge,
+                        resources.limits()?,
+                        &cancelled,
+                        &mut hasher
+                    )?)
                 );
             }
         }
@@ -275,9 +350,9 @@ fn main() -> Result<(), Error> {
                 }
             };
             eprintln!(
-                "Native in-memory development pipeline; default budgets intentionally reject k28. Network mode is not stored in the plot."
+                "Compact in-memory pipeline; set explicit memory, entry and work budgets for large plots. Network mode is not stored in the plot."
             );
-            let info = dg_xch_plotter::create_with_engine(
+            let info = engine.create(
                 &PlotRequest {
                     farmer_public_key: bytes(&farmer_key)?,
                     pool,
@@ -290,7 +365,6 @@ fn main() -> Result<(), Error> {
                 &output,
                 resources.limits()?,
                 &cancelled,
-                |params, limits, cancelled| engine.build(params, limits, cancelled),
             )?;
             println!("{info:?}");
         }

@@ -8,8 +8,8 @@ This is active development, not a finished chain-launch distribution.
 
 - The native desktop uses egui/wgpu, without Electron, a browser runtime, or JavaScript.
 - Standard wallets have encrypted account keys and durable SQLite state. Multiple accounts can sync in the background. Use test funds; funded-chain and recovery testing are still needed.
-- The integrated farmer comes from `dg_fast_farmer`, without its old UI. PoS1 farming is available; efficient production PoS2 disk farming is not.
-- Native PoS2 development plots can be checked against the external Chia reference. CUDA and AMD-capable Vulkan paths are bounded correctness implementations, not production k28 throughput claims. Vulkan uses a WGSL shader with Rust host code.
+- The integrated farmer comes from `dg_fast_farmer`, without its old UI. PoS1 farming is available; PoS2 fragment recovery exists, but network signage submission is not connected yet.
+- Native PoS2 RAM plots can be checked against the pinned external Chia reference. CPU, CUDA and AMD-capable Vulkan share compact plotting and fragment-recovery paths. Large k sizes require explicit RAM/work budgets; network farming readiness is separate from plotting. Vulkan uses a WGSL shader with Rust host code.
 - The introducer provides peer discovery. The timelord provides bounded real VDF jobs and compact-proof service, not a complete regular signage/infusion/slot scheduler.
 - `config/chains/dgx.json` defines the no-prefarm fork. Consensus activation schedules remain explicit; generating a PoS2 proof does not mean that proof is accepted at genesis.
 
@@ -45,7 +45,7 @@ This starts the service; it does not promise that an empty chain will produce bl
 | [dg_xch_cli](cli/README.md) | The `dg` command and full-node entry point |
 | [dg_full_node](full-node/README.md) | Full-node application, authenticated RPC and wallet queries |
 | [dg_xch_farmer](farmer/README.md) | Integrated farmer/harvester and legacy configuration |
-| [dg_xch_plotter](plotter/README.md) | Native CPU/Vulkan PoS2 development plotting and proof checks |
+| [dg_xch_plotter](plotter/README.md) | Native CPU/Vulkan PoS2 RAM plotting, file reading and fragment proof recovery |
 | [dg_xch_plotter_cuda](plotter/cuda/README.md) | Separately built NVIDIA CUDA backend |
 | [dg_xch_timelord](timelord/README.md) | Real VDF jobs and compact-proof service; regular scheduler unfinished |
 | [dg_xch_introducer](introducer/README.md) | Bounded peer discovery and registration |
