@@ -1,4 +1,5 @@
 use crate::error::SimError;
+use crate::plots::PlotKeys;
 use crate::pos2::PlotSet;
 use crate::timelord::prove_vdf;
 use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
@@ -133,12 +134,17 @@ pub fn farm_genesis(
 pub fn build_genesis_unfinished(
     constants: &ConsensusConstants,
     farmed: &FarmedProof,
-    farmer_reward_puzzle_hash: Bytes32,
+    keys: &PlotKeys,
     timestamp: u64,
 ) -> Result<UnfinishedBlock, SimError> {
+    if keys.plot_public_key != farmed.proof_of_space.plot_public_key {
+        return Err(SimError::Invariant(
+            "genesis signing key does not match the proof".to_string(),
+        ));
+    }
     let placeholder = FarmerSignatures {
-        challenge_chain_sp_signature: g2_infinity(),
-        reward_chain_sp_signature: g2_infinity(),
+        challenge_chain_sp_signature: keys.sign(constants.genesis_challenge)?,
+        reward_chain_sp_signature: keys.sign(constants.genesis_challenge)?,
         foliage_block_data_signature: g2_infinity(),
         foliage_transaction_block_signature: g2_infinity(),
     };
@@ -146,7 +152,7 @@ pub fn build_genesis_unfinished(
         puzzle_hash: constants.genesis_pre_farm_pool_puzzle_hash,
         max_height: 0,
     };
-    create_unfinished_block_with_sigs(
+    let mut unfinished = create_unfinished_block_with_sigs(
         constants,
         farmed.iters.infusion_point_total_iters,
         0,
@@ -165,12 +171,20 @@ pub fn build_genesis_unfinished(
         constants.genesis_challenge,
         pool_target,
         None,
-        farmer_reward_puzzle_hash,
+        constants.genesis_pre_farm_farmer_puzzle_hash,
         timestamp,
         b"dg_xch_simulator/genesis",
         placeholder,
     )
-    .map_err(SimError::Producer)
+    .map_err(SimError::Producer)?;
+    unfinished.foliage.foliage_block_data_signature =
+        keys.sign(unfinished.foliage.foliage_block_data.hash()?)?;
+    unfinished.foliage.foliage_transaction_block_signature = unfinished
+        .foliage
+        .foliage_transaction_block_hash
+        .map(|hash| keys.sign(hash))
+        .transpose()?;
+    Ok(unfinished)
 }
 
 /// Finish the genesis unfinished block into a full block by running its two infusion-point VDFs.

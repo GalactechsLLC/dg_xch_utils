@@ -42,6 +42,15 @@ pub fn get_insecure_url(host: &str, port: u16, request_uri: &str) -> String {
 }
 
 pub fn get_client(ssl_path: &Option<ClientSSLConfig>, timeout: u64) -> Result<Client, Error> {
+    get_client_builder(ssl_path, timeout)?
+        .build()
+        .map_err(Error::other)
+}
+
+pub fn get_client_builder(
+    ssl_path: &Option<ClientSSLConfig>,
+    timeout: u64,
+) -> Result<ClientBuilder, Error> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let mut builder = ClientBuilder::new()
         .https_only(true)
@@ -68,7 +77,7 @@ pub fn get_client(ssl_path: &Option<ClientSSLConfig>, timeout: u64) -> Result<Cl
             builder = builder.add_root_certificate(certificate);
         }
     }
-    builder.build().map_err(Error::other)
+    Ok(builder)
 }
 
 pub fn get_http_client(timeout: u64) -> Result<Client, Error> {

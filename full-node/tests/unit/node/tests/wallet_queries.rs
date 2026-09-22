@@ -116,7 +116,6 @@ fn api_trust(
         store,
         mempool: Arc::new(Mutex::new(Mempool::new(&MAINNET))),
         constants: MAINNET,
-        claimed_peak: Arc::new(AtomicU32::new(0)),
         peak_book: Arc::new(PeakBook::new(Arc::new(AtomicU32::new(0)))),
         claim_guard: None,
         new_peak_signal: Arc::new(Notify::new()),

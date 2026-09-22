@@ -8,7 +8,6 @@ use dg_xch_clients::websocket::farmer::FarmerClient;
 use dg_xch_core::blockchain::proof_of_space::calculate_prefix_bits;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use dg_xch_core::constants::POOL_SUB_SLOT_ITERS;
 use dg_xch_core::protocols::farmer::{FarmerPoolState, MostRecentSignagePoint, NewSignagePoint};
 use dg_xch_core::protocols::harvester::{NewSignagePointHarvester, PoolDifficulty};
 use dg_xch_core::protocols::{ChiaMessage, MessageHandler, PeerMap};
@@ -99,7 +98,7 @@ where
                     );
                     pool_difficulties.push(PoolDifficulty {
                         difficulty,
-                        sub_slot_iters: POOL_SUB_SLOT_ITERS,
+                        sub_slot_iters: self.constants.pool_sub_slot_iters,
                         pool_contract_puzzle_hash: *p2_singleton_puzzle_hash,
                     })
                 } else {

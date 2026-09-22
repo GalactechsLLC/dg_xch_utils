@@ -17,19 +17,13 @@ where
         });
     }
 
-    /// Build the Chia session state consumed by Portfu's `/ws` route.
-    /// Returns the state, its run flag, and the shared inbound peer map.
-    ///
-    /// # Errors
-    /// Returns an I/O error if the TLS config or socket cannot be initialized.
-    pub fn build_peer_server(&self) -> Result<(WebsocketServer, Arc<AtomicBool>, PeerMap), Error> {
-        let api: Arc<dyn FullNodeApi> = Arc::new(StoreApi {
+    pub(in crate::node) fn peer_api(&self) -> StoreApi<S> {
+        StoreApi {
             allow_chain_bootstrap: self.config.allows_chain_bootstrap(),
             follow_inflight_since: self.follow_inflight_since.clone(),
             store: self.store.clone(),
             mempool: self.mempool.clone(),
             constants: self.constants,
-            claimed_peak: self.claimed_peak.clone(),
             peak_book: self.peak_book.clone(),
             // Inbound claims key by the REAL inbound peer id (distinct per connection) and are
             // retracted by the driver's per-tick reconcile against the live inbound map.
@@ -58,7 +52,16 @@ where
             wallet_sync_sem: self.wallet_sync_sem.clone(),
             record_window: self.record_window.clone(),
             sync_metrics: self.sync_metrics.clone(),
-        });
+        }
+    }
+
+    /// Build the Chia session state consumed by Portfu's `/ws` route.
+    /// Returns the state, its run flag, and the shared inbound peer map.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the TLS config or socket cannot be initialized.
+    pub fn build_peer_server(&self) -> Result<(WebsocketServer, Arc<AtomicBool>, PeerMap), Error> {
+        let api: Arc<dyn FullNodeApi> = Arc::new(self.peer_api());
         let handlers = full_node_handlers_counted(
             api,
             self.config.handshake_network_id().map_err(Error::other)?,

@@ -10,7 +10,6 @@ pub(super) struct StoreApi<S> {
     pub(super) store: Arc<S>,
     pub(super) mempool: Arc<Mutex<Mempool>>,
     pub(super) constants: ConsensusConstants,
-    pub(super) claimed_peak: Arc<AtomicU32>,
     // The per-peer peak-claim book (`sync_store`): on_new_peak records the announcing peer's
     // (hash, height, weight) claim here; the sync bands select the heaviest verified-selectable claim.
     pub(super) peak_book: Arc<PeakBook>,

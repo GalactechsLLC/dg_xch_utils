@@ -25,7 +25,10 @@ pub fn calculate_sp_interval_iters(
     constants: &ConsensusConstants,
     sub_slot_iters: u64,
 ) -> Result<u64, Error> {
-    if !sub_slot_iters.is_multiple_of(u64::from(constants.num_sps_sub_slot)) {
+    if constants.num_sps_sub_slot == 0
+        || sub_slot_iters == 0
+        || !sub_slot_iters.is_multiple_of(u64::from(constants.num_sps_sub_slot))
+    {
         Err(Error::new(
             ErrorKind::InvalidData,
             format!("Invalid SubSlot Iterations: {sub_slot_iters}"),
@@ -71,10 +74,12 @@ pub fn calculate_ip_iters(
             ),
         ))
     } else {
-        Ok(
-            (sp_iters + constants.num_sp_intervals_extra * sp_interval_iters + required_iters)
-                % sub_slot_iters,
-        )
+        let infusion = u128::from(constants.num_sp_intervals_extra)
+            .checked_mul(u128::from(sp_interval_iters))
+            .and_then(|offset| offset.checked_add(u128::from(sp_iters)))
+            .and_then(|offset| offset.checked_add(u128::from(required_iters)))
+            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "infusion iteration overflow"))?;
+        u64::try_from(infusion % u128::from(sub_slot_iters)).map_err(Error::other)
     }
 }
 

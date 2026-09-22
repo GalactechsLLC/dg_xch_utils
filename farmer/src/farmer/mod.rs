@@ -304,7 +304,7 @@ where
         let network_id = config.network_id()?;
         let ssl_path = get_ssl_root_path(&*config)?;
         crate::utils::ensure_farmer_tls(&ssl_path)?;
-        FarmerClient::new(
+        FarmerClient::new_with_constants(
             Arc::new(WsClientConfig {
                 host: config.fullnode_ws_host.clone(),
                 port: config.fullnode_ws_port,
@@ -323,6 +323,7 @@ where
             shared_state.clone(),
             client_run.clone(),
             30,
+            config.constants()?,
         )
         .await
     }

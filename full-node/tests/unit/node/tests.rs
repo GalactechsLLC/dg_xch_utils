@@ -447,7 +447,7 @@ fn test_book() -> (Arc<AtomicU32>, Arc<PeakBook>) {
 // tests below all need the same scaffold. `claim_guard` None = the shared inbound server api
 // (claims keyed by the real peer id); Some = one outbound connection (claims keyed by the guard).
 async fn peak_test_api(
-    claimed_peak: &Arc<AtomicU32>,
+    _claimed_peak: &Arc<AtomicU32>,
     book: &Arc<PeakBook>,
     claim_guard: Option<Arc<ClaimGuard>>,
 ) -> StoreApi<SqliteStore> {
@@ -468,7 +468,6 @@ async fn peak_test_api(
         store,
         mempool: Arc::new(Mutex::new(Mempool::new(&MAINNET))),
         constants: MAINNET,
-        claimed_peak: claimed_peak.clone(),
         peak_book: book.clone(),
         claim_guard,
         new_peak_signal: Arc::new(Notify::new()),
@@ -512,11 +511,23 @@ async fn custom_chain_bootstrap_keeps_sync_status_and_blocks_catchup() {
     let mut api = peak_test_api(&claimed, &book, None).await;
     api.synced.store(false, Ordering::Relaxed);
     assert!(!api.production_ready().await);
+    assert!(FullNodeApi::timelord_genesis(&api).await.is_none());
     api.allow_chain_bootstrap = true;
     api.constants = dg_xch_core::consensus::chain_definition::ChainDefinition::default()
         .constants()
         .unwrap();
     assert!(api.production_ready().await);
+    let genesis = FullNodeApi::timelord_genesis(&api).await.unwrap();
+    assert_eq!(genesis.genesis_challenge, api.constants.genesis_challenge);
+    assert_eq!(genesis.difficulty, api.constants.difficulty_starting);
+    assert_eq!(
+        genesis.sub_slot_iters,
+        api.constants.sub_slot_iters_starting
+    );
+    assert_eq!(
+        genesis.discriminant_size_bits,
+        api.constants.discriminant_size_bits
+    );
     assert!(!api.synced.load(Ordering::Relaxed));
     assert!(
         FullNodeApi::on_new_unfinished_block(
@@ -531,6 +542,7 @@ async fn custom_chain_bootstrap_keeps_sync_status_and_blocks_catchup() {
     );
     api.follow_inflight_since.store(1, Ordering::Relaxed);
     assert!(!api.production_ready().await);
+    assert!(FullNodeApi::timelord_genesis(&api).await.is_none());
     api.follow_inflight_since.store(0, Ordering::Relaxed);
     api.sync_metrics.queue_len.store(1, Ordering::Relaxed);
     assert!(!api.production_ready().await);
@@ -546,6 +558,7 @@ async fn custom_chain_bootstrap_keeps_sync_status_and_blocks_catchup() {
         },
     );
     assert!(!api.production_ready().await);
+    assert!(FullNodeApi::timelord_genesis(&api).await.is_none());
     book.retract(&peer);
     assert!(api.production_ready().await);
 }
@@ -1199,7 +1212,6 @@ async fn signed_values_splices_farmer_sigs_and_queues_for_broadcast() {
         store,
         mempool: Arc::new(Mutex::new(Mempool::new(&MAINNET))),
         constants: MAINNET,
-        claimed_peak: Arc::new(AtomicU32::new(0)),
         peak_book: Arc::new(PeakBook::new(Arc::new(AtomicU32::new(0)))),
         claim_guard: None,
         new_peak_signal: Arc::new(Notify::new()),
@@ -1491,6 +1503,40 @@ fn genesis_unfinished_block() -> UnfinishedBlock {
 }
 
 #[tokio::test]
+async fn genesis_unfinished_block_reaches_real_validation_without_a_stored_parent() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::build(
+        "127.0.0.1:0",
+        "127.0.0.1:0",
+        None,
+        &[],
+        None,
+        directory.path().join("genesis.sqlite").to_str().unwrap(),
+        "mainnet",
+        None,
+        false,
+        0,
+        false,
+        None,
+        None,
+        dg_xch_p2p::P2pSettings::default(),
+        &[],
+        &[],
+    )
+    .unwrap();
+    let node = Arc::new(FullNode::boot(config).await.unwrap());
+    let block = genesis_unfinished_block();
+    let hash = block.reward_chain_block.hash().unwrap();
+    node.ub_inbox.lock().await.push(block);
+    process_ub_inbox(&node).await;
+    assert_eq!(node.producer.dropped_count("ub_prev_unknown"), 0);
+    assert_eq!(node.producer.dropped_count("ub_validation_fail"), 1);
+    assert!(node.unfinished.lock().await.get_block(&hash).is_none());
+    assert!(node.ub_timelord_announce.lock().await.is_empty());
+    assert!(node.store.get_peak().await.unwrap().is_none());
+}
+
+#[tokio::test]
 async fn infusion_return_handlers_queue_only_when_synced() {
     use dg_xch_core::blockchain::challenge_chain_subslot::ChallengeChainSubSlot;
     use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
@@ -1518,7 +1564,6 @@ async fn infusion_return_handlers_queue_only_when_synced() {
         store: store.clone(),
         mempool: Arc::new(Mutex::new(Mempool::new(&MAINNET))),
         constants: MAINNET,
-        claimed_peak: Arc::new(AtomicU32::new(0)),
         peak_book: Arc::new(PeakBook::new(Arc::new(AtomicU32::new(0)))),
         claim_guard: None,
         new_peak_signal: Arc::new(Notify::new()),
@@ -2114,8 +2159,8 @@ async fn ub_store_error_requeues_candidate_never_counts_it_as_prev_unknown() {
         .expect("boot node with fault store"),
     );
 
-    // A ready unfinished block sits in the inbox; the parent lookup is the first store touch it hits.
-    let ub = genesis_unfinished_block();
+    let mut ub = genesis_unfinished_block();
+    ub.foliage.prev_block_hash = Bytes32::new([0x39; 32]);
     node.ub_inbox.lock().await.push(ub);
 
     // Arm the fault: the parent lookup now errors (transient backend outage), even though on a healthy
@@ -2141,8 +2186,6 @@ async fn ub_store_error_requeues_candidate_never_counts_it_as_prev_unknown() {
         "the re-queue must be recorded under its own reason"
     );
 
-    // With the backend recovered, the same candidate now resolves its (absent) genesis parent as a
-    // genuine miss — the correct 'we are behind' park — proving the retry path is real, not a black hole.
     fail.store(false, Ordering::Relaxed);
     process_ub_inbox(&node).await;
     assert_eq!(
@@ -2153,7 +2196,7 @@ async fn ub_store_error_requeues_candidate_never_counts_it_as_prev_unknown() {
     assert_eq!(
         node.producer.dropped_count("ub_prev_unknown"),
         1,
-        "genesis parent absent on a healthy store is the genuine ub_prev_unknown park"
+        "non-genesis parent absent on a healthy store is the genuine ub_prev_unknown park"
     );
 }
 

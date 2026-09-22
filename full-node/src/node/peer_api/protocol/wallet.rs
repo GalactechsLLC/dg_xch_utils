@@ -43,6 +43,21 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         .await
     }
 
+    pub(super) async fn timelord_genesis(&self) -> Option<NewGenesisTimelord> {
+        if !self.allow_chain_bootstrap || !self.production_ready().await {
+            return None;
+        }
+        if self.store.get_peak().await.ok()?.is_some() {
+            return None;
+        }
+        Some(NewGenesisTimelord {
+            genesis_challenge: self.constants.genesis_challenge,
+            difficulty: self.constants.difficulty_starting,
+            sub_slot_iters: self.constants.sub_slot_iters_starting,
+            discriminant_size_bits: self.constants.discriminant_size_bits,
+        })
+    }
+
     pub(super) async fn mempool_sync_filter(&self) -> Option<Vec<u8>> {
         on_connect_mempool_filter(&self.synced, &self.mempool).await
     }

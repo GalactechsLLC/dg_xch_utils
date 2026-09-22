@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod native_bootstrap;
+
 // Compact-VDF SOLICITATION send path. The scan's
 // per-block plan/dedup is proven purely in full-node/tests/compact_vdf.rs (against a real mainnet
 // block); here we prove the peer-conditional fan-out — the half that turns a solicitation list into

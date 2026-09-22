@@ -1,5 +1,6 @@
 use super::*;
 use crate::consensus::block_rewards::{calculate_base_farmer_reward, calculate_pool_reward};
+use crate::consensus::constants::MAINNET;
 
 #[cfg(feature = "bls")]
 #[test]
@@ -63,7 +64,7 @@ fn chain_bound_signatures_cannot_replay_between_chia_and_fork() {
 #[test]
 fn fork_preserves_chia_rules_except_identity_and_prefarm() {
     let definition: ChainDefinition =
-        serde_json::from_str(include_str!("../../../../config/chains/dgx.json")).unwrap();
+        serde_json::from_str(r#"{"network_id":"dgx","genesis_seed":"dg_xch/dgx/no-prefarm/v1","rewards":{"genesis_pool":0,"genesis_farmer":0,"initial_pool":1750000000000,"initial_farmer":250000000000,"halving_interval":5045760,"max_halvings":4}}"#).unwrap();
     assert_eq!(definition, ChainDefinition::default());
     let mut fork = definition.constants().unwrap();
     assert_eq!(
@@ -186,5 +187,95 @@ fn chia_schedule_preserves_prefarm_and_all_halving_boundaries() {
             RewardSchedule::CHIA.farmer_reward(height),
             calculate_base_farmer_reward(height)
         );
+    }
+}
+
+#[test]
+fn chain_selection_defaults_to_unchanged_chia_mainnet() {
+    let chain = ChainSelection::default().resolve().unwrap();
+    assert_eq!(chain.constants, MAINNET);
+    assert_eq!(chain.network_id, "mainnet");
+    assert_eq!(chain.handshake_network_id, "mainnet");
+    assert!(!chain.allows_bootstrap);
+    assert!(ChainSelection::from_config("unknown", None).is_err());
+}
+
+#[test]
+fn published_dgx_definition_matches_the_versioned_preset() {
+    let definition: ChainDefinition =
+        serde_json::from_str(include_str!("../../../../config/chains/dgx.json")).unwrap();
+    assert_eq!(definition, ChainDefinition::dgx());
+    assert_eq!(
+        definition.constants().unwrap(),
+        ChainSelection::Dgx.constants().unwrap()
+    );
+}
+
+#[test]
+fn chain_selections_round_trip_and_preserve_legacy_definitions() {
+    for selection in [
+        ChainSelection::default(),
+        ChainSelection::Chia(ChiaNetwork::Testnet11),
+        ChainSelection::Dgx,
+        ChainSelection::Custom(ChainDefinition::default()),
+        ChainSelection::Custom(ChainDefinition::development("test seed".into())),
+    ] {
+        let encoded = serde_json::to_string(&selection).unwrap();
+        let decoded: ChainSelection = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(selection, decoded);
+        assert_eq!(selection.constants().unwrap(), decoded.constants().unwrap());
+    }
+    assert!(serde_json::from_str::<ChainSelection>("\"typo\"").is_err());
+}
+
+#[test]
+fn versioned_development_rules_are_isolated_and_use_real_proofs() {
+    let definition = ChainDefinition::development("test seed".into());
+    let constants = definition.constants().unwrap();
+    assert_eq!(constants.hard_fork2_height, 0);
+    assert_eq!(constants.discriminant_size_bits, 1024);
+    assert_eq!(constants.plot_size_v2, 28);
+    assert!(!constants.simulated);
+    assert!(constants.is_testnet);
+    assert_eq!(constants.rewards.pool_reward(0), 0);
+    assert_eq!(constants.rewards.farmer_reward(0), 0);
+    assert_ne!(
+        constants.genesis_challenge,
+        ChainSelection::Dgx.constants().unwrap().genesis_challenge
+    );
+    let mut altered = definition.clone();
+    altered.consensus.as_mut().unwrap().difficulty_starting = 2;
+    assert_ne!(
+        constants.genesis_challenge,
+        altered.constants().unwrap().genesis_challenge
+    );
+    assert!(ChainSelection::from_config("mainnet", Some(&definition)).is_err());
+}
+
+#[test]
+fn launch_parameters_reject_invalid_resource_and_arithmetic_bounds() {
+    let definition = ChainDefinition::development("test seed".into());
+    for (iterations, bits, version) in [(0, 38, 2), (129, 38, 2), (16_384, 128, 2), (16_384, 38, 3)]
+    {
+        let mut changed = definition.clone();
+        let parameters = changed.consensus.as_mut().unwrap();
+        parameters.sub_slot_iters_starting = iterations;
+        parameters.difficulty_constant_factor_bits = bits;
+        parameters.version = version;
+        assert!(changed.constants().is_err());
+    }
+}
+
+#[test]
+fn launch_parameters_require_at_least_one_valid_plot_strength() {
+    for plot_size in (18..=32u8).step_by(2) {
+        let mut definition = ChainDefinition::development("strength bounds".into());
+        let ceiling = plot_size.min(28) - 3;
+        let parameters = definition.consensus.as_mut().unwrap();
+        parameters.plot_size_v2 = plot_size;
+        parameters.min_plot_strength = ceiling;
+        assert!(definition.constants().is_ok());
+        definition.consensus.as_mut().unwrap().min_plot_strength = ceiling + 1;
+        assert!(definition.constants().is_err());
     }
 }

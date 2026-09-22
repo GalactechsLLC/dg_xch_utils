@@ -4,7 +4,7 @@ Full-node application library: configuration, chain storage, peer transport, syn
 
 ## Status
 
-The node validates and stores chain data and exposes authenticated diagnostics. Custom chain definitions can remove the prefarm while retaining Chia-derived rules. That does not make the new-chain production stack complete: regular timelord scheduling and production PoS2 disk farming remain separate gates. Linux and macOS are the current node build targets; the GMP dependency prevents Windows MSVC node builds.
+The node validates and stores chain data and exposes authenticated diagnostics. Runtime chain selection defaults to Chia mainnet; custom definitions can remove the prefarm and activate PoS2 from genesis. Fresh-chain candidates follow normal header, body and VDF validation, with explicit bootstrap work sent only to trusted timelords on custom chains. The [Compose acceptance checks](../docker/README.md) exercise integration separately from container health. Linux and macOS are the current node build targets; the GMP dependency prevents Windows MSVC node builds.
 
 ## Run
 

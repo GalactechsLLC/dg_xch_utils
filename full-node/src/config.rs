@@ -1,5 +1,5 @@
-use dg_xch_core::consensus::chain_definition::ChainDefinition;
-use dg_xch_core::consensus::constants::{ChiaNetwork, ConsensusConstants};
+use dg_xch_core::consensus::chain_definition::{ChainDefinition, ChainSelection, ResolvedChain};
+use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_p2p::P2pSettings;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -116,7 +116,7 @@ pub struct Config {
 
 impl Config {
     pub fn bind_chain_identity(&self) -> Result<(), std::io::Error> {
-        use std::io::{Error, ErrorKind, Write};
+        use std::io::{Error, ErrorKind};
         let constants = self.consensus_constants().map_err(Error::other)?;
         let custom = self.allows_chain_bootstrap();
         let (marker, occupied) = match &self.backend {
@@ -165,46 +165,25 @@ impl Config {
                 "custom chain requires an empty database or an existing matching chain-identity marker",
             ));
         }
-        if let Some(parent) = marker
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(marker)?;
-        file.write_all(identity.as_bytes())?;
-        file.sync_all()
+        dg_xch_servers::chain_config::write_new(&marker, identity.as_bytes())
     }
 
     pub fn consensus_constants(&self) -> Result<ConsensusConstants, String> {
-        if let Some(definition) = &self.chain_definition {
-            if self.network_id != definition.network_id {
-                return Err("network id does not match chain definition".into());
-            }
-            definition.constants()
-        } else if self.network_id == "dgx" {
-            ChainDefinition::default().constants()
-        } else {
-            ChiaNetwork::from_str(&self.network_id).map(ConsensusConstants::from)
-        }
+        self.resolved_chain().map(|chain| chain.constants)
+    }
+
+    pub fn resolved_chain(&self) -> Result<ResolvedChain, String> {
+        ChainSelection::from_config(&self.network_id, self.chain_definition.as_ref())?.resolve()
     }
 
     pub fn handshake_network_id(&self) -> Result<String, String> {
-        match &self.chain_definition {
-            Some(definition) => definition.handshake_network_id(),
-            None if self.network_id == "dgx" => ChainDefinition::default().handshake_network_id(),
-            None => {
-                self.consensus_constants()?;
-                Ok(self.network_id.clone())
-            }
-        }
+        self.resolved_chain()
+            .map(|chain| chain.handshake_network_id)
     }
 
     pub fn allows_chain_bootstrap(&self) -> bool {
-        self.chain_definition.is_some() || self.network_id == "dgx"
+        self.resolved_chain()
+            .is_ok_and(|chain| chain.allows_bootstrap)
     }
 
     /// Build a config from the parsed CLI strings.

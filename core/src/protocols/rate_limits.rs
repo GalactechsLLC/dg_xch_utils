@@ -159,6 +159,7 @@ fn v1_limit(t: ProtocolMessageTypes) -> Limit {
         P::FarmingInfo => rl(true, 100, 1024),
         P::SignedValues => rl(true, 100, 1024),
         P::NewPeakTimelord => rl(true, 100, 20 * KIB),
+        P::NewGenesisTimelord => rl(true, 10, 128),
         P::NewUnfinishedBlockTimelord => rl(true, 100, 10 * KIB),
         P::NewSignagePointVdf => rl(true, 100, 100 * KIB),
         P::NewInfusionPointVdf => rl(true, 100, 100 * KIB),

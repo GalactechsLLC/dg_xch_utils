@@ -106,6 +106,7 @@ fn a_farmed_proof_passes_the_consensus_verifier() {
     let constants = apply_overrides(
         MAINNET,
         &ConsensusOverrides {
+            hard_fork2_height: Some(0),
             plot_size_v2: Some(K),
             ..Default::default()
         },

@@ -1,6 +1,6 @@
 [package]
 name = "dg_xch_timelord"
-description = "Native VDF workers and authenticated compact-proof timelord service"
+description = "Native CPU VDF workers and authenticated regular and compact timelord services"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,9 +9,10 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-dg_xch_core = { path = "../core", version = "3.0.0", default-features = false }
+dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, features = ["bls"] }
 dg_xch_servers = { path = "../servers" }
 dg_xch_vdf = { path = "../vdf" }
+dg_xch_pos = { path = "../proof_of_space" }
 clap = { version = "4.5.60", features = ["derive"] }
 futures-util = "0.3.32"
 rustls = "0.23.45"

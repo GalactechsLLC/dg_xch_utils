@@ -15,7 +15,6 @@ where
     pub fn outbound_handler_factory(&self) -> HandlerFactory {
         let store = self.store.clone();
         let mempool = self.mempool.clone();
-        let claimed_peak = self.claimed_peak.clone();
         let peak_book = self.peak_book.clone();
         let new_peak_signal = self.new_peak_signal.clone();
         let known_peers = self.known_peers.clone();
@@ -57,7 +56,6 @@ where
                 store: store.clone(),
                 mempool: mempool.clone(),
                 constants,
-                claimed_peak: claimed_peak.clone(),
                 peak_book: peak_book.clone(),
                 // One factory invocation = one outbound dial: mint this connection's claim key. Its
                 // Drop (with the connection's handler map) retracts the claim — the

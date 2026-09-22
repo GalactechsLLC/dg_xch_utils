@@ -3,6 +3,49 @@ use crate::discriminant::create_discriminant_int;
 use crate::form::{B_BYTES, get_b};
 
 #[test]
+fn memory_bounded_prover_preserves_wesolowski_proofs() {
+    let challenge = [37; 32];
+    let mut input = [0; 100];
+    input[0] = 8;
+    for iterations in [1, 73, 4097] {
+        let bounded = prove_result_bounded(&challenge, &input, 32, iterations, 128 * 1024).unwrap();
+        let ordinary = prove_result(&challenge, &input, 32, iterations).unwrap();
+        assert_eq!(bounded, ordinary);
+        assert!(verify_vdf_serial(
+            &challenge, &input, &bounded, 32, iterations, 0
+        ));
+    }
+    let first = prove_result_bounded(&challenge, &input, 1024, 8, 128 * 1024).unwrap();
+    let second = prove_result_bounded(&challenge, &first[..100], 1024, 9, 128 * 1024).unwrap();
+    let whole = prove_result(&challenge, &input, 1024, 17).unwrap();
+    assert_eq!(second[..100], whole[..100]);
+    assert!(verify_vdf_serial(
+        &challenge,
+        &first[..100],
+        &second,
+        1024,
+        9,
+        0
+    ));
+}
+
+#[test]
+fn bounded_parameters_cover_consensus_iterations_without_compact_ceiling() {
+    for iterations in [1u64 << 26, 1u64 << 27, 1u64 << 40, u64::MAX - 4095] {
+        let budget = 128 * 1024;
+        let (spacing, window) = bounded_parameters(iterations, budget).unwrap();
+        let checkpoints = iterations.div_ceil(spacing.checked_mul(window).unwrap());
+        assert!(64 * 1024 + 512 * ((1u64 << window) + checkpoints) <= budget);
+        assert!((1..=20).contains(&window));
+        assert!(spacing > 0);
+    }
+    assert_eq!(
+        bounded_parameters(100, 64 * 1024),
+        Err(Error::ProverMemoryLimit)
+    );
+}
+
+#[test]
 fn memoized_verify_vdf_is_identical_to_uncached() {
     let challenge = hex::decode("9f1fbdf9b1a0b6912cd5e2a4b40a2ffb1810b513994b1dd6c4e6df9c30de5f6e")
         .expect("challenge hex is valid");

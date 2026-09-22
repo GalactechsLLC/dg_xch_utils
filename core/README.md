@@ -8,7 +8,11 @@ Changes here can change consensus or wire compatibility. Default features includ
 
 ## Usage
 
-Import shared types from `blockchain`, consensus constants and `ChainDefinition` from `consensus`, and wire messages from `protocols`. Services must derive their network identity and constants from the same chain definition. For lean consumers, disable default features and select `bls` or the required storage features explicitly.
+Import shared types from `blockchain`, `ChainSelection` and `ChainDefinition` from `consensus::chain_definition`, and wire messages from `protocols`. `ChainSelection::default()` resolves to unmodified Chia mainnet. `Chia(ChiaNetwork)`, `Dgx`, and `Custom(ChainDefinition)` resolve shared constants, handshake identity and bootstrap policy once at startup. Select capabilities with Cargo features; do not compile a different consensus implementation per network.
+
+Serialized selections are Chia network names such as `"mainnet"`, `"dgx"`, or a custom definition object. The version-2 custom definition pins its baseline and explicit activation/work parameters. Development presets keep real proof verification and 1024-bit VDFs, but lower work and eligibility settings for a small farm. They are separate chains, not production overrides. Legacy objects without `consensus` retain their version-1 identity. `ChainDefinition::default()` remains that legacy custom builder for compatibility; it is not the default chain selection. Never regenerate a running chain's genesis identity as an upgrade mechanism.
+
+For lean consumers, disable default features and select `bls` or the required storage features explicitly.
 
 On Unix, TLS private-key files must be regular, non-symlinked files with a single hard link and owner-only permissions, usually `0600`. Existing files are rejected rather than silently repaired; correct permissions only on keys you own, and restore incomplete certificate/key pairs from a matching backup. Keep their parent directories trusted. Windows ACL enforcement is not implemented by these helpers.
 

@@ -279,6 +279,10 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> FullNodeApi for StoreApi
         StoreApi::timelord_peak(self).await
     }
 
+    async fn timelord_genesis(&self) -> Option<NewGenesisTimelord> {
+        StoreApi::timelord_genesis(self).await
+    }
+
     async fn mempool_sync_filter(&self) -> Option<Vec<u8>> {
         StoreApi::mempool_sync_filter(self).await
     }

@@ -124,14 +124,19 @@ pub(in crate::node) async fn build_new_peak_timelord<S: BlockStore + Send + Sync
         transactions_generator: peak_block.transactions_generator.clone(),
         transactions_generator_ref_list: peak_block.transactions_generator_ref_list.clone(),
     };
-    let sub_epoch_summary = next_sub_epoch_summary(
+    let sub_epoch_summary = match next_sub_epoch_summary(
         constants,
         &records,
         peak.required_iters,
         &unfinished_peak,
         true,
-    )
-    .unwrap_or(None);
+    ) {
+        Ok(summary) => summary,
+        Err(error) => {
+            warn!("Cannot announce timelord peak without a valid sub-epoch summary: {error}");
+            return None;
+        }
+    };
 
     // previous_reward_challenges: `blockchain.get_recent_reward_challenges`().
     let previous_reward_challenges = get_recent_reward_challenges(constants, &peak, &records)?;

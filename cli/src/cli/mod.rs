@@ -35,6 +35,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum RootCommands {
+    #[command(about = "Initialize or inspect a chain without creating blocks")]
+    Chain(crate::chain::ChainArgs),
     #[command(name = "full-node", about = "Run the dg_xch validating full node")]
     FullNode(Box<FullNodeArgs>),
     //START OF FULLNODE API

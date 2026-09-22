@@ -1,6 +1,7 @@
 use crate::PROTOCOL_VERSION;
-use crate::farmer::config::Config;
+use crate::farmer::config::{Config, Pos2HarvesterConfig};
 use crate::farmer::{PathInfo, PlotInfo};
+use crate::harvesters::pos2_network::Pos2Harvester;
 use crate::harvesters::{FarmingKeys, Harvester, ProofHandler, SignatureHandler, count_plots};
 use crate::utils::load_client_id;
 use async_trait::async_trait;
@@ -69,6 +70,7 @@ pub struct DruidGardenHarvester<T: Send + Sync + 'static> {
     pub uuid: Bytes32,
     pub client_id: Bytes32,
     pub shared_state: Arc<FarmerSharedState<T>>,
+    pub(crate) pos2: Arc<Pos2Harvester>,
 }
 #[async_trait]
 impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
@@ -112,7 +114,7 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
                 error!("Error Counting Plots: {e:?}")
             }
         }
-        let harvester = DruidGardenHarvester::new(
+        let harvester = DruidGardenHarvester::new_with_pos2(
             dg_config
                 .plot_directories
                 .iter()
@@ -123,6 +125,7 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
             config.constants()?,
             client_id,
             shared_state.clone(),
+            config.harvester_configs.pos2.clone().unwrap_or_default(),
         )
         .await?;
         Ok(Arc::new(harvester))
@@ -133,8 +136,43 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
         proof_handle: O,
     ) -> Result<(), Error>
     where
-        O: ProofHandler<T, DruidGardenHarvester<T>, C> + Sync + Send,
+        O: ProofHandler<T, DruidGardenHarvester<T>, C> + Sync + Send + 'static,
     {
+        let proof_handle = Arc::new(proof_handle);
+        let pos2 = self.pos2.clone();
+        let pos2_point = signage_point.clone();
+        let shared_state = self.shared_state.clone();
+        let pos2_proof_handle = proof_handle.clone();
+        tokio::spawn(async move {
+            let height = shared_state
+                .signage_points
+                .read()
+                .await
+                .get(&pos2_point.sp_hash)
+                .and_then(|points| {
+                    points.iter().find(|point| {
+                        point.challenge_hash == pos2_point.challenge_hash
+                            && point.signage_point_index == pos2_point.signage_point_index
+                    })
+                })
+                .map(|point| point.peak_height);
+            let Some(height) = height else {
+                return;
+            };
+            let (sender, mut proofs) = tokio::sync::mpsc::channel(4);
+            let farming = pos2.farm(pos2_point, height, sender);
+            let submission = async move {
+                while let Some(proof) = proofs.recv().await {
+                    if let Err(error) = pos2_proof_handle.handle_proof(proof).await {
+                        error!("PoS2 proof submission failed: {error}");
+                    }
+                }
+            };
+            let (result, ()) = tokio::join!(farming, submission);
+            if let Err(error) = result {
+                warn!("PoS2 signage processing failed: {error}");
+            }
+        });
         let start = self
             .shared_state
             .metrics
@@ -440,6 +478,9 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
     where
         H: SignatureHandler<T, DruidGardenHarvester<T>, C> + Sync + Send,
     {
+        if let Some(response) = self.pos2.sign(&request_signatures).await? {
+            return response_handle.handle_signature(response).await;
+        }
         let file_name = request_signatures
             .plot_identifier
             .get(64..)
@@ -509,6 +550,35 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
         client_id: Bytes32,
         shared_state: Arc<FarmerSharedState<T>>,
     ) -> Result<Self, Error> {
+        Self::new_with_pos2(
+            plot_dirs,
+            farming_keys,
+            shutdown_signal,
+            constants,
+            client_id,
+            shared_state,
+            Pos2HarvesterConfig::default(),
+        )
+        .await
+    }
+
+    pub async fn new_with_pos2(
+        plot_dirs: Vec<PathBuf>,
+        farming_keys: Arc<FarmingKeys>,
+        shutdown_signal: Arc<AtomicBool>,
+        constants: ConsensusConstants,
+        client_id: Bytes32,
+        shared_state: Arc<FarmerSharedState<T>>,
+        pos2_config: Pos2HarvesterConfig,
+    ) -> Result<Self, Error> {
+        let pos2 = Pos2Harvester::new(
+            pos2_config,
+            &plot_dirs,
+            farming_keys.clone(),
+            constants,
+            shutdown_signal.clone(),
+        )
+        .await?;
         let decompressor_pool = Arc::new(DecompressorPool::new(
             1,
             available_parallelism().map(|u| u.get()).unwrap_or(4) as u8,
@@ -520,7 +590,7 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
                 &farming_keys.farmer_public_keys,
                 &farming_keys.pool_public_keys,
                 &farming_keys.pool_contract_hashes,
-                vec![],
+                pos2.paths().await,
                 decompressor_pool.clone(),
                 shared_state.metrics.clone(),
             )
@@ -531,6 +601,7 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
         let plot_sync_farming_keys = farming_keys.clone();
         let plot_sync_decompressor_pool = decompressor_pool.clone();
         let plot_sync_shared_state = shared_state.clone();
+        let plot_sync_pos2 = pos2.clone();
         let _plot_sync = tokio::spawn(async move {
             let mut last_sync = Instant::now();
             loop {
@@ -538,14 +609,18 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
                     break;
                 }
                 if last_sync.elapsed() > Duration::from_secs(30) {
-                    let existing_plot_paths: Arc<Vec<PathBuf>> = Arc::new(
+                    if let Err(error) = plot_sync_pos2.refresh().await {
+                        warn!("Failed to refresh PoS2 plots: {error}");
+                    }
+                    let mut known_paths = plot_sync_pos2.paths().await;
+                    known_paths.extend(
                         plot_sync_mutex
                             .lock()
                             .await
                             .keys()
-                            .map(|info| info.path.clone())
-                            .collect(),
+                            .map(|info| info.path.clone()),
                     );
+                    let existing_plot_paths: Arc<Vec<PathBuf>> = Arc::new(known_paths);
                     match load_plots(
                         plot_sync_dirs.clone(),
                         &plot_sync_farming_keys.farmer_public_keys,
@@ -579,6 +654,7 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
             client_id,
             uuid: Bytes32::from(random::<[u8; 32]>()),
             shared_state,
+            pos2,
         })
     }
 }

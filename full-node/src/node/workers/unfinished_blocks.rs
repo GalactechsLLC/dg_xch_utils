@@ -33,8 +33,15 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
         // in_main_chain, which get_block_record-by-hash ignores). So an `Ok(None)` really is "we do not
         // have this parent yet" (we are behind), and an OWN candidate's committed-peak parent can only
         // fail to resolve via an `Err` — which we now retry instead of dropping.
-        let prev = match node.store.get_block_record(&prev_hash).await {
-            Ok(Some(prev)) => prev,
+        let genesis = prev_hash == node.constants.genesis_challenge;
+        let previous = if genesis {
+            Ok(None)
+        } else {
+            node.store.get_block_record(&prev_hash).await
+        };
+        let prev = match previous {
+            Ok(Some(prev)) => Some(prev),
+            Ok(None) if genesis => None,
             Ok(None) => {
                 // Parent genuinely absent — we have not validated it yet. Park the placeholder and drop
                 // the pending request so a re-announce after the peak catches up re-fetches it (a UB
@@ -119,7 +126,20 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
                 continue;
             }
         }
-        let records = difficulty_records_map(node, &prev).await;
+        let height = match prev.as_ref() {
+            None => 0,
+            Some(previous) => match previous.height.checked_add(1) {
+                Some(height) => height,
+                None => {
+                    node.producer.candidate_dropped("ub_height_overflow");
+                    continue;
+                }
+            },
+        };
+        let records = match prev.as_ref() {
+            Some(previous) => difficulty_records_map(node, previous).await,
+            None => HashMap::new(),
+        };
         let is_first_in_sub_slot = !block.finished_sub_slots.is_empty();
         // With the window sized by difficulty_record_depth this cannot fail for a parent whose
         // ancestry is in the store. A failure means the record walk broke mid-chain — a real
@@ -127,7 +147,7 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
         let (ssi, difficulty) = match get_next_sub_slot_iters_and_difficulty(
             &node.constants,
             is_first_in_sub_slot,
-            Some(&prev),
+            prev.as_ref(),
             &records,
         ) {
             Ok(v) => v,
@@ -172,7 +192,7 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
                 // the p2p ban list (same posture as the tx path, p2p/src/handlers.rs
                 // TransactionAnnounceAction::Ban).
                 if let Err((reason, e)) =
-                    validate_ub_body(node, &block, prev.height.saturating_add(1), &prev).await
+                    validate_ub_body(node, &block, height, prev.as_ref()).await
                 {
                     node.producer.candidate_dropped(reason);
                     info!(
@@ -196,14 +216,26 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
                 // rc_prev is the last reward-chain infusion before this SP (the index-0 vs
                 // index>0 split).
                 let timelord_request = {
-                    let ses = next_sub_epoch_summary(
+                    let ses = match next_sub_epoch_summary(
                         &node.constants,
                         &records,
                         required_iters,
                         &block,
                         true,
-                    )
-                    .unwrap_or(None);
+                    ) {
+                        Ok(summary) => summary,
+                        Err(error) => {
+                            node.producer.candidate_dropped("ub_sub_epoch_summary");
+                            warn!(
+                                "Cannot relay unfinished block {partial_hash} without a valid sub-epoch summary: {error}"
+                            );
+                            node.unfinished
+                                .lock()
+                                .await
+                                .remove_requesting(&partial_hash, foliage_hash.as_ref());
+                            continue;
+                        }
+                    };
                     let rcb = &block.reward_chain_block;
                     // Resolve the pos sub-slot's reward-chain hash under the slot lock (index-0 path only),
                     // then let the pure helper apply the index-0/index>0 rc_prev split.
@@ -230,12 +262,10 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
                         rc_prev,
                     })
                 };
-                node.unfinished.lock().await.add_block(
-                    partial_hash,
-                    prev.height.saturating_add(1),
-                    block,
-                    required_iters,
-                );
+                node.unfinished
+                    .lock()
+                    .await
+                    .add_block(partial_hash, height, block, required_iters);
                 node.ub_announce.lock().await.push(NewUnfinishedBlock2 {
                     unfinished_reward_hash: partial_hash,
                     foliage_hash,
@@ -273,7 +303,7 @@ pub(in crate::node) async fn validate_ub_body<S: BlockStore + CoinStore + Send +
     node: &Arc<FullNode<S>>,
     block: &UnfinishedBlock,
     height: u32,
-    prev: &BlockRecord,
+    prev: Option<&BlockRecord>,
 ) -> Result<(), (&'static str, NodeError)> {
     let mut refs: Vec<GeneratorReference> =
         Vec::with_capacity(block.transactions_generator_ref_list.len());
@@ -298,10 +328,10 @@ pub(in crate::node) async fn validate_ub_body<S: BlockStore + CoinStore + Send +
     }
     // The SF9 body rules key on the previous TRANSACTION block's height (the CLVM flag ladder
     // keys on the block's own). Two regimes, two keys, as in the engine.
-    let prev_tx_height = if prev.is_transaction_block() {
-        prev.height
-    } else {
-        prev.prev_transaction_block_height
+    let prev_tx_height = match prev {
+        None => 0,
+        Some(previous) if previous.is_transaction_block() => previous.height,
+        Some(previous) => previous.prev_transaction_block_height,
     };
     validate_unfinished_block_body(
         &NativePrimitives,

@@ -18,7 +18,7 @@ use dg_xch_core::protocols::harvester::RespondSignatures;
 use dg_xch_core::protocols::{ChiaMessage, ProtocolMessageTypes};
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_keys::parse_payout_address;
-use dg_xch_pos::verify_and_get_quality_string;
+use dg_xch_pos::verify_and_get_quality_string_with_context;
 use dg_xch_serialize::ChiaSerialize;
 use log::{debug, error, info, warn};
 use std::io::{Error, ErrorKind};
@@ -129,13 +129,16 @@ where
                 }
                 if let Some(pospace) = pospace {
                     let include_taproot = pospace.pool_contract_puzzle_hash.is_some();
-                    if let Some(computed_quality_string) = verify_and_get_quality_string(
-                        &pospace,
-                        &self.constants,
-                        response.challenge_hash,
-                        response.sp_hash,
-                        peak_height,
-                    ) {
+                    if let Some(computed_quality_string) =
+                        verify_and_get_quality_string_with_context(
+                            &pospace,
+                            &self.constants,
+                            response.challenge_hash,
+                            response.sp_hash,
+                            peak_height,
+                            signage_point.last_tx_height,
+                        )
+                    {
                         if is_sp_signatures {
                             let (challenge_chain_sp, challenge_chain_sp_harv_sig) =
                                 &response.message_signatures[0];
@@ -491,7 +494,7 @@ where
                                             .into(),
                                     };
                                     if let Some(client) = self.client.read().await.as_ref() {
-                                        let _ = client
+                                        client
                                             .client
                                             .connection
                                             .write()
@@ -506,7 +509,7 @@ where
                                                 .to_bytes(PROTOCOL_VERSION)?
                                                 .into(),
                                             ))
-                                            .await;
+                                            .await?;
                                         debug!("Sending Signed Values: {request:?}");
                                     } else {
                                         error!(

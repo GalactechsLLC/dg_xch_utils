@@ -509,6 +509,8 @@ struct Arguments {
     prove_plot: Option<PathBuf>,
     #[arg(long, requires = "prove_plot")]
     challenge: Option<String>,
+    #[arg(long, requires = "prove_plot")]
+    quality: Option<String>,
     #[arg(
         long,
         required_unless_present_any = ["contract", "prove_plot", "probe_device"],
@@ -583,6 +585,8 @@ fn main() -> Result<(), Error> {
                 .ok_or_else(|| Error::other("challenge required"))?,
         )?
         .into();
+        let requested_quality = args.quality.as_deref().map(decode::<32>).transpose()?;
+        let mut matched_quality = false;
         for chain in plot.qualities(
             challenge,
             dg_xch_pos2::chainer::SearchLimits {
@@ -591,9 +595,17 @@ fn main() -> Result<(), Error> {
             },
             &cancelled,
         )? {
+            let quality = dg_xch_pos2::quality::quality_hash(&chain.fragments, plot.info.strength);
+            if requested_quality
+                .as_ref()
+                .is_some_and(|requested| quality.const_bytes() != *requested)
+            {
+                continue;
+            }
+            matched_quality = true;
             println!(
                 "quality={} proof={}",
-                dg_xch_pos2::quality::quality_hash(&chain.fragments, plot.info.strength),
+                quality,
                 hex::encode(plot.prove_with_engine(
                     &chain,
                     challenge,
@@ -602,6 +614,15 @@ fn main() -> Result<(), Error> {
                     &mut engine
                 )?)
             );
+            if requested_quality.is_some() {
+                break;
+            }
+        }
+        if requested_quality.is_some() && !matched_quality {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "requested proof quality is not present in this plot challenge",
+            ));
         }
         return Ok(());
     }

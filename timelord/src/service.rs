@@ -1,6 +1,6 @@
 use crate::worker::{MAX_ITERATIONS, ProofRequest, ProofResult, run_isolated};
 use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
-use dg_xch_core::consensus::chain_definition::ChainDefinition;
+use dg_xch_core::consensus::chain_definition::ChainSelection;
 use dg_xch_core::protocols::shared::Handshake;
 use dg_xch_core::protocols::timelord::{
     NewPeakTimelord, RequestCompactProofOfTime, RespondCompactProofOfTime,
@@ -23,7 +23,8 @@ use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub chain: ChainDefinition,
+    #[serde(default)]
+    pub chain: ChainSelection,
     pub fullnode_host: String,
     pub fullnode_port: u16,
     pub server_name: String,
@@ -31,6 +32,14 @@ pub struct Config {
     pub max_iterations: u64,
     pub job_timeout_seconds: u64,
     pub reconnect_seconds: u64,
+    #[serde(default)]
+    pub max_iterations_per_second: Option<u64>,
+    #[serde(default = "default_worker_memory_bytes")]
+    pub worker_memory_bytes: u64,
+}
+
+fn default_worker_memory_bytes() -> u64 {
+    64 * 1024 * 1024
 }
 
 impl Config {
@@ -41,28 +50,28 @@ impl Config {
             || self.fullnode_host.len() > 253
             || self.fullnode_port == 0
             || !(1..=MAX_ITERATIONS).contains(&self.max_iterations)
-            || !(1..=3600).contains(&self.job_timeout_seconds)
+            || !(1..=86_400).contains(&self.job_timeout_seconds)
             || !(1..=300).contains(&self.reconnect_seconds)
+            || self.max_iterations_per_second == Some(0)
+            || !(128 * 1024..=8 * 1024 * 1024 * 1024).contains(&self.worker_memory_bytes)
         {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                "invalid compact timelord configuration",
+                "invalid timelord configuration",
             ));
         }
         Ok(())
     }
 }
 
-async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), Error> {
+pub(crate) type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
+
+pub(crate) async fn connect(
+    config: &Config,
+    tls: Arc<rustls::ClientConfig>,
+) -> Result<Socket, Error> {
     let network = config.chain.handshake_network_id().map_err(Error::other)?;
-    let bits = usize::try_from(
-        config
-            .chain
-            .constants()
-            .map_err(Error::other)?
-            .discriminant_size_bits,
-    )
-    .map_err(Error::other)?;
     let (mut socket, _) = tokio::time::timeout(Duration::from_secs(15), async {
         let stream =
             TcpStream::connect((config.fullnode_host.as_str(), config.fullnode_port)).await?;
@@ -110,9 +119,20 @@ async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), 
             "timelord connected to wrong network or role",
         ));
     }
-    eprintln!(
-        "Authenticated full node; compact-proof mode only, regular chain production is not implemented"
-    );
+    Ok(socket)
+}
+
+async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), Error> {
+    let bits = usize::try_from(
+        config
+            .chain
+            .constants()
+            .map_err(Error::other)?
+            .discriminant_size_bits,
+    )
+    .map_err(Error::other)?;
+    let mut socket = connect(config, tls).await?;
+    eprintln!("Authenticated full node; compact-proof mode");
     let mut generation = 0u64;
     let mut workers: JoinSet<Result<(RequestCompactProofOfTime, ProofResult), Error>> =
         JoinSet::new();
@@ -167,7 +187,7 @@ async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), 
                                 let timeout = Duration::from_secs(config.job_timeout_seconds);
                                 workers.spawn(async move { Ok((request, run_isolated(work, timeout).await?)) });
                             }
-                            ProtocolMessageTypes::RequestCompactProofOfTime | ProtocolMessageTypes::NewUnfinishedBlockTimelord => {}
+                            ProtocolMessageTypes::RequestCompactProofOfTime | ProtocolMessageTypes::NewUnfinishedBlockTimelord | ProtocolMessageTypes::NewGenesisTimelord => {}
                             _ => return Err(Error::new(ErrorKind::InvalidData, "unexpected timelord protocol message")),
                         }
                     }

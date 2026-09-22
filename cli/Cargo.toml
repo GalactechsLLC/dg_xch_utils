@@ -32,6 +32,7 @@ dg_xch_keys = {path = "../keys", version="3.0.0"}
 dg_xch_p2p = { path = "../p2p", version = "3.0.0" }
 dg_xch_puzzles = {path = "../puzzles", version="3.0.0"}
 dg_xch_serialize= {path = "../serialize", version="3.0.0"}
+dg_xch_servers = { path = "../servers", version = "3.0.0" }
 dg_full_node = { path = "../full-node", version = "3.0.0", default-features = false }
 hex = "0.4.3"
 lazy_static = "1.5.0"

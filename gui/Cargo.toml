@@ -12,10 +12,11 @@ bip39 = { version = "2.2.2", features = ["rand"] }
 blst = "0.3.16"
 dg_xch_clients = { path = "../clients" }
 dg_xch_core = { path = "../core", default-features = false, features = ["bls"] }
-dg_xch_farmer = { path = "../farmer" }
+dg_xch_farmer = { path = "../farmer", features = ["vulkan"] }
 dg_xch_keys = { path = "../keys" }
 dg_xch_plotter = { path = "../plotter", features = ["vulkan"] }
 dg_xch_pos2 = { path = "../proof_of_space/pos2", features = ["vulkan"] }
+dg_xch_servers = { path = "../servers" }
 dg_xch_wallet = { path = "../wallet" }
 directories = "6.0.0"
 eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11"] }

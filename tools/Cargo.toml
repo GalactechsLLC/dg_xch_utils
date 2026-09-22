@@ -9,6 +9,17 @@ homepage = "https://github.com/GalactechsLLC/dg_xch_utils"
 repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 
 [dependencies]
+blst = "0.3.16"
+dg_xch_farmer = { path = "../farmer" }
+dg_xch_keys = { path = "../keys" }
+dg_xch_plotter = { path = "../plotter" }
+dg_xch_pos2 = { path = "../proof_of_space/pos2" }
+dg_xch_puzzles = { path = "../puzzles" }
+dg_xch_servers = { path = "../servers" }
+hex = "0.4.3"
+rand = "0.10.0"
+serde_yaml = { package = "serde_norway", version = "0.9.42" }
+zeroize = "1.9.0"
 async-trait = "0.1.89"
 clap = { version = "4.5.60", features = ["derive", "env"] }
 dg_xch_clients = { path = "../clients", version = "3.0.0" }
@@ -39,12 +50,16 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 tikv-jemalloc-ctl = { version = "0.6", features = ["stats"] }
 tikv-jemallocator = "0.6"
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
+
 [[bin]]
 name = "leak_probe"
 path = "src/bin/leak_probe.rs"
 required-features = ["postgres"]
 
 [features]
+vulkan = ["dg_xch_farmer/vulkan", "dg_xch_plotter/vulkan"]
 default = ["sqlite"]
 sqlite = ["dg_full_node/sqlite"]
 postgres = ["dg_xch_stores/postgres", "dg_full_node/postgres"]

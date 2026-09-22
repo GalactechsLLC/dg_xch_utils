@@ -281,3 +281,21 @@ fn v2_iterations_scale_inversely_with_plot_size() {
         big
     );
 }
+
+#[test]
+fn infusion_iterations_do_not_overflow_at_consensus_integer_bounds() {
+    let constants = crate::consensus::constants::MAINNET;
+    let iterations = u64::MAX - 63;
+    let interval = iterations / 64;
+    let expected = (u128::from(interval) * 66 + 1) % u128::from(iterations);
+    assert_eq!(
+        super::calculate_ip_iters(&constants, iterations, 63, 1).unwrap(),
+        expected as u64
+    );
+    assert!(super::calculate_sp_interval_iters(&constants, 0).is_err());
+    let invalid = crate::consensus::constants::ConsensusConstants {
+        num_sps_sub_slot: 0,
+        ..constants
+    };
+    assert!(super::calculate_sp_interval_iters(&invalid, 64).is_err());
+}

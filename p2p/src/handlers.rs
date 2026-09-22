@@ -22,8 +22,8 @@ use dg_xch_core::protocols::shared::{
     CAPABILITIES, Capability, ConfigureWindowSizes, ErrorMessage, Handshake,
 };
 use dg_xch_core::protocols::timelord::{
-    NewEndOfSubSlotVDF, NewInfusionPointVDF, NewPeakTimelord, NewSignagePointVDF,
-    RespondCompactProofOfTime,
+    NewEndOfSubSlotVDF, NewGenesisTimelord, NewInfusionPointVDF, NewPeakTimelord,
+    NewSignagePointVDF, RespondCompactProofOfTime,
 };
 use dg_xch_core::protocols::wallet::{
     CoinState, CoinStateUpdate, FeeEstimate, FeeEstimateGroup, FeeRate, NewPeakWallet,
@@ -437,6 +437,9 @@ pub trait FullNodeApi: Send + Sync {
     async fn timelord_peak(&self) -> Option<Box<NewPeakTimelord>> {
         None
     }
+    async fn timelord_genesis(&self) -> Option<NewGenesisTimelord> {
+        None
+    }
     // Mempool sync on connect: when WE are synced, a new FULL_NODE peer is sent
     // `RequestMempoolTransactions` carrying the BIP158 filter over OUR mempool item ids — the
     // peer answers with the transactions we are missing (new peers announce via NewTransaction,
@@ -620,6 +623,7 @@ fn msg_label(t: ProtocolMessageTypes) -> &'static str {
         ProtocolMessageTypes::NewInfusionPointVdf => "new_infusion_point_vdf",
         ProtocolMessageTypes::NewSignagePointVdf => "new_signage_point_vdf",
         ProtocolMessageTypes::NewEndOfSubSlotVdf => "new_end_of_sub_slot_vdf",
+        ProtocolMessageTypes::NewGenesisTimelord => "new_genesis_timelord",
         ProtocolMessageTypes::RequestCompactProofOfTime => "request_compact_proof_of_time",
         ProtocolMessageTypes::RespondCompactProofOfTime => "respond_compact_proof_of_time",
         // Light-wallet query surface (in + out labels for the gossip-health signal).
@@ -940,6 +944,17 @@ impl FullNodeHandler {
                                 peer_id,
                                 ProtocolMessageTypes::NewPeakTimelord,
                                 &*peak,
+                                None,
+                                negotiated,
+                            )
+                            .await?;
+                        } else if let Some(genesis) = self.api.timelord_genesis().await {
+                            send(
+                                &self.counters,
+                                peers,
+                                peer_id,
+                                ProtocolMessageTypes::NewGenesisTimelord,
+                                &genesis,
                                 None,
                                 negotiated,
                             )

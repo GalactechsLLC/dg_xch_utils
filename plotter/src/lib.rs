@@ -63,6 +63,23 @@ pub struct PlotInfo {
     pub file_bytes: u64,
 }
 
+pub struct PlotMetadata {
+    pub info: PlotInfo,
+    pub memo: zeroize::Zeroizing<Vec<u8>>,
+}
+
+pub fn read_metadata(path: &Path) -> Result<PlotMetadata, Error> {
+    let mut input = File::open(path)?;
+    let info = inspect_reader(&mut input)?;
+    input.seek(std::io::SeekFrom::Start(43))?;
+    let mut memo = zeroize::Zeroizing::new(vec![0u8; if info.portable { 112 } else { 128 }]);
+    input.read_exact(&mut memo)?;
+    if identity(&memo, info.strength, info.index, info.meta_group)?.as_ref() != info.plot_id {
+        return Err(invalid("plot identity changed while reading metadata"));
+    }
+    Ok(PlotMetadata { info, memo })
+}
+
 fn identity(memo: &[u8], strength: u8, index: u16, meta_group: u8) -> Result<Bytes32, Error> {
     let pool_size = match memo.len() {
         112 => 32,

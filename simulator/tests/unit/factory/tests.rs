@@ -17,6 +17,7 @@ fn constants() -> ConsensusConstants {
     apply_overrides(
         SIMULATOR,
         &ConsensusOverrides {
+            hard_fork2_height: Some(0),
             plot_size_v2: Some(K),
             number_zero_bits_plot_filter_v2: Some(0),
             // With the mainnet 2^67 factor a k18 proof's required-iters sits far above the
@@ -45,8 +46,13 @@ fn a_genesis_proof_is_farmed_and_assembled_into_an_unfinished_block() {
     assert_eq!(farmed.proof_of_space.version, 1, "genesis proof is v2");
     assert!(farmed.iters.required_iters >= 1);
 
-    let ub = build_genesis_unfinished(&c, &farmed, Bytes32::from([0xAB; 32]), 1_700_000_000)
-        .expect("the producer must accept a farmed v2 proof");
+    let ub = build_genesis_unfinished(
+        &c,
+        &farmed,
+        &plots.plots[farmed.plot_index].keys,
+        1_700_000_000,
+    )
+    .expect("the producer must accept a farmed v2 proof");
 
     // The assembled block carries the farmed proof, and that proof still verifies against the
     // genesis challenge — the pos2 farming path and the producer agree.
@@ -80,8 +86,13 @@ async fn a_farmed_genesis_block_is_accepted_by_the_engine() {
 
     let farmed = farm_genesis(&c, &plots, c.difficulty_starting, c.sub_slot_iters_starting)
         .expect("farm genesis");
-    let ub = build_genesis_unfinished(&c, &farmed, Bytes32::from([0xAB; 32]), 1_700_000_000)
-        .expect("assemble");
+    let ub = build_genesis_unfinished(
+        &c,
+        &farmed,
+        &plots.plots[farmed.plot_index].keys,
+        1_700_000_000,
+    )
+    .expect("assemble");
     let full = build_genesis_full(&c, &ub, &farmed).expect("finish");
     assert_eq!(full.reward_chain_block.height, 0, "genesis is height 0");
 

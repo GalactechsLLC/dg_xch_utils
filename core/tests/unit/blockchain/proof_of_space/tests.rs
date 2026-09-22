@@ -301,6 +301,28 @@ fn get_plot_id_routes_by_version() {
     assert!(make_pos(1, true, true, 0).get_plot_id().is_none());
     assert!(make_pos(1, false, false, 0).get_plot_id().is_none());
 }
+
+#[test]
+fn proof_version_activation_uses_previous_transaction_height() {
+    use crate::consensus::constants::MAINNET;
+    let constants = ConsensusConstants {
+        hard_fork2_height: 100,
+        ..MAINNET
+    };
+    assert!(is_proof_version_active(0, 0, &constants));
+    assert!(!is_proof_version_active(1, 99, &constants));
+    assert!(is_proof_version_active(1, 100, &constants));
+    assert!(is_proof_version_active(1, 101, &constants));
+    assert!(!is_proof_version_active(2, u32::MAX, &constants));
+    assert!(is_proof_version_active(
+        1,
+        0,
+        &ConsensusConstants {
+            hard_fork2_height: 0,
+            ..constants
+        }
+    ));
+}
 #[test]
 fn plot_filter_prefix_matches_bit_reference_for_all_i8_values() {
     for set_bit in 0..=256 {

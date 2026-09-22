@@ -12,6 +12,8 @@ Embed `WebsocketServer` with a `WebsocketServerConfig`, peer map, handlers, and 
 
 File-backed TLS identities use the [core TLS helpers](../core/README.md): on Unix, private keys require owner-only permissions, usually `0600`, and cannot be symlinks or hard-linked files. Existing permissive files fail closed instead of being silently changed.
 
+`chain_config` loads bounded, validated chain manifests and initializes a chain directory without creating blocks or wallet keys. Writes refuse to replace existing files, and repeated initialization requires the same chain identity. The CLI, GUI and development tools share these helpers; consensus selection itself lives in `dg_xch_core` and defaults to Chia mainnet.
+
 Both embedded and standalone listeners hold a semaphore permit for each inbound session. The default is 128 sessions; the full node reserves its configured outbound slots and sets the inbound ceiling to `target_peer_count - target_outbound`. Wallet, farmer, and timelord connections share that inbound budget. TLS and HTTP upgrades have separate deadlines.
 
 This package has no standalone service binary. From the repository root:

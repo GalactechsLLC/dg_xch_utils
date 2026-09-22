@@ -1,5 +1,6 @@
 pub mod druid_garden;
 pub mod pos2;
+mod pos2_network;
 use crate::farmer::config::Config;
 use async_trait::async_trait;
 use dg_xch_clients::websocket::farmer::FarmerClient;
@@ -8,6 +9,7 @@ use dg_xch_core::protocols::farmer::FarmerSharedState;
 use dg_xch_core::protocols::harvester::{
     NewProofOfSpace, NewSignagePointHarvester, RequestSignatures, RespondSignatures,
 };
+pub use pos2_network::{Pos2Harvester, Pos2Status};
 use std::io::Error;
 use std::path::Path;
 use std::sync::Arc;

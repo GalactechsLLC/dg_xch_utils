@@ -12,7 +12,7 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::clvm::bls_bindings::{sign, sign_prepend};
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::consensus::pot_iterations::{
-    calculate_iterations_quality, calculate_sp_interval_iters,
+    calculate_iterations_quality_for_proof, calculate_sp_interval_iters,
 };
 use dg_xch_core::constants::AUG_SCHEME_DST;
 use dg_xch_core::protocols::farmer::{FarmerIdentifier, NewSignagePoint};
@@ -25,7 +25,7 @@ use dg_xch_core::protocols::pool::{
 };
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_core::utils::hash_256;
-use dg_xch_pos::verify_and_get_quality_string;
+use dg_xch_pos::verify_and_get_quality_string_with_context;
 use dg_xch_serialize::ChiaSerialize;
 use log::{debug, error, info, warn};
 use std::collections::hash_map::Entry;
@@ -103,17 +103,18 @@ where
                     new_pos.signage_point_index,
                 )
             }) {
-                if let Some(qs) = verify_and_get_quality_string(
+                if let Some(qs) = verify_and_get_quality_string_with_context(
                     &new_pos.proof,
                     &self.constants,
                     new_pos.challenge_hash,
                     new_pos.sp_hash,
                     sp.peak_height,
+                    sp.last_tx_height,
                 ) {
-                    let required_iters = calculate_iterations_quality(
-                        self.constants.difficulty_constant_factor,
+                    let required_iters = calculate_iterations_quality_for_proof(
+                        &self.constants,
+                        &new_pos.proof,
                         qs,
-                        new_pos.proof.size,
                         sp.difficulty,
                         new_pos.sp_hash,
                     );
@@ -366,10 +367,10 @@ where
             .map(|v| v.current_difficulty)
         {
             (
-                calculate_iterations_quality(
-                    self.constants.difficulty_constant_factor,
+                calculate_iterations_quality_for_proof(
+                    &self.constants,
+                    &new_pos.proof,
                     *qs,
-                    new_pos.proof.size,
                     pool_dif,
                     new_pos.sp_hash,
                 ),

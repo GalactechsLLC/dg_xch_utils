@@ -187,6 +187,7 @@ pub enum ProtocolMessageTypes {
     PartialProofs = 110,
     //Rate-limits-v3 handshake follow-up (configure_window_sizes = 111)
     ConfigureWindowSizes = 111,
+    NewGenesisTimelord = 240,
     //The error protocol message (error = 255) — see shared::ErrorMessage
     Error = 255,
 }
@@ -194,6 +195,7 @@ impl From<u8> for ProtocolMessageTypes {
     #[allow(clippy::too_many_lines)]
     fn from(byte: u8) -> Self {
         match byte {
+            240 => ProtocolMessageTypes::NewGenesisTimelord,
             i if i == ProtocolMessageTypes::Handshake as u8 => ProtocolMessageTypes::Handshake,
             i if i == ProtocolMessageTypes::HarvesterHandshake as u8 => {
                 ProtocolMessageTypes::HarvesterHandshake

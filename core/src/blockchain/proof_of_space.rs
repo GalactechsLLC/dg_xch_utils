@@ -438,6 +438,19 @@ pub fn num_phase_out_epochs(constants: &ConsensusConstants) -> u32 {
     (1u32 << constants.plot_v1_phase_out_epoch_bits) - 1
 }
 
+#[must_use]
+pub fn is_proof_version_active(
+    version: u8,
+    previous_transaction_height: u32,
+    constants: &ConsensusConstants,
+) -> bool {
+    match version {
+        0 => true,
+        1 => previous_transaction_height >= constants.hard_fork2_height,
+        _ => false,
+    }
+}
+
 /// The height at which v1 proofs stop being valid: a block whose previous transaction block is at
 /// or above this may not carry one.
 #[must_use]

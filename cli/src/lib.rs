@@ -18,8 +18,7 @@ use dg_xch_core::clvm::assemble::{assemble_text, is_hex};
 use dg_xch_core::clvm::parser::sexp_to_bytes;
 use dg_xch_core::clvm::program::{Program, SerializedProgram};
 use dg_xch_core::clvm::utils::INFINITE_COST;
-use dg_xch_core::consensus::constants::ChiaNetwork::Mainnet;
-use dg_xch_core::consensus::constants::{CONSENSUS_CONSTANTS, ChiaNetwork, MAINNET};
+use dg_xch_core::consensus::chain_definition::ChainSelection;
 use dg_xch_keys::{
     encode_puzzle_hash, key_from_mnemonic, master_sk_to_farmer_sk, master_sk_to_pool_sk,
     master_sk_to_wallet_sk, master_sk_to_wallet_sk_unhardened,
@@ -35,6 +34,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
+pub mod chain;
 pub mod cli;
 pub mod commands;
 pub mod full_node;
@@ -42,10 +42,49 @@ pub mod simulator;
 pub mod wallet_commands;
 pub mod wallets;
 
+fn inherit_network(network: &mut Option<String>, root_network: Option<&str>) -> Result<(), Error> {
+    if let Some(root_network) = root_network {
+        if network
+            .as_deref()
+            .is_some_and(|network| network != root_network)
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "root --network conflicts with subcommand --network",
+            ));
+        }
+        *network = Some(root_network.to_owned());
+    }
+    Ok(())
+}
+
+fn apply_network(cli: &mut Cli) -> Result<(), Error> {
+    match &mut cli.action {
+        RootCommands::Chain(args) => args.inherit_network(cli.network.as_deref()),
+        RootCommands::FullNode(args) => args.inherit_network(cli.network.as_deref()),
+        _ => {
+            if let Some(network) = cli.network.as_deref() {
+                ChainSelection::from_config(network, None)
+                    .map_err(|error| Error::new(ErrorKind::InvalidInput, error))?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn selected_constants(
+    network: Option<&str>,
+) -> Result<dg_xch_core::consensus::constants::ConsensusConstants, Error> {
+    ChainSelection::from_config(network.unwrap_or("mainnet"), None)
+        .and_then(|chain| chain.constants())
+        .map_err(|error| Error::new(ErrorKind::InvalidInput, error))
+}
+
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::cast_sign_loss)]
 pub async fn run_cli() -> Result<(), Error> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    apply_network(&mut cli)?;
     let level = env::var("RUST_LOG")
         .ok()
         .and_then(|value| value.parse::<Level>().ok())
@@ -69,12 +108,8 @@ pub async fn run_cli() -> Result<(), Error> {
         ssl_key_path: format!("{}/{}", v, "full_node/private_full_node.key"),
         ssl_ca_crt_path: format!("{}/{}", v, "ca/private_ca.crt"),
     });
-    let constants = if let Some(network) = cli.network {
-        CONSENSUS_CONSTANTS[ChiaNetwork::from_str(&network).unwrap_or(Mainnet) as usize]
-    } else {
-        MAINNET
-    };
     match cli.action {
+        RootCommands::Chain(args) => chain::run(args)?,
         RootCommands::FullNode(args) => full_node::run(*args, logger).await?,
         RootCommands::PrintPlottingInfo { launcher_id } => {
             let client = Arc::new(FullnodeClient::new(&host, port, timeout, ssl, &None)?);
@@ -704,7 +739,7 @@ pub async fn run_cli() -> Result<(), Error> {
                 launcher_id,
                 target_address,
                 &mnemonic,
-                Arc::new(constants),
+                Arc::new(selected_constants(cli.network.as_deref())?),
                 fee.unwrap_or_default(),
             )
             .await?;
@@ -744,7 +779,7 @@ pub async fn run_cli() -> Result<(), Error> {
         }
         RootCommands::CreateWallet { action } => match action {
             WalletAction::WithNFT { .. } => {}
-            WalletAction::Cold => create_cold_wallet(&constants)?,
+            WalletAction::Cold => create_cold_wallet(&selected_constants(cli.network.as_deref())?)?,
         },
         RootCommands::Curry {
             program,
@@ -819,4 +854,33 @@ pub async fn run_cli() -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    #[test]
+    fn inherited_network_must_agree_with_an_explicit_subcommand_network() {
+        let mut network = None;
+        inherit_network(&mut network, Some("testnet11")).unwrap();
+        assert_eq!(network.as_deref(), Some("testnet11"));
+        inherit_network(&mut network, None).unwrap();
+        inherit_network(&mut network, Some("testnet11")).unwrap();
+        assert!(inherit_network(&mut network, Some("mainnet")).is_err());
+        assert_eq!(network.as_deref(), Some("testnet11"));
+    }
+
+    #[test]
+    fn commands_without_a_chain_manifest_reject_unknown_explicit_networks() {
+        let mut cli =
+            Cli::try_parse_from(["dg", "--network", "not-a-network", "get-network-info"]).unwrap();
+        assert!(apply_network(&mut cli).is_err());
+        let mut cli = Cli::try_parse_from(["dg", "get-network-info"]).unwrap();
+        apply_network(&mut cli).unwrap();
+        assert_eq!(
+            selected_constants(None).unwrap(),
+            dg_xch_core::consensus::constants::MAINNET
+        );
+    }
 }

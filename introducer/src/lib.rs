@@ -9,7 +9,7 @@
     )
 )]
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
-use dg_xch_core::consensus::chain_definition::ChainDefinition;
+use dg_xch_core::consensus::chain_definition::ChainSelection;
 use dg_xch_core::protocols::introducer::{RequestPeersIntroducer, RespondPeersIntroducer};
 use dg_xch_core::protocols::shared::Handshake;
 use dg_xch_core::protocols::{ChiaMessage, NodeType, ProtocolMessageTypes};
@@ -34,7 +34,8 @@ use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub listen: SocketAddr,
-    pub chain: ChainDefinition,
+    #[serde(default)]
+    pub chain: ChainSelection,
     pub tls: TlsIdentity,
     pub peer_server_name: String,
     #[serde(default)]
@@ -299,7 +300,8 @@ pub async fn serve(config: Config) -> Result<(), Error> {
     let listener = TcpListener::bind(config.listen).await?;
     eprintln!(
         "Introducer listening on {} for {}",
-        config.listen, config.chain.network_id
+        config.listen,
+        config.chain.resolve().map_err(Error::other)?.network_id
     );
     let config = Arc::new(config);
     let book = Arc::new(Mutex::new(PeerBook::default()));
@@ -367,7 +369,7 @@ mod tests {
     fn registry_caps_probes_expires_peers_and_excludes_requester() {
         let config = Config {
             listen: "127.0.0.1:8445".parse().unwrap(),
-            chain: ChainDefinition::default(),
+            chain: ChainSelection::default(),
             tls: TlsIdentity {
                 certificate: "unused".into(),
                 private_key: "unused".into(),

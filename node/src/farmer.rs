@@ -25,7 +25,7 @@ use dg_xch_core::protocols::farmer::{
     DeclareProofOfSpace, NewSignagePoint, RequestSignedValues, SPVDFSourceData,
     SignagePointSourceData,
 };
-use dg_xch_pos::verify_and_get_quality_string;
+use dg_xch_pos::verify_and_get_quality_string_with_context;
 use std::collections::{HashMap, VecDeque};
 
 /// The outcome of validating a `DeclareProofOfSpace`.
@@ -87,6 +87,24 @@ pub fn validate_declared_proof(
     lookup_sp: impl Fn(&Bytes32) -> Option<SignagePoint>,
     sub_slot_present: impl Fn(&Bytes32) -> bool,
 ) -> DeclareVerdict {
+    validate_declared_proof_with_context(
+        constants,
+        declare,
+        height,
+        height,
+        lookup_sp,
+        sub_slot_present,
+    )
+}
+
+pub fn validate_declared_proof_with_context(
+    constants: &ConsensusConstants,
+    declare: &DeclareProofOfSpace,
+    height: u32,
+    previous_transaction_height: u32,
+    lookup_sp: impl Fn(&Bytes32) -> Option<SignagePoint>,
+    sub_slot_present: impl Fn(&Bytes32) -> bool,
+) -> DeclareVerdict {
     // The proof must be for a signage point we have accepted.
     let Some(sp) = lookup_sp(&declare.challenge_chain_sp) else {
         return DeclareVerdict::UnknownSignagePoint;
@@ -104,12 +122,13 @@ pub fn validate_declared_proof(
         return DeclareVerdict::UnknownSubSlot;
     }
     // The proof of space itself must verify against our checker.
-    match verify_and_get_quality_string(
+    match verify_and_get_quality_string_with_context(
         &declare.proof_of_space,
         constants,
         cc_hash,
         declare.challenge_chain_sp,
         height,
+        previous_transaction_height,
     ) {
         Some(quality) => DeclareVerdict::Accepted(quality),
         None => DeclareVerdict::InvalidProof,

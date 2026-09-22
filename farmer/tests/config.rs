@@ -1,6 +1,6 @@
 use dg_xch_core::consensus::chain_definition::ChainDefinition;
 use dg_xch_farmer::farmer::PathInfo;
-use dg_xch_farmer::farmer::config::{Config, FarmingInfo};
+use dg_xch_farmer::farmer::config::{Config, FarmingInfo, Pos2Backend, Pos2HarvesterConfig};
 use std::collections::HashMap;
 
 #[test]
@@ -46,6 +46,35 @@ fn invalid_keys_are_rejected_and_debug_is_redacted() {
     };
     assert!(config.validate_keys().is_err());
     assert!(!format!("{:?}", config.farmer_info[0]).contains("farmer_secret_key"));
+}
+
+#[test]
+fn named_dgx_and_default_chia_resolve_without_network_fallback() {
+    let mut config: Config<()> = Config::default();
+    assert_eq!(config.network_id().unwrap(), "mainnet");
+    config.selected_network = "dgx".into();
+    assert!(config.network_id().unwrap().starts_with("dgx-"));
+    assert_eq!(config.constants().unwrap().hard_fork2_height, 0);
+    config.selected_network = "dgx-typo".into();
+    assert!(config.constants().is_err());
+}
+
+#[test]
+fn pos2_resource_and_backend_configuration_fails_closed() {
+    let mut config = Pos2HarvesterConfig::default();
+    assert!(config.validate().is_ok());
+    config.backend = Pos2Backend::Cuda;
+    assert!(config.validate().is_err());
+    config.cuda_helper = Some(std::env::temp_dir().join("dg_xch_pos2_cuda"));
+    assert!(config.validate().is_ok());
+    config.memory_mib = u64::MAX;
+    assert!(config.validate().is_err());
+    config.memory_mib = 1024;
+    config.parallelism = 0;
+    assert!(config.validate().is_err());
+    config.parallelism = 1;
+    config.deadline_ms = 0;
+    assert!(config.validate().is_err());
 }
 
 #[test]

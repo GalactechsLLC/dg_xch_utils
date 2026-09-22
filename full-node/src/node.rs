@@ -44,8 +44,9 @@ use dg_xch_core::protocols::full_node::{
     RespondSignagePoint,
 };
 use dg_xch_core::protocols::timelord::{
-    NewEndOfSubSlotVDF, NewInfusionPointVDF, NewPeakTimelord, NewSignagePointVDF,
-    NewUnfinishedBlockTimelord, RequestCompactProofOfTime, RespondCompactProofOfTime,
+    NewEndOfSubSlotVDF, NewGenesisTimelord, NewInfusionPointVDF, NewPeakTimelord,
+    NewSignagePointVDF, NewUnfinishedBlockTimelord, RequestCompactProofOfTime,
+    RespondCompactProofOfTime,
 };
 use dg_xch_core::protocols::wallet::{
     CoinState, FeeEstimate, FeeEstimateGroup, FeeRate, NewPeakWallet, PuzzleSolutionResponse,
@@ -78,7 +79,7 @@ use dg_xch_node::engine::BlockDelta;
 use dg_xch_node::farmer::{
     AcceptedProof, CandidateBlockStore, CandidatePrev, DeclareVerdict, ProofCandidateStore,
     assemble_candidate, candidate_difficulty_and_ssi, new_signage_point_for_farmers,
-    resolve_candidate_iters, validate_declared_proof,
+    resolve_candidate_iters,
 };
 use dg_xch_node::slots::{PeakSlotContext, SlotState};
 use dg_xch_node::sync::queue::BlockQueue;

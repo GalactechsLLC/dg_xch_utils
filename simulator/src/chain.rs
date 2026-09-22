@@ -245,7 +245,7 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
         let ub = build_genesis_unfinished(
             &self.constants,
             &farmed,
-            self.farmer_reward_puzzle_hash,
+            &self.plots.plots[farmed.plot_index].keys,
             self.timestamp,
         )?;
         let full = build_genesis_full(&self.constants, &ub, &farmed)?;

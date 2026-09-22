@@ -9,6 +9,7 @@ fn constants() -> ConsensusConstants {
     apply_overrides(
         SIMULATOR,
         &ConsensusOverrides {
+            hard_fork2_height: Some(0),
             plot_size_v2: Some(K),
             number_zero_bits_plot_filter_v2: Some(0),
             difficulty_constant_factor: Some(2u128.pow(25)),

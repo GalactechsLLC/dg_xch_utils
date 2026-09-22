@@ -8,10 +8,10 @@ This is active development, not a finished chain-launch distribution.
 
 - The native desktop uses egui/wgpu, without Electron, a browser runtime, or JavaScript.
 - Standard wallets have encrypted account keys and durable SQLite state. Multiple accounts can sync in the background. Use test funds; funded-chain and recovery testing are still needed.
-- The integrated farmer comes from `dg_fast_farmer`, without its old UI. PoS1 farming is available; PoS2 fragment recovery exists, but network signage submission is not connected yet.
+- The integrated farmer comes from `dg_fast_farmer`, without its old UI. PoS1 and PoS2 discovery, signing and network submission are connected, including CPU, native CUDA and Vulkan proof recovery. End-to-end deployment testing remains a separate gate.
 - Native PoS2 RAM plots can be checked against the pinned external Chia reference. CPU, CUDA and AMD-capable Vulkan share compact plotting and fragment-recovery paths. Large k sizes require explicit RAM/work budgets; network farming readiness is separate from plotting. Vulkan uses a WGSL shader with Rust host code.
-- The introducer provides peer discovery. The timelord provides bounded real VDF jobs and compact-proof service, not a complete regular signage/infusion/slot scheduler.
-- `config/chains/dgx.json` defines the no-prefarm fork. Consensus activation schedules remain explicit; generating a PoS2 proof does not mean that proof is accepted at genesis.
+- The introducer provides peer discovery. The CPU timelord schedules real signage, infusion and end-of-slot proofs; compact-proof mode remains separate. ASIC backend integration and production throughput validation remain future work.
+- Chia mainnet is the default for library and service configuration. Runtime `ChainSelection` also supports the pinned no-prefarm DGX preset and explicit custom definitions. `config/chains/dgx.json` selects the version-2 DGX chain with PoS2 active from genesis; it is a different chain from the legacy version-1 definition.
 
 ## Build and start
 
@@ -31,10 +31,10 @@ Start a wallet-capable full node:
 mkdir -p ./local-node
 cargo run -p dg_xch_cli --release --features coin-index -- full-node \
   --listen 127.0.0.1:8444 --db sqlite://./local-node/chain.db \
-  --ssl-dir ./local-node/ssl --chain-config ./config/chains/dgx.json --genesis-sync
+  --ssl-dir ./local-node/ssl --network mainnet --genesis-sync
 ```
 
-This starts the service; it does not promise that an empty chain will produce blocks. See the [full-node README](full-node/README.md) for private-CA RPC, discovery, trust policy, and storage. The Rust node serves RPC and peers on the same listener. In the desktop, configure that port, verified TLS paths, the same chain definition, and a trusted genesis block-header hash.
+This selects Chia, not a newly created chain; supply reachable peers or an introducer to synchronize it. Use `dg chain init --output ./new-chain --network dgx` for the custom production preset, or `--development` instead of `--network` for a disposable small-farm chain. Initialization never fabricates blocks. See the [full-node README](full-node/README.md) for private-CA RPC, discovery, trust policy, and storage. The Rust node serves RPC and peers on the same listener. In the desktop, configure that port, verified TLS paths, the same chain definition, and a trusted genesis block-header hash.
 
 ## Applications and services
 
@@ -47,7 +47,7 @@ This starts the service; it does not promise that an empty chain will produce bl
 | [dg_xch_farmer](farmer/README.md) | Integrated farmer/harvester and legacy configuration |
 | [dg_xch_plotter](plotter/README.md) | Native CPU/Vulkan PoS2 RAM plotting, file reading and fragment proof recovery |
 | [dg_xch_plotter_cuda](plotter/cuda/README.md) | Separately built NVIDIA CUDA backend |
-| [dg_xch_timelord](timelord/README.md) | Real VDF jobs and compact-proof service; regular scheduler unfinished |
+| [dg_xch_timelord](timelord/README.md) | CPU regular timelord, verified VDF workers and separate compact-proof service |
 | [dg_xch_introducer](introducer/README.md) | Bounded peer discovery and registration |
 | [dg_xch_simulator](simulator/README.md) | Deterministic test fixtures and development servers |
 | [dg_xch_dev_tools](tools/README.md) | Database, corpus, node and weight-proof diagnostics |
@@ -77,7 +77,7 @@ This starts the service; it does not promise that an empty chain will produce bl
 
 ## Local stack and validation
 
-The [Docker Compose harness](docker/README.md) provisions separate nodes, an introducer, farmers and compact timelords with disposable test identities. GPU services are opt-in profiles. It tests service wiring and discovery; it cannot yet demonstrate production PoS2 block creation or a complete timelord-driven chain.
+The [Docker Compose harness](docker/README.md) provisions separate nodes, an introducer, independent farmers and a regular CPU timelord with disposable test identities. It includes sequential matching-plot preparation and an acceptance checker for real genesis production, cross-node agreement, zero prefarm and required farmer participation. GPU services are opt-in profiles, with a separate native CUDA image. Container health alone is not chain readiness; run the acceptance checks before treating a deployment as working.
 
 Start with focused checks, then run broader tests. Leave GPU and resource-intensive runs until the end:
 

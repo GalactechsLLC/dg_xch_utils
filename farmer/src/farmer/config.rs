@@ -1,15 +1,14 @@
 use blst::min_pk::SecretKey;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::config::PoolWalletConfig;
-use dg_xch_core::consensus::chain_definition::ChainDefinition;
-use dg_xch_core::consensus::constants::{ChiaNetwork, ConsensusConstants};
+use dg_xch_core::consensus::chain_definition::{ChainDefinition, ChainSelection};
+use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_keys::parse_payout_address;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Error;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 const fn default_true() -> bool {
     true
@@ -65,9 +64,94 @@ pub struct DruidGardenHarvesterConfig {
 pub struct HarvesterConfig<C = ()> {
     #[serde(default = "default_none")]
     pub druid_garden: Option<DruidGardenHarvesterConfig>,
+    #[serde(default)]
+    pub pos2: Option<Pos2HarvesterConfig>,
     #[serde(default = "default_none")]
     #[serde(alias = "gigahorse")] //Support Legacy Gigahorse Configs
     pub custom_config: Option<C>,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Pos2Backend {
+    #[default]
+    Cpu,
+    Auto,
+    Cuda,
+    Vulkan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Pos2HarvesterConfig {
+    pub plot_directories: Vec<String>,
+    pub backend: Pos2Backend,
+    pub device: usize,
+    pub cuda_helper: Option<PathBuf>,
+    pub memory_mib: u64,
+    pub max_entries: usize,
+    pub max_work: u64,
+    pub search_hashes: u64,
+    pub max_qualities: usize,
+    pub deadline_ms: u64,
+    pub parallelism: usize,
+}
+
+impl Default for Pos2HarvesterConfig {
+    fn default() -> Self {
+        Self {
+            plot_directories: Vec::new(),
+            backend: Pos2Backend::Cpu,
+            device: 0,
+            cuda_helper: None,
+            memory_mib: 1024,
+            max_entries: 4_194_304,
+            max_work: 2_000_000_000,
+            search_hashes: 100_000_000,
+            max_qualities: 32,
+            deadline_ms: 20_000,
+            parallelism: 1,
+        }
+    }
+}
+
+impl Pos2HarvesterConfig {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.memory_mib == 0
+            || self.memory_mib.checked_mul(1024 * 1024).is_none()
+            || self.max_entries == 0
+            || self.max_work == 0
+            || self.search_hashes == 0
+            || !(1..=1024).contains(&self.max_qualities)
+            || !(1..=120_000).contains(&self.deadline_ms)
+            || !(1..=32).contains(&self.parallelism)
+            || (self.backend == Pos2Backend::Cpu && self.device != 0)
+        {
+            return Err(Error::other(
+                "invalid PoS2 farming resource limits or CPU device",
+            ));
+        }
+        if matches!(self.backend, Pos2Backend::Cuda)
+            && self
+                .cuda_helper
+                .as_ref()
+                .is_none_or(|path| !path.is_absolute())
+        {
+            return Err(Error::other(
+                "CUDA farming requires an absolute cuda_helper path",
+            ));
+        }
+        if self
+            .cuda_helper
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
+        {
+            return Err(Error::other(
+                "cuda_helper must be an absolute executable path",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -91,6 +175,9 @@ where
 }
 impl<C: Clone + Serialize> Config<C> {
     pub fn validate_keys(&self) -> Result<(), Error> {
+        if let Some(config) = &self.harvester_configs.pos2 {
+            config.validate()?;
+        }
         for info in &self.farmer_info {
             for key in [
                 Some(info.farmer_secret_key),
@@ -166,6 +253,7 @@ impl<C: Clone> Default for Config<C> {
             payout_address: "".to_string(),
             harvester_configs: HarvesterConfig {
                 druid_garden: Some(DruidGardenHarvesterConfig::default()),
+                pos2: None,
                 custom_config: None,
             },
             metrics: Some(MetricsConfig {
@@ -178,26 +266,15 @@ impl<C: Clone> Default for Config<C> {
 
 impl<C: Clone> Config<C> {
     pub fn constants(&self) -> Result<ConsensusConstants, Error> {
-        if let Some(chain) = &self.chain_definition {
-            if chain.network_id != self.selected_network {
-                return Err(Error::other("farmer network and chain definition disagree"));
-            }
-            chain.constants().map_err(Error::other)
-        } else {
-            ChiaNetwork::from_str(&self.selected_network)
-                .map(ConsensusConstants::from)
-                .map_err(Error::other)
-        }
+        ChainSelection::from_config(&self.selected_network, self.chain_definition.as_ref())
+            .and_then(|chain| chain.constants())
+            .map_err(Error::other)
     }
 
     pub fn network_id(&self) -> Result<String, Error> {
-        match &self.chain_definition {
-            Some(chain) => chain.handshake_network_id().map_err(Error::other),
-            None => {
-                self.constants()?;
-                Ok(self.selected_network.clone())
-            }
-        }
+        ChainSelection::from_config(&self.selected_network, self.chain_definition.as_ref())
+            .and_then(|chain| chain.handshake_network_id())
+            .map_err(Error::other)
     }
 }
 impl<C: for<'a> Deserialize<'a> + Clone> TryFrom<&Path> for Config<C> {

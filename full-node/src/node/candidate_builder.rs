@@ -113,8 +113,18 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
 
         // ---- Phase B: peak + prev-block linkage (store) ----
         let peak_rec = match self.store.get_peak().await {
-            Ok(Some((hash, _))) => self.store.get_block_record(&hash).await.ok().flatten(),
-            _ => None,
+            Ok(Some((hash, height))) => match self.store.get_block_record(&hash).await {
+                Ok(Some(record)) if record.height == height => Some(record),
+                _ => {
+                    self.producer.candidate_dropped("peak_store_error");
+                    return None;
+                }
+            },
+            Ok(None) => None,
+            Err(_) => {
+                self.producer.candidate_dropped("peak_store_error");
+                return None;
+            }
         };
         // prev_b starts at the peak; the reward-chain backtrack finds the true
         // previous block. No peak ⇒ genesis: prev_b = None, height 0.
@@ -142,7 +152,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             None
         };
         let height = match &prev_b {
-            Some(pb) => pb.height + 1,
+            Some(pb) => pb.height.checked_add(1)?,
             None => 0,
         };
 
@@ -225,13 +235,17 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         };
         let peak_pair = match &peak_rec {
             Some(peak) => {
-                let prev_weight = self
-                    .store
-                    .get_block_record(&peak.prev_hash)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map_or(0, |r| r.weight);
+                let prev_weight = if peak.height == 0 {
+                    0
+                } else {
+                    match self.store.get_block_record(&peak.prev_hash).await {
+                        Ok(Some(previous)) => previous.weight,
+                        _ => {
+                            self.producer.candidate_dropped("peak_parent_store_error");
+                            return None;
+                        }
+                    }
+                };
                 Some((peak, prev_weight))
             }
             None => None,

@@ -1,52 +1,106 @@
 # Development stack
 
-This Compose setup connects three isolated full nodes through `dg_xch_introducer`, attaches a separate farmer to each configured node, and runs the compact-proof timelord beside the CPU node. It generates its own chain identity, TLS certificates, and disposable farming keys.
+Three isolated full nodes discover one another through `dg_xch_introducer`. Each farmer connects to its own node, and a regular CPU timelord advances the chain through the CPU node. CPU, native NVIDIA CUDA, and AMD/Vulkan farmers are independent processes, not a central farming service.
 
-**It is an integration harness, not a working block-production network.** The regular timelord scheduler and production PoS2 network-farming integration are unfinished. An empty stack will discover peers but will not produce its first block. GPU passthrough on a farmer container does not turn its existing PoS1 signage loop into a PoS2 GPU harvester.
+This is an integration-testing setup, not a claim of a completed production deployment. Container health only checks TLS and `/metrics`; the acceptance tool waits for real blocks and checks agreement. Wallet transfers, forced reorganizations, long-running operation, and hardware-specific performance need separate testing.
 
 ## Requirements
 
-- Docker Engine and Docker Compose with GPU device reservations support.
-- Enough disk space for a Rust release build, container layers, and separate node databases.
-- For NVIDIA: host driver and NVIDIA Container Toolkit configured for Docker.
-- For AMD: a Linux render node exposed under `/dev/dri`; the image includes Mesa's Vulkan drivers.
-- Disposable plots and test data only. Never mount a production wallet, real farming keys, or an existing chain database into this stack.
+- Docker Engine and Compose, with GPU reservations support for NVIDIA.
+- At least 16 GiB available to plot preparation, plus room for other running services. It creates k28 strength-2 plots sequentially; do not overlap it with benchmarks.
+- A new host directory for disposable plots, writable by container UID 1000, and space for images and node databases. Owning the directory is not sufficient if your host UID differs; arrange access for UID 1000 without making unrelated directories writable.
+- NVIDIA: host driver, NVIDIA Container Toolkit, and the optional CUDA image. The default target is the A4000's `sm_86`; set `DGX_CUDA_ARCH` for another GPU.
+- AMD: Linux render-node access under `/dev/dri`. The ordinary image includes Mesa Vulkan drivers.
 
-The image builds the native services and Vulkan plotter. It does not build the separate nightly CUDA executable or desktop GUI. Building the image is CPU-intensive; do it after source changes and lightweight checks are complete.
+Never mount production keys, wallets or chain databases. Disposable master keys are plaintext inside private volumes. The ordinary image does not require CUDA; the optional CUDA image currently targets Linux amd64 only.
 
-## Start the CPU stack
+## Prepare
 
-From the repository root:
+From the repository root, choose a new directory you own:
 
 ```sh
-mkdir -p docker/plots/cpu docker/plots/nvidia docker/plots/amd
-docker compose -f compose.yaml config --quiet
-docker compose -f compose.yaml build
-docker compose -f compose.yaml up -d
-docker compose -f compose.yaml ps
-docker compose -f compose.yaml logs --tail=100 introducer node-cpu farmer-cpu timelord
+export DGX_PLOTS_ROOT=/mnt/nvmep1/tmp/dgx-compose-plots
+mkdir -p "$DGX_PLOTS_ROOT"
+docker compose config --quiet
+docker compose build init-stack
+docker compose run --rm init-stack
+docker compose run --rm --no-deps prepare-plots
 ```
 
-The init service creates separate volumes for each node and farmer. The chain uses a random genesis seed and zero prefarm. Each node owns a different private CA. Farmers receive only their own public peer identity and node-signed private RPC identity, not the node CA signing key. The development master keys are plaintext in their private farmer volumes so test identities survive restarts; they are not suitable for production custody.
+Preparation creates one matching CPU-generated plot for each of the CPU, NVIDIA and AMD identities, sequentially. It needs no GPU. Append `--farmers cpu` to prepare only CPU initially; later repeat with `--farmers nvidia,amd`. Matching existing plots are retained, not overwritten. Metadata checks do not scan every compressed payload. An unrelated nonempty plot directory is rejected.
 
-| Service | Connection and role |
-| --- | --- |
-| `introducer` | Internal port 8445; vets and returns full-node endpoints. |
-| `node-cpu` | Internal port 8444; dedicated database and CA. |
-| `node-nvidia` | Internal port 8444; dedicated database and CA. |
-| `node-amd` | Internal port 8444; dedicated database and CA. |
-| `farmer-cpu` | Shares `node-cpu`'s network namespace and connects to its verified local endpoint. |
-| `farmer-nvidia` | Optional `nvidia` profile; shares `node-nvidia`'s network namespace. |
-| `farmer-amd` | Optional `amd` profile; shares `node-amd`'s network namespace. |
-| `timelord` | Compact-proof mode, connected to `node-cpu` over verified local TLS. |
+The initializer generates an immutable development manifest, separate node CAs and per-farmer identities. This chain activates PoS2 at genesis, removes the prefarm and uses lower starting work and difficulty for a small farm. Proof verification stays enabled, including real 1024-bit VDFs. The timelord is deliberately paced at 27 iterations/second to leave time for CPU farming. These settings do not change Chia or the production DGX preset.
 
-No service publishes a host port. The bridge is internal. The readiness check verifies TLS and that `/metrics` answers; it does **not** declare the chain synchronized or capable of producing blocks. `/health` retains the node's actual liveness assessment.
+Old version-1 stack volumes are rejected rather than silently changed to another chain. To preserve an existing run, use a separate `COMPOSE_PROJECT_NAME` and plots directory.
 
-Each full node registers with the introducer without manual peer addresses. To inspect connections from within the isolated stack:
+## Start and check
 
 ```sh
-docker compose exec node-cpu curl --fail --silent \
-  --cacert /data/ssl/ca/private_ca.crt https://localhost:8444/metrics
+docker compose up -d
+docker compose ps
+docker compose logs --tail=100 introducer node-cpu farmer-cpu timelord
+docker compose run --rm --no-deps check-stack --require-farmer cpu
+```
+
+The checker waits up to 30 minutes by default. It uses verified private-CA RPC, requires PoS2 genesis and at least height 3 on all three nodes, compares hashes at a common height, rejects nonzero genesis reward coins, and requires an accepted non-genesis block paying the CPU farmer's target. This does not claim that a wallet has synchronized or spent the reward. Adjust `--min-height` and `--timeout-seconds` deliberately.
+
+| Service | Role |
+| --- | --- |
+| `init-stack` | Idempotent development identities and configuration; no block injection |
+| `introducer` | Vetted discovery on internal port 8445 |
+| `node-cpu`, `node-nvidia`, `node-amd` | Independent databases and listeners on internal port 8444 |
+| `farmer-cpu` | CPU PoS2 recovery; local connection to its node |
+| `farmer-nvidia` | Optional `nvidia` profile; native CUDA recovery |
+| `farmer-amd` | Optional `amd` profile; Vulkan recovery |
+| `timelord` | Regular CPU scheduler connected to `node-cpu` |
+| `prepare-plots` | Opt-in sequential plot preparation |
+| `check-stack` | Opt-in block-production acceptance check |
+
+No host ports are published. The bridge is internal. Nodes register with the introducer; there is no manual full-node peer list. Farmers and the timelord share their assigned node's network namespace, not its filesystem or private CA signing key.
+
+## NVIDIA and AMD
+
+Build the ordinary image first, then the optional CUDA image. Its Dockerfile pins the CUDA base, cuda-oxide revision and Rust nightly; compilation does not need a GPU.
+
+```sh
+export DGX_CUDA_ARCH=sm_86
+export DGX_NVIDIA_DEVICE=0
+docker compose --profile nvidia build farmer-nvidia
+docker compose --profile nvidia up -d
+```
+
+For AMD, select the render node and its host group:
+
+```sh
+export DGX_AMD_RENDER_NODE=/dev/dri/renderD128
+export DGX_RENDER_GID="$(stat -c %g "$DGX_AMD_RENDER_NODE")"
+docker compose --profile amd up -d
+```
+
+Use both profiles when both GPUs are available:
+
+```sh
+docker compose --profile nvidia --profile amd up -d
+docker compose run --rm --no-deps check-stack --require-farmer cpu,nvidia,amd
+```
+
+Logs distinguish loaded plots, eligible qualities, recovered proofs and errors. Only chain acceptance establishes accepted blocks. Explicit CUDA/Vulkan selections do not silently use CPU hashing. Additional cards need separate farmers, nodes, device mappings and identities; scaling a service would share its device and identity.
+
+`DGX_PLOTS_ROOT` supplies the common preparation directory. `DGX_CPU_PLOTS`, `DGX_NVIDIA_PLOTS`, and `DGX_AMD_PLOTS` can override individual read-only farming mounts, but those locations must contain matching plots for the generated identities and testnet hash domain.
+
+## Restart and inspect
+
+After a successful check, stop and restart without deleting volumes. Require a height beyond the previously reported result:
+
+```sh
+docker compose --profile nvidia --profile amd down
+docker compose --profile nvidia --profile amd up -d
+docker compose run --rm --no-deps check-stack --min-height 10 --require-farmer cpu,nvidia,amd
+```
+
+Choose a height beyond the previous result, not always 10, and use only available GPU profiles. This checks renewed advancement and common history; it does not force a competing-branch reorganization.
+
+```sh
 docker compose exec farmer-cpu curl --fail --silent \
   --cacert /service/ssl/ca/private_ca.crt \
   --cert /service/ssl/farmer/private_farmer.crt \
@@ -55,57 +109,6 @@ docker compose exec farmer-cpu curl --fail --silent \
   https://localhost:8444/get_node_details
 ```
 
-## Enable GPU containers
+`docker compose down` preserves identities and databases. `down --volumes` deliberately destroys them and is not an automatic repair step. New identities need new matching plots; host plots are not removed by Compose. Prefer a new project name and a new plots directory for another independent run.
 
-For one NVIDIA card:
-
-```sh
-DGX_NVIDIA_DEVICE=0 docker compose --profile nvidia up -d
-docker compose --profile nvidia run --rm --entrypoint dg_xch_plotter farmer-nvidia devices
-```
-
-For one AMD card, replace the device and group with the values on your host:
-
-```sh
-export DGX_AMD_RENDER_NODE=/dev/dri/renderD128
-export DGX_RENDER_GID="$(stat -c %g "$DGX_AMD_RENDER_NODE")"
-docker compose --profile amd up -d
-docker compose --profile amd run --rm --entrypoint dg_xch_plotter farmer-amd devices
-```
-
-Use both `--profile nvidia --profile amd` when both are available. The example reserves one device of each vendor. Do not scale a GPU farmer service to obtain one worker per card: replicas would share the same device and node. Additional cards need separate service definitions, node instances, identity volumes, and initialization entries.
-
-`DGX_CPU_PLOTS`, `DGX_NVIDIA_PLOTS`, and `DGX_AMD_PLOTS` override the read-only plot directories. New test identities do not match arbitrary existing plots. Read `plot-keys.json` in the relevant farmer volume to obtain the generated public keys before creating matching plots:
-
-```sh
-docker compose exec farmer-cpu cat /service/plot-keys.json
-```
-
-To exercise a low-k PoS2 plot through the real Vulkan backend without claiming network farming:
-
-```sh
-docker compose --profile amd run --rm --entrypoint dg_xch_plotter farmer-amd \
-  prove-plot /plots/development.plot \
-  --challenge 0000000000000000000000000000000000000000000000000000000000000000 \
-  --backend vulkan --device 0
-```
-
-Add `--testnet` only if that plot was created for the testnet PoS2 domain. Use `farmer-nvidia` with the `nvidia` profile for the equivalent NVIDIA Vulkan check. The [plotter README](../plotter/README.md) describes limits and plotting commands. The separate [CUDA backend](../plotter/cuda/README.md) is not bundled in this image.
-
-## Stop and reset
-
-```sh
-docker compose --profile nvidia --profile amd down
-```
-
-Volumes survive a normal shutdown. For a deliberate **destructive reset of all stack identities and databases**:
-
-```sh
-docker compose --profile nvidia --profile amd down --volumes
-```
-
-The next start generates a new chain and different keys, so old plots no longer belong to those generated farmer identities. Host-mounted plot directories are not deleted by `down --volumes`.
-
-## Remaining integration work
-
-The stack still needs a regular timelord, scalable on-disk PoS2 solving connected to signage/infusion submission, matched production plots, and funded-wallet/reorganization tests. No successful end-to-end block-production run is implied by container readiness or peer discovery.
+[Repository overview](../readme.md) · [Farmer](../farmer/README.md) · [Timelord](../timelord/README.md) · [Plotter](../plotter/README.md)

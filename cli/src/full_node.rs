@@ -131,24 +131,21 @@ pub struct FullNodeArgs {
 }
 
 impl FullNodeArgs {
+    pub(crate) fn inherit_network(&mut self, root_network: Option<&str>) -> Result<(), Error> {
+        crate::inherit_network(&mut self.network, root_network)
+    }
+
     fn config(self) -> Result<Config, Error> {
-        let chain_definition: Option<dg_xch_core::consensus::chain_definition::ChainDefinition> =
-            self.chain_config
-                .as_ref()
-                .map(|path| {
-                    let file = std::fs::File::open(path)?;
-                    serde_json::from_reader(file).map_err(Error::other)
-                })
-                .transpose()?;
-        let network = self
-            .network
-            .as_deref()
-            .or_else(|| {
-                chain_definition
-                    .as_ref()
-                    .map(|definition| definition.network_id.as_str())
-            })
-            .unwrap_or("mainnet");
+        let selection =
+            crate::chain::selection(self.network.as_deref(), self.chain_config.as_deref())?;
+        let resolved = selection.resolve().map_err(Error::other)?;
+        let chain_definition = match selection {
+            dg_xch_core::consensus::chain_definition::ChainSelection::Custom(definition) => {
+                Some(definition)
+            }
+            _ => None,
+        };
+        let network = resolved.network_id.as_str();
         let defaults = P2pSettings::default();
         let p2p = P2pSettings {
             target_outbound: self.target_outbound.unwrap_or(defaults.target_outbound),
@@ -232,4 +229,63 @@ pub async fn run(args: FullNodeArgs, logger: Arc<DruidGardenLogger>) -> Result<(
     dg_full_node::server::run(config, logger)
         .await
         .map_err(|error| Error::other(error.to_string()))
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+    use crate::cli::{Cli, RootCommands};
+    use clap::Parser;
+
+    fn config(arguments: &[&str]) -> Result<Config, Error> {
+        let mut cli = Cli::try_parse_from(arguments).map_err(Error::other)?;
+        crate::apply_network(&mut cli)?;
+        match cli.action {
+            RootCommands::FullNode(args) => args.config(),
+            _ => Err(Error::other("expected full-node command")),
+        }
+    }
+
+    #[test]
+    fn root_network_reaches_the_full_node_without_changing_chia_defaults() {
+        let defaults = config(&["dg", "full-node"]).unwrap();
+        assert_eq!(defaults.network_id, "mainnet");
+        assert_eq!(defaults.handshake_network_id().unwrap(), "mainnet");
+        assert_eq!(
+            defaults.consensus_constants().unwrap(),
+            dg_xch_core::consensus::constants::MAINNET
+        );
+        let inherited = config(&["dg", "--network", "testnet11", "full-node"]).unwrap();
+        assert_eq!(inherited.network_id, "testnet11");
+        assert_eq!(inherited.handshake_network_id().unwrap(), "testnet11");
+        let local = config(&["dg", "full-node", "--network", "dgx"]).unwrap();
+        assert!(local.allows_chain_bootstrap());
+        assert_eq!(local.network_id, "dgx");
+    }
+
+    #[test]
+    fn conflicting_and_unknown_full_node_networks_fail_closed() {
+        assert!(
+            config(&[
+                "dg",
+                "--network",
+                "mainnet",
+                "full-node",
+                "--network",
+                "testnet11"
+            ])
+            .is_err()
+        );
+        assert!(config(&["dg", "--network", "not-a-network", "full-node"]).is_err());
+        let matching = config(&[
+            "dg",
+            "--network",
+            "testnet11",
+            "full-node",
+            "--network",
+            "testnet11",
+        ])
+        .unwrap();
+        assert_eq!(matching.network_id, "testnet11");
+    }
 }

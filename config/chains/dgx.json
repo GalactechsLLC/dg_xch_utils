@@ -1,6 +1,6 @@
 {
   "network_id": "dgx",
-  "genesis_seed": "dg_xch/dgx/no-prefarm/v1",
+  "genesis_seed": "dg_xch/dgx/no-prefarm/pos2/v2",
   "rewards": {
     "genesis_pool": 0,
     "genesis_farmer": 0,
@@ -8,5 +8,19 @@
     "initial_farmer": 250000000000,
     "halving_interval": 5045760,
     "max_halvings": 4
+  },
+  "consensus": {
+    "version": 2,
+    "development": false,
+    "pos2_activation_height": 0,
+    "difficulty_starting": 7,
+    "difficulty_constant_factor_bits": 67,
+    "sub_slot_iters_starting": 134217728,
+    "sub_slot_time_target": 600,
+    "plot_filter_bits": 9,
+    "plot_filter_v2_bits": 5,
+    "plot_size_v2": 28,
+    "min_plot_strength": 2,
+    "max_plot_strength": 32
   }
 }

@@ -23,18 +23,7 @@ Use the [Docker development stack](../docker/README.md) to generate matching tes
 ```json
 {
   "listen": "0.0.0.0:8445",
-  "chain": {
-    "network_id": "dgx",
-    "genesis_seed": "dg_xch/dgx/no-prefarm/v1",
-    "rewards": {
-      "genesis_pool": 0,
-      "genesis_farmer": 0,
-      "initial_pool": 1750000000000,
-      "initial_farmer": 250000000000,
-      "halving_interval": 5045760,
-      "max_halvings": 4
-    }
-  },
+  "chain": "dgx",
   "tls": {
     "certificate": "/path/to/public_introducer.crt",
     "private_key": "/path/to/public_introducer.key",
@@ -50,7 +39,7 @@ Use the [Docker development stack](../docker/README.md) to generate matching tes
 
 The identity is also presented when probing full nodes. The current full-node `/ws` route expects a public-network client certificate. `ca_certificate` instead contains the CAs that signed the **server** certificates of nodes you want to introduce. These are separate trust roles. `peer_server_name` must match those server certificates; the current local full-node certificates use `localhost`.
 
-Use the exact same chain definition on all nodes. Point each node at the introducer:
+The `chain` field accepts `"mainnet"` (the default), another Chia network name, `"dgx"`, or a complete custom definition object. Use the exact same selection on all nodes. Point each node at the introducer:
 
 ```sh
 cargo run -p dg_xch_cli --features coin-index --bin dg -- full-node \

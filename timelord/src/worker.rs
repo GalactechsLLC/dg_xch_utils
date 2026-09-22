@@ -4,7 +4,7 @@ use dg_xch_core::blockchain::unsized_bytes::UnsizedBytes;
 use dg_xch_core::blockchain::vdf_info::VdfInfo;
 use dg_xch_core::blockchain::vdf_proof::VdfProof;
 use dg_xch_core::traits::SizedBytes;
-use dg_xch_vdf::proof::{prove_result, verify_vdf_serial};
+use dg_xch_vdf::proof::{prove_result, prove_result_bounded, verify_vdf_serial};
 use serde::{Deserialize, Serialize};
 use std::io::{Error, ErrorKind};
 use std::process::Stdio;
@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub const MAX_ITERATIONS: u64 = 1 << 26;
 pub const WORKER_MESSAGE_LIMIT: u64 = 16 * 1024;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProofRequest {
     pub generation: u64,
@@ -26,8 +26,18 @@ pub struct ProofRequest {
 
 impl ProofRequest {
     pub fn validate(&self) -> Result<(), Error> {
+        self.validate_regular()?;
+        if self.iterations > MAX_ITERATIONS {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "compact VDF request exceeds iteration limit",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn validate_regular(&self) -> Result<(), Error> {
         if self.iterations == 0
-            || self.iterations > MAX_ITERATIONS
             || !(16..=1024).contains(&self.discriminant_bits)
             || !self.discriminant_bits.is_multiple_of(8)
         {
@@ -50,12 +60,52 @@ pub struct ProofResult {
 
 pub fn prove(request: &ProofRequest) -> Result<ProofResult, Error> {
     request.validate()?;
-    let bytes = prove_result(
-        request.challenge.as_ref(),
-        request.input.data.as_ref(),
-        request.discriminant_bits,
-        request.iterations,
-    )
+    prove_inner(request, None)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegularProofRequest {
+    pub request: ProofRequest,
+    pub memory_bytes: u64,
+}
+
+impl RegularProofRequest {
+    pub fn validate(&self) -> Result<(), Error> {
+        self.request.validate_regular()?;
+        if !(128 * 1024..=8 * 1024 * 1024 * 1024).contains(&self.memory_bytes) {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "regular VDF memory budget must be 128 KiB through 8 GiB",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn prove_regular(request: &RegularProofRequest) -> Result<ProofResult, Error> {
+    request.validate()?;
+    let mut result = prove_inner(&request.request, Some(request.memory_bytes))?;
+    result.proof.normalized_to_identity = false;
+    Ok(result)
+}
+
+fn prove_inner(request: &ProofRequest, memory_bytes: Option<u64>) -> Result<ProofResult, Error> {
+    let bytes = match memory_bytes {
+        Some(memory_bytes) => prove_result_bounded(
+            request.challenge.as_ref(),
+            request.input.data.as_ref(),
+            request.discriminant_bits,
+            request.iterations,
+            memory_bytes,
+        ),
+        None => prove_result(
+            request.challenge.as_ref(),
+            request.input.data.as_ref(),
+            request.discriminant_bits,
+            request.iterations,
+        ),
+    }
     .map_err(Error::other)?;
     if bytes.len() != 200
         || !verify_vdf_serial(
@@ -92,14 +142,39 @@ pub fn prove(request: &ProofRequest) -> Result<ProofResult, Error> {
 
 pub async fn run_isolated(request: ProofRequest, timeout: Duration) -> Result<ProofResult, Error> {
     request.validate()?;
-    if timeout.is_zero() || timeout > Duration::from_secs(3600) {
+    run_isolated_inner(request, timeout, None).await
+}
+
+pub async fn run_regular_isolated(
+    request: ProofRequest,
+    timeout: Duration,
+    memory_bytes: u64,
+) -> Result<ProofResult, Error> {
+    RegularProofRequest {
+        request: request.clone(),
+        memory_bytes,
+    }
+    .validate()?;
+    run_isolated_inner(request, timeout, Some(memory_bytes)).await
+}
+
+async fn run_isolated_inner(
+    request: ProofRequest,
+    timeout: Duration,
+    memory_bytes: Option<u64>,
+) -> Result<ProofResult, Error> {
+    if timeout.is_zero() || timeout > Duration::from_secs(86_400) {
         return Err(Error::new(
             ErrorKind::InvalidInput,
-            "worker timeout must be 1..3600 seconds",
+            "worker timeout must be 1..86400 seconds",
         ));
     }
     let mut child = tokio::process::Command::new(std::env::current_exe()?)
-        .arg("worker")
+        .arg(if memory_bytes.is_some() {
+            "regular-worker"
+        } else {
+            "worker"
+        })
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -114,9 +189,15 @@ pub async fn run_isolated(request: ProofRequest, timeout: Duration) -> Result<Pr
         .take()
         .ok_or_else(|| Error::other("worker stdout unavailable"))?;
     let result = tokio::time::timeout(timeout, async {
-        stdin
-            .write_all(&serde_json::to_vec(&request).map_err(Error::other)?)
-            .await?;
+        let encoded = match memory_bytes {
+            Some(memory_bytes) => serde_json::to_vec(&RegularProofRequest {
+                request: request.clone(),
+                memory_bytes,
+            }),
+            None => serde_json::to_vec(&request),
+        }
+        .map_err(Error::other)?;
+        stdin.write_all(&encoded).await?;
         drop(stdin);
         let mut bytes = Vec::new();
         stdout
@@ -205,6 +286,30 @@ mod tests {
         assert!(request.validate().is_err());
         request.iterations = 1;
         request.discriminant_bits = 2048;
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn regular_worker_has_full_iteration_range_and_partial_proof_semantics() {
+        let mut request = RegularProofRequest {
+            request: ProofRequest {
+                generation: 9,
+                challenge: Bytes32::from([29; 32]),
+                input: ClassgroupElement::get_default_element(),
+                iterations: MAX_ITERATIONS + 1,
+                discriminant_bits: 1024,
+            },
+            memory_bytes: 128 * 1024,
+        };
+        assert!(request.validate().is_ok());
+        assert!(request.request.validate().is_err());
+        request.request.iterations = 7;
+        let result = prove_regular(&request).unwrap();
+        assert!(!result.proof.normalized_to_identity);
+        assert_eq!(result.info.number_of_iterations, 7);
+        request.memory_bytes = 0;
+        assert!(request.validate().is_err());
+        request.memory_bytes = 9 * 1024 * 1024 * 1024;
         assert!(request.validate().is_err());
     }
 }

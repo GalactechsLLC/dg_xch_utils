@@ -1271,7 +1271,7 @@ where
         // Height/weight continuity against the parent record (before any body work).
         if let Some(p) = prev.as_ref() {
             let height = block.height();
-            if height != p.height + 1 {
+            if p.height.checked_add(1) != Some(height) {
                 return Err(NodeError::Invalid(format!(
                     "height {height} does not extend parent {}",
                     p.height
@@ -1305,6 +1305,7 @@ where
                 .await?;
             out
         } else {
+            self.coin_rules_enforced(block.height()).await?;
             (None, Vec::new(), Vec::new())
         };
         // Record derivation runs the consensus ancestry walks (retarget/SES/header validation)
@@ -1482,11 +1483,6 @@ where
         }
         if let Some(r) = self.store.get_block_record(&prev_hash).await? {
             return Ok(Some(r));
-        }
-        // Bootstrap: a fresh store (no peak) accepts a base block whose ancestors are not yet synced (a
-        // checkpoint entry point). With a peak established, an unknown parent is a real orphan.
-        if self.store.get_peak().await?.is_none() {
-            return Ok(None);
         }
         Err(NodeError::Orphan(format!(
             "unknown parent {prev_hash} for block at height {height}"
@@ -2442,6 +2438,13 @@ where
     }
 
     fn warm_ancestry(ancestors: &HashMap<Bytes32, BlockRecord>, p: &BlockRecord) -> bool {
+        Self::ancestry_gap(ancestors, p).is_none()
+    }
+
+    fn ancestry_gap(ancestors: &HashMap<Bytes32, BlockRecord>, p: &BlockRecord) -> Option<Bytes32> {
+        if !ancestors.contains_key(&p.header_hash) {
+            return Some(p.header_hash);
+        }
         let mut sub_slots = 0usize;
         let mut tx_blocks = 0usize;
         let mut curr = p;
@@ -2453,11 +2456,11 @@ where
                 tx_blocks += 1;
             }
             if (sub_slots > 2 && tx_blocks > 11) || curr.height == 0 {
-                return true;
+                return None;
             }
             match ancestors.get(&curr.prev_hash) {
                 Some(r) => curr = r,
-                None => return false,
+                None => return Some(curr.prev_hash),
             }
         }
     }
@@ -2469,23 +2472,25 @@ where
         vdf_sink: Option<&crate::header::HeaderSink>,
     ) -> Result<u64, NodeError> {
         let Some(p) = prev else {
-            // Genesis: no ancestor, but its proof of space is validated like any other block —
-            // the challenge is the block's declared pos_ss_cc_challenge_hash (which
-            // get_block_challenge resolves to the genesis challenge) and the difficulty is the
-            // genesis weight itself (there is no prev to subtract). A zero placeholder here
-            // poisons the stored record: calculate_ip_iters rejects required_iters == 0 the
-            // first time a challenge-block walk reads the genesis record (the
-            // height-36 genesis-sync wall).
-            let difficulty = u64::try_from(header.weight()).map_err(|_| {
-                NodeError::Invalid("genesis weight does not fit a difficulty".into())
-            })?;
-            return self.pospace_required_iters_at(header, difficulty);
+            return self.validate_header_block_sinked(
+                &HashMap::new(),
+                header,
+                ValidationState {
+                    ssi: self.constants.sub_slot_iters_starting,
+                    difficulty: self.constants.difficulty_starting,
+                },
+                true,
+                vdf_sink,
+            );
         };
         let ancestors = self.cache.records();
-        if !ancestors.contains_key(&p.header_hash) || !ancestors.contains_key(&p.prev_hash) {
-            return self.pospace_required_iters(header, p);
-        }
-        if !Self::warm_ancestry(ancestors, p) {
+        if let Some(missing) = Self::ancestry_gap(ancestors, p) {
+            if self.full_history == Some(true) {
+                return Err(NodeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("block record not found: {missing}"),
+                )));
+            }
             return self.pospace_required_iters(header, p);
         }
         let is_first_in_sub_slot = !header.finished_sub_slots.is_empty();
@@ -2511,8 +2516,6 @@ where
     // pos_ss_cc_challenge_hash — exactly what the full header validator feeds to pospace after
     // confirming get_block_challenge equals it. So the value this returns equals the
     // full-validation path's required_iters for the same valid block, while needing none of its
-    // deep ancestor walk. prev_transaction_block_height is unused by
-    // validate_pospace_and_get_required_iters (dg_xch's pospace quality is height-based only), so 0 is passed.
     fn pospace_required_iters(
         &self,
         header: &HeaderBlock,
@@ -2528,13 +2531,29 @@ where
                     header.height()
                 ))
             })?;
-        self.pospace_required_iters_at(header, difficulty)
+        let previous_transaction_height = if prev.height >= self.constants.hard_fork2_height
+            || header.reward_chain_block.proof_of_space.version != 0
+        {
+            let mut ancestors = self.cache.records().clone();
+            ancestors.insert(prev.header_hash, prev.clone());
+            dg_xch_core::consensus::get_block_challenge::pre_sp_tx_block_height(
+                &self.constants,
+                &ancestors,
+                header.prev_header_hash(),
+                header.reward_chain_block.signage_point_index,
+                header.finished_sub_slots.len(),
+            )?
+        } else {
+            0
+        };
+        self.pospace_required_iters_at(header, difficulty, previous_transaction_height)
     }
 
     fn pospace_required_iters_at(
         &self,
         header: &HeaderBlock,
         difficulty: u64,
+        previous_transaction_height: u32,
     ) -> Result<u64, NodeError> {
         log::debug!("pospace height={}", header.height());
         let rcb = &header.reward_chain_block;
@@ -2551,7 +2570,7 @@ where
             cc_sp_hash,
             header.height(),
             difficulty,
-            0,
+            previous_transaction_height,
         )
         .map_err(NodeError::Io)?
         .ok_or_else(|| NodeError::Invalid(format!("invalid pospace at height {}", header.height())))
@@ -2592,9 +2611,7 @@ where
         let candidate_ssi = candidate.map(|r| r.sub_slot_iters);
         let ssi = match prev {
             Some(p)
-                if ancestors.contains_key(&p.header_hash)
-                    && ancestors.contains_key(&p.prev_hash)
-                    && Self::warm_ancestry(ancestors, p) =>
+                if ancestors.contains_key(&p.header_hash) && Self::warm_ancestry(ancestors, p) =>
             {
                 get_next_sub_slot_iters_and_difficulty(
                     &self.constants,

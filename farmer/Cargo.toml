@@ -12,10 +12,14 @@ repository.workspace = true
 repository = "https://github.com/GalactechsLLC/dg_fast_farmer"
 revision = "270d44e1d885bd2d21ed658345042c954abfdcdc"
 
+[features]
+vulkan = ["dg_xch_plotter/vulkan"]
+
 [dependencies]
 async-trait = "0.1.89"
 blst = "0.3.16"
 clap = { version = "4.5.60", features = ["derive"] }
+dg_logger = { path = "../logging" }
 dg_xch_clients = { path = "../clients", features = ["metrics"] }
 dg_xch_core = { path = "../core", default-features = false, features = ["metrics", "bls"] }
 dg_xch_keys = { path = "../keys" }
@@ -36,6 +40,7 @@ serde_json = "1.0.145"
 serde_yaml = { package = "serde_norway", version = "0.9.42" }
 tempfile = "3"
 time = "0.3.47"
-tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "signal", "macros", "time", "fs"] }
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "signal", "macros", "time", "fs", "process", "io-util"] }
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
 uuid = { version = "1.21.0", features = ["v4"] }
+zeroize = "1.9.0"

@@ -1,12 +1,11 @@
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
-use dg_xch_core::consensus::chain_definition::ChainDefinition;
-use dg_xch_core::consensus::constants::{ChiaNetwork, ConsensusConstants};
+use dg_xch_core::consensus::chain_definition::ChainSelection;
+use dg_xch_core::consensus::constants::ConsensusConstants;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::io::{Error, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
@@ -144,22 +143,18 @@ impl Settings {
     }
 
     pub fn constants(&self) -> Result<ConsensusConstants, Error> {
-        if self.chain_definition_path.is_empty() {
-            ChiaNetwork::from_str(&self.network)
-                .map(ConsensusConstants::from)
-                .map_err(Error::other)
+        let selection = if self.chain_definition_path.is_empty() {
+            ChainSelection::from_config(&self.network, None).map_err(Error::other)?
         } else {
-            let definition: ChainDefinition = serde_json::from_reader(std::fs::File::open(
-                Path::new(&self.chain_definition_path),
-            )?)
-            .map_err(Error::other)?;
-            if definition.network_id != self.network {
-                return Err(Error::other(
-                    "chain definition does not match selected network",
-                ));
-            }
-            definition.constants().map_err(Error::other)
+            dg_xch_servers::chain_config::read_selection(Path::new(&self.chain_definition_path))?
+        };
+        let chain = selection.resolve().map_err(Error::other)?;
+        if chain.network_id != self.network {
+            return Err(Error::other(
+                "chain definition does not match selected network",
+            ));
         }
+        Ok(chain.constants)
     }
 
     pub fn client(&self) -> Result<FullnodeClient, Error> {

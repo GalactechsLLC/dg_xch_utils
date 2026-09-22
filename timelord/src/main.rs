@@ -9,7 +9,9 @@
     )
 )]
 use clap::{Parser, Subcommand};
-use dg_xch_timelord::worker::{ProofRequest, WORKER_MESSAGE_LIMIT, prove, run_isolated};
+use dg_xch_timelord::worker::{
+    ProofRequest, WORKER_MESSAGE_LIMIT, prove, prove_regular, run_isolated,
+};
 use std::io::{Error, Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -23,6 +25,10 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    Run {
+        #[arg(long)]
+        config: PathBuf,
+    },
     Compact {
         #[arg(long)]
         config: PathBuf,
@@ -35,6 +41,8 @@ enum Command {
     },
     #[command(hide = true)]
     Worker,
+    #[command(hide = true)]
+    RegularWorker,
 }
 
 fn read_limited(input: impl Read) -> Result<Vec<u8>, Error> {
@@ -51,6 +59,11 @@ fn read_limited(input: impl Read) -> Result<Vec<u8>, Error> {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     match Args::parse().command {
+        Command::Run { config } => {
+            let config = serde_json::from_slice(&read_limited(std::fs::File::open(config)?)?)
+                .map_err(Error::other)?;
+            dg_xch_timelord::regular::serve(config).await
+        }
         Command::Compact { config } => {
             let config = serde_json::from_slice(&read_limited(std::fs::File::open(config)?)?)
                 .map_err(Error::other)?;
@@ -74,6 +87,14 @@ async fn main() -> Result<(), Error> {
             let request = serde_json::from_slice(&read_limited(std::io::stdin().lock())?)
                 .map_err(Error::other)?;
             let result = prove(&request)?;
+            std::io::stdout()
+                .lock()
+                .write_all(&serde_json::to_vec(&result).map_err(Error::other)?)
+        }
+        Command::RegularWorker => {
+            let request = serde_json::from_slice(&read_limited(std::io::stdin().lock())?)
+                .map_err(Error::other)?;
+            let result = prove_regular(&request)?;
             std::io::stdout()
                 .lock()
                 .write_all(&serde_json::to_vec(&result).map_err(Error::other)?)

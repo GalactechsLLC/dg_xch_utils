@@ -28,19 +28,38 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             );
             return None;
         }
-        // The plot filter is height-dependent (hard-fork sizing). The farmer proved against the
-        // network tip it sees; the highest peer-announced tip is our closest match to that view.
-        let height = self.claimed_peak.load(Ordering::Relaxed);
+        let (height, previous_transaction_height) = match self.store.get_peak().await {
+            Ok(None) => (0, 0),
+            Ok(Some((hash, height))) => match self.store.get_block_record(&hash).await {
+                Ok(Some(record)) if record.height == height => (
+                    height,
+                    if record.is_transaction_block() {
+                        height
+                    } else {
+                        record.prev_transaction_block_height
+                    },
+                ),
+                _ => {
+                    self.producer.validated("not_synced");
+                    return None;
+                }
+            },
+            Err(_) => {
+                self.producer.validated("not_synced");
+                return None;
+            }
+        };
         // The two slot-state lookups run synchronously under one guard — the proof verify itself is
         // CPU-only (no I/O), so holding the slot lock across it is bounded and avoids a TOCTOU on the
         // SP set. This is the read loop, but a single PoSpace verify is cheap (unlike a VDF verify,
         // which we always defer).
         let verdict = {
             let slot = self.slot_state.lock().await;
-            validate_declared_proof(
+            dg_xch_node::farmer::validate_declared_proof_with_context(
                 &self.constants,
                 &declare,
                 height,
+                previous_transaction_height,
                 |cc_sp| slot.get_signage_point(cc_sp),
                 |cc| slot.get_sub_slot(cc).is_some(),
             )

@@ -260,8 +260,18 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
         return;
     }
     let peak = match node.store.get_peak().await {
-        Ok(Some((hash, _))) => node.store.get_block_record(&hash).await.ok().flatten(),
-        _ => None,
+        Ok(Some((hash, height))) => match node.store.get_block_record(&hash).await {
+            Ok(Some(record)) if record.height == height => Some(record),
+            _ => {
+                warn!("signage-point batch dropped: local peak record is unavailable");
+                return;
+            }
+        },
+        Ok(None) => None,
+        Err(error) => {
+            warn!("signage-point batch dropped: peak lookup failed: {error}");
+            return;
+        }
     };
     let blocks = match &peak {
         Some(rec) => difficulty_records_map(node, rec).await,

@@ -45,10 +45,15 @@ pub type NewProofHandler =
 
 pub struct FarmerService {
     pub state: Arc<FarmerSharedState<()>>,
+    pos2: Arc<harvesters::Pos2Harvester>,
     tasks: JoinSet<()>,
 }
 
 impl FarmerService {
+    pub fn pos2_status(&self) -> harvesters::Pos2Status {
+        self.pos2.status()
+    }
+
     pub fn failure(&mut self) -> Option<String> {
         match self.tasks.try_join_next() {
             Some(Ok(())) => Some("farmer background task stopped unexpectedly".into()),
@@ -89,7 +94,7 @@ impl FarmerService {
         let farmer = Farmer::<DefaultPoolClient, NewProofHandler, SignaturesHandler>::new(
             state.clone(),
             Arc::new(DefaultPoolClient::new()?),
-            harvester,
+            harvester.clone(),
             config.clone(),
         )
         .await?;
@@ -103,7 +108,11 @@ impl FarmerService {
             state.clone(),
             config,
         ));
-        Ok(Self { state, tasks })
+        Ok(Self {
+            state,
+            tasks,
+            pos2: harvester.pos2.clone(),
+        })
     }
 
     pub async fn stop(mut self) {

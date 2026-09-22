@@ -1,6 +1,6 @@
 use dg_xch_core::blockchain::proof_of_space::{
     ProofOfSpace, calculate_plot_filter_input, calculate_prefix_bits, calculate_prefix_bits_v2,
-    passes_plot_filter_input,
+    is_proof_version_active, passes_plot_filter_input,
 };
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
@@ -31,6 +31,45 @@ fn test_version() {
 
 #[must_use]
 pub fn verify_and_get_quality_string(
+    pos: &ProofOfSpace,
+    constants: &ConsensusConstants,
+    original_challenge_hash: Bytes32,
+    signage_point: Bytes32,
+    height: u32,
+) -> Option<Bytes32> {
+    verify_and_get_quality_string_with_context(
+        pos,
+        constants,
+        original_challenge_hash,
+        signage_point,
+        height,
+        height,
+    )
+}
+
+#[must_use]
+pub fn verify_and_get_quality_string_with_context(
+    pos: &ProofOfSpace,
+    constants: &ConsensusConstants,
+    original_challenge_hash: Bytes32,
+    signage_point: Bytes32,
+    height: u32,
+    previous_transaction_height: u32,
+) -> Option<Bytes32> {
+    if !is_proof_version_active(pos.version, previous_transaction_height, constants) {
+        return None;
+    }
+    verify_and_get_quality_string_without_activation(
+        pos,
+        constants,
+        original_challenge_hash,
+        signage_point,
+        height,
+    )
+}
+
+#[must_use]
+pub fn verify_and_get_quality_string_without_activation(
     pos: &ProofOfSpace,
     constants: &ConsensusConstants,
     original_challenge_hash: Bytes32,

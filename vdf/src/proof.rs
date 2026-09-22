@@ -173,6 +173,46 @@ pub fn prove_result(
     prove_with_discriminant(&discriminant, &x, num_iterations)
 }
 
+pub fn prove_result_bounded(
+    challenge: &[u8],
+    input: &[u8],
+    discriminant_bits: usize,
+    iterations: u64,
+    memory_bytes: u64,
+) -> Result<Vec<u8>> {
+    let (spacing, window) = bounded_parameters(iterations, memory_bytes)?;
+    let discriminant = create_discriminant_int(challenge, discriminant_bits)?;
+    let input = Form::deserialize(&discriminant, input)?;
+    prove_with_parameters(&discriminant, &input, iterations, spacing, window)
+}
+
+fn bounded_parameters(iterations: u64, memory_bytes: u64) -> Result<(u64, u64)> {
+    const FORM_BUDGET: u64 = 512;
+    const FIXED_BUDGET: u64 = 64 * 1024;
+    let available = memory_bytes
+        .checked_sub(FIXED_BUDGET)
+        .ok_or(Error::ProverMemoryLimit)?;
+    let (initial_spacing, mut window) = approximate_parameters(iterations).unwrap_or((1, 20));
+    while window > 1 && (1u64 << window) > available / (4 * FORM_BUDGET) {
+        window -= 1;
+    }
+    let bucket_bytes = (1u64 << window)
+        .checked_mul(FORM_BUDGET)
+        .ok_or(Error::ProverMemoryLimit)?;
+    let checkpoints = available
+        .checked_sub(bucket_bytes)
+        .ok_or(Error::ProverMemoryLimit)?
+        / FORM_BUDGET;
+    if checkpoints == 0 {
+        return Err(Error::ProverMemoryLimit);
+    }
+    let span = window
+        .checked_mul(checkpoints)
+        .ok_or(Error::ProverMemoryLimit)?;
+    let spacing = initial_spacing.max(iterations.div_ceil(span));
+    Ok((spacing, window))
+}
+
 pub fn check_n_wesolowski(
     discriminant: &BigInt,
     x_s: &[u8],
@@ -313,12 +353,30 @@ fn prove_with_discriminant(
     x: &Form,
     num_iterations: u64,
 ) -> Result<Vec<u8>> {
+    let (spacing, window) = approximate_parameters(num_iterations)?;
+    prove_with_parameters(discriminant, x, num_iterations, spacing, window)
+}
+
+fn prove_with_parameters(
+    discriminant: &BigInt,
+    x: &Form,
+    num_iterations: u64,
+    l: u64,
+    k: u64,
+) -> Result<Vec<u8>> {
     let d_bits = bit_len(discriminant);
     let mut y = x.clone();
-    let (l, k) = approximate_parameters(num_iterations)?;
     let kl = k.checked_mul(l).ok_or(Error::InvalidProofParameters)?;
+    if kl == 0 || k > 20 {
+        return Err(Error::InvalidProofParameters);
+    }
     let intermediate_count = num_iterations.div_ceil(kl);
-    let mut intermediates = Vec::with_capacity(intermediate_count as usize);
+    let mut intermediates = Vec::new();
+    intermediates
+        .try_reserve_exact(
+            usize::try_from(intermediate_count).map_err(|_| Error::ProverMemoryLimit)?,
+        )
+        .map_err(|_| Error::ProverMemoryLimit)?;
     // NUCOMP bound computed once for the whole iterated-squaring run.
     let nl = nucomp_bound(discriminant);
 
@@ -363,11 +421,23 @@ fn generate_wesolowski(
     for j in (0..l).rev() {
         x = fast_pow_form_with(&x, discriminant, &nl, &(BigInt::one() << k as usize))?;
 
-        let mut ys = vec![Form::identity(discriminant)?; bucket_count];
-        let chunks = num_iterations.div_ceil(k * l);
+        let mut ys = Vec::new();
+        ys.try_reserve_exact(bucket_count)
+            .map_err(|_| Error::ProverMemoryLimit)?;
+        ys.resize(bucket_count, Form::identity(discriminant)?);
+        let chunks =
+            num_iterations.div_ceil(k.checked_mul(l).ok_or(Error::InvalidProofParameters)?);
         for i in 0..chunks {
-            if num_iterations >= k * (i * l + j + 1) {
-                let block = get_block(i * l + j, k, num_iterations, &b)?;
+            let block_number = i
+                .checked_mul(l)
+                .and_then(|base| base.checked_add(j))
+                .ok_or(Error::InvalidProofParameters)?;
+            if block_number
+                .checked_add(1)
+                .and_then(|next| k.checked_mul(next))
+                .is_some_and(|end| num_iterations >= end)
+            {
+                let block = get_block(block_number, k, num_iterations, &b)?;
                 let block_index =
                     usize::try_from(block).map_err(|_| Error::InvalidProofParameters)?;
                 if block_index >= ys.len() {

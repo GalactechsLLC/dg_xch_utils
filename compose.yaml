@@ -128,10 +128,20 @@ services:
     network_mode: service:node-cpu
     volumes:
       - farmer-cpu:/service:ro
-      - ${DGX_CPU_PLOTS:-./docker/plots/cpu}:/plots:ro
+      - ${DGX_CPU_PLOTS:-${DGX_PLOTS_ROOT:-./docker/plots}/cpu}:/plots:ro
+    mem_limit: 4g
+    cpus: 4
 
   farmer-nvidia:
     <<: *service
+    image: dgx-development-cuda:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cuda
+      args:
+        STACK_IMAGE: dgx-development:local
+        CUDA_ARCH: ${DGX_CUDA_ARCH:-sm_86}
+    platform: linux/amd64
     profiles: [nvidia]
     entrypoint: [dg_xch_farmer, --config, /service/config.yaml]
     depends_on:
@@ -140,7 +150,8 @@ services:
     network_mode: service:node-nvidia
     volumes:
       - farmer-nvidia:/service:ro
-      - ${DGX_NVIDIA_PLOTS:-./docker/plots/nvidia}:/plots:ro
+      - ${DGX_NVIDIA_PLOTS:-${DGX_PLOTS_ROOT:-./docker/plots}/nvidia}:/plots:ro
+    mem_limit: 4g
     environment:
       NVIDIA_VISIBLE_DEVICES: ${DGX_NVIDIA_DEVICE:-0}
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics
@@ -162,7 +173,8 @@ services:
     network_mode: service:node-amd
     volumes:
       - farmer-amd:/service:ro
-      - ${DGX_AMD_PLOTS:-./docker/plots/amd}:/plots:ro
+      - ${DGX_AMD_PLOTS:-${DGX_PLOTS_ROOT:-./docker/plots}/amd}:/plots:ro
+    mem_limit: 4g
     devices:
       - ${DGX_AMD_RENDER_NODE:-/dev/dri/renderD128}:/dev/dri/renderD128
     group_add:
@@ -170,7 +182,7 @@ services:
 
   timelord:
     <<: *service
-    entrypoint: [dg_xch_timelord, compact, --config, /service/config.json]
+    entrypoint: [dg_xch_timelord, run, --config, /service/config.json]
     depends_on:
       node-cpu:
         condition: service_healthy
@@ -179,6 +191,36 @@ services:
       - timelord:/service:ro
     mem_limit: 1g
     cpus: 1
+
+  prepare-plots:
+    <<: *service
+    profiles: [prepare]
+    restart: "no"
+    entrypoint: [dg_xch_stack_plot, --root, /stack, --plots-root, /plots]
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+    network_mode: none
+    volumes:
+      - common:/stack/common:ro
+      - farmer-cpu:/stack/farmer-cpu:ro
+      - farmer-nvidia:/stack/farmer-nvidia:ro
+      - farmer-amd:/stack/farmer-amd:ro
+      - ${DGX_PLOTS_ROOT:-./docker/plots}:/plots
+    mem_limit: 16g
+    cpus: 8
+
+  check-stack:
+    <<: *service
+    profiles: [check]
+    restart: "no"
+    entrypoint: [dg_xch_stack_check, --root, /stack]
+    networks: [chain]
+    volumes:
+      - common:/stack/common:ro
+      - farmer-cpu:/stack/farmer-cpu:ro
+      - farmer-nvidia:/stack/farmer-nvidia:ro
+      - farmer-amd:/stack/farmer-amd:ro
 
 networks:
   chain:
