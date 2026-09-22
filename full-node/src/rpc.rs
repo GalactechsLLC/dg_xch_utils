@@ -48,6 +48,7 @@ pub const MAX_BLOCKS_PER_REQUEST: u32 = 128;
 pub const MAX_IDS_PER_REQUEST: usize = 32_690;
 /// Request-body cap (1 MiB). An oversize body is refused with HTTP 413.
 pub const MAX_RPC_BODY_BYTES: usize = 1024 * 1024;
+pub(crate) const RPC_TRUST_STORE: &str = "rpc-clients";
 // UI_ACTUAL_SPACE_CONSTANT_FACTOR — the netspace estimate's plot-efficiency constant.
 const UI_ACTUAL_SPACE_CONSTANT_FACTOR: f64 = 0.762;
 
@@ -359,7 +360,7 @@ pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsCon
         presentation: ClientCertificateMode::Optional,
         trust_stores: vec![
             TrustStore::new("chia-peers", CHIA_CA_CRT.as_bytes()),
-            TrustStore::new("rpc-clients", &rpc_ca),
+            TrustStore::new(RPC_TRUST_STORE, &rpc_ca),
         ],
     };
     let (cert_bytes, key_bytes) =

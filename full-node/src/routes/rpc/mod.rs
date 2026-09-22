@@ -44,7 +44,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 const RPC_BODY_READ_TIMEOUT: Duration = Duration::from_secs(5);
-const RPC_TRUST_STORE: &str = "chia-rpc";
+use crate::rpc::RPC_TRUST_STORE;
 
 /// Access methods accepted by an RPC route hosted on the shared Portfu listener.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -355,4 +355,37 @@ fn hex_of(bytes: &[u8]) -> String {
         let _ = write!(s, "{b:02x}");
     }
     s
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+    use portfu::prelude::ClientIdentity;
+
+    #[test]
+    fn remote_rpc_requires_the_configured_private_trust_store() {
+        let mut connection = ConnectionInfo::plaintext(
+            "192.0.2.1:50000".parse().unwrap(),
+            "192.0.2.2:8444".parse().unwrap(),
+        );
+        assert!(access_denied(&connection, RpcAccessPolicy::PrivateCa).is_some());
+        let tls =
+            crate::rpc::build_portfu_rpc_tls_context(&crate::config::RpcTlsMode::Local).unwrap();
+        let rpc_store = tls
+            .tls_config
+            .client_auth
+            .trust_stores
+            .iter()
+            .find(|store| store.name == "rpc-clients")
+            .unwrap();
+        connection.client_identity = Some(ClientIdentity {
+            leaf_der: Arc::from([]),
+            chain_der: Arc::from([]),
+            sha256_fingerprint: [0; 32],
+            verified_by: vec![rpc_store.name.clone()],
+        });
+        assert!(access_denied(&connection, RpcAccessPolicy::PrivateCa).is_none());
+        connection.client_identity.as_mut().unwrap().verified_by = vec!["chia-peers".into()];
+        assert!(access_denied(&connection, RpcAccessPolicy::PrivateCa).is_some());
+    }
 }

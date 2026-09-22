@@ -248,8 +248,8 @@ pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, 
 }
 
 pub fn parse_payout_address(s: &str) -> Result<String, Error> {
-    if s.starts_with("xch") || s.starts_with("txch") {
-        return decode_puzzle_hash(s).map(|b| prep_hex_str(b.to_string()));
+    if let Ok(puzzle_hash) = decode_puzzle_hash(s) {
+        return Ok(hex::encode(puzzle_hash));
     }
     let clean_hex = prep_hex_str(s);
     if clean_hex.len() == 64 {
@@ -264,8 +264,40 @@ pub fn parse_payout_address(s: &str) -> Result<String, Error> {
     } else {
         Err(Error::new(
             ErrorKind::InvalidInput,
-            "String does not appear to be a valid XCH Payout Address",
+            "String does not appear to be a valid payout address or puzzle hash",
         ))
+    }
+}
+
+#[cfg(test)]
+mod payout_tests {
+    use super::*;
+
+    #[test]
+    fn payout_addresses_accept_chia_and_custom_prefixes() {
+        let puzzle_hash = Bytes32::from([37; 32]);
+        let expected = hex::encode(puzzle_hash);
+        for prefix in ["xch", "txch", "dgx", "custom"] {
+            let address = encode_puzzle_hash(&puzzle_hash, prefix).unwrap();
+            assert_eq!(parse_payout_address(&address).unwrap(), expected);
+        }
+        assert_eq!(parse_payout_address(&expected).unwrap(), expected);
+        assert_eq!(
+            parse_payout_address(&format!("0x{expected}")).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn payout_addresses_reject_invalid_checksums_and_lengths() {
+        let address = encode_puzzle_hash(&Bytes32::from([37; 32]), "dgx").unwrap();
+        let mut invalid = address.into_bytes();
+        let last = invalid.last_mut().unwrap();
+        *last = if *last == b'q' { b'p' } else { b'q' };
+        assert!(parse_payout_address(std::str::from_utf8(&invalid).unwrap()).is_err());
+        for invalid in ["dgx1", "", "1234", &"z".repeat(64)] {
+            assert!(parse_payout_address(invalid).is_err());
+        }
     }
 }
 
