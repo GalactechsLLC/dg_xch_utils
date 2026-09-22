@@ -4,6 +4,8 @@ Fuzz targets for CLVM parsing, execution, and serialization round trips.
 
 ## Status
 
+Fuzz targets are developer-only programs. They need neither `dgx init` nor a running node or GUI. Keep corpora separate from real keys, wallets, and node databases.
+
 This package is excluded from normal workspace builds. It requires a nightly Rust toolchain and cargo-fuzz. It does not start a node or validate a network deployment.
 
 ## Run

@@ -8,7 +8,7 @@ Introducers provide candidate endpoints, not trusted chain state. Peers still ne
 
 ## Usage
 
-Configure `P2pSettings`, create the peer registry and `Supervisor`, then start supervised outbound connections and optional introducer discovery. Most operators should configure these through `dg full-node`.
+Configure `P2pSettings`, create the peer registry and `Supervisor`, then start supervised outbound connections and optional introducer discovery. Most operators should configure these through `dgx full-node`.
 
 This package has no standalone service binary. From the repository root:
 
@@ -17,7 +17,14 @@ cargo check -p dg_xch_p2p
 cargo doc -p dg_xch_p2p --no-deps
 ```
 
-Use a workspace/path dependency when developing against this checkout. Published crate versions may not include the current changes.
+From another top-level workspace crate, add a local dependency:
+
+```toml
+[dependencies]
+dg_xch_p2p = { path = "../p2p" }
+```
+
+Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
 
 ## Validation
 
@@ -31,4 +38,3 @@ Tests that require external fixtures, a GPU, or a service need their documented 
 
 - [Repository overview](../readme.md)
 - [introducer](../introducer/README.md)
-

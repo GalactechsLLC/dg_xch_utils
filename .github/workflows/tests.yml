@@ -53,6 +53,7 @@ jobs:
           RAYON_NUM_THREADS: 2
         run: |
           cargo test -p dg_xch_dev_tools --bin dg_xch_stack_init --locked
+          cargo test -p dg_xch_cli --test setup_cli --test regular_worker --locked
           cargo test -p dg_full_node --release --lib native_pos2_genesis_and_successor_through_farmer_timelord_handlers --locked -- --ignored --test-threads=1
       - name: Test compact RAM plotting and fragment recovery on CPU
         env:

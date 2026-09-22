@@ -8,25 +8,27 @@ Wallet sessions use a file-backed SQLite database, not an in-memory-only balance
 
 Standard payments are implemented. CATs, NFTs, offers, hardware signing, automatic pending-transaction recovery, and a standalone wallet daemon are not complete. Use test funds until funded-chain, reorganization, and recovery testing has been completed.
 
-## Run
+## Integration
 
 From the repository root:
 
 ```sh
-cargo run -p dg_xch_gui
+cargo build -p dg_xch_cli
+./target/debug/dgx init
+./target/debug/dgx gui
 ```
 
-1. Configure the full-node RPC hostname, port, client certificate, client key, and trusted private CA in Preferences. The certificate must match the hostname; verification is not bypassed.
-2. Select the network or custom chain definition and configure the trusted genesis block **header hash**, not the genesis challenge.
+1. Configure the full-node RPC hostname, port, client certificate, client key, and trusted private CA in Settings. The certificate must match the hostname; verification is not bypassed.
+2. Select Chia mainnet or Chia testnet11; the desktop supplies their pinned genesis block header hashes. Only Custom requires a chain definition and an independently verified genesis block **header hash**, not the genesis challenge.
 3. Use a full node built with `coin-index` enabled. The wallet queries spent and unspent coins by puzzle hash and refuses to synchronize against a different genesis or an unsynchronized node.
-4. Import or create an account in Accounts, retain an independent mnemonic backup, and choose a password of at least 12 bytes.
+4. Import or create an account in Wallets, retain an independent mnemonic backup, and choose a password of at least 12 bytes.
 5. Unlock one or more accounts. Previously saved balances and history are available immediately, even before the node responds. They are cached observations, not proof of current spendability. Sending requires a fresh successful scan.
 
 Applications embedding this library call the asynchronous `accounts::WalletSession::new` constructor with a secret key, verified `FullnodeClient`, consensus constants, expected genesis header hash, and database path. `sync`, `send`, `snapshot`, `transactions`, and `checkpoint` provide the session API. `MemoryWallet` remains an internal signing/cache implementation and a compatibility API; it is not the desktop wallet's persistence layer.
 
 ## Configuration and storage
 
-The desktop uses the operating system's per-user config and local-data directories through `directories::ProjectDirs` with organization `Galactechs` and application `dg_xch`. Preferences displays the resolved paths. Within the data directory:
+New Linux desktop profiles use `~/.dgx/config` and `~/.dgx/data`. macOS and Windows use native per-user directories through `directories::ProjectDirs` with organization `Galactechs` and application `dg_xch`. Existing initialized profiles remain discoverable; no wallet files are moved automatically. `dgx init` can select custom paths, recorded in the shared application profile. Settings displays the resolved paths. Within the data directory:
 
 ```text
 accounts/<account-id>.json

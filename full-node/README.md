@@ -1,6 +1,6 @@
 # dg_full_node
 
-Full-node application library: configuration, chain storage, peer transport, synchronization, RPC, and wallet-query services. The executable entry point is `dg full-node` in `dg_xch_cli`.
+Full-node application library: configuration, chain storage, peer transport, synchronization, RPC, and wallet-query services. The executable entry point is `dgx full-node` in `dg_xch_cli`.
 
 ## Status
 
@@ -11,11 +11,13 @@ The node validates and stores chain data and exposes authenticated diagnostics. 
 From the repository root, choose an empty development data directory:
 
 ```sh
-mkdir -p ./local-node
-cargo run -p dg_xch_cli --release --features coin-index -- full-node \
+cargo build -p dg_xch_cli --release --features hint
+./target/release/dgx --config-dir ./local-node/config init --non-interactive \
+  --data-dir ./local-node/data --plots-dir ./local-node/plots
+./target/release/dgx --config-dir ./local-node/config full-node \
   --listen 127.0.0.1:8444 \
-  --db sqlite://./local-node/chain.db \
-  --ssl-dir ./local-node/ssl \
+  --db sqlite://./local-node/data/chain.db \
+  --ssl-dir ./local-node/config/ssl \
   --chain-config ./config/chains/dgx.json \
   --genesis-sync
 ```
@@ -30,7 +32,7 @@ For peer discovery add `--introducer HOST:PORT`; advertise a reachable listener 
 
 The SQLite backend is the default. Build with `coin-index` for standard wallet coin queries, or `hint` for hint-aware wallet queries. PostgreSQL and mmap are optional features. Back up with SQLite-aware tooling or stop the node before copying the database; a live WAL database is not safely backed up by copying only its main file.
 
-The native desktop's Node Details page calls the authenticated `get_node_details` endpoint. It reports actual local counters and consensus settings; absent live-peer data is not a fabricated zero-value health signal.
+The native desktop's Node page calls the authenticated `get_node_details` endpoint. It reports actual local counters and consensus settings; absent live-peer data is not a fabricated zero-value health signal.
 
 ## Validation
 

@@ -38,6 +38,20 @@ impl FromStr for ChiaNetwork {
     }
 }
 
+impl ChiaNetwork {
+    pub fn genesis_header_hash(self) -> Option<Bytes32> {
+        match self {
+            Self::Mainnet => Some(Bytes32::const_hex(
+                "d780d22c7a87c9e01d98b49a0910f6701c3b95015741316b3fda042e5d7b81d2",
+            )),
+            Self::Testnet11 => Some(Bytes32::const_hex(
+                "3068458e6ce87dbb5e2ace5378bb84185cb0638da84ab28c39153f665e7b2c97",
+            )),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusConstants {
     #[serde(default)]

@@ -11,7 +11,9 @@ Each farmer runs independently and connects to its configured full node; there i
 From the repository root:
 
 ```sh
-cargo run -p dg_xch_farmer --release --bin dg_xch_farmer -- --config /absolute/path/farmer.yaml
+cargo build -p dg_xch_cli --release
+./target/release/dgx init
+./target/release/dgx farmer --config /absolute/path/farmer.yaml
 ```
 
 Use an existing compatible FastFarmer YAML or configure an account-backed farmer in the [desktop](../gui/README.md). For disposable local tests, the [Compose setup](../docker/README.md) generates per-service identities and configuration. A minimal legacy configuration has these fields:
@@ -62,7 +64,7 @@ harvester_configs:
 
 An empty PoS2 directory list inherits the Druid Garden directories. Memory and proof-work limits apply per recovery; search limits apply per plot, and the deadline covers the whole signage job, including its wait for a worker. Concurrent jobs multiply managed memory requirements. Deadline cancellation reaches native proof work between bounded batches. A GPU driver call already in progress cannot be preempted. Increase limits deliberately for larger or stronger plots rather than treating a budget failure as a valid proof.
 
-For AMD or another supported Vulkan device, build with `cargo build -p dg_xch_farmer --release --features vulkan` and set `backend: vulkan`. For native NVIDIA CUDA, build the [separate Rust helper](../plotter/cuda/README.md), set `backend: cuda`, and add `cuda_helper: /absolute/path/dg_xch_plotter_cuda`. Rebuild the helper to include its selected-quality proving interface. The farmer checks the device, invokes the helper without a shell, bounds its output, kills it when its deadline expires, and validates the requested chain independently. No private farming keys are passed to the helper.
+For AMD or another supported Vulkan device, build with `cargo build -p dg_xch_cli --release` and set `backend: vulkan`. For native NVIDIA CUDA, build the [separate Rust helper](../plotter/cuda/README.md), set `backend: cuda`, and add `cuda_helper: /absolute/path/dg_xch_plotter_cuda`. Rebuild the helper to include its selected-quality proving interface. The farmer checks the device, invokes the helper without a shell, bounds its output, kills it when its deadline expires, and validates the requested chain independently. No private farming keys are passed to the helper.
 
 `backend: auto` prefers a successfully probed native CUDA helper, otherwise a hardware Vulkan adapter; it does not silently choose CPU when no requested GPU is available. Device ordinals are backend-specific. Explicit selections never substitute CPU hashing. Standalone [plotter proof checks](../plotter/README.md) remain available for diagnosing a file before farming it.
 

@@ -4,6 +4,8 @@ Experimental NVIDIA backend for [dg_xch_plotter](../README.md). GPU kernels and 
 
 ## Status
 
+For desktop use, build this helper separately and configure its absolute executable path in Settings after `dgx init`. `dgx gui` does not install or download CUDA tools. Direct helper commands below are development/hardware-validation interfaces, not evidence of mainnet activation.
+
 The compact pipeline supports the same k sizes and strengths as the parent plotter without retaining full witnesses. Its fastest k28 strength-2 path keeps generation, intermediate tables, radix sorting, matching, filtering and final fragment sorting on the GPU. File plotting also computes chunk boundaries, deltas and packed stubs on CUDA. Only small status/metadata buffers and packed output cross PCIe; intermediate tables do not. CPU code performs FSE entropy compression, file writing and durable publication through the shared canonical writer. The in-memory `CompactPlot` interface instead downloads the final sorted 64-bit fragments. GPU kernels, including radix sorting, are Rust; this path does not use CUB or a C++ plotter.
 
 This helper enables the `resident` feature without adding a Vulkan dependency. AMD cards use the parent package's Vulkan backend, which has a corresponding GPU-resident sorting and packing path using WGSL. CUDA retains its native Rust kernels and independent device selection.

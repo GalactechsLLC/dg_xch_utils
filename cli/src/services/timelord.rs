@@ -1,13 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unimplemented
-    )
-)]
 use clap::{Parser, Subcommand};
 use dg_xch_timelord::worker::{
     ProofRequest, WORKER_MESSAGE_LIMIT, prove, prove_regular, run_isolated,
@@ -56,9 +46,12 @@ fn read_limited(input: impl Read) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    match Args::parse().command {
+pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
+    match Args::parse_from(
+        std::iter::once(std::ffi::OsString::from("dgx timelord")).chain(arguments.iter().cloned()),
+    )
+    .command
+    {
         Command::Run { config } => {
             let config = serde_json::from_slice(&read_limited(std::fs::File::open(config)?)?)
                 .map_err(Error::other)?;

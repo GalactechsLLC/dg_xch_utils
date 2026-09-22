@@ -1,16 +1,17 @@
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_clients::rpc::full_node::FullnodeClient;
+use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::chain_definition::ChainSelection;
-use dg_xch_core::consensus::constants::ConsensusConstants;
-use directories::ProjectDirs;
+use dg_xch_core::consensus::constants::{ChiaNetwork, ConsensusConstants};
 use serde::{Deserialize, Serialize};
 use std::io::{Error, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
-    #[default]
     Midnight,
+    #[default]
     Daylight,
 }
 
@@ -32,6 +33,7 @@ pub struct Settings {
     pub network: String,
     pub genesis_header_hash: String,
     pub chain_definition_path: String,
+    pub custom_chain: bool,
     pub certificate: String,
     pub private_key: String,
     pub certificate_authority: String,
@@ -52,12 +54,16 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: 1,
-            theme: Theme::Midnight,
+            theme: Theme::Daylight,
             node_host: "localhost".into(),
             node_port: 8555,
             network: "mainnet".into(),
-            genesis_header_hash: String::new(),
+            genesis_header_hash: ChiaNetwork::Mainnet
+                .genesis_header_hash()
+                .map(hex::encode)
+                .unwrap_or_default(),
             chain_definition_path: String::new(),
+            custom_chain: false,
             certificate: String::new(),
             private_key: String::new(),
             certificate_authority: String::new(),
@@ -84,11 +90,11 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn discover() -> Result<Self, Error> {
-        let paths = ProjectDirs::from("com", "Galactechs", "dg_xch")
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, "cannot locate user directories"))?;
+        let config = dg_xch_servers::app_config::config_dir(None)?;
+        let profile = dg_xch_servers::app_config::AppConfig::load(&config)?;
         Ok(Self {
-            config: paths.config_dir().to_owned(),
-            data: paths.data_local_dir().to_owned(),
+            config,
+            data: profile.data_dir,
         })
     }
 
@@ -107,12 +113,16 @@ impl AppPaths {
         if bytes.len() > 1_048_576 {
             return Err(Error::other("settings file is too large"));
         }
-        let settings: Settings = serde_json::from_slice(&bytes).map_err(Error::other)?;
+        let mut settings: Settings = serde_json::from_slice(&bytes).map_err(Error::other)?;
+        settings.normalize_network()?;
         settings.validate()?;
         Ok(settings)
     }
 
     pub fn save(&self, settings: &Settings) -> Result<(), Error> {
+        let mut normalized = settings.clone();
+        normalized.normalize_network()?;
+        let settings = &normalized;
         settings.validate()?;
         std::fs::create_dir_all(&self.config)?;
         let mut output = tempfile::NamedTempFile::new_in(&self.config)?;
@@ -126,6 +136,46 @@ impl AppPaths {
 }
 
 impl Settings {
+    pub fn is_custom_chain(&self) -> bool {
+        self.custom_chain || !self.chain_definition_path.is_empty()
+    }
+
+    pub fn trusted_genesis(&self) -> Result<Bytes32, Error> {
+        if self.is_custom_chain() {
+            let hash = self.genesis_header_hash.trim();
+            let hash = hash.strip_prefix("0x").unwrap_or(hash);
+            if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(Error::other(
+                    "enter the custom chain's 64-digit genesis block header hash",
+                ));
+            }
+            Bytes32::from_str(hash).map_err(|_| {
+                Error::other("enter the custom chain's trusted genesis block header hash")
+            })
+        } else {
+            ChiaNetwork::from_str(&self.network).map_err(Error::other)?
+                .genesis_header_hash().ok_or_else(|| Error::other("no bundled genesis header hash for this retired network; use a custom chain definition"))
+        }
+    }
+
+    pub fn normalize_network(&mut self) -> Result<(), Error> {
+        if self.is_custom_chain() {
+            if self.chain_definition_path.trim().is_empty() {
+                return Err(Error::other("select a custom chain definition JSON file"));
+            }
+            let chain = dg_xch_servers::chain_config::read_selection(Path::new(
+                &self.chain_definition_path,
+            ))?
+            .resolve()
+            .map_err(Error::other)?;
+            self.network = chain.network_id;
+            self.custom_chain = true;
+        } else {
+            self.genesis_header_hash = hex::encode(self.trusted_genesis()?);
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         if self.version != 1
             || self.node_port == 0
@@ -139,10 +189,14 @@ impl Settings {
             ));
         }
         self.constants()?;
+        self.trusted_genesis()?;
         Ok(())
     }
 
     pub fn constants(&self) -> Result<ConsensusConstants, Error> {
+        if self.is_custom_chain() && self.chain_definition_path.trim().is_empty() {
+            return Err(Error::other("select a custom chain definition JSON file"));
+        }
         let selection = if self.chain_definition_path.is_empty() {
             ChainSelection::from_config(&self.network, None).map_err(Error::other)?
         } else {
@@ -185,6 +239,85 @@ mod tests {
     use super::*;
 
     #[test]
+    fn built_in_networks_pin_header_hashes_not_challenges() {
+        for network in ["mainnet", "testnet11"] {
+            let mut settings = Settings {
+                network: network.into(),
+                genesis_header_hash: "ff".repeat(32),
+                ..Settings::default()
+            };
+            let trusted = settings.trusted_genesis().unwrap();
+            assert_ne!(trusted, settings.constants().unwrap().genesis_challenge);
+            assert_ne!(hex::encode(trusted), "ff".repeat(32));
+            settings.normalize_network().unwrap();
+            assert_eq!(settings.genesis_header_hash, hex::encode(trusted));
+            settings.validate().unwrap();
+        }
+        let settings = Settings {
+            network: "testnet10".into(),
+            ..Settings::default()
+        };
+        assert!(settings.trusted_genesis().is_err());
+    }
+
+    #[test]
+    fn custom_network_requires_definition_and_trusted_header() {
+        let directory = tempfile::tempdir().unwrap();
+        let definition = directory.path().join("chain.json");
+        std::fs::write(
+            &definition,
+            serde_json::to_vec(&dg_xch_core::consensus::chain_definition::ChainDefinition::dgx())
+                .unwrap(),
+        )
+        .unwrap();
+        let mut settings = Settings {
+            custom_chain: true,
+            genesis_header_hash: String::new(),
+            ..Settings::default()
+        };
+        assert!(settings.normalize_network().is_err());
+        settings.chain_definition_path = definition.display().to_string();
+        settings.normalize_network().unwrap();
+        assert_eq!(settings.network, "dgx");
+        assert!(settings.validate().is_err());
+        settings.genesis_header_hash = "12".into();
+        assert!(settings.validate().is_err());
+        settings.genesis_header_hash = "zz".repeat(32);
+        assert!(settings.validate().is_err());
+        settings.genesis_header_hash = "12".repeat(32);
+        settings.validate().unwrap();
+        assert_eq!(
+            settings.trusted_genesis().unwrap(),
+            Bytes32::const_new([0x12; 32])
+        );
+    }
+
+    #[test]
+    fn old_profile_receives_network_specific_builtin_anchor() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config: directory.path().to_path_buf(),
+            data: directory.path().join("data"),
+        };
+        std::fs::write(
+            paths.config.join("desktop.json"),
+            br#"{"network":"testnet11","genesis_header_hash":""}"#,
+        )
+        .unwrap();
+        let settings = paths.load().unwrap();
+        assert_eq!(
+            settings.genesis_header_hash,
+            "3068458e6ce87dbb5e2ace5378bb84185cb0638da84ab28c39153f665e7b2c97"
+        );
+        assert!(!settings.is_custom_chain());
+        paths.save(&settings).unwrap();
+        assert_eq!(
+            paths.load().unwrap().genesis_header_hash,
+            settings.genesis_header_hash
+        );
+    }
+
+    #[test]
     fn settings_round_trip_and_fail_closed() {
         let directory = tempfile::tempdir().unwrap();
         let paths = AppPaths {
@@ -203,6 +336,8 @@ mod tests {
 
     #[test]
     fn gpu_defaults_to_auto_and_preserves_explicit_legacy_selection() {
+        assert!(Settings::default().theme == Theme::Daylight);
+        assert!(Theme::default() == Theme::Daylight);
         assert!(Settings::default().gpu_backend == GpuBackend::Auto);
         let settings: Settings = serde_json::from_str("{}").unwrap();
         assert!(settings.gpu_backend == GpuBackend::Auto);

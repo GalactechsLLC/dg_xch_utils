@@ -1,7 +1,11 @@
+#![cfg(feature = "timelord")]
+
+use dg_xch_vdf::proof::verify_vdf_serial;
+
 use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_timelord::worker::{ProofRequest, ProofResult, RegularProofRequest};
-use dg_xch_vdf::proof::verify_vdf_serial;
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -17,8 +21,8 @@ fn regular_worker_subprocess_returns_verified_full_discriminant_proof() {
         },
         memory_bytes: 128 * 1024,
     };
-    let mut child = Command::new(env!("CARGO_BIN_EXE_dg_xch_timelord"))
-        .arg("regular-worker")
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dgx"))
+        .args(["timelord", "regular-worker"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

@@ -14,7 +14,6 @@ use dg_xch_wallet::accounts::{Account, WalletSession, WalletSnapshot};
 use std::collections::HashMap;
 use std::io::Error;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -46,9 +45,14 @@ pub struct State {
     pub plot_job: Option<String>,
     pub inventory: Vec<(PathBuf, String)>,
     pub notice: String,
+    pub plotting_keys: Option<(String, String, String)>,
 }
 
 pub enum Command {
+    PlottingKeys {
+        id: String,
+        password: Zeroizing<String>,
+    },
     Import {
         name: String,
         mnemonic: Zeroizing<String>,
@@ -336,6 +340,15 @@ async fn command_worker(
         let settings = configuration.borrow().clone();
         let result: Result<(), Error> = async {
             match command {
+                Command::PlottingKeys { id, password } => {
+                    update(&state, |state| state.plotting_keys = None);
+                    let account = Account::load(&paths.accounts(), &id)?;
+                    if account.network != settings.network { return Err(Error::other("account belongs to another network")); }
+                    let secret = tokio::task::spawn_blocking(move || account.unlock(&password)).await.map_err(Error::other)??;
+                    let farmer = hex::encode(dg_xch_keys::master_sk_to_farmer_sk(&secret)?.sk_to_pk().to_bytes());
+                    let pool = hex::encode(dg_xch_keys::master_sk_to_pool_sk(&secret)?.sk_to_pk().to_bytes());
+                    update(&state, |state| { state.plotting_keys = Some((id, farmer, pool)); state.notice = "Public plotting keys loaded. No node connection or wallet sync is needed.".into(); });
+                },
                 Command::Import { name, mnemonic, password } => {
                     if state.lock().unwrap_or_else(|error| error.into_inner()).accounts.len() >= 64 { return Err(Error::other("account limit reached")); }
                     let account = tokio::task::spawn_blocking(move || Account::import(name, settings.network, &mnemonic, &password)).await.map_err(Error::other)??;
@@ -346,7 +359,7 @@ async fn command_worker(
                     if wallets.contains_key(&id) { return Err(Error::other("wallet is already unlocked")); }
                     let account = Account::load(&paths.accounts(), &id)?;
                     if account.network != settings.network { return Err(Error::other("account belongs to another network")); }
-                    let genesis = Bytes32::from_str(&settings.genesis_header_hash).map_err(|_| Error::other("configure the trusted genesis block HEADER hash before unlocking"))?;
+                    let genesis = settings.trusted_genesis()?;
                     let secret = tokio::task::spawn_blocking(move || account.unlock(&password)).await.map_err(Error::other)??;
                     let session = WalletSession::new(secret, settings.client()?, Arc::new(settings.constants()?), genesis, paths.data.join("wallets").join(&id).join(format!("{}.sqlite", hex::encode(genesis)))).await?;
                     let (sender, receiver) = mpsc::channel(4);
@@ -364,12 +377,13 @@ async fn command_worker(
                     wallets.get(&id).ok_or_else(|| Error::other("wallet is locked"))?.0.try_send(WalletCommand::Send { destination, amount, fee }).map_err(Error::other)?;
                     update(&state, |state| state.notice = "Transaction queued for revalidation and signing.".into());
                 },
-                Command::Settings(settings) => {
+                Command::Settings(mut settings) => {
+                    settings.normalize_network()?;
                     if !wallets.is_empty() || farmer.is_some() { return Err(Error::other("lock wallets and stop farming before changing settings")); }
                     paths.save(&settings)?;
                     configuration.send(settings.clone()).map_err(Error::other)?;
                     update(&state, |state| state.settings = Some(settings));
-                    update(&state, |state| { state.node = None; state.node_updated = None; state.notice = "Settings saved.".into(); });
+                    update(&state, |state| { state.node = None; state.node_updated = None; state.plotting_keys = None; state.notice = "Settings saved.".into(); });
                 },
                 Command::StartFarmer => {
                     if farmer.is_some() { return Err(Error::other("farmer is already running")); }
@@ -413,6 +427,10 @@ async fn command_worker(
                 },
                 Command::Plot { request, output, limits, gpu } => {
                     if plot.as_ref().is_some_and(|job| !job.is_finished()) { return Err(Error::other("a plot job is already running")); }
+                    if !output.is_dir() { return Err(Error::other("choose an existing output directory")); }
+                    let started = time::OffsetDateTime::now_utc();
+                    let staging = tempfile::Builder::new().prefix(".dgx-plot-").tempdir_in(&output)?;
+                    let output = staging.path().join("plot.partial");
                     cancelled.store(false, Ordering::Release);
                     let cancelled = cancelled.clone();
                     let state = state.clone();
@@ -420,7 +438,7 @@ async fn command_worker(
                     let (selection, job_label) = resolve_execution(&settings, gpu, &cancelled).await?;
                     if selection.as_ref().is_some_and(|selection| selection.backend == SelectedGpuBackend::Cuda) {
                         use std::ffi::OsString;
-                        let mut args: Vec<OsString> = vec!["--output".into(), output.into_os_string(), "--farmer-key".into(), hex::encode(request.farmer_public_key).into(),
+                        let mut args: Vec<OsString> = vec!["--output".into(), output.clone().into_os_string(), "--farmer-key".into(), hex::encode(request.farmer_public_key).into(),
                             "--k".into(), request.k.to_string().into(), "--strength".into(), request.strength.to_string().into(),
                             "--index".into(), request.index.to_string().into(), "--meta-group".into(), request.meta_group.to_string().into(),
                             "--memory-mib".into(), (limits.memory_bytes / 1024 / 1024).to_string().into(), "--max-entries".into(), limits.max_entries.to_string().into(), "--max-work".into(), limits.max_work.to_string().into()];
@@ -432,6 +450,10 @@ async fn command_worker(
                         update(&state, |state| state.plot_job = Some(format!("Running {job_label}")));
                         plot = Some(tokio::spawn(async move {
                             let result = run_cuda(&settings, args, &cancelled, Duration::from_secs(3600)).await;
+                            let result = result.and_then(|_| {
+                                let info = dg_xch_plotter::inspect(&output)?;
+                                publish_plot(staging, &info, started).map(|path| format!("complete: {} ({} bytes)", path.display(), info.file_bytes))
+                            });
                             update(&state, |state| state.plot_job = Some(format!("{job_label}: {}", result.unwrap_or_else(|error| format!("GPU job stopped: {error}")))));
                         }));
                         return Ok(());
@@ -444,7 +466,10 @@ async fn command_worker(
                             dg_xch_plotter::create(&request, &output, limits, &cancelled)
                         };
                         update(&state, |state| state.plot_job = Some(match result {
-                            Ok(info) => format!("{job_label}: complete: {} ({} bytes)", output.display(), info.file_bytes),
+                            Ok(info) => match publish_plot(staging, &info, started) {
+                                Ok(path) => format!("{job_label}: complete: {} ({} bytes)", path.display(), info.file_bytes),
+                                Err(error) => format!("{job_label}: stopped: {error}"),
+                            },
                             Err(error) => format!("{job_label}: stopped: {error}"),
                         }));
                     }));
@@ -657,9 +682,128 @@ async fn run_cuda(
     }
 }
 
+fn publish_plot(
+    staging: tempfile::TempDir,
+    info: &dg_xch_plotter::PlotInfo,
+    started: time::OffsetDateTime,
+) -> Result<PathBuf, Error> {
+    let directory = staging
+        .path()
+        .parent()
+        .ok_or_else(|| Error::other("plot staging directory has no parent"))?;
+    let filename = format!(
+        "plot-k{}-{:04}-{:02}-{:02}-{:02}-{:02}-{}.plot",
+        info.k,
+        started.year(),
+        u8::from(started.month()),
+        started.day(),
+        started.hour(),
+        started.minute(),
+        hex::encode(info.plot_id)
+    );
+    let destination = directory.join(filename);
+    let mut temporary = tempfile::TempPath::try_from_path(staging.path().join("plot.partial"))?;
+    temporary.disable_cleanup(true);
+    if let Err(error) = temporary.persist_noclobber(&destination) {
+        let recovery = staging.keep();
+        return Err(Error::new(
+            error.error.kind(),
+            format!(
+                "could not publish plot: {error}; completed plot retained at {}",
+                recovery.join("plot.partial").display()
+            ),
+        ));
+    }
+    Ok(destination)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generated_plot_name_preserves_identity_and_never_overwrites() {
+        let root = tempfile::tempdir().unwrap();
+        let info = dg_xch_plotter::PlotInfo {
+            plot_id: [0xab; 32],
+            k: 28,
+            strength: 2,
+            index: 0,
+            meta_group: 0,
+            portable: true,
+            chunks: 0,
+            file_bytes: 5,
+        };
+        let started = time::OffsetDateTime::UNIX_EPOCH;
+        let staging = tempfile::tempdir_in(root.path()).unwrap();
+        std::fs::write(staging.path().join("plot.partial"), b"first").unwrap();
+        let output = super::publish_plot(staging, &info, started).unwrap();
+        assert_eq!(
+            output.file_name().unwrap().to_str().unwrap(),
+            format!("plot-k28-1970-01-01-00-00-{}.plot", "ab".repeat(32))
+        );
+        assert_eq!(output.parent().unwrap(), root.path());
+        let duplicate = tempfile::tempdir_in(root.path()).unwrap();
+        let recovery = duplicate.path().join("plot.partial");
+        std::fs::write(&recovery, b"second").unwrap();
+        assert!(super::publish_plot(duplicate, &info, started).is_err());
+        assert_eq!(std::fs::read(output).unwrap(), b"first");
+        assert_eq!(std::fs::read(recovery).unwrap(), b"second");
+    }
+
     use super::*;
+
+    #[test]
+    fn plotting_keys_load_without_a_node_or_wallet_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config: directory.path().join("config"),
+            data: directory.path().join("data"),
+        };
+        let mnemonic = bip39::Mnemonic::from_entropy(&[7; 32]).unwrap().to_string();
+        let password = "local-test-password";
+        let account = Account::import(
+            "Plotting fixture".into(),
+            "mainnet".into(),
+            &mnemonic,
+            password,
+        )
+        .unwrap();
+        account.save_new(&paths.accounts()).unwrap();
+        let secret = dg_xch_keys::key_from_mnemonic_str(&mnemonic).unwrap();
+        let farmer = hex::encode(
+            dg_xch_keys::master_sk_to_farmer_sk(&secret)
+                .unwrap()
+                .sk_to_pk()
+                .to_bytes(),
+        );
+        let pool = hex::encode(
+            dg_xch_keys::master_sk_to_pool_sk(&secret)
+                .unwrap()
+                .sk_to_pk()
+                .to_bytes(),
+        );
+        let backend = Backend::for_smoke_test(paths.clone(), Settings::default()).unwrap();
+        backend.command(Command::PlottingKeys {
+            id: account.id.clone(),
+            password: Zeroizing::new(password.into()),
+        });
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let state = backend.snapshot();
+            if let Some(keys) = state.plotting_keys {
+                assert_eq!(keys, (account.id.clone(), farmer, pool));
+                assert!(state.node.is_none());
+                assert!(state.accounts.iter().all(|account| !account.unlocked));
+                assert!(!paths.data.join("wallets").exists());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "public-key derivation timed out: {}",
+                state.notice
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 
     #[tokio::test]
     async fn explicit_cpu_does_not_probe_configured_helper() {

@@ -67,7 +67,7 @@ services:
 
   introducer:
     <<: *service
-    entrypoint: [dg_xch_introducer, --config, /service/config.json]
+    entrypoint: [dgx, --config-dir, /service/app, introducer, --config, /service/config.json]
     depends_on:
       init-stack:
         condition: service_completed_successfully
@@ -121,7 +121,7 @@ services:
 
   farmer-cpu:
     <<: *service
-    entrypoint: [dg_xch_farmer, --config, /service/config.yaml]
+    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, /service/config.yaml]
     depends_on:
       node-cpu:
         condition: service_healthy
@@ -143,7 +143,7 @@ services:
         CUDA_ARCH: ${DGX_CUDA_ARCH:-sm_86}
     platform: linux/amd64
     profiles: [nvidia]
-    entrypoint: [dg_xch_farmer, --config, /service/config.yaml]
+    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, /service/config.yaml]
     depends_on:
       node-nvidia:
         condition: service_healthy
@@ -166,7 +166,7 @@ services:
   farmer-amd:
     <<: *service
     profiles: [amd]
-    entrypoint: [dg_xch_farmer, --config, /service/config.yaml]
+    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, /service/config.yaml]
     depends_on:
       node-amd:
         condition: service_healthy
@@ -182,7 +182,7 @@ services:
 
   timelord:
     <<: *service
-    entrypoint: [dg_xch_timelord, run, --config, /service/config.json]
+    entrypoint: [dgx, --config-dir, /service/app, timelord, run, --config, /service/config.json]
     depends_on:
       node-cpu:
         condition: service_healthy

@@ -17,7 +17,14 @@ cargo check -p dg_logger
 cargo doc -p dg_logger --no-deps
 ```
 
-Use a workspace/path dependency when developing against this checkout. Published crate versions may not include the current changes.
+From another top-level workspace crate, add a local dependency:
+
+```toml
+[dependencies]
+dg_logger = { path = "../logging" }
+```
+
+Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
 
 ## Validation
 
@@ -31,4 +38,3 @@ Tests that require external fixtures, a GPU, or a service need their documented 
 
 - [Repository overview](../readme.md)
 - [cli](../cli/README.md)
-

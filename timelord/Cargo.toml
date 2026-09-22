@@ -13,7 +13,6 @@ dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, f
 dg_xch_servers = { path = "../servers" }
 dg_xch_vdf = { path = "../vdf" }
 dg_xch_pos = { path = "../proof_of_space" }
-clap = { version = "4.5.60", features = ["derive"] }
 futures-util = "0.3.32"
 rustls = "0.23.45"
 serde = { version = "1.0.228", features = ["derive"] }

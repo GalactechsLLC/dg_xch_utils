@@ -170,6 +170,7 @@ async fn run_isolated_inner(
         ));
     }
     let mut child = tokio::process::Command::new(std::env::current_exe()?)
+        .arg("timelord")
         .arg(if memory_bytes.is_some() {
             "regular-worker"
         } else {

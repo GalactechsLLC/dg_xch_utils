@@ -13,10 +13,17 @@ name = "dg_xch_cli_lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "dg"
+name = "dgx"
 path = "src/main.rs"
 
 [dependencies]
+dg_xch_gui = { path = "../gui", optional = true }
+dg_xch_farmer = { path = "../farmer" }
+dg_xch_plotter = { path = "../plotter" }
+dg_xch_pos2 = { path = "../proof_of_space/pos2" }
+dg_xch_introducer = { path = "../introducer" }
+dg_xch_timelord = { path = "../timelord", optional = true }
+dg_xch_vdf = { path = "../vdf", optional = true }
 dg_xch_wallet = { path = "../wallet" }
 serde = { version = "1.0.228", features = ["derive"] }
 async-trait = "0.1.89"
@@ -33,7 +40,7 @@ dg_xch_p2p = { path = "../p2p", version = "3.0.0" }
 dg_xch_puzzles = {path = "../puzzles", version="3.0.0"}
 dg_xch_serialize= {path = "../serialize", version="3.0.0"}
 dg_xch_servers = { path = "../servers", version = "3.0.0" }
-dg_full_node = { path = "../full-node", version = "3.0.0", default-features = false }
+dg_full_node = { path = "../full-node", version = "3.0.0", default-features = false, optional = true }
 hex = "0.4.3"
 lazy_static = "1.5.0"
 log = "0.4.29"
@@ -45,14 +52,21 @@ tokio = {version = "1.50.0", features=["rt-multi-thread", "sync", "signal", "mac
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+[target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
 tikv-jemallocator = "0.6"
 
 [features]
-default = ["sqlite"]
-sqlite = ["dg_full_node/sqlite"]
-coin-index = ["dg_full_node/coin-index"]
+default = ["hint", "desktop", "vulkan", "timelord"]
+desktop = ["dep:dg_xch_gui"]
+vulkan = ["dg_xch_farmer/vulkan", "dg_xch_plotter/vulkan", "dg_xch_pos2/vulkan"]
+timelord = ["dep:dg_xch_timelord", "dep:dg_xch_vdf"]
+full-node = ["dep:dg_full_node"]
+sqlite = ["full-node", "dg_full_node/sqlite"]
+coin-index = ["full-node", "dg_full_node/coin-index"]
 hint = ["coin-index", "dg_full_node/hint"]
-postgres = ["dg_full_node/postgres"]
-mmap = ["dg_full_node/mmap"]
-profiling = ["dg_full_node/profiling", "tikv-jemallocator/profiling"]
+postgres = ["full-node", "dg_full_node/postgres"]
+mmap = ["full-node", "dg_full_node/mmap"]
+profiling = ["full-node", "dg_full_node/profiling", "tikv-jemallocator/profiling"]
+
+[dev-dependencies]
+tempfile = "3"

@@ -12,7 +12,9 @@ From the repository root:
 
 ```sh
 cargo test -p dg_xch_simulator
-cargo run -p dg_xch_simulator --bin dg_xch_simulator
+cargo build -p dg_xch_cli -p dg_xch_simulator
+./target/debug/dgx init
+SIMULATOR_HOSTNAME=127.0.0.1 ./target/debug/dgx simulator
 ```
 
 The legacy server entry point reads `SIMULATOR_HOSTNAME` and `SIMULATOR_PORT` (defaults `0.0.0.0` and `8080`). Bind it to `127.0.0.1` for local work; it is not an authenticated wallet node. The `server` feature exposes the separate `sim_node` binary. Inspect its source/options before deployment rather than assuming it matches the full-node CLI.

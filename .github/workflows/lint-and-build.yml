@@ -95,24 +95,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes build-essential libssl-dev libxkbcommon-dev libwayland-dev xvfb libvulkan1 mesa-vulkan-drivers
-      - name: Build native desktop
-        run: cargo build -p dg_xch_gui --locked
+      - name: Build unified native desktop
+        run: cargo build -p dg_xch_cli --no-default-features --features desktop,vulkan --locked
+      - name: Test launcher initialization
+        run: cargo test -p dg_xch_cli --no-default-features --features desktop,vulkan --test setup_cli --locked
       - name: Test desktop and wallet
         run: cargo test -p dg_xch_gui -p dg_xch_wallet -p dg_xch_farmer --locked
       - name: Render every page on Linux
         if: runner.os == 'Linux'
-        run: timeout 60s xvfb-run -a target/debug/dg_xch_gui --smoke-test
+        run: timeout 60s xvfb-run -a target/debug/dgx gui --smoke-test
         env:
           WINIT_UNIX_BACKEND: x11
           WGPU_BACKEND: vulkan
       - name: Render every page on macOS
         if: runner.os == 'macOS'
-        run: python3 -c 'import subprocess; subprocess.run(["target/debug/dg_xch_gui", "--smoke-test"], check=True, timeout=60)'
+        run: python3 -c 'import subprocess; subprocess.run(["target/debug/dgx", "gui", "--smoke-test"], check=True, timeout=60)'
       - name: Render every page on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $app = Start-Process -FilePath target/debug/dg_xch_gui.exe -ArgumentList '--smoke-test' -PassThru
+          $app = Start-Process -FilePath target/debug/dgx.exe -ArgumentList 'gui','--smoke-test' -PassThru
           if (-not $app.WaitForExit(60000)) {
             Stop-Process -Id $app.Id -Force
             throw 'Native desktop smoke test timed out'

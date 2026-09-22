@@ -1,6 +1,5 @@
 [package]
 name = "dg_xch_farmer"
-default-run = "dg_xch_farmer"
 description = "Integrated native farmer and harvester"
 version.workspace = true
 edition.workspace = true
@@ -18,8 +17,6 @@ vulkan = ["dg_xch_plotter/vulkan"]
 [dependencies]
 async-trait = "0.1.89"
 blst = "0.3.16"
-clap = { version = "4.5.60", features = ["derive"] }
-dg_logger = { path = "../logging" }
 dg_xch_clients = { path = "../clients", features = ["metrics"] }
 dg_xch_core = { path = "../core", default-features = false, features = ["metrics", "bls"] }
 dg_xch_keys = { path = "../keys" }

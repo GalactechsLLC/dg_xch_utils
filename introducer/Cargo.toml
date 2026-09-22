@@ -8,7 +8,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-clap = { version = "4.5.60", features = ["derive"] }
 dg_xch_core = { path = "../core", default-features = false }
 dg_xch_serialize = { path = "../serialize" }
 dg_xch_servers = { path = "../servers" }

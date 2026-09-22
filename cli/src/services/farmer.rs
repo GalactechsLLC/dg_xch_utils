@@ -1,13 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unimplemented
-    )
-)]
 use clap::Parser;
 use dg_xch_farmer::FarmerService;
 use dg_xch_farmer::farmer::config::Config;
@@ -22,16 +12,7 @@ struct Args {
     config: PathBuf,
 }
 
-fn main() -> Result<(), Error> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let result = runtime.block_on(run());
-    runtime.shutdown_timeout(Duration::from_secs(5));
-    result
-}
-
-async fn run() -> Result<(), Error> {
+pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
     let level = std::env::var("RUST_LOG")
         .ok()
         .and_then(|value| value.parse::<log::Level>().ok())
@@ -41,7 +22,9 @@ async fn run() -> Result<(), Error> {
         .current_level(level)
         .init()
         .map_err(|error| Error::other(format!("{error:?}")))?;
-    let args = Args::parse();
+    let args = Args::parse_from(
+        std::iter::once(std::ffi::OsString::from("dgx farmer")).chain(arguments.iter().cloned()),
+    );
     let mut service = FarmerService::start(Config::try_from(args.config.as_path())?).await?;
     let shutdown = dg_xch_servers::transport::shutdown_signal();
     tokio::pin!(shutdown);

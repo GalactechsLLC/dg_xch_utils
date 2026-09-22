@@ -17,7 +17,9 @@ The compact service remains available separately. It handles `RequestCompactProo
 The [Docker development stack](../docker/README.md) supplies a separate development chain and isolated full nodes. To run a regular timelord separately:
 
 ```sh
-cargo run --release -p dg_xch_timelord -- run --config /path/to/timelord.json
+cargo build --release -p dg_xch_cli
+./target/release/dgx init
+./target/release/dgx timelord run --config /path/to/timelord.json
 ```
 
 The JSON configuration has these fields:
@@ -40,7 +42,7 @@ Regular mode waits for a node-confirmed peak after submitting an infusion. If co
 For compact proofs, use the same configuration with:
 
 ```sh
-cargo run --release -p dg_xch_timelord -- compact --config /path/to/timelord.json
+./target/release/dgx timelord compact --config /path/to/timelord.json
 ```
 
 A compact-only starting configuration can use `max_iterations` of 1,048,576, a 300-second deadline, and a 5-second reconnect delay. Requests beyond its ceiling are skipped, not shortened. Larger Chia proofs may exceed that limit.
@@ -50,7 +52,7 @@ The full node must enable `--uncompact` to request compact proofs; regular opera
 For one isolated proof, prepare a request JSON containing `generation`, a 32-byte hex `challenge`, `input` with a 100-byte hex `data` field, `iterations`, and `discriminant_bits`, then run:
 
 ```sh
-cargo run -p dg_xch_timelord -- prove \
+cargo run -p dg_xch_cli -- timelord prove \
   --request /path/to/vdf-request.json --timeout-seconds 300
 ```
 

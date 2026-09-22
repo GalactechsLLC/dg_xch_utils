@@ -1,5 +1,11 @@
 # dg_xch_core
 
+## Wallet network anchors
+
+`ChiaNetwork::genesis_header_hash()` supplies the pinned height-zero header hash for mainnet (`d780d22c7a87c9e01d98b49a0910f6701c3b95015741316b3fda042e5d7b81d2`) and testnet11 (`3068458e6ce87dbb5e2ace5378bb84185cb0638da84ab28c39153f665e7b2c97`). These are not `GENESIS_CHALLENGE`. The desktop uses these constants rather than accepting a replacement from settings or from its connected node.
+
+The hashes were sourced from height-one `prev_hash` records from the [Coinset mainnet RPC](https://api.coinset.org/get_block_record_by_height) and [testnet11 RPC](https://testnet11.api.coinset.org/get_block_record_by_height) on 2026-09-22, using `{"height":1}`. These lookups are not performed at runtime. [Chia documents testnet11 as its only supported testnet](https://docs.chia.net/reference-client/install-and-setup/testnets/). Older network consensus presets remain available to library callers, but have no bundled wallet header anchor; retired networks require an explicit custom definition and independently verified header hash in the desktop.
+
 Shared blockchain types, consensus rules, CLVM execution, protocol messages, and TLS helpers.
 
 ## Status
@@ -23,7 +29,14 @@ cargo check -p dg_xch_core
 cargo doc -p dg_xch_core --no-deps
 ```
 
-Use a workspace/path dependency when developing against this checkout. Published crate versions may not include the current changes.
+From another top-level workspace crate, add a local dependency:
+
+```toml
+[dependencies]
+dg_xch_core = { path = "../core", default-features = false, features = ["bls"] }
+```
+
+Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
 
 ## Validation
 

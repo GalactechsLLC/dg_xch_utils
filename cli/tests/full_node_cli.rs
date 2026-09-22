@@ -1,10 +1,12 @@
+#![cfg(feature = "full-node")]
+
 use clap::Parser;
 use dg_xch_cli_lib::cli::{Cli, RootCommands};
 
 #[test]
 fn confirmation_performance_controls_parse() {
     let cli = Cli::try_parse_from([
-        "dg",
+        "dgx",
         "full-node",
         "--compute-workers=32",
         "--validation-window-blocks=256",
@@ -22,9 +24,9 @@ fn confirmation_performance_controls_parse() {
 }
 
 #[test]
-fn full_node_is_a_dg_subcommand() {
+fn full_node_is_a_dgx_subcommand() {
     let cli = Cli::try_parse_from([
-        "dg",
+        "dgx",
         "full-node",
         "--listen",
         "127.0.0.1:8444",

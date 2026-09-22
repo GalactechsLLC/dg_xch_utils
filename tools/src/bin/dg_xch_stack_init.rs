@@ -457,6 +457,14 @@ fn initialize(root: &Path) -> Result<(), Error> {
         let key = Zeroizing::new(key);
         create_farmer(&root.join(farmer), &chain, &certificate, &key, backend)?;
         roots.extend_from_slice(&certificate);
+        let config_root = root.join(node).join("config");
+        ensure_directory(&config_root)?;
+        let profile = dg_xch_servers::app_config::AppConfig {
+            version: 1,
+            data_dir: PathBuf::from("/data"),
+            plot_directories: vec![PathBuf::from("/plots")],
+        };
+        profile.ensure(&config_root)?;
     }
     let introducer = root.join("introducer");
     {
@@ -472,6 +480,22 @@ fn initialize(root: &Path) -> Result<(), Error> {
         )?;
         let config = serde_json::json!({ "chain": chain, "fullnode_host": "localhost", "fullnode_port": 8444, "server_name": "localhost", "tls": tls, "max_iterations": 1048576, "job_timeout_seconds": 300, "reconnect_seconds": 5, "max_iterations_per_second": 27 });
         ensure_service(&timelord, &config)?;
+    }
+    for service in [
+        "farmer-cpu",
+        "farmer-nvidia",
+        "farmer-amd",
+        "introducer",
+        "timelord",
+    ] {
+        let config_root = root.join(service).join("app");
+        ensure_directory(&config_root)?;
+        dg_xch_servers::app_config::AppConfig {
+            version: 1,
+            data_dir: PathBuf::from("/service"),
+            plot_directories: vec![PathBuf::from("/plots")],
+        }
+        .ensure(&config_root)?;
     }
     Ok(())
 }

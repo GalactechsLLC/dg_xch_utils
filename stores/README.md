@@ -17,7 +17,14 @@ cargo check -p dg_xch_stores
 cargo doc -p dg_xch_stores --no-deps
 ```
 
-Use a workspace/path dependency when developing against this checkout. Published crate versions may not include the current changes.
+From another top-level workspace crate, add a local dependency:
+
+```toml
+[dependencies]
+dg_xch_stores = { path = "../stores" }
+```
+
+Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
 
 ## Validation
 
@@ -31,4 +38,3 @@ Tests that require external fixtures, a GPU, or a service need their documented 
 
 - [Repository overview](../readme.md)
 - [full-node](../full-node/README.md)
-

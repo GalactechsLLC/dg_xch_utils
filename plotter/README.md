@@ -4,6 +4,8 @@ Native proof-of-space v2 RAM plotting, file inspection and fragment-based provin
 
 ## Status
 
+For application use, install `dgx`, run `dgx init`, then use `dgx plotter <subcommand>`. `dgx plotter -- --help` lists the CLI and `dgx plotter create --help` lists creation options. Direct Cargo commands below are development and validation entry points. Plotting needs no node connection or wallet synchronization. The desktop can obtain public plotting keys from an encrypted account without opening a wallet session.
+
 The default CPU pipeline creates format-1 fat plots using two compact 16-byte-entry tables in RAM, retaining only final fragments. It targets the pinned `chia-pos2 0.6.0` format: even k18 through k32, both pool-public-key and portable-contract memos, all indices/meta groups, and separate mainnet/testnet hash domains. Strength ranges from 2 to `k - section_bits - 1`, where `section_bits` is 2 below k28 and `k - 26` otherwise. This is a versioned compatibility target, not a claim about future Chia formats or different strength numbering.
 
 Plot creation needs no intermediate disk tables. The final file is published atomically without overwriting an existing plot. Library callers can use `create_in_memory` or `create_in_memory_with_engine` to keep the complete file in a bounded byte buffer, and `PlotReader::from_reader(Cursor::new(bytes), ...)` to read it. Checkpoint/resume, external sorting and format-2 Benes plots are not implemented; the pinned reference writer produces format 1.
@@ -29,22 +31,23 @@ The desktop supports Auto, CUDA, and Vulkan preferences. Auto prefers a successf
 Run commands from the repository root:
 
 ```sh
-cargo build -p dg_xch_plotter --release
-cargo run -p dg_xch_plotter --release -- --help
+cargo build -p dg_xch_cli --release
+./target/release/dgx init
+cargo run -p dg_xch_cli --release -- plotter --help
 ```
 
 Supply your farmer's 48-byte public key and either a 48-byte pool public key or a 32-byte pool-contract puzzle hash, all hexadecimal. Do not supply a mnemonic or private key. The writer generates a fresh local plot key and refuses to overwrite an existing file.
 
 ```sh
-cargo run -p dg_xch_plotter --release -- create \
+cargo run -p dg_xch_cli --release -- plotter create \
   --output /path/to/development.plot \
   --farmer-key "$FARMER_PUBLIC_KEY" --pool-key "$POOL_PUBLIC_KEY" \
   --k 18 --strength 2 --experimental-size \
   --memory-mib 512 --max-entries 2097152 --max-work 100000000
 
-cargo run -p dg_xch_plotter --release -- inspect /path/to/development.plot
+cargo run -p dg_xch_cli --release -- plotter inspect /path/to/development.plot
 
-cargo run -p dg_xch_plotter --release -- prove-plot /path/to/development.plot \
+cargo run -p dg_xch_cli --release -- plotter prove-plot /path/to/development.plot \
   --challenge "$CHALLENGE_HEX"
 ```
 
@@ -65,7 +68,7 @@ Vulkan also keeps both tables and sorting on the device when its full-resident p
 For a k28 strength-2 run on a machine with sufficient free RAM:
 
 ```sh
-cargo run -p dg_xch_plotter --release -- create \
+cargo run -p dg_xch_cli --release -- plotter create \
   --output /path/to/k28.plot \
   --farmer-key "$FARMER_PUBLIC_KEY" --contract "$POOL_CONTRACT_HASH" \
   --k 28 --strength 2 \
@@ -79,16 +82,16 @@ The default 512 MiB limit intentionally does not authorize multi-gigabyte plotti
 Install a working hardware Vulkan driver on Linux or Windows. The process must be able to access its GPU device; a software Vulkan implementation is deliberately rejected. Native macOS Vulkan is not assumed by this backend.
 
 ```sh
-cargo build -p dg_xch_plotter --release --features vulkan
-cargo run -p dg_xch_plotter --release --features vulkan -- devices
+cargo build -p dg_xch_cli --release
+cargo run -p dg_xch_cli --release -- plotter devices
 
-cargo run -p dg_xch_plotter --release --features vulkan -- create \
+cargo run -p dg_xch_cli --release -- plotter create \
   --backend vulkan --device 0 \
   --output /path/to/development-amd.plot \
   --farmer-key "$FARMER_PUBLIC_KEY" --pool-key "$POOL_PUBLIC_KEY" \
   --k 18 --strength 2 --experimental-size
 
-cargo run -p dg_xch_plotter --release --features vulkan -- prove-plot \
+cargo run -p dg_xch_cli --release -- plotter prove-plot \
   /path/to/development-amd.plot --challenge "$CHALLENGE_HEX" \
   --backend vulkan --device 0
 ```

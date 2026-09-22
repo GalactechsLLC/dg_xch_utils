@@ -11,6 +11,8 @@
 pub mod app;
 pub mod backend;
 pub mod config;
+pub mod runner;
+pub mod theme;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

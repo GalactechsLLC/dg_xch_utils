@@ -4,6 +4,8 @@ Developer binaries for inspecting nodes, importing corpora, deriving coin roots,
 
 ## Status
 
+The application launcher is `dgx`; these binaries are developer utilities, not substitutes for `dgx init`. Stack initialization provisions versioned application profiles for container-local paths while preserving service identities. The [Docker guide](../docker/README.md) documents the explicit height-100 acceptance target.
+
 These are developer tools, not production services. They may open databases, write fixture files, or contact the explicitly selected node. Use copied databases and disposable output directories; do not point experiments at a running production database.
 
 ## Build and usage

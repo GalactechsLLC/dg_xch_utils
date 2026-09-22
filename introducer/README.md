@@ -15,7 +15,9 @@ The listener is public and does not treat the public Chia CA as an authenticatio
 Run from the repository root:
 
 ```sh
-cargo run -p dg_xch_introducer -- --config /path/to/introducer.json
+cargo build -p dg_xch_cli
+./target/debug/dgx init
+./target/debug/dgx introducer --config /path/to/introducer.json
 ```
 
 Use the [Docker development stack](../docker/README.md) to generate matching test certificates and configurations automatically. For a standalone instance, provide JSON like this:
@@ -42,7 +44,7 @@ The identity is also presented when probing full nodes. The current full-node `/
 The `chain` field accepts `"mainnet"` (the default), another Chia network name, `"dgx"`, or a complete custom definition object. Use the exact same selection on all nodes. Point each node at the introducer:
 
 ```sh
-cargo run -p dg_xch_cli --features coin-index --bin dg -- full-node \
+cargo run -p dg_xch_cli --features coin-index --bin dgx -- full-node \
   --listen 0.0.0.0:8444 --db sqlite:///path/to/chain.db \
   --chain-config config/chains/dgx.json --rpc-tls private-ca \
   --ssl-dir /path/to/node-ssl --introducer introducer.example:8445

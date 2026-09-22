@@ -1177,11 +1177,18 @@ dependencies = [
  "dg_logger",
  "dg_xch_clients",
  "dg_xch_core",
+ "dg_xch_farmer",
+ "dg_xch_gui",
+ "dg_xch_introducer",
  "dg_xch_keys",
  "dg_xch_p2p",
+ "dg_xch_plotter",
+ "dg_xch_pos2",
  "dg_xch_puzzles",
  "dg_xch_serialize",
  "dg_xch_servers",
+ "dg_xch_timelord",
+ "dg_xch_vdf",
  "dg_xch_wallet",
  "dialoguer",
  "hex",
@@ -1191,6 +1198,7 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "serde_json",
+ "tempfile",
  "tikv-jemallocator",
  "tokio",
 ]
@@ -1317,8 +1325,6 @@ version = "3.0.0"
 dependencies = [
  "async-trait",
  "blst",
- "clap",
- "dg_logger",
  "dg_xch_clients",
  "dg_xch_core",
  "dg_xch_keys",
@@ -1359,12 +1365,12 @@ dependencies = [
  "dg_xch_pos2",
  "dg_xch_servers",
  "dg_xch_wallet",
- "directories",
  "eframe",
  "hex",
  "serde",
  "serde_json",
  "tempfile",
+ "time",
  "tokio",
  "zeroize",
 ]
@@ -1373,7 +1379,6 @@ dependencies = [
 name = "dg_xch_introducer"
 version = "3.0.0"
 dependencies = [
- "clap",
  "dg_xch_core",
  "dg_xch_serialize",
  "dg_xch_servers",
@@ -1465,7 +1470,6 @@ name = "dg_xch_plotter"
 version = "3.0.0"
 dependencies = [
  "blst",
- "clap",
  "dg_xch_core",
  "dg_xch_keys",
  "dg_xch_pos2",
@@ -1567,6 +1571,7 @@ dependencies = [
  "dg_xch_keys",
  "dg_xch_pos",
  "dg_xch_serialize",
+ "directories",
  "http",
  "http-body-util",
  "hyper",
@@ -1635,7 +1640,6 @@ dependencies = [
 name = "dg_xch_timelord"
 version = "3.0.0"
 dependencies = [
- "clap",
  "dg_xch_core",
  "dg_xch_pos",
  "dg_xch_servers",

@@ -1,13 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unimplemented
-    )
-)]
 use clap::{Parser, Subcommand};
 use dg_xch_plotter::{PlotRequest, PoolBinding};
 use dg_xch_pos2::{
@@ -263,9 +253,13 @@ fn bytes<const SIZE: usize>(value: &str) -> Result<[u8; SIZE], Error> {
         .map_err(|_| Error::new(ErrorKind::InvalidInput, format!("expected {SIZE} bytes")))
 }
 
-fn main() -> Result<(), Error> {
+pub fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
     let cancelled = AtomicBool::new(false);
-    match Cli::parse().command {
+    match Cli::parse_from(
+        std::iter::once(std::ffi::OsString::from("dgx plotter")).chain(arguments.iter().cloned()),
+    )
+    .command
+    {
         Command::Devices => {
             #[cfg(feature = "vulkan")]
             {

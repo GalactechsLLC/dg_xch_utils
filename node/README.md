@@ -8,7 +8,7 @@ This package is a library, not a standalone daemon. It does not own HTTP routing
 
 ## Usage
 
-Embed the exported engine with a store and primitive verifier, or use `dg_full_node` through the `dg full-node` command. `slots`, `unfinished`, `sync`, and `mempool` own node state rather than desktop UI state.
+Embed the exported engine with a store and primitive verifier, or use `dg_full_node` through the `dgx full-node` command. `slots`, `unfinished`, `sync`, and `mempool` own node state rather than desktop UI state.
 
 This package has no standalone service binary. From the repository root:
 
@@ -17,7 +17,14 @@ cargo check -p dg_xch_node
 cargo doc -p dg_xch_node --no-deps
 ```
 
-Use a workspace/path dependency when developing against this checkout. Published crate versions may not include the current changes.
+From another top-level workspace crate, add a local dependency:
+
+```toml
+[dependencies]
+dg_xch_node = { path = "../node" }
+```
+
+Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
 
 ## Validation
 
@@ -31,4 +38,3 @@ Tests that require external fixtures, a GPU, or a service need their documented 
 
 - [Repository overview](../readme.md)
 - [full-node](../full-node/README.md)
-

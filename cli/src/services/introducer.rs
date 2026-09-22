@@ -1,13 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unimplemented
-    )
-)]
 use clap::Parser;
 use std::io::{Error, Read};
 use std::path::PathBuf;
@@ -19,9 +9,11 @@ struct Args {
     config: PathBuf,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    let args = Args::parse();
+pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
+    let args = Args::parse_from(
+        std::iter::once(std::ffi::OsString::from("dgx introducer"))
+            .chain(arguments.iter().cloned()),
+    );
     let mut bytes = Vec::new();
     std::fs::File::open(args.config)?
         .take(1024 * 1024 + 1)

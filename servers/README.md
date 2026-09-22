@@ -8,6 +8,8 @@ This package remains separate: the full node and discovery services share transp
 
 ## Usage
 
+`app_config::{AppConfig, config_dir, default_paths}` shares versioned storage paths between CLI and desktop. `dgx init` writes the profile after setup succeeds. Loading is bounded to 64 KiB and rejects unsupported versions, relative storage paths, and empty plot lists. `save_new` refuses overwrites. Embedders can use these helpers without depending on either application.
+
 Embed `WebsocketServer` with a `WebsocketServerConfig`, peer map, handlers, and shutdown flag. `transport` contains reusable bounded Chia frame helpers. Use the full-node or introducer package for an executable service.
 
 File-backed TLS identities use the [core TLS helpers](../core/README.md): on Unix, private keys require owner-only permissions, usually `0600`, and cannot be symlinks or hard-linked files. Existing permissive files fail closed instead of being silently changed.

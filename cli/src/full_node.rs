@@ -16,8 +16,8 @@ pub struct FullNodeArgs {
     #[arg(long = "rpc-tls", default_value = "private-ca")]
     rpc_tls: String,
     /// Directory containing the private RPC CA when `--rpc-tls private-ca` is used.
-    #[arg(long = "ssl-dir", default_value = "ssl")]
-    ssl_dir: String,
+    #[arg(long = "ssl-dir")]
+    ssl_dir: Option<String>,
     #[arg(long)]
     introducer: Option<String>,
     #[arg(long = "peer")]
@@ -26,8 +26,8 @@ pub struct FullNodeArgs {
     #[arg(long)]
     advertise: Option<String>,
     /// Storage URL: `sqlite://<path>`, `postgres://...`, or `mmap://<directory>`.
-    #[arg(long, default_value = "sqlite:///data/chain.db")]
-    db: String,
+    #[arg(long)]
+    db: Option<String>,
     /// Network id selecting consensus constants.
     #[arg(long)]
     network: Option<String>,
@@ -131,6 +131,26 @@ pub struct FullNodeArgs {
 }
 
 impl FullNodeArgs {
+    pub(crate) fn apply_profile(&mut self, root: &std::path::Path) -> Result<(), Error> {
+        if self.print_chain_info {
+            return Ok(());
+        }
+        let profile = dg_xch_servers::app_config::AppConfig::load(root)?;
+        self.ssl_dir
+            .get_or_insert_with(|| root.join("ssl").display().to_string());
+        self.db.get_or_insert_with(|| {
+            format!("sqlite://{}", profile.data_dir.join("chain.db").display())
+        });
+        if self.introducer.is_none()
+            && self.peer.is_empty()
+            && self.chain_config.is_none()
+            && self.network.as_deref().unwrap_or("mainnet") == "mainnet"
+        {
+            self.introducer = Some("introducer.chia.net:8444".into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn inherit_network(&mut self, root_network: Option<&str>) -> Result<(), Error> {
         crate::inherit_network(&mut self.network, root_network)
     }
@@ -168,7 +188,7 @@ impl FullNodeArgs {
             self.introducer.as_deref(),
             &self.peer,
             self.advertise.as_deref(),
-            &self.db,
+            self.db.as_deref().unwrap_or("sqlite:///data/chain.db"),
             network,
             self.capture_dir.as_deref(),
             self.genesis_sync,
@@ -189,8 +209,11 @@ impl FullNodeArgs {
                 config.listen
             )));
         }
-        config.rpc_tls =
-            dg_full_node::RpcTlsMode::parse(&self.rpc_tls, &self.ssl_dir).map_err(Error::other)?;
+        config.rpc_tls = dg_full_node::RpcTlsMode::parse(
+            &self.rpc_tls,
+            self.ssl_dir.as_deref().unwrap_or("ssl"),
+        )
+        .map_err(Error::other)?;
         config.debug_endpoints = self.debug_endpoints;
         config.performance.compute_workers = self.compute_workers;
         config.performance.validation_window_blocks = self.validation_window_blocks;
@@ -237,6 +260,52 @@ mod network_tests {
     use crate::cli::{Cli, RootCommands};
     use clap::Parser;
 
+    #[test]
+    fn initialized_paths_supply_defaults_without_overriding_explicit_flags() {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = dg_xch_servers::app_config::AppConfig {
+            version: 1,
+            data_dir: directory.path().join("data"),
+            plot_directories: vec![directory.path().join("plots")],
+        };
+        profile.save_new(directory.path()).unwrap();
+        let cli = Cli::try_parse_from(["dgx", "full-node"]).unwrap();
+        let RootCommands::FullNode(mut args) = cli.action else {
+            panic!("wrong command")
+        };
+        args.apply_profile(directory.path()).unwrap();
+        assert_eq!(
+            args.db,
+            Some(format!(
+                "sqlite://{}",
+                profile.data_dir.join("chain.db").display()
+            ))
+        );
+        assert_eq!(
+            args.ssl_dir,
+            Some(directory.path().join("ssl").display().to_string())
+        );
+        assert_eq!(args.introducer.as_deref(), Some("introducer.chia.net:8444"));
+        let cli = Cli::try_parse_from([
+            "dgx",
+            "full-node",
+            "--db",
+            "sqlite://explicit.db",
+            "--ssl-dir",
+            "explicit-ssl",
+            "--peer",
+            "localhost:9000",
+        ])
+        .unwrap();
+        let RootCommands::FullNode(mut args) = cli.action else {
+            panic!("wrong command")
+        };
+        args.apply_profile(directory.path()).unwrap();
+        assert_eq!(args.db.as_deref(), Some("sqlite://explicit.db"));
+        assert_eq!(args.ssl_dir.as_deref(), Some("explicit-ssl"));
+        assert!(args.introducer.is_none());
+    }
+
     fn config(arguments: &[&str]) -> Result<Config, Error> {
         let mut cli = Cli::try_parse_from(arguments).map_err(Error::other)?;
         crate::apply_network(&mut cli)?;
@@ -248,17 +317,17 @@ mod network_tests {
 
     #[test]
     fn root_network_reaches_the_full_node_without_changing_chia_defaults() {
-        let defaults = config(&["dg", "full-node"]).unwrap();
+        let defaults = config(&["dgx", "full-node"]).unwrap();
         assert_eq!(defaults.network_id, "mainnet");
         assert_eq!(defaults.handshake_network_id().unwrap(), "mainnet");
         assert_eq!(
             defaults.consensus_constants().unwrap(),
             dg_xch_core::consensus::constants::MAINNET
         );
-        let inherited = config(&["dg", "--network", "testnet11", "full-node"]).unwrap();
+        let inherited = config(&["dgx", "--network", "testnet11", "full-node"]).unwrap();
         assert_eq!(inherited.network_id, "testnet11");
         assert_eq!(inherited.handshake_network_id().unwrap(), "testnet11");
-        let local = config(&["dg", "full-node", "--network", "dgx"]).unwrap();
+        let local = config(&["dgx", "full-node", "--network", "dgx"]).unwrap();
         assert!(local.allows_chain_bootstrap());
         assert_eq!(local.network_id, "dgx");
     }
@@ -267,7 +336,7 @@ mod network_tests {
     fn conflicting_and_unknown_full_node_networks_fail_closed() {
         assert!(
             config(&[
-                "dg",
+                "dgx",
                 "--network",
                 "mainnet",
                 "full-node",
@@ -276,9 +345,9 @@ mod network_tests {
             ])
             .is_err()
         );
-        assert!(config(&["dg", "--network", "not-a-network", "full-node"]).is_err());
+        assert!(config(&["dgx", "--network", "not-a-network", "full-node"]).is_err());
         let matching = config(&[
-            "dg",
+            "dgx",
             "--network",
             "testnet11",
             "full-node",

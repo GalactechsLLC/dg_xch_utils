@@ -159,9 +159,9 @@ mod network_tests {
     #[test]
     fn root_network_reaches_chain_init_and_inspect() {
         for command in [
-            vec!["dg", "--network", "testnet11", "chain", "inspect"],
+            vec!["dgx", "--network", "testnet11", "chain", "inspect"],
             vec![
-                "dg",
+                "dgx",
                 "--network",
                 "testnet11",
                 "chain",
@@ -180,7 +180,7 @@ mod network_tests {
         }
         assert!(
             arguments(&[
-                "dg",
+                "dgx",
                 "--network",
                 "mainnet",
                 "chain",
@@ -192,7 +192,7 @@ mod network_tests {
         );
         assert!(
             arguments(&[
-                "dg",
+                "dgx",
                 "--network",
                 "mainnet",
                 "chain",
@@ -217,7 +217,7 @@ mod network_tests {
         dg_xch_servers::chain_config::write_new(&path, &serde_json::to_vec(&expected).unwrap())
             .unwrap();
         let args = arguments(&[
-            "dg",
+            "dgx",
             "--network",
             "custom-cli-chain",
             "chain",

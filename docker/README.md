@@ -35,6 +35,8 @@ Old version-1 stack volumes are rejected rather than silently changed to another
 
 ## Start and check
 
+The image's full-node entry point is `dgx --config-dir /data/config full-node`. The stack initializer provisions the same versioned application profile used by `dgx init`, with container-local paths; it does not bypass the initialization requirement. Farmers, timelord, and introducer also use `dgx`, with `/service/app` profiles provisioned by the initializer. Developer preparation/check utilities remain separate executables.
+
 ```sh
 docker compose up -d
 docker compose ps
@@ -89,6 +91,17 @@ Logs distinguish loaded plots, eligible qualities, recovered proofs and errors. 
 `DGX_PLOTS_ROOT` supplies the common preparation directory. `DGX_CPU_PLOTS`, `DGX_NVIDIA_PLOTS`, and `DGX_AMD_PLOTS` can override individual read-only farming mounts, but those locations must contain matching plots for the generated identities and testnet hash domain.
 
 ## Restart and inspect
+
+Local validation on 2026-09-22 rebuilt the `dgx` image, repeated initialization without replacing identities, and restored all three nodes at height 8 with the same block hash. The checker confirmed the earlier CPU and AMD farmer payouts and zero genesis prefarm. This was a restart check, not a new 100-block run. The extended run remains unverified because the expected plot disk was unavailable; NVIDIA container execution also remains unverified on this host.
+
+For an extended acceptance run requiring all nodes to reach at least height 100:
+
+```sh
+docker compose run --rm --no-deps check-stack \
+  --min-height 100 --timeout-seconds 14400 --require-farmer cpu,amd
+```
+
+Start the AMD profile first for this example. Use `cpu` alone when only the CPU farmer is running, or include `nvidia` only with a working CUDA container runtime and its farmer. Verify the plot mount with `findmnt -T "$DGX_PLOTS_ROOT"` and `df -h "$DGX_PLOTS_ROOT"` before preparation: device names can change after reboot. Do not let Docker create a missing mount directory on the wrong filesystem. A checker timeout is a failed/incomplete run, not a pass.
 
 After a successful check, stop and restart without deleting volumes. Require a height beyond the previously reported result:
 
