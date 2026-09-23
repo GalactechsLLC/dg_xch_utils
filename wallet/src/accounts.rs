@@ -185,6 +185,10 @@ pub struct WalletSnapshot {
     pub receive_puzzle_hash: Bytes32,
     pub coins: Vec<CoinRecord>,
     pub pending: Vec<Bytes32>,
+    #[serde(default)]
+    pub assets: Vec<crate::assets::AssetCoin>,
+    #[serde(default)]
+    pub watched_cats: Vec<Bytes32>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -235,6 +239,7 @@ impl WalletSession {
                             created_at: 0,
                             broadcast: BroadcastStatus::Prepared,
                             inputs_spent: false,
+                            offer: None,
                         })
                         .collect(),
                     ..StoredWallet::default()
@@ -271,7 +276,27 @@ impl WalletSession {
     }
 
     pub fn snapshot(&self) -> WalletSnapshot {
-        self.stored.snapshot.clone()
+        let mut snapshot = self.stored.snapshot.clone();
+        let reserved = self.stored.reserved_coins();
+        for asset in &mut snapshot.assets {
+            asset.reserved = reserved.contains(&asset.record.coin.name());
+        }
+        snapshot
+    }
+
+    pub async fn watch_cat(&mut self, asset_id: Bytes32) -> Result<(), Error> {
+        if self.stored.snapshot.watched_cats.contains(&asset_id) {
+            return Ok(());
+        }
+        if self.stored.snapshot.watched_cats.len() >= 100 {
+            return Err(Error::other("CAT watch list limit reached"));
+        }
+        let mut next = self.stored.clone();
+        next.snapshot.watched_cats.push(asset_id);
+        next.snapshot.synced = false;
+        self.database.save(&next).await?;
+        self.stored = next;
+        Ok(())
     }
 
     pub fn transactions(&self) -> &[StoredTransaction] {
@@ -313,6 +338,8 @@ impl WalletSession {
             .peak
             .ok_or_else(|| Error::other("node has no peak"))?;
         let mut records = HashMap::new();
+        let mut assets = HashMap::new();
+        let mut parents = HashMap::new();
         let mut hashes = HashSet::new();
         let mut scanned = 0;
         let mut last_used = 0;
@@ -334,8 +361,92 @@ impl WalletSession {
                 .client
                 .get_coin_records_by_puzzle_hashes(&batch, Some(true), None, None)
                 .await?;
-            let used = !coins.is_empty();
-            hashes.extend(batch);
+            let mut used = !coins.is_empty();
+            hashes.extend(batch.iter().copied());
+            for hash in &batch {
+                let mut hinted = self
+                    .client
+                    .get_coin_records_by_hint(hash, Some(true), None, None)
+                    .await?;
+                let wrapped: Vec<_> = self
+                    .stored
+                    .snapshot
+                    .watched_cats
+                    .iter()
+                    .flat_map(|id| {
+                        [
+                            crate::assets::AssetKind::Cat1,
+                            crate::assets::AssetKind::Cat2,
+                        ]
+                        .map(|kind| crate::assets::cat_puzzle_hash(kind, *id, *hash))
+                    })
+                    .collect();
+                if !wrapped.is_empty() {
+                    hinted.extend(
+                        self.client
+                            .get_coin_records_by_puzzle_hashes(&wrapped, Some(true), None, None)
+                            .await?,
+                    );
+                }
+                if hinted.len() > 1000 {
+                    return Err(Error::other(
+                        "asset discovery limit exceeded; refusing a partial asset balance",
+                    ));
+                }
+                for record in hinted {
+                    if hashes.contains(&record.coin.puzzle_hash) {
+                        continue;
+                    }
+                    if let Some(previous) = assets.get(&record.coin.name()) {
+                        let previous: &crate::assets::AssetCoin = previous;
+                        if previous.record != record {
+                            return Err(Error::other(
+                                "node returned conflicting asset coin records",
+                            ));
+                        }
+                        continue;
+                    }
+                    if record.confirmed_block_index > peak.height
+                        || record.spent_block_index > peak.height
+                        || record.spent != (record.spent_block_index != 0)
+                        || (record.spent && record.spent_block_index < record.confirmed_block_index)
+                    {
+                        return Err(Error::other("inconsistent asset coin heights"));
+                    }
+                    let parent_id = record.coin.parent_coin_info;
+                    if !parents.contains_key(&parent_id) {
+                        if parents.len() >= 1000 {
+                            return Err(Error::other("asset discovery parent limit exceeded"));
+                        }
+                        let parent = self
+                            .client
+                            .get_coin_record_by_name(&parent_id)
+                            .await?
+                            .ok_or_else(|| Error::other("asset parent is missing"))?;
+                        if !parent.spent || parent.spent_block_index != record.confirmed_block_index
+                        {
+                            return Err(Error::other("asset parent spend height mismatch"));
+                        }
+                        let spend = self
+                            .client
+                            .get_puzzle_and_solution(&parent_id, parent.spent_block_index)
+                            .await?;
+                        if spend.coin != parent.coin {
+                            return Err(Error::other("asset parent spend coin mismatch"));
+                        }
+                        parents.insert(parent_id, spend);
+                    }
+                    let parent = parents
+                        .get(&parent_id)
+                        .ok_or_else(|| Error::other("missing asset parent cache"))?;
+                    if let Some(asset) =
+                        crate::assets::discover_asset(record, parent.clone(), &hashes)?
+                    {
+                        used = true;
+                        assets.insert(record.coin.name(), asset);
+                    }
+                }
+            }
             for coin in coins {
                 if !hashes.contains(&coin.coin.puzzle_hash) {
                     return Err(Error::other("node returned an unrelated wallet coin"));
@@ -388,19 +499,26 @@ impl WalletSession {
         coins.sort_by_key(|coin| coin.confirmed_block_index);
         let spent: HashSet<_> = coins
             .iter()
+            .chain(assets.values().map(|asset| &asset.record))
             .filter(|coin| coin.spent)
             .map(|coin| coin.coin.name())
             .collect();
         for transaction in &mut next.transactions {
             let removals = transaction.bundle.removals();
-            transaction.inputs_spent =
-                !removals.is_empty() && removals.iter().all(|coin| spent.contains(&coin.name()));
+            let input_ids: HashSet<_> = removals.iter().map(|coin| coin.name()).collect();
+            transaction.inputs_spent = !removals.is_empty()
+                && removals
+                    .iter()
+                    .filter(|coin| !input_ids.contains(&coin.parent_coin_info))
+                    .all(|coin| spent.contains(&coin.name()));
         }
         next.snapshot = WalletSnapshot {
             synced: true,
             height: Some(peak.height),
             receive_puzzle_hash: self.wallet.get_puzzle_hash(false).await?,
             coins,
+            assets: assets.into_values().collect(),
+            watched_cats: self.stored.snapshot.watched_cats.clone(),
             ..WalletSnapshot::default()
         };
         next.refresh_balances()?;
@@ -429,8 +547,143 @@ impl WalletSession {
         let bundle = transaction
             .spend_bundle
             .ok_or_else(|| Error::other("transaction has no spend bundle"))?;
+        self.broadcast(bundle).await
+    }
+
+    pub async fn asset_transaction(
+        &mut self,
+        action: crate::assets::AssetAction,
+        fee: u64,
+    ) -> Result<Bytes32, Error> {
+        self.sync().await?;
+        let bundle = crate::assets::build_transaction(
+            &self.wallet,
+            &self.stored.snapshot.coins,
+            &self.stored.snapshot.assets,
+            &self.stored.reserved_coins(),
+            &action,
+            fee,
+            self.stored.snapshot.receive_puzzle_hash,
+        )
+        .await?;
+        self.broadcast(bundle).await
+    }
+
+    pub async fn create_offer(
+        &mut self,
+        give: crate::offers::OfferAmount,
+        receive: crate::offers::OfferAmount,
+        fee: u64,
+    ) -> Result<String, Error> {
+        self.sync().await?;
+        let reserved = self.stored.reserved_coins();
+        let prepared = crate::offers::OfferInputs {
+            wallet: &self.wallet,
+            coins: &self.stored.snapshot.coins,
+            assets: &self.stored.snapshot.assets,
+            reserved: &reserved,
+            change: self.stored.snapshot.receive_puzzle_hash,
+        }
+        .make(give, receive, fee)
+        .await?;
+        let mut next = self.stored.clone();
+        next.transactions.push(StoredTransaction {
+            bundle: prepared.maker_bundle,
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(Error::other)?
+                .as_secs(),
+            broadcast: BroadcastStatus::Offered,
+            inputs_spent: false,
+            offer: Some(prepared.text.clone()),
+        });
+        next.refresh_balances()?;
+        self.database.save(&next).await?;
+        self.stored = next;
+        self.restore_signer_coins().await;
+        Ok(prepared.text)
+    }
+
+    pub async fn take_offer(&mut self, text: &str, fee: u64) -> Result<Bytes32, Error> {
+        self.sync().await?;
+        let inputs = crate::offers::inputs(text)?;
+        let names: Vec<_> = inputs.iter().map(|coin| coin.name()).collect();
+        let records = self
+            .client
+            .get_coin_records_by_names(&names, Some(true), None, None)
+            .await?;
+        if records.len() != inputs.len()
+            || inputs.iter().any(|coin| {
+                !records
+                    .iter()
+                    .any(|record| record.coin == *coin && !record.spent)
+            })
+        {
+            return Err(Error::other(
+                "offer inputs are spent or unavailable on the selected chain",
+            ));
+        }
+        let reserved = self.stored.reserved_coins();
+        let bundle = crate::offers::OfferInputs {
+            wallet: &self.wallet,
+            coins: &self.stored.snapshot.coins,
+            assets: &self.stored.snapshot.assets,
+            reserved: &reserved,
+            change: self.stored.snapshot.receive_puzzle_hash,
+        }
+        .take(text, fee)
+        .await?;
+        self.broadcast(bundle).await
+    }
+
+    async fn broadcast(&mut self, bundle: SpendBundle) -> Result<Bytes32, Error> {
+        self.journal_and_broadcast(bundle, None).await
+    }
+
+    pub async fn cancel_offer(&mut self, offer_id: Bytes32, fee: u64) -> Result<Bytes32, Error> {
+        self.sync().await?;
+        let transaction = self
+            .stored
+            .transactions
+            .iter()
+            .find(|transaction| {
+                transaction.broadcast == BroadcastStatus::Offered
+                    && transaction.bundle.name().ok() == Some(offer_id)
+            })
+            .ok_or_else(|| Error::other("active offer not found"))?;
+        let reserved = self.stored.reserved_coins();
+        let bundle = crate::offers::OfferInputs {
+            wallet: &self.wallet,
+            coins: &self.stored.snapshot.coins,
+            assets: &self.stored.snapshot.assets,
+            reserved: &reserved,
+            change: self.stored.snapshot.receive_puzzle_hash,
+        }
+        .cancel(&transaction.bundle, fee)
+        .await?;
+        self.journal_and_broadcast(bundle, Some(offer_id)).await
+    }
+
+    async fn journal_and_broadcast(
+        &mut self,
+        bundle: SpendBundle,
+        replacement: Option<Bytes32>,
+    ) -> Result<Bytes32, Error> {
         let name = bundle.name()?;
         let mut next = self.stored.clone();
+        let offer = if let Some(replacement) = replacement {
+            let index = next
+                .transactions
+                .iter()
+                .position(|transaction| {
+                    transaction.broadcast == BroadcastStatus::Offered
+                        && transaction.bundle.name().ok() == Some(replacement)
+                })
+                .ok_or_else(|| Error::other("offer journal changed"))?;
+            next.transactions.remove(index).offer
+        } else {
+            None
+        };
         next.address_index = self.wallet.wallet_store().lock().await.current_index();
         if next.address_index >= MAX_DERIVATIONS {
             return Err(Error::other("wallet derivation limit exceeded"));
@@ -445,6 +698,7 @@ impl WalletSession {
                 .as_secs(),
             broadcast: BroadcastStatus::Prepared,
             inputs_spent: false,
+            offer,
         });
         next.snapshot.synced = false;
         next.refresh_balances()?;
@@ -486,6 +740,9 @@ fn refresh_pending_change(
         .map(|coin| coin.coin.name())
         .collect();
     for transaction in &stored.transactions {
+        if transaction.broadcast == BroadcastStatus::Offered {
+            continue;
+        }
         if transaction
             .bundle
             .removals()

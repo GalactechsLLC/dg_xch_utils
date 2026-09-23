@@ -1,138 +1,120 @@
 # DruidGarden XCH
 
-One native application and Rust tools for running a Chia node, managing wallets, plotting, and farming. No Electron or JavaScript runtime. `dgx` is the command-line starting point.
+A native Rust desktop and command-line toolkit for Chia: run a node, manage wallets, make plots, and farm through `dgx`. No Electron or JavaScript runtime.
 
-This project is under active development. Use a separate wallet with test funds while evaluating it. Local integration tests do not establish complete mainnet compatibility, wallet recovery, or sustained farming performance.
+The project is still under development. Mainnet compatibility, wallet recovery, and sustained farming need further validation; use test funds while evaluating it.
 
-## 1. Install
+## Install
 
-Build from this checkout with stable Rust and a native build toolchain:
+Clone the repository, then install from its root with stable Rust:
 
 ```sh
+git clone https://github.com/GalactechsLLC/dg_xch_utils.git
+cd dg_xch_utils
 git submodule update --init --recursive
 cargo install --path cli --locked
-dgx --help
 ```
 
-One install provides the desktop, node, farmer, CPU/Vulkan plotter, introducer, and CPU timelord in `dgx`. Put Cargo's `bin` directory on `PATH`; there are no companion applications to install.
+Keep Cargo's bin directory on your `PATH`.
 
-Linux needs a C/C++ toolchain, CMake, m4, pkg-config, OpenSSL headers, libxkbcommon, and Wayland/X11 development libraries. macOS needs Xcode command-line tools. The local full node currently targets Linux and macOS because of GMP. On Windows, install the CLI with `cargo install --path cli --locked --no-default-features --features desktop,vulkan`, then run `dgx init` and `dgx gui`. Connect it to an existing compatible node in Settings; the portable Windows CLI does not include a local full node. See the [desktop package](gui/README.md).
+- **Linux:** needs a C/C++ toolchain, CMake, m4, pkg-config, OpenSSL headers, libxkbcommon, and X11/Wayland development libraries.
+- **macOS:** needs Xcode command-line tools.
+- **Windows:** use `cargo install --path cli --locked --no-default-features --features desktop,vulkan` instead. The desktop connects to a separate node; local full-node and timelord builds currently require Linux/macOS.
 
-CUDA is optional and [built separately](plotter/cuda/README.md). AMD compute uses Vulkan. Without a supported compute device, choose CPU plotting. Desktop rendering and plotting have separate GPU paths.
+The standard install includes the desktop, node, farmer, CPU/Vulkan plotter, pool, introducer, and CPU timelord. NVIDIA CUDA uses an [optional helper](plotter/cuda/README.md); AMD compute uses Vulkan.
 
-## 2. Initialize
+## Set up and start
 
 ```sh
 dgx init
-```
-
-Setup asks where to keep configuration, node/wallet data, and plots. Press Enter for sane per-user defaults. Plots default to a `plots` directory inside application data; choose a disk with enough room and leave space for the growing node database.
-
-On Linux, new profiles use `~/.dgx/config`, `~/.dgx/data`, and `~/.dgx/data/plots` (for example, `/home/user/.dgx/config`). macOS and Windows use their native per-user application directories. Existing initialized profiles remain discoverable at their previous location; no wallets or databases are moved automatically.
-
-Initialization selects **Chia mainnet**, creates local TLS credentials, and configures the desktop for the local node on port 8444. It does not start services, create wallet keys, or download the blockchain. Repeating initialization preserves existing settings and keys.
-
-For a non-default configuration directory, use the printed `--config-dir` argument on subsequent commands or set `DGX_CONFIG_DIR`. Unattended setup:
-
-```sh
-dgx --config-dir /absolute/path/config init --non-interactive \
-  --data-dir /absolute/path/data --plots-dir /absolute/path/plots
-```
-
-Existing desktop preferences are retained. Check Settings after upgrading; initialization does not move existing wallets or databases.
-
-## 3. Start the node and desktop
-
-In one terminal, leave the node running:
-
-```sh
 dgx full-node
 ```
 
-In a second terminal:
+Setup asks where to keep configuration, data, and plots. Press Enter for defaults, or choose a larger disk for plots and the node database. **Chia mainnet is the default.**
+
+On Linux, defaults are `~/.dgx/config`, `~/.dgx/data`, and `~/.dgx/data/plots`. macOS and Windows use their native application directories. Setup preserves existing settings and keys.
+
+Leave the node running, then open a second terminal:
 
 ```sh
 dgx gui
 ```
 
-The node uses Chia's introducer to discover peers and validates downloaded blocks. The GUI does not own the separate node process: closing it leaves the node running. Stop the node with Ctrl+C. Never run two nodes against one database.
+![Desktop overview](gui/screenshots/overview-garden-home.png)
 
-![Native desktop overview](gui/screenshots/overview-garden-home.png)
+Closing the desktop does not stop the separate node. Use Ctrl+C in its terminal when you want to stop it.
 
-The interface follows the Druid Garden website: a white-to-green background, soft cards, and readable Sora type. Garden light is the default for new profiles; Forest dark remains available in Settings, and saved theme choices are preserved. Wallets, plotting controls, and node data use visible sections rather than collapsed dropdowns.
+## Watch your node sync
 
-These are real application screenshots connected to a running local Chia-configured node. The node has not synchronized yet, so no block height or wallet balances are fabricated. “Node connected” confirms the GUI connection, not completed blockchain synchronization.
+Open **Node** to see height, sync status, peers, and pending transactions. Weight is cumulative difficulty, not block height. Hover over labels for explanations.
 
-## 4. Watch synchronization
+![Node status](gui/screenshots/node-garden-capacity.png)
 
-Open **Node** for sync progress, difficulty, mempool activity, and internal diagnostics. Overview displays the latest observed height. A disconnected/stale message means no fresh sample is available, not that synchronization finished.
+If disconnected, check that the node is running and Settings points to `localhost:8444` with the TLS credentials from setup. A Chia reference node commonly uses RPC port 8555 and needs its own credentials.
 
-![Node](gui/screenshots/node-garden-home.png)
+The screenshots show a connected but unsynchronized local node. Connection alone does not mean sync has finished. **You can set up accounts and create plots while syncing.**
 
-If disconnected, check that the node is running and Settings points to `localhost:8444` with the TLS files created during initialization. This node shares its peer and RPC listener. A Chia reference node commonly uses a different RPC port and needs its own trusted client credentials. Never disable certificate verification. Detailed internals require this project's node endpoint.
+## Add wallets
 
-Initial sync takes time and disk space. **You can create accounts and plots while it runs.** Sending requires a synchronized node and a fresh wallet scan.
+In **Wallets**, create an account or import your recovery phrase. Save the phrase offline and choose a strong password. Unlock multiple accounts to track them in the background while the desktop runs.
 
-## 5. Add wallets
+![Wallet setup](gui/screenshots/accounts-garden-feedback.png)
 
-Open **Wallets** and use the visible **Add a wallet** section. Generate a new 24-word wallet or import your own recovery phrase, name it, and choose a strong password. Back up the phrase independently before confirming and creating the account. Never share it or put it in command-line arguments.
+Keys are encrypted; balances, transactions, and reservations persist in SQLite. Sending needs a fresh scan from a synchronized node.
 
-![Account setup](gui/screenshots/accounts-garden-home.png)
+Supported workflows include XCH payments, read-only CAT1, CAT2 issuance/transfers, NFT1 minting/transfers, and basic Chia DID1 identities. **Tools** also provides address conversion and XCH/CAT2 offers. Offers are only safely cancelled after on-chain confirmation. NFT offers, DID social recovery, and hardware signing are not available.
 
-In Settings, choose **Chia mainnet** (the default) or **Chia testnet11** from the Network dropdown. Their trusted genesis block header hashes are built in and cannot be edited. No manual hash entry is needed. The wallet still rejects a node reporting a different genesis block.
+![Wallet tools](gui/screenshots/tools-garden-assets.png)
 
-Unlock each account you want tracked. Multiple accounts update in the background while the desktop runs. Encrypted keys and SQLite wallet state persist across restarts. Cached balances may be stale; sending needs a fresh scan. Standard payments are supported; CATs, NFTs, offers, and hardware signing are not exposed.
+Addresses shown in screenshots are examples, not payment destinations. See [wallet backups and limits](wallet/README.md#storage-and-backups) before storing funds.
 
-Keep recovery phrases separate from the computer. For file-copy backups, close the desktop and copy account files and complete wallet directories, including any SQLite WAL files. See [wallet backup and recovery](wallet/README.md).
+## Make plots
 
-## 6. Create plots while syncing
+Open **Plots**, load public keys from an account, and choose an output directory. Filenames are generated automatically. Select CPU or a GPU backend and leave enough RAM for the node and operating system.
 
-Open **Plots**. No synchronized node or unlocked wallet session is needed.
+![Plotting controls](gui/screenshots/plots-garden-controls.png)
 
-![Plots](gui/screenshots/plots-garden-directory.png)
+The PoS2 plotter defaults to k28, strength 2, targeting `chia-pos2 0.6.0`. Portable plots require your actual pool-contract puzzle hash; choosing one does not create or join a pool.
 
-1. Under **Plotting account**, select an account, enter its password, and load the public keys. Choose **Use loaded keys for a self-farming plot**. For a portable plot, supply your actual pool contract puzzle hash instead; this GUI does not create or join a pool.
-2. Choose an output directory. The filename is generated automatically as `plot-k<size>-YYYY-MM-DD-HH-MM-<plot-ID>.plot` using the UTC start time and actual plot ID. Existing files are never overwritten. Use distinct plot identity inputs, such as a new index, for subsequent plots; renaming an identical plot adds no farming capacity.
-3. The defaults are **k28, strength 2** for the implementation's pinned format. Higher strengths take more work. Leave RAM for the node and operating system; a memory budget is a limit, not a reservation.
-4. Leave GPU unchecked for CPU plotting. Otherwise configure Auto, CUDA, or Vulkan in Settings, select the device, then enable GPU. CUDA needs the helper's absolute path; CUDA and Vulkan device ordinals may differ.
-5. Select **Create plot**, watch job status, and cancel if needed. One desktop plotting job runs at a time. Completed files can be discovered without restarting the node.
+**Do not replace an existing farm yet.** This checkout's mainnet PoS2 activation constants still need updating and validation. Successful plotting does not establish network eligibility. See [plotter formats and requirements](plotter/README.md).
 
-**Do not replace your existing farm based solely on this guide.** The plotter targets `chia-pos2 0.6.0`. Chia's [PoS2 FAQ](https://docs.chia.net/chia-blockchain/consensus/proof-of-space-2.0/new-proof-faq/) schedules activation at height 9,562,000. Accepted formats, activation rules, and strength conventions must match the network. Small development plots are not mainnet plots. Read [plotter compatibility and limits](plotter/README.md) before making a large batch.
+## Farm and manage pooling
 
-## 7. Configure farming
-
-This checkout still has a placeholder mainnet PoS2 activation height in its consensus constants. Do not treat it as Chia 3.0 mainnet-ready or expect newly created PoS2 plots to earn rewards yet. Updating and validating those network rules is separate from the plotting workflow.
-
-In **Settings**, set plot directories, the farmer's node connection, TLS directory, and payout address, then save. In **Farm**, refresh the inventory and select an account under **Account farmer** to start its farmer. Account mode derives keys in memory for self-farming. Existing compatible farmer YAML supports other configurations, including pool credentials and explicit GPU proving settings.
+Set plot directories, node credentials, and your payout address in **Settings**. In **Farm**, choose an account and start its farmer. Already-unlocked accounts do not need another password.
 
 ![Farmer controls](gui/screenshots/farm-garden-home.png)
 
-Check loaded plots, continuing signage points, and proof activity as the node becomes ready. A running process or loaded plot does not prove accepted blocks or rewards. PoS1/PoS2 eligibility follows network activation rules.
+The embedded farmer stops when the GUI closes. To run independently with an existing configuration:
 
-The embedded farmer stops when the desktop closes. To run independently, use `dgx farmer --config /absolute/path/farmer.yaml`. Avoid accidentally running both against the same farm. Protect YAML files containing plaintext farming keys. See [farmer configuration](farmer/README.md) for CPU, CUDA, and Vulkan proving.
+```sh
+dgx farmer --config /home/user/.dgx/config/farmer.yaml
+```
 
-## Appearance and settings
+Avoid running both against the same farm. Legacy YAML contains plaintext farming keys; protect it.
 
-Open **Settings** to change connections, plot directories, and appearance. Choose **Garden light** for the green theme shown here, then **Save settings**. Existing profiles keep their previously saved theme.
+For an already configured pool account, **Farm → Pool settings** loads the pool's current payout instructions and difficulty. Changes are explicit; background polling does not overwrite them. Pool joining and registration are not yet part of the GUI.
 
-![Settings with the green theme and a connected node](gui/screenshots/preferences-garden-networks.png)
+Developers running a pool can use [dgx pool](pool/README.md). The reference supports v1 and experimental v2, but is not ready to hold real pool funds.
 
-## Troubleshooting
+## Settings and help
 
-- **Run dgx init first:** initialize, or select the same configuration directory used during setup.
-- **Command unavailable:** check build features with `dgx --help`; Windows desktop builds omit the local node and timelord.
-- **Plot resource errors:** check RAM/VRAM, work limits, output space, and drivers. Leave capacity for node sync; do not raise budgets beyond available memory.
-- **Wallet not updating:** check node sync, trusted RPC credentials, genesis settings, and account errors. Do not delete a database to clear a pending transaction.
-- **Changing endpoints:** stop farming and lock all accounts first. Keep real keys and production data out of test environments.
+Choose Garden light or Forest dark, change connections, and review storage paths in **Settings**.
+
+![Settings](gui/screenshots/preferences-garden-selection.png)
+
+- Run `dgx --help` or a command's `--help` for options.
+- If setup used a custom directory, pass `--config-dir /path/to/config` on later commands.
+- If wallet data looks stale, check node sync and account errors. Do not delete its database to clear a pending transaction.
+- Lock accounts and stop farming before changing node endpoints.
 
 ## Package reference
 
-Package READMEs cover APIs, development builds, configuration, and focused tests.
+Package READMEs cover configuration and Rust integration.
 
 | Applications | Libraries |
 | --- | --- |
 | [CLI](cli/README.md), [desktop](gui/README.md), [wallet](wallet/README.md) | [Core](core/README.md), [keys](keys/README.md), [puzzles](puzzles/README.md) |
-| [Full node](full-node/README.md), [farmer](farmer/README.md) | [Node engine](node/README.md), [P2P](p2p/README.md), [stores](stores/README.md) |
+| [Full node](full-node/README.md), [farmer](farmer/README.md), [pool](pool/README.md) | [Node engine](node/README.md), [P2P](p2p/README.md), [stores](stores/README.md) |
 | [Plotter](plotter/README.md), [CUDA helper](plotter/cuda/README.md) | [Proof facade](proof_of_space/README.md), [PoS1](proof_of_space/pos1/README.md), [PoS2](proof_of_space/pos2/README.md), [shared codecs](proof_of_space/pos_common/README.md) |
 | [Timelord](timelord/README.md), [introducer](introducer/README.md) | [VDF](vdf/README.md), [weight proofs](weight-proof/README.md), [clients](clients/README.md), [servers](servers/README.md) |
 | [Simulator](simulator/README.md), [developer tools](tools/README.md), [fuzzing](fuzz/README.md) | [Serialization](serialize/README.md), [macros](macros/README.md), [parser macro](parser_macro/README.md), [logging](logging/README.md) |

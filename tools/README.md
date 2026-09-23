@@ -1,34 +1,25 @@
 # dg_xch_dev_tools
 
-Developer binaries for inspecting nodes, importing corpora, deriving coin roots, and working with weight proofs.
+Developer utilities for inspecting Chia nodes, copied databases, fixtures, and weight proofs. These are separate tools; normal service startup belongs to `dgx`.
 
-## Status
-
-The application launcher is `dgx`; these binaries are developer utilities, not substitutes for `dgx init`. Stack initialization provisions versioned application profiles for container-local paths while preserving service identities. The [Docker guide](../docker/README.md) documents the explicit height-100 acceptance target.
-
-These are developer tools, not production services. They may open databases, write fixture files, or contact the explicitly selected node. Use copied databases and disposable output directories; do not point experiments at a running production database.
-
-## Build and usage
+## Install and use
 
 From the repository root:
 
 ```sh
-cargo build -p dg_xch_dev_tools --bins
-cargo test -p dg_xch_dev_tools
-```
-
-Available binaries include `block_fetch`, `coin_root_derive`, `corpus_import`, `validate_node_ws`, and `wp_build`. `leak_probe` requires `--features postgres`. Each source file under `src/bin` defines its arguments; not all legacy tools implement `--help`.
-
-The disposable chain tools are `dg_xch_stack_init`, `dg_xch_stack_plot`, and `dg_xch_stack_check`. The initializer moved here from the farmer package. It creates per-node certificates and development keys without replacing existing identities. Plot preparation creates matching CPU plots sequentially for the selected farmers; it refuses to adopt unmarked existing plot directories or overwrite mismatched plots. The checker uses verified private-CA RPC to wait for real PoS2 genesis and subsequent blocks, compare a common height on all nodes, check zero genesis rewards, and require accepted blocks paying the configured farmers. See the [Compose instructions](../docker/README.md) for mounting the generated layout. These tools are not production key-management commands.
-
-For example, `wp_build` reads a selected tip from a chain store:
-
-```sh
-cargo run -p dg_xch_dev_tools --bin wp_build -- \
-  --db sqlite://./copied-chain.db --tip HEADER_HASH \
+cargo install --path tools --locked --bins
+wp_build --db sqlite://./copied-chain.db --tip HEADER_HASH \
   --out ./weight-proof.bin --network mainnet
 ```
 
-Replace the hash and network deliberately. PostgreSQL and mmap inputs require their matching build features. Diagnostics and fixtures can contain transaction or operational data; inspect them before sharing.
+Replace `HEADER_HASH` with a tip in the copied database. Other installed tools include `block_fetch`, `coin_root_derive`, `corpus_import`, and `validate_node_ws`. Check their argument definitions in `src/bin`; not all legacy tools implement `--help`.
 
-[Repository overview](../readme.md) · [Stores](../stores/README.md) · [Weight proofs](../weight-proof/README.md)
+Optional `postgres` and `mmap` features enable those stores. `leak_probe` requires `postgres`. Use copied databases and disposable output paths, never experiments against a live production store.
+
+## Integration helpers
+
+`dg_xch_stack_init`, `dg_xch_stack_plot`, `dg_xch_stack_pool`, and `dg_xch_stack_check` support the isolated [Compose stack](../docker/README.md). They provision test identities, prepare plots, register pool accounts, and check actual chain/payout progress. They are not mainnet setup or key-management tools.
+
+Pool preparation preserves original configurations and uses new portable plots. The checker distinguishes accepted partials from confirmed payouts; running containers alone are not a passing integration test.
+
+[CLI installation](../cli/README.md) · [Stores](../stores/README.md) · [Weight proofs](../weight-proof/README.md)

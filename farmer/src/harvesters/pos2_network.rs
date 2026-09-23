@@ -172,10 +172,12 @@ impl FarmingPlot {
     }
 
     fn sign(&self, request: RequestSignatures) -> Result<RespondSignatures, Error> {
-        if request.messages.len() != 2 {
+        if request.messages.len() != 2
+            && !(request.messages.len() == 1 && self.pool_contract_puzzle_hash.is_some())
+        {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
-                "expected exactly two plot signature messages",
+                "expected two block messages or one portable-pool partial message",
             ));
         }
         let public_key = PublicKey::key_validate(self.plot_public_key.as_ref())
@@ -900,6 +902,29 @@ mod tests {
             },
             farmer,
         )
+    }
+
+    #[test]
+    fn portable_partial_signatures_accept_one_message_only_for_pool_plots() {
+        for portable in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (path, keys, _) = fixture(directory.path(), 5, portable);
+            let plot = FarmingPlot::open(path, &keys, &constants()).unwrap();
+            for count in [0, 1, 2, 3] {
+                let request = RequestSignatures {
+                    plot_identifier: plot.path.identifier().to_string(),
+                    challenge_hash: [10; 32].into(),
+                    sp_hash: [11; 32].into(),
+                    messages: vec![[12; 32].into(); count],
+                    message_data: None,
+                    rc_block_unfinished: None,
+                };
+                assert_eq!(
+                    plot.sign(request).is_ok(),
+                    count == 2 || portable && count == 1
+                );
+            }
+        }
     }
 
     #[test]

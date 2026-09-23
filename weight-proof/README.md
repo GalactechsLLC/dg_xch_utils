@@ -2,20 +2,11 @@
 
 Weight-proof verification and serving for chain synchronization.
 
-## Status
-
 This is a consensus-sensitive library, not a replacement for validating downloaded blocks or a complete wallet light client. Fixture-based correctness tests and production performance validation are different checks.
 
 ## Usage
 
 Call `validate_weight_proof` with the intended consensus constants and primitive verifier. `serve::WeightProofServer` constructs responses from chain storage. Operators normally reach this through the full node rather than starting a separate service.
-
-This package has no standalone service binary. From the repository root:
-
-```sh
-cargo check -p dg_xch_weight_proof
-cargo doc -p dg_xch_weight_proof --no-deps
-```
 
 From another top-level workspace crate, add a local dependency:
 
@@ -24,15 +15,7 @@ From another top-level workspace crate, add a local dependency:
 dg_xch_weight_proof = { path = "../weight-proof" }
 ```
 
-Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
-
-## Validation
-
-```sh
-cargo test -p dg_xch_weight_proof
-```
-
-Tests that require external fixtures, a GPU, or a service need their documented prerequisites; compiling is not an end-to-end network test.
+Adjust the dependency path for your project. This is a library; install [dgx](../cli/README.md) to run services.
 
 ## Related packages
 

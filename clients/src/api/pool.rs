@@ -20,6 +20,14 @@ use std::io::{Error, ErrorKind};
 
 #[async_trait]
 pub trait PoolClient {
+    fn from_configured_client(_client: DefaultPoolClient) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        Err(Error::other(
+            "pool client does not support configured farmer construction",
+        ))
+    }
     async fn get_farmer<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
@@ -50,26 +58,61 @@ pub trait PoolClient {
 #[derive(Default, Debug)]
 pub struct DefaultPoolClient {
     pub client: Client,
+    pub(super) v2_accounts: HashMap<Bytes32, super::pool_v2::V2Account>,
 }
 impl DefaultPoolClient {
     pub fn new() -> Result<Self, Error> {
+        Self::with_ca_certificates(&[])
+    }
+
+    pub fn with_ca_certificates(certificates: &[Vec<u8>]) -> Result<Self, Error> {
+        let mut builder = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(30));
+        for certificate in certificates {
+            if certificate.len() > 1024 * 1024 {
+                return Err(Error::other("pool CA certificate exceeds 1 MiB"));
+            }
+            let roots = reqwest::Certificate::from_pem_bundle(certificate).map_err(Error::other)?;
+            if roots.is_empty() {
+                return Err(Error::other("pool CA file contains no certificates"));
+            }
+            for root in roots {
+                builder = builder.add_root_certificate(root);
+            }
+        }
         Ok(Self {
-            client: Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .map_err(Error::other)?,
+            client: builder.build().map_err(Error::other)?,
+            v2_accounts: HashMap::new(),
         })
     }
 }
 #[async_trait]
 impl PoolClient for DefaultPoolClient {
+    fn from_configured_client(client: DefaultPoolClient) -> Result<Self, Error> {
+        Ok(client)
+    }
     async fn get_farmer<S: std::hash::BuildHasher + Sync + Send + 'static>(
         &self,
         url: &str,
         request: GetFarmerRequest,
         headers: &Option<HashMap<String, String, S>>,
     ) -> Result<GetFarmerResponse, PoolError> {
+        if let Some(account) = self.v2_account(url, request.launcher_id)? {
+            let token = self.v2_token(request.launcher_id, account).await?;
+            let result = self
+                .get_farmer_v2(
+                    &account.base,
+                    dg_xch_core::protocols::pool_v2::GetFarmerRequest {
+                        launcher_id: request.launcher_id,
+                        authentication_token: 0,
+                        authentication_token_v2: token,
+                        signature: None,
+                    },
+                )
+                .await;
+            return self.v2_result(account, result).await;
+        }
         send_request(
             self.client.get(format!("{url}/farmer")),
             "get_farmer",
@@ -85,6 +128,26 @@ impl PoolClient for DefaultPoolClient {
         request: PostFarmerRequest,
         headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PostFarmerResponse, PoolError> {
+        if let Some(account) = self.v2_account(url, request.payload.launcher_id)? {
+            let mut payload = request.payload;
+            if payload.authentication_public_key != account.key.sk_to_pk().to_bytes().into() {
+                return Err(Error::other(
+                    "v2 registration key differs from configured synthetic key",
+                )
+                .into());
+            }
+            payload.authentication_token = 0;
+            let key = dg_xch_keys::derive_path_unhardened(&account.key, vec![12381])?;
+            let signature = sign(
+                &key,
+                &hash_256(payload.to_bytes(ChiaProtocolVersion::Chia0_0_37)?),
+            )
+            .to_bytes()
+            .into();
+            return self
+                .post_farmer_v2(&account.base, PostFarmerRequest { payload, signature })
+                .await;
+        }
         send_request(
             self.client.post(format!("{url}/farmer")),
             "post_farmer",
@@ -100,6 +163,24 @@ impl PoolClient for DefaultPoolClient {
         request: PutFarmerRequest,
         headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PutFarmerResponse, PoolError> {
+        if let Some(account) = self.v2_account(url, request.payload.launcher_id)? {
+            let token = self.v2_token(request.payload.launcher_id, account).await?;
+            let mut farmer = request.payload;
+            farmer.authentication_token = 0;
+            let result = self
+                .put_farmer_v2(
+                    &account.base,
+                    dg_xch_core::protocols::pool_v2::PutFarmerRequest {
+                        payload: dg_xch_core::protocols::pool_v2::UpdateFarmerPayload {
+                            farmer,
+                            authentication_token_v2: token,
+                        },
+                        signature: None,
+                    },
+                )
+                .await;
+            return self.v2_result(account, result).await;
+        }
         send_request(
             self.client.put(format!("{url}/farmer")),
             "put_farmer",
@@ -115,6 +196,35 @@ impl PoolClient for DefaultPoolClient {
         request: PostPartialRequest,
         headers: &Option<HashMap<String, String, S>>,
     ) -> Result<PostPartialResponse, PoolError> {
+        if let Some(account) = self.v2_account(url, request.payload.launcher_id)? {
+            if request.payload.authentication_token != 0 {
+                return Err(
+                    Error::other("v2 partial must be signed with a zero legacy token").into(),
+                );
+            }
+            let token = self.v2_token(request.payload.launcher_id, account).await?;
+            let headers: HashMap<String, String> = headers
+                .as_ref()
+                .map(|headers| {
+                    headers
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let result = self
+                .post_partial_v2(
+                    &account.base,
+                    dg_xch_core::protocols::pool_v2::PostPartialRequest {
+                        payload: request.payload,
+                        aggregate_signature: request.aggregate_signature,
+                        authentication_token_v2: token,
+                    },
+                    &headers,
+                )
+                .await;
+            return self.v2_result(account, result).await;
+        }
         send_request(
             self.client.post(format!("{url}/partial")),
             "post_partial",
@@ -134,7 +244,7 @@ impl PoolClient for DefaultPoolClient {
     }
 }
 
-async fn send_request<
+pub(super) async fn send_request<
     T: Serialize + Debug,
     R: DeserializeOwned,
     S: std::hash::BuildHasher + Sync + Send + 'static,
@@ -214,6 +324,7 @@ async fn send_request<
             }
         }
         Err(e) => {
+            let e = e.without_url();
             warn!("Failed to {method}: {e:?}");
             Err(PoolError {
                 error_code: PoolErrorCode::RequestFailed as u8,

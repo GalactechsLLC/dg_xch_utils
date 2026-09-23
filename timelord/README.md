@@ -1,67 +1,53 @@
 # dg_xch_timelord
 
-CPU VDF proof workers and authenticated regular and compact timelord services.
+CPU VDF workers for regular and compact Chia timelord services. This is a correctness-first implementation, not a mainnet-speed timelord. ASIC and GPU backends are not implemented.
 
-## Status
+## Install and run
 
-The regular service schedules challenge-chain, reward-chain, and infused-challenge-chain work. It emits signage points, infusion points, and end-of-slot bundles, handles overflow candidates and epoch changes, and replaces stale work when its full node announces a new peak. New chains start only after a matching full node explicitly authorizes genesis work; public Chia networks never bootstrap an invented genesis.
-
-The worker generates real Wesolowski proofs with `dg_xch_vdf`. Proofs are checked against their exact challenge, input, and iteration count before submission. CPU work runs in child processes so deadlines, shutdown, disconnects, reorgs, and earlier infusion requests can stop superseded computation. Regular work has no compact-mode iteration ceiling and uses memory-budgeted checkpoints. At most three chain proofs run concurrently; identical genesis challenge/reward work is shared.
-
-This is a correctness-first CPU implementation, not a production-speed timelord. Successive signage proofs currently recompute from the last peak or slot boundary rather than sharing a continuous squaring pipeline. The `VdfBackend` interface separates scheduling from proof generation for a future hardware adapter, but no ASIC or `hw_vdf_client` backend is implemented. Live-chain compatibility and full multi-node production require integration validation; source implementation alone is not evidence that those tests passed.
-
-The compact service remains available separately. It handles `RequestCompactProofOfTime` and returns matching normalized proofs, with one worker and a bounded request size.
-
-## Usage
-
-The [Docker development stack](../docker/README.md) supplies a separate development chain and isolated full nodes. To run a regular timelord separately:
+From the repository root on Linux or macOS:
 
 ```sh
-cargo build --release -p dg_xch_cli
-./target/release/dgx init
-./target/release/dgx timelord run --config /path/to/timelord.json
+cargo install --path cli --locked
+dgx init
+dgx timelord run --config /home/user/.dgx/config/timelord.json
 ```
 
-The JSON configuration has these fields:
+Create the JSON configuration using a client identity accepted by your node:
 
-| Field | Meaning |
-| --- | --- |
-| `chain` | `"mainnet"` by default, another supported Chia network name, `"dgx"`, or a custom chain-definition object identical to the node's definition. |
-| `fullnode_host`, `fullnode_port` | Full-node TCP destination. |
-| `server_name` | TLS server identity to verify, normally `localhost` for a local node. |
-| `tls.certificate`, `tls.private_key` | Client identity accepted by the node's peer endpoint. |
-| `tls.ca_certificate` | CA certificate that signed the node's server certificate. |
-| `max_iterations` | Compact-mode request ceiling, from 1 through 67,108,864. Regular mode uses the chain's complete iteration counts instead. |
-| `job_timeout_seconds` | Per-proof worker deadline, from 1 through 86,400 seconds. |
-| `reconnect_seconds` | Reconnection delay, from 1 through 300 seconds. |
-| `worker_memory_bytes` | Per-worker checkpoint/workspace budget, 128 KiB through 8 GiB; defaults to 64 MiB. Process/runtime overhead is additional. |
-| `max_iterations_per_second` | Optional positive local pacing limit. Omit or use `null` for unrestricted output. This delays real SP/IP/EOS proofs; it does not alter consensus or shorten VDFs. |
+```json
+{
+  "chain": "mainnet",
+  "fullnode_host": "localhost",
+  "fullnode_port": 8444,
+  "server_name": "localhost",
+  "tls": {
+    "certificate": "/path/to/public_timelord.crt",
+    "private_key": "/path/to/public_timelord.key",
+    "ca_certificate": "/path/to/node-server-ca.crt"
+  },
+  "max_iterations": 67108864,
+  "job_timeout_seconds": 300,
+  "reconnect_seconds": 5,
+  "worker_memory_bytes": 67108864
+}
+```
 
-Regular mode waits for a node-confirmed peak after submitting an infusion. If confirmation does not arrive, it reconnects for authoritative state instead of inventing a local block. An idle connection without authorized genesis work or an existing peak also reconnects. A low-iteration development chain can use pacing to leave CPU farmers time to recover proofs; production defaults do not impose this limit.
+The CA and server name must match the node's server certificate. Keep timelord access local or narrowly trusted on the node.
 
-For compact proofs, use the same configuration with:
+For compact proofs, use the same file:
 
 ```sh
-./target/release/dgx timelord compact --config /path/to/timelord.json
+dgx timelord compact --config /home/user/.dgx/config/timelord.json
 ```
 
-A compact-only starting configuration can use `max_iterations` of 1,048,576, a 300-second deadline, and a 5-second reconnect delay. Requests beyond its ceiling are skipped, not shortened. Larger Chia proofs may exceed that limit.
+The node must enable `--uncompact` to request compact proofs. `max_iterations` limits compact requests only; requests above it are skipped. Regular mode uses the chain's full iteration counts and can need longer worker deadlines.
 
-The full node must enable `--uncompact` to request compact proofs; regular operation does not require it. It accepts timelord connections from loopback or explicitly trusted networks only. Prefer a local node; do not expose timelord access through broad trusted CIDRs. The public Chia client CA is not secret and is not proof of administrative authority. The node remains responsible for consensus acceptance, including activation rules when a reconnecting timelord lacks transaction-history context.
+## Integration
 
-For one isolated proof, prepare a request JSON containing `generation`, a 32-byte hex `challenge`, `input` with a 100-byte hex `data` field, `iterations`, and `discriminant_bits`, then run:
+The regular scheduler handles signage points, infusion points, and end-of-slot proofs. Child-process workers allow stale work to be stopped after a new peak, disconnect, or deadline. Results are verified before submission.
 
-```sh
-cargo run -p dg_xch_cli -- timelord prove \
-  --request /path/to/vdf-request.json --timeout-seconds 300
-```
+`VdfBackend` separates scheduling from proving for future hardware support. Current CPU workers recompute successive signage proofs rather than maintaining a continuous squaring pipeline. Worker memory budgets exclude process overhead.
 
-The identity input has byte `08` followed by 99 zero bytes. The command writes the VDF info and proof as JSON to stdout. It does not submit them to a node. The hidden `worker` and `regular-worker` commands are subprocess protocols, not network APIs.
+For a standalone proof request, use `dgx timelord prove --help`. The hidden worker commands are internal subprocess protocols.
 
-## Development
-
-```sh
-cargo test -p dg_xch_timelord
-```
-
-Targeted tests cover real bounded-memory proofs, explicit genesis authorization, SP/IP/EOS proof lengths, infused-chain transitions, overflow and epoch handling, stale generations, pacing, and invalid backend output. Production-sized throughput, long reorg/epoch sequences, and a complete multi-node block-production run remain separate validation requirements.
+[VDF primitives](../vdf/README.md) · [Full node](../full-node/README.md)

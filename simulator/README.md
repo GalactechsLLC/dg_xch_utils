@@ -1,24 +1,24 @@
 # dg_xch_simulator
 
-Deterministic consensus fixtures, configurable block-production experiments, and development server entry points.
+Deterministic consensus fixtures and local block-production experiments. This is a developer tool, not a Chia mainnet node or an authenticated wallet service.
 
-## Status
-
-The simulator is for tests, not a production network or wallet service. Its optional PoS2 reference dependency is a test oracle and is not the native plotter implementation. Simulator success does not establish that the independent farmer/timelord network can produce blocks.
-
-## Usage
+## Install and launch
 
 From the repository root:
 
 ```sh
-cargo test -p dg_xch_simulator
-cargo build -p dg_xch_cli -p dg_xch_simulator
-./target/debug/dgx init
-SIMULATOR_HOSTNAME=127.0.0.1 ./target/debug/dgx simulator
+cargo install --path cli --locked
+cargo install --path simulator --locked --bin dg_xch_simulator
+dgx init
+SIMULATOR_HOSTNAME=127.0.0.1 dgx simulator
 ```
 
-The legacy server entry point reads `SIMULATOR_HOSTNAME` and `SIMULATOR_PORT` (defaults `0.0.0.0` and `8080`). Bind it to `127.0.0.1` for local work; it is not an authenticated wallet node. The `server` feature exposes the separate `sim_node` binary. Inspect its source/options before deployment rather than assuming it matches the full-node CLI.
+Install both into the same Cargo bin directory: `dgx simulator` launches the companion beside it. The server reads `SIMULATOR_HOSTNAME` and `SIMULATOR_PORT` (default port 8080). Keep it bound to loopback.
 
-Library consumers use `HarnessConfig`, `SimConfig`, `PlotKeys`, and the deterministic chain/step helpers. The `pos2` feature is enabled by default; disable default features when reference PoS2 functionality is unnecessary. Keep seeds and small fixture parameters explicit so regressions are reproducible.
+The optional `server` feature provides a separate `sim_node` developer binary. The default `pos2` feature includes Chia's reference implementation as a test oracle and needs system zstd development files; it is not used by the native plotter.
 
-[Repository overview](../readme.md) · [Full node](../full-node/README.md) · [Timelord](../timelord/README.md)
+## Library use
+
+Use `HarnessConfig`, `SimConfig`, `PlotKeys`, and deterministic chain/step helpers. Keep seeds and small fixture parameters explicit. Disable default features when the reference PoS2 path is unnecessary.
+
+For normal Chia operation, use [dgx full-node](../full-node/README.md). Simulator results do not establish live-network compatibility.

@@ -1,0 +1,34 @@
+[package]
+name = "dg_xch_pool"
+description = "Reference pool service and durable payout accounting"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+blst = { version = "0.3.16", features = ["portable"] }
+chia-bls = "=0.36.1"
+dg_xch_clients = { path = "../clients" }
+dg_xch_core = { path = "../core", default-features = false, features = ["bls"] }
+dg_xch_keys = { path = "../keys" }
+dg_xch_pos = { path = "../proof_of_space" }
+dg_xch_puzzles = { path = "../puzzles" }
+dg_xch_serialize = { path = "../serialize" }
+dg_xch_wallet = { path = "../wallet" }
+hex = "0.4.3"
+libc = "0.2"
+log = "0.4.29"
+zeroize = "1.9.0"
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false, features = ["endpoint", "tasks", "tls"] }
+rand = "0.10.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+serde_urlencoded = "0.7.1"
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"

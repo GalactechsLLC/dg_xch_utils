@@ -22,6 +22,7 @@ pub enum BroadcastStatus {
     Prepared,
     Accepted,
     Rejected,
+    Offered,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -30,6 +31,8 @@ pub struct StoredTransaction {
     pub created_at: u64,
     pub broadcast: BroadcastStatus,
     pub inputs_spent: bool,
+    #[serde(default)]
+    pub offer: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -71,7 +74,9 @@ impl StoredWallet {
         self.snapshot.pending = self
             .transactions
             .iter()
-            .filter(|transaction| !transaction.inputs_spent)
+            .filter(|transaction| {
+                !transaction.inputs_spent && transaction.broadcast != BroadcastStatus::Offered
+            })
             .map(|transaction| transaction.bundle.name())
             .collect::<Result<_, _>>()?;
         Ok(())

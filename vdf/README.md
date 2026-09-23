@@ -2,20 +2,11 @@
 
 Native class-group VDF proving and verification.
 
-## Status
-
 Consensus discriminant generation depends on GMP through `rug`; this is not a dependency-free pure-Rust build. Linux/macOS builds are supported by the workspace; Windows MSVC is not supported by this dependency path. Successful small proofs do not establish mainnet-speed proving throughput.
 
 ## Usage
 
 Use `prove` for bounded local work and `verify_vdf` / `verify_n_wesolowski` for verification. Pass the consensus discriminant size and iterations explicitly. The timelord service wraps these primitives with operational limits.
-
-This package has no standalone service binary. From the repository root:
-
-```sh
-cargo check -p dg_xch_vdf
-cargo doc -p dg_xch_vdf --no-deps
-```
 
 From another top-level workspace crate, add a local dependency:
 
@@ -24,15 +15,7 @@ From another top-level workspace crate, add a local dependency:
 dg_xch_vdf = { path = "../vdf" }
 ```
 
-Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
-
-## Validation
-
-```sh
-cargo test -p dg_xch_vdf
-```
-
-Tests that require external fixtures, a GPU, or a service need their documented prerequisites; compiling is not an end-to-end network test.
+Adjust the dependency path for your project. This is a library; install [dgx](../cli/README.md) to run services.
 
 ## Related packages
 

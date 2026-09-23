@@ -84,8 +84,11 @@ where
         client: Arc<RwLock<Option<FarmerClient<T>>>>,
     ) -> Result<Arc<Self>, Error> {
         let constants = config.read().await.constants()?;
+        let pool_client = Arc::new(P::from_configured_client(
+            config.read().await.pool_client()?,
+        )?);
         let s = Self {
-            pool_client: Arc::new(P::default()),
+            pool_client,
             shared_state,
             harvester,
             constants,

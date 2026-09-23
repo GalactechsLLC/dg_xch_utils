@@ -242,6 +242,7 @@ async fn prepared_transaction_reservations_survive_restart_and_reorg() {
             created_at: 1234,
             broadcast: BroadcastStatus::Prepared,
             inputs_spent: false,
+            offer: None,
         }],
         ..StoredWallet::default()
     };
@@ -262,6 +263,26 @@ async fn prepared_transaction_reservations_survive_restart_and_reorg() {
     assert_eq!(
         restored.transactions[0].broadcast,
         BroadcastStatus::Prepared
+    );
+    let mut offered = saved.clone();
+    offered.transactions[0].broadcast = BroadcastStatus::Offered;
+    offered.transactions[0].offer = Some("persisted offer text".into());
+    database.save(&offered).await.unwrap();
+    database.close().await.unwrap();
+    let mut database = WalletDatabase::open(&path, &identity(), genesis())
+        .await
+        .unwrap();
+    let restored_offer = database.load().await.unwrap().unwrap();
+    assert_eq!(restored_offer.snapshot.spendable, 0);
+    assert!(restored_offer.snapshot.pending.is_empty());
+    assert_eq!(
+        restored_offer.transactions[0].offer.as_deref(),
+        Some("persisted offer text")
+    );
+    assert!(
+        restored_offer
+            .reserved_coins()
+            .contains(&owned_coin.coin.name())
     );
     saved.snapshot.coins[0].spent = true;
     saved.transactions[0].inputs_spent = true;

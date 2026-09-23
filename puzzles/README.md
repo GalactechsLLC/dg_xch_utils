@@ -2,20 +2,13 @@
 
 CLVM puzzle definitions and helpers for standard coins, singletons, pools, CATs, DIDs, and NFTs.
 
-## Status
+Having a puzzle helper does not mean the desktop supports every operation for that wallet type. See the wallet and desktop packages for supported CAT, NFT, DID, and pool-management workflows. Do not hand-build spends for valuable funds without testing their conditions and signatures.
 
-Having a puzzle helper does not mean the desktop supports that wallet type. CAT/NFT/offers and pool-management UX remain separate work. Do not hand-build spends for valuable funds without testing their conditions and signatures.
+`pool_launch::launch_v1` constructs a v1 PlotNFT launcher and its required funding conditions. `pool_v2::PlotNft` constructs experimental v2 puzzles, memos, launches, and reward claims. The native v2 output is checked byte-for-byte against the pinned Chia reference described in the [pool README](../pool/README.md). Compiled v2 puzzle artifacts originate from that upstream revision; application-side construction and spend assembly are Rust. These helpers do not broadcast or maintain wallet reservations.
 
 ## Usage
 
 Use the appropriate puzzle module to construct puzzles and solutions, and verify expected tree hashes and spend conditions with `dg_xch_core`. Wallet transaction assembly uses `p2_delegated_puzzle_or_hidden_puzzle` and `clvm_puzzles`.
-
-This package has no standalone service binary. From the repository root:
-
-```sh
-cargo check -p dg_xch_puzzles
-cargo doc -p dg_xch_puzzles --no-deps
-```
 
 From another top-level workspace crate, add a local dependency:
 
@@ -24,15 +17,7 @@ From another top-level workspace crate, add a local dependency:
 dg_xch_puzzles = { path = "../puzzles" }
 ```
 
-Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
-
-## Validation
-
-```sh
-cargo test -p dg_xch_puzzles
-```
-
-Tests that require external fixtures, a GPU, or a service need their documented prerequisites; compiling is not an end-to-end network test.
+Adjust the dependency path for your project. This is a library; install [dgx](../cli/README.md) to run services.
 
 ## Related packages
 

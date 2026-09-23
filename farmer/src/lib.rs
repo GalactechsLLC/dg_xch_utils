@@ -26,6 +26,7 @@ use tokio::task::JoinSet;
 
 pub mod farmer;
 pub mod harvesters;
+pub mod pool_management;
 pub mod tasks;
 pub mod utils;
 
@@ -45,11 +46,64 @@ pub type NewProofHandler =
 
 pub struct FarmerService {
     pub state: Arc<FarmerSharedState<()>>,
+    config: Arc<RwLock<Config<()>>>,
     pos2: Arc<harvesters::Pos2Harvester>,
     tasks: JoinSet<()>,
 }
 
 impl FarmerService {
+    pub async fn pool_settings(&self) -> Result<Vec<pool_management::PoolSettings>, Error> {
+        let client = Arc::new(self.config.read().await.pool_client()?);
+        let configs = self.config.read().await.pool_info.clone();
+        let mut settings = Vec::new();
+        for config in configs.iter().filter(|config| !config.pool_url.is_empty()) {
+            let key = self
+                .state
+                .owner_public_keys_to_auth_secret_keys
+                .get(&config.owner_public_key)
+                .ok_or_else(|| Error::other("pool authentication key is unavailable"))?;
+            settings.push(pool_management::read_settings(client.clone(), config, key).await?);
+        }
+        Ok(settings)
+    }
+
+    pub async fn update_pool_settings(
+        &self,
+        expected: &pool_management::PoolSettings,
+        payout: &str,
+        difficulty: u64,
+    ) -> Result<pool_management::PoolSettings, Error> {
+        if !self
+            .config
+            .read()
+            .await
+            .pool_info
+            .iter()
+            .any(|config| config == &expected.config)
+        {
+            return Err(Error::other("pool is no longer configured on this farmer"));
+        }
+        let authentication_key = self
+            .state
+            .owner_public_keys_to_auth_secret_keys
+            .get(&expected.config.owner_public_key)
+            .ok_or_else(|| Error::other("pool authentication key is unavailable"))?;
+        let owner_key = self
+            .state
+            .owner_secret_keys
+            .get(&expected.config.owner_public_key)
+            .ok_or_else(|| Error::other("pool owner key is unavailable"))?;
+        pool_management::update_settings(
+            Arc::new(self.config.read().await.pool_client()?),
+            expected,
+            authentication_key,
+            owner_key,
+            payout,
+            difficulty,
+        )
+        .await
+    }
+
     pub fn pos2_status(&self) -> harvesters::Pos2Status {
         self.pos2.status()
     }
@@ -93,7 +147,7 @@ impl FarmerService {
             .await?;
         let farmer = Farmer::<DefaultPoolClient, NewProofHandler, SignaturesHandler>::new(
             state.clone(),
-            Arc::new(DefaultPoolClient::new()?),
+            Arc::new(config.read().await.pool_client()?),
             harvester.clone(),
             config.clone(),
         )
@@ -106,10 +160,11 @@ impl FarmerService {
         ));
         tasks.spawn(tasks::blockchain_state_updater::update_blockchain(
             state.clone(),
-            config,
+            config.clone(),
         ));
         Ok(Self {
             state,
+            config,
             tasks,
             pos2: harvester.pos2.clone(),
         })

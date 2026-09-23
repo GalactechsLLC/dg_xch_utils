@@ -22,6 +22,7 @@ dg_xch_farmer = { path = "../farmer" }
 dg_xch_plotter = { path = "../plotter" }
 dg_xch_pos2 = { path = "../proof_of_space/pos2" }
 dg_xch_introducer = { path = "../introducer" }
+dg_xch_pool = { path = "../pool" }
 dg_xch_timelord = { path = "../timelord", optional = true }
 dg_xch_vdf = { path = "../vdf", optional = true }
 dg_xch_wallet = { path = "../wallet" }

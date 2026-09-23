@@ -29,6 +29,7 @@ members = [
     "timelord",
     "introducer",
     "plotter",
+    "pool",
     "vdf",
     "weight-proof"
 ]

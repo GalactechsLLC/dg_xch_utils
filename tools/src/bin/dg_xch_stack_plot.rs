@@ -14,6 +14,8 @@ struct Args {
     #[arg(long)]
     root: PathBuf,
     #[arg(long)]
+    pooling: bool,
+    #[arg(long)]
     plots_root: PathBuf,
     #[arg(long, value_delimiter = ',', default_value = "cpu,nvidia,amd")]
     farmers: Vec<String>,
@@ -31,7 +33,8 @@ struct Args {
 #[serde(deny_unknown_fields)]
 struct PlotKeys {
     farmer_public_key: String,
-    pool_public_key: String,
+    pool_public_key: Option<String>,
+    pool_contract_puzzle_hash: Option<String>,
     payout_address: String,
 }
 
@@ -94,7 +97,12 @@ fn main() -> Result<(), Error> {
     let cancelled = AtomicBool::new(false);
     for farmer in &args.farmers {
         let mut bytes = Vec::new();
-        std::fs::File::open(args.root.join(format!("farmer-{farmer}/plot-keys.json")))?
+        let filename = if args.pooling {
+            "pool-plot-keys.json"
+        } else {
+            "plot-keys.json"
+        };
+        std::fs::File::open(args.root.join(format!("farmer-{farmer}/{filename}")))?
             .take(4097)
             .read_to_end(&mut bytes)?;
         if bytes.len() > 4096 {
@@ -102,7 +110,25 @@ fn main() -> Result<(), Error> {
         }
         let keys: PlotKeys = serde_json::from_slice(&bytes).map_err(Error::other)?;
         let farmer_public_key = public_key(&keys.farmer_public_key)?;
-        let pool_public_key = public_key(&keys.pool_public_key)?;
+        let pool = match (&keys.pool_public_key, &keys.pool_contract_puzzle_hash) {
+            (Some(public), None) if !args.pooling => PoolBinding::PublicKey(public_key(public)?),
+            (None, Some(contract)) if args.pooling => PoolBinding::Contract(
+                hex::decode(contract)
+                    .map_err(Error::other)?
+                    .try_into()
+                    .map_err(|_| Error::other("pool contract must be 32 bytes"))?,
+            ),
+            _ => {
+                return Err(Error::other(
+                    "plot binding does not match the requested pooling mode",
+                ));
+            }
+        };
+        let mut memo_prefix = match &pool {
+            PoolBinding::PublicKey(key) => key.to_vec(),
+            PoolBinding::Contract(hash) => hash.to_vec(),
+        };
+        memo_prefix.extend_from_slice(&farmer_public_key);
         dg_xch_keys::decode_puzzle_hash(&keys.payout_address)?;
         let directory = args.plots_root.join(farmer);
         std::fs::create_dir_all(&directory)?;
@@ -117,9 +143,8 @@ fn main() -> Result<(), Error> {
                     || metadata.info.strength != args.strength
                     || metadata.info.index != index
                     || metadata.info.meta_group != 0
-                    || metadata.memo.len() != 128
-                    || metadata.memo[..48] != pool_public_key
-                    || metadata.memo[48..96] != farmer_public_key
+                    || metadata.memo.len() != memo_prefix.len() + 32
+                    || !metadata.memo.starts_with(&memo_prefix)
                 {
                     return Err(Error::other(format!(
                         "existing plot does not match this farmer: {}",
@@ -135,7 +160,7 @@ fn main() -> Result<(), Error> {
             );
             let request = PlotRequest {
                 farmer_public_key,
-                pool: PoolBinding::PublicKey(pool_public_key),
+                pool: pool.clone(),
                 k: constants.plot_size_v2,
                 strength: args.strength,
                 index,

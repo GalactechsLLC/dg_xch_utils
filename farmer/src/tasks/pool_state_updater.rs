@@ -1,7 +1,7 @@
 use crate::farmer::config::Config;
 use crate::{HEADERS, PROTOCOL_VERSION};
 use blst::min_pk::SecretKey;
-use dg_xch_clients::api::pool::{DefaultPoolClient, PoolClient};
+use dg_xch_clients::api::pool::PoolClient;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::clvm::bls_bindings::{sign, verify_signature};
 use dg_xch_core::config::PoolWalletConfig;
@@ -13,13 +13,12 @@ use dg_xch_core::protocols::pool::{
 };
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_core::utils::hash_256;
-use dg_xch_keys::{encode_puzzle_hash, parse_payout_address};
+use dg_xch_keys::parse_payout_address;
 use dg_xch_serialize::ChiaSerialize;
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::io::Error;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime};
@@ -35,7 +34,7 @@ pub async fn pool_updater<T, C: Clone>(
 ) {
     let mut last_update = Instant::now();
     let mut first = true;
-    let pool_client = match DefaultPoolClient::new() {
+    let pool_client = match config.read().await.pool_client() {
         Ok(client) => Arc::new(client),
         Err(error) => {
             error!("Failed to initialize pool client: {error}");
@@ -322,14 +321,10 @@ pub async fn update_pool_state<'a, T, C: Clone, P: 'a + PoolClient + Sized + Syn
     shared_state: Arc<FarmerSharedState<T>>,
 ) -> Result<(), Error> {
     let auth_keys = shared_state.owner_public_keys_to_auth_secret_keys.as_ref();
-    let owner_keys = shared_state.owner_secret_keys.as_ref();
     let pool_states = shared_state.pool_states.clone();
     let headers = shared_state.additional_headers.as_ref().clone();
     for pool_config in &config.pool_info {
-        if let (Some(owner_secret_key), Some(auth_secret_key)) = (
-            owner_keys.get(&pool_config.owner_public_key),
-            auth_keys.get(&pool_config.owner_public_key),
-        ) {
+        if let Some(auth_secret_key) = auth_keys.get(&pool_config.owner_public_key) {
             if let Entry::Vacant(s) = pool_states
                 .write()
                 .await
@@ -395,10 +390,13 @@ pub async fn update_pool_state<'a, T, C: Clone, P: 'a + PoolClient + Sized + Syn
                     Ok(pool_info) => {
                         if pool_info.authentication_token_timeout == 0
                             || pool_info.minimum_difficulty == 0
+                            || pool_info.protocol_version
+                                != pool_config.pooling_version.protocol_number()
+                            || pool_info.target_puzzle_hash != pool_config.target_puzzle_hash
                         {
                             return Err(Error::new(
                                 std::io::ErrorKind::InvalidData,
-                                "pool returned zero authentication timeout or difficulty",
+                                "pool returned invalid limits, protocol version, or target",
                             ));
                         }
                         pool_states
@@ -512,7 +510,7 @@ pub async fn update_pool_state<'a, T, C: Clone, P: 'a + PoolClient + Sized + Syn
                     .authentication_token_timeout;
                 if let Some(authentication_token_timeout) = authentication_token_timeout {
                     info!("Running Farmer Pool Update");
-                    let farmer_info = match update_pool_farmer_info(
+                    if let Err(error) = update_pool_farmer_info(
                         pool_states.clone(),
                         pool_config,
                         authentication_token_timeout,
@@ -523,238 +521,9 @@ pub async fn update_pool_state<'a, T, C: Clone, P: 'a + PoolClient + Sized + Syn
                     )
                     .await
                     {
-                        Ok(resp) => Some(resp),
-                        Err(e) => {
-                            if e.error_code == PoolErrorCode::FarmerNotKnown as u8 {
-                                warn!("Farmer Pool Not Known");
-                                let post_shared_state = shared_state.clone();
-                                match post_farmer(
-                                    pool_config,
-                                    &config.payout_address,
-                                    authentication_token_timeout,
-                                    owner_secret_key,
-                                    auth_keys,
-                                    pool_config.difficulty,
-                                    client.clone(),
-                                    headers.clone(),
-                                    async move || {
-                                        post_shared_state
-                                            .upstream_handshake
-                                            .read()
-                                            .await
-                                            .as_ref()
-                                            .map(|v| v.software_version.clone())
-                                    },
-                                )
-                                .await
-                                {
-                                    Ok(resp) => {
-                                        info!(
-                                            "Welcome message from {} : {}",
-                                            pool_config.pool_url, resp.welcome_message
-                                        );
-                                    }
-                                    Err(e) => {
-                                        error!("Failed post farmer info. {e:?}");
-                                    }
-                                }
-                                match update_pool_farmer_info(
-                                    pool_states.clone(),
-                                    pool_config,
-                                    authentication_token_timeout,
-                                    auth_secret_key,
-                                    client.clone(),
-                                    headers.clone(),
-                                    shared_state.clone(),
-                                )
-                                .await
-                                {
-                                    Ok(resp) => Some(resp),
-                                    Err(e) => {
-                                        error!(
-                                            "Failed to update farmer info after POST /farmer. {e:?}"
-                                        );
-                                        None
-                                    }
-                                }
-                            } else if e.error_code == PoolErrorCode::InvalidSignature as u8 {
-                                warn!("Invalid Signature Detected, Updating Farmer Auth Key");
-                                let put_shared_state = shared_state.clone();
-                                match put_farmer(
-                                    pool_config,
-                                    &config.payout_address,
-                                    authentication_token_timeout,
-                                    owner_secret_key,
-                                    auth_keys,
-                                    pool_config.difficulty,
-                                    client.clone(),
-                                    headers.clone(),
-                                    async move || {
-                                        put_shared_state
-                                            .upstream_handshake
-                                            .read()
-                                            .await
-                                            .as_ref()
-                                            .map(|v| v.software_version.clone())
-                                    },
-                                )
-                                .await
-                                {
-                                    Ok(res) => {
-                                        info!("Farmer Update Response: {res:?}");
-                                        update_pool_farmer_info(
-                                            pool_states.clone(),
-                                            pool_config,
-                                            authentication_token_timeout,
-                                            auth_secret_key,
-                                            client.clone(),
-                                            headers.clone(),
-                                            shared_state.clone(),
-                                        )
-                                        .await
-                                        .ok()
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to update farmer auth key. {e:?}");
-                                        None
-                                    }
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                    };
-                    let old_instructions;
-                    let payout_instructions_update_required = if let Some(info) = farmer_info {
-                        info!("Farmer Info: {info:?}");
-                        if let (Ok(p1), Ok(p2)) = (
-                            parse_payout_address(&config.payout_address.to_ascii_lowercase()),
-                            parse_payout_address(&info.payout_instructions.to_ascii_lowercase()),
-                        ) {
-                            old_instructions = p2;
-                            p1 != old_instructions
-                        } else {
-                            old_instructions = String::new();
-                            false
-                        }
-                    } else {
-                        warn!("Did not get response from pool!");
-                        old_instructions = String::new();
-                        false
-                    };
-                    let current_difficulty = pool_states
-                        .read()
-                        .await
-                        .get(&pool_config.p2_singleton_puzzle_hash)
-                        .ok_or_else(|| {
-                            Error::other(format!(
-                                "pool state disappeared for {}",
-                                pool_config.p2_singleton_puzzle_hash
-                            ))
-                        })?
-                        .current_difficulty;
-                    let difficulty_update_required = pool_config.difficulty.unwrap_or_default() > 0
-                        && current_difficulty != pool_config.difficulty;
-                    debug!(
-                        "Current Pool Payout Address: {}",
-                        encode_puzzle_hash(
-                            &Bytes32::from_str(
-                                &parse_payout_address(&old_instructions).unwrap_or_default()
-                            )?,
-                            "xch"
-                        )
-                        .unwrap_or_default()
-                    );
-                    debug!(
-                        "Desired Pool Payout Address: {}",
-                        encode_puzzle_hash(
-                            &Bytes32::from_str(
-                                &parse_payout_address(&config.payout_address).unwrap_or_default()
-                            )?,
-                            "xch"
-                        )
-                        .unwrap_or_default()
-                    );
-                    if payout_instructions_update_required || difficulty_update_required {
-                        if payout_instructions_update_required {
-                            info!(
-                                "Updating Payout Address from {old_instructions} to {}",
-                                parse_payout_address(&config.payout_address.to_ascii_lowercase())
-                                    .unwrap_or_default(),
-                            );
-                        }
-                        if difficulty_update_required {
-                            info!(
-                                "Updating Difficulty from {} to {}",
-                                current_difficulty.unwrap_or_default(),
-                                pool_config.difficulty.unwrap_or_default()
-                            );
-                        }
-                        match owner_keys.get(&pool_config.owner_public_key) {
-                            None => {
-                                error!(
-                                    "Could not find Owner SK for {}",
-                                    pool_config.owner_public_key
-                                );
-                                continue;
-                            }
-                            Some(sk) => {
-                                let put_shared_state = shared_state.clone();
-                                match put_farmer(
-                                    pool_config,
-                                    &config.payout_address,
-                                    authentication_token_timeout,
-                                    sk,
-                                    auth_keys,
-                                    pool_config.difficulty,
-                                    client.clone(),
-                                    headers.clone(),
-                                    async move || {
-                                        put_shared_state
-                                            .upstream_handshake
-                                            .read()
-                                            .await
-                                            .as_ref()
-                                            .map(|v| v.software_version.clone())
-                                    },
-                                )
-                                .await
-                                {
-                                    Ok(res) => {
-                                        if payout_instructions_update_required
-                                            && let Some(false) = res.payout_instructions
-                                        {
-                                            error!("Pool Rejected Updating Payout Address")
-                                        }
-                                        if difficulty_update_required {
-                                            if let Some(true) = res.suggested_difficulty {
-                                                info!(
-                                                    "Updated Pool Difficulty to {:?}",
-                                                    pool_config.difficulty.unwrap_or_default()
-                                                );
-                                                pool_states
-                                                    .write()
-                                                    .await
-                                                    .get_mut(&pool_config.p2_singleton_puzzle_hash)
-                                                    .ok_or_else(|| {
-                                                        Error::other(format!(
-                                                            "pool state disappeared for {}",
-                                                            pool_config.p2_singleton_puzzle_hash
-                                                        ))
-                                                    })?
-                                                    .current_difficulty = pool_config.difficulty
-                                            } else if let Some(false) = res.payout_instructions {
-                                                error!("Pool Rejected Updating Difficulty")
-                                            }
-                                        }
-                                        info!("Farmer Update Response: {res:?}");
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to update farmer auth key. {e:?}");
-                                    }
-                                }
-                            }
-                        }
+                        warn!(
+                            "Pool account could not be read: {error:?}. Registration and settings changes require explicit user action; no pool values were changed."
+                        );
                     }
                 } else {
                     warn!(
@@ -765,7 +534,7 @@ pub async fn update_pool_state<'a, T, C: Clone, P: 'a + PoolClient + Sized + Syn
             }
         } else {
             warn!(
-                "Could not find owner sk for: {:?}",
+                "Could not find pool authentication key for: {:?}",
                 pool_config.owner_public_key
             );
         }

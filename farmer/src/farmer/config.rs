@@ -169,6 +169,8 @@ where
     pub fullnode_rpc_port: u16,
     pub farmer_info: Vec<FarmingInfo>,
     pub pool_info: Vec<PoolWalletConfig>,
+    #[serde(default)]
+    pub pool_ca_certificates: Vec<PathBuf>,
     pub payout_address: String,
     pub harvester_configs: HarvesterConfig<C>,
     pub metrics: Option<MetricsConfig>,
@@ -250,6 +252,7 @@ impl<C: Clone> Default for Config<C> {
             fullnode_ws_port: 8444,
             farmer_info: vec![],
             pool_info: vec![],
+            pool_ca_certificates: vec![],
             payout_address: "".to_string(),
             harvester_configs: HarvesterConfig {
                 druid_garden: Some(DruidGardenHarvesterConfig::default()),
@@ -265,6 +268,59 @@ impl<C: Clone> Default for Config<C> {
 }
 
 impl<C: Clone> Config<C> {
+    pub fn pool_client(&self) -> Result<dg_xch_clients::api::pool::DefaultPoolClient, Error> {
+        use std::io::Read;
+        if self.pool_ca_certificates.len() > 16 {
+            return Err(Error::other("at most 16 custom pool CA files are allowed"));
+        }
+        let certificates = self
+            .pool_ca_certificates
+            .iter()
+            .map(|path| {
+                let mut bytes = Vec::new();
+                fs::File::open(path)?
+                    .take(1024 * 1024 + 1)
+                    .read_to_end(&mut bytes)?;
+                Ok(bytes)
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let mut client =
+            dg_xch_clients::api::pool::DefaultPoolClient::with_ca_certificates(&certificates)?;
+        for pool in &self.pool_info {
+            if pool.pooling_version == dg_xch_core::protocols::pool::PoolVersion::V2 {
+                let keys = self
+                    .farmer_info
+                    .iter()
+                    .find(|keys| keys.launcher_id == Some(pool.launcher_id))
+                    .ok_or_else(|| {
+                        Error::other("v2 pool requires explicit launcher-linked keys")
+                    })?;
+                let bytes = keys.auth_secret_key.ok_or_else(|| {
+                    Error::other("v2 pool requires its synthetic authentication key")
+                })?;
+                if keys.owner_secret_key != Some(bytes) {
+                    return Err(Error::other(
+                        "v2 owner and authentication keys must be the same synthetic PlotNFT key",
+                    ));
+                }
+                let key = SecretKey::from_bytes(bytes.as_ref())
+                    .map_err(|_| Error::other("invalid v2 authentication key"))?;
+                if key.sk_to_pk().to_bytes() != pool.owner_public_key.as_ref() {
+                    return Err(Error::other(
+                        "v2 PlotNFT public key does not match the authentication key",
+                    ));
+                }
+                client.add_v2_account(
+                    &pool.pool_url,
+                    pool.launcher_id,
+                    pool.target_puzzle_hash,
+                    key,
+                )?;
+            }
+        }
+        Ok(client)
+    }
+
     pub fn constants(&self) -> Result<ConsensusConstants, Error> {
         ChainSelection::from_config(&self.selected_network, self.chain_definition.as_ref())
             .and_then(|chain| chain.constants())

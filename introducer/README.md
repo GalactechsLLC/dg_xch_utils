@@ -1,31 +1,23 @@
 # dg_xch_introducer
 
-A small peer-discovery service using the Chia TLS/WebSocket handshake and `RequestPeersIntroducer` protocol. It helps full nodes find each other; it does not validate blocks or act as a central farmer.
+Peer discovery for Chia full nodes. The introducer checks advertised endpoints before sharing them; it does not validate blocks.
 
-## Status
+## Install and run
 
-The service accepts registrations from full-node connections on its configured chain. It derives the advertised address from the connection's source IP and handshake port, then checks that endpoint with a TLS-verified full-node handshake before sharing it. It never probes an address supplied in a message body.
-
-Registrations are held in memory, expire, and are rebuilt after a restart. Replies contain at most 100 peers. Connections, message sizes, probes, and registry capacity are bounded. Only one registered endpoint per source IP is retained; multiple public nodes behind one NAT need separate public addresses or another discovery arrangement.
-
-The listener is public and does not treat the public Chia CA as an authentication authority. Its outbound checks use the configured CA bundle and server name. A publicly reachable deployment still needs network-level abuse controls and operational testing.
-
-## Usage
-
-Run from the repository root:
+From the repository root:
 
 ```sh
-cargo build -p dg_xch_cli
-./target/debug/dgx init
-./target/debug/dgx introducer --config /path/to/introducer.json
+cargo install --path cli --locked
+dgx init
+dgx introducer --config /home/user/.dgx/config/introducer.json
 ```
 
-Use the [Docker development stack](../docker/README.md) to generate matching test certificates and configurations automatically. For a standalone instance, provide JSON like this:
+Create that JSON file with your certificate paths:
 
 ```json
 {
   "listen": "0.0.0.0:8445",
-  "chain": "dgx",
+  "chain": "mainnet",
   "tls": {
     "certificate": "/path/to/public_introducer.crt",
     "private_key": "/path/to/public_introducer.key",
@@ -39,24 +31,20 @@ Use the [Docker development stack](../docker/README.md) to generate matching tes
 }
 ```
 
-The identity is also presented when probing full nodes. The current full-node `/ws` route expects a public-network client certificate. `ca_certificate` instead contains the CAs that signed the **server** certificates of nodes you want to introduce. These are separate trust roles. `peer_server_name` must match those server certificates; the current local full-node certificates use `localhost`.
+The public introducer identity is also used when probing nodes. The CA bundle must trust their **server** certificates, and `peer_server_name` must match them. These are distinct from private RPC credentials.
 
-The `chain` field accepts `"mainnet"` (the default), another Chia network name, `"dgx"`, or a complete custom definition object. Use the exact same selection on all nodes. Point each node at the introducer:
-
-```sh
-cargo run -p dg_xch_cli --features coin-index --bin dgx -- full-node \
-  --listen 0.0.0.0:8444 --db sqlite:///path/to/chain.db \
-  --chain-config config/chains/dgx.json --rpc-tls private-ca \
-  --ssl-dir /path/to/node-ssl --introducer introducer.example:8445
-```
-
-Full nodes register at startup and refresh every 15 minutes, including when they already have peers. They also retry discovery while peer-starved. NAT deployments must expose their advertised listening port. Enable `allow_private_addresses` only for an isolated test or private network; the Docker example enables it on an internal bridge.
-
-## Development
+To have a mainnet node use your introducer:
 
 ```sh
-cargo test -p dg_xch_introducer
-cargo test -p dg_xch_servers transport
+dgx full-node --network mainnet --introducer introducer.example:8445
 ```
 
-The tests cover address policy, probe bounds, expiry, requester exclusion, and shared message framing. They are not a substitute for a public-network deployment test.
+Replace the example hostname with your reachable service. Nodes register at startup and refresh every 15 minutes; their advertised listening port must be reachable.
+
+## Behavior
+
+Registrations are kept in memory and expire. Replies contain at most 100 peers, with one endpoint retained per source IP. Multiple nodes behind one NAT need another discovery arrangement. Private addresses are rejected by default.
+
+The service bounds connections, probes, and messages, but a public deployment still needs network-level abuse protection. For embedding, use the configuration and service APIs in `src/lib.rs`.
+
+[Full node](../full-node/README.md) · [Shared transport](../servers/README.md)

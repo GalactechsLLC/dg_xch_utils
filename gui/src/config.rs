@@ -23,7 +23,7 @@ pub enum GpuBackend {
     Vulkan,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub version: u32,

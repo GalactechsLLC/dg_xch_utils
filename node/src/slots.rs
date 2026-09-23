@@ -79,6 +79,7 @@ pub struct PeakSlotContext<'a> {
 }
 
 pub struct SlotState {
+    received_times: HashMap<Bytes32, f64>,
     peak_hash: Option<Bytes32>,
     constants: ConsensusConstants,
     finished_sub_slots: Vec<FinishedSubSlot>,
@@ -93,6 +94,7 @@ impl SlotState {
     #[must_use]
     pub fn new(constants: ConsensusConstants) -> Self {
         let mut state = Self {
+            received_times: HashMap::new(),
             peak_hash: None,
             constants,
             finished_sub_slots: Vec::new(),
@@ -118,6 +120,29 @@ impl SlotState {
 
     pub fn peak_hash(&self) -> Option<Bytes32> {
         self.peak_hash
+    }
+
+    pub fn received_time(&self, hash: &Bytes32) -> Option<f64> {
+        self.received_times.get(hash).copied()
+    }
+
+    fn record_received(&mut self, hash: Bytes32) {
+        if self.received_times.contains_key(&hash) {
+            return;
+        }
+        let Ok(time) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+            return;
+        };
+        if self.received_times.len() >= 4096
+            && let Some(oldest) = self
+                .received_times
+                .iter()
+                .min_by(|left, right| left.1.total_cmp(right.1))
+                .map(|(hash, _)| *hash)
+        {
+            self.received_times.remove(&oldest);
+        }
+        self.received_times.insert(hash, time.as_secs_f64());
     }
 
     // The finished sub-slot whose challenge-chain hash is `challenge_hash`, with its index and
@@ -593,6 +618,7 @@ impl SlotState {
         }
 
         let sps = self.empty_sps();
+        self.record_received(eos.challenge_chain.hash().ok()?);
         self.finished_sub_slots.push(FinishedSubSlot {
             eos: Some(eos.clone()),
             sps,
@@ -800,6 +826,10 @@ impl SlotState {
                 return false;
             }
 
+            let Ok(hash) = sp_cc_vdf.output.hash() else {
+                return false;
+            };
+            self.record_received(hash);
             self.finished_sub_slots[slot_idx].sps[index as usize] = Some(signage_point.clone());
             return true;
         }
@@ -934,6 +964,7 @@ impl SlotState {
     }
 
     pub fn clear_slots(&mut self) {
+        self.received_times.clear();
         self.finished_sub_slots.clear();
         self.future_eos.clear();
         self.future_sp.clear();

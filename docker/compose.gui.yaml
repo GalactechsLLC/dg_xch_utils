@@ -1,0 +1,17 @@
+services:
+  node-cpu:
+    networks: [chain, gui]
+    ports:
+      - "127.0.0.1:18444:8444"
+  node-nvidia:
+    networks: [chain, gui]
+    ports:
+      - "127.0.0.1:18445:8444"
+  node-amd:
+    networks: [chain, gui]
+    ports:
+      - "127.0.0.1:18446:8444"
+
+networks:
+  gui:
+    driver: bridge

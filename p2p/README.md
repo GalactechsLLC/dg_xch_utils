@@ -2,20 +2,11 @@
 
 Peer address management, sessions, reconnection, and introducer discovery.
 
-## Status
-
 Introducers provide candidate endpoints, not trusted chain state. Peers still need handshake, network, rate-limit, and consensus validation. Private test-network address policies must be explicit.
 
 ## Usage
 
 Configure `P2pSettings`, create the peer registry and `Supervisor`, then start supervised outbound connections and optional introducer discovery. Most operators should configure these through `dgx full-node`.
-
-This package has no standalone service binary. From the repository root:
-
-```sh
-cargo check -p dg_xch_p2p
-cargo doc -p dg_xch_p2p --no-deps
-```
 
 From another top-level workspace crate, add a local dependency:
 
@@ -24,15 +15,7 @@ From another top-level workspace crate, add a local dependency:
 dg_xch_p2p = { path = "../p2p" }
 ```
 
-Adjust the path for an external application. Published crate versions may not include this checkout's APIs.
-
-## Validation
-
-```sh
-cargo test -p dg_xch_p2p
-```
-
-Tests that require external fixtures, a GPU, or a service need their documented prerequisites; compiling is not an end-to-end network test.
+Adjust the dependency path for your project. This is a library; install [dgx](../cli/README.md) to run services.
 
 ## Related packages
 

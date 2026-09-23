@@ -52,6 +52,8 @@ pub enum RootCommands {
     Plotter(crate::setup::ServiceArgs),
     Timelord(crate::setup::ServiceArgs),
     Introducer(crate::setup::ServiceArgs),
+    #[command(about = "Run the reference pool (pooling v2 requires explicit experimental opt-in)")]
+    Pool(crate::setup::ServiceArgs),
     Simulator(crate::setup::ServiceArgs),
     #[command(about = "Initialize or inspect a chain without creating blocks")]
     Chain(crate::chain::ChainArgs),

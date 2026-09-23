@@ -42,13 +42,34 @@ pub struct State {
     pub node_details: String,
     pub farmer_running: bool,
     pub farmer_stats: String,
+    pub pool_settings: Vec<dg_xch_farmer::pool_management::PoolSettings>,
     pub plot_job: Option<String>,
     pub inventory: Vec<(PathBuf, String)>,
     pub notice: String,
+    pub notice_error: bool,
+    pub notice_revision: u64,
+    pub import_result: Option<Result<String, String>>,
     pub plotting_keys: Option<(String, String, String)>,
+    pub offers: HashMap<String, Vec<(Bytes32, String, bool)>>,
+}
+
+#[derive(Clone)]
+pub enum OfferAction {
+    Create {
+        give: dg_xch_wallet::offers::OfferAmount,
+        receive: dg_xch_wallet::offers::OfferAmount,
+    },
+    Take(String),
+    Cancel(Bytes32),
 }
 
 pub enum Command {
+    Offer {
+        id: String,
+        genesis: Bytes32,
+        action: OfferAction,
+        fee: u64,
+    },
     PlottingKeys {
         id: String,
         password: Zeroizing<String>,
@@ -69,6 +90,16 @@ pub enum Command {
         amount: u64,
         fee: u64,
     },
+    Asset {
+        id: String,
+        genesis: Bytes32,
+        action: dg_xch_wallet::assets::AssetAction,
+        fee: u64,
+    },
+    WatchCat {
+        id: String,
+        asset_id: Bytes32,
+    },
     Settings(Settings),
     StartFarmer,
     StartAccountFarmer {
@@ -76,6 +107,12 @@ pub enum Command {
         password: Zeroizing<String>,
     },
     StopFarmer,
+    LoadPools,
+    UpdatePool {
+        expected: Box<dg_xch_farmer::pool_management::PoolSettings>,
+        payout: String,
+        difficulty: u64,
+    },
     ScanPlots,
     Plot {
         request: PlotRequest,
@@ -95,6 +132,15 @@ pub enum Command {
 }
 
 enum WalletCommand {
+    Offer {
+        action: OfferAction,
+        fee: u64,
+    },
+    Asset {
+        action: dg_xch_wallet::assets::AssetAction,
+        fee: u64,
+    },
+    WatchCat(Bytes32),
     Send {
         destination: Bytes32,
         amount: u64,
@@ -206,11 +252,23 @@ impl Backend {
     }
 
     pub fn command(&self, command: Command) {
+        let importing = matches!(&command, Command::Import { .. });
+        update(&self.state, |state| {
+            state.notice_revision = state.notice_revision.wrapping_add(1);
+            state.notice = "Working…".into();
+            state.notice_error = false;
+            if importing {
+                state.import_result = None;
+            }
+        });
         if let Err(error) = self.commands.try_send(command) {
-            self.state
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .notice = format!("Command queue unavailable: {error}");
+            update(&self.state, |state| {
+                state.notice = format!("Command queue unavailable: {error}");
+                state.notice_error = true;
+                if importing {
+                    state.import_result = Some(Err(state.notice.clone()));
+                }
+            });
         }
     }
 
@@ -285,15 +343,63 @@ async fn wallet_worker(
         let result = tokio::select! {
             _ = interval.tick() => session.sync().await.map(|_| ()),
             command = commands.recv() => match command {
+                Some(WalletCommand::Offer { action, fee }) => {
+                    let result = match action {
+                        OfferAction::Create { give, receive } => session.create_offer(give, receive, fee).await.map(|_| "Offer signed and saved. Its inputs remain reserved until spent. Copy it from the saved offers below.".to_string()),
+                        OfferAction::Take(text) => session.take_offer(&text, fee).await.map(|id| format!("Offer acceptance submitted: {id}")),
+                        OfferAction::Cancel(id) => session.cancel_offer(id, fee).await.map(|id| format!("On-chain cancellation submitted: {id}. The offer is not cancelled until this transaction confirms.")),
+                    };
+                    update(&state, |state| {
+                        state.notice = match &result { Ok(message) => message.clone(), Err(error) => format!("Offer operation failed: {error}") };
+                        state.notice_error = result.is_err();
+                    });
+                    result.map(|_| ())
+                },
+                Some(WalletCommand::WatchCat(asset_id)) => {
+                    let result = session.watch_cat(asset_id).await;
+                    update(&state, |state| { state.notice = match &result { Ok(_) => "CAT asset ID saved. Both CAT1 (read-only) and CAT2 addresses will be scanned.".into(), Err(error) => format!("Could not watch CAT: {error}") }; state.notice_error = result.is_err(); });
+                    result
+                },
+                Some(WalletCommand::Asset { action, fee }) => {
+                    let result = session.asset_transaction(action, fee).await;
+                    update(&state, |state| {
+                        state.notice = match &result { Ok(transaction) => format!("Asset transaction submitted: {transaction}"), Err(error) => format!("Asset transaction failed: {error}") };
+                        state.notice_error = result.is_err();
+                    });
+                    result.map(|_| ())
+                },
                 Some(WalletCommand::Send { destination, amount, fee }) => {
                     let result = session.send(destination, amount, fee).await;
-                    if let Ok(transaction) = &result { update(&state, |state| state.notice = format!("Transaction submitted: {transaction}")); }
+                    update(&state, |state| match &result {
+                        Ok(transaction) => { state.notice = format!("Transaction submitted: {transaction}"); state.notice_error = false; }
+                        Err(error) => { state.notice = format!("Payment failed: {error}"); state.notice_error = true; }
+                    });
                     result.map(|_| ())
                 },
                 None => break,
             }
         };
         update(&state, |state| {
+            state.offers.insert(
+                id.clone(),
+                session
+                    .transactions()
+                    .iter()
+                    .filter_map(|transaction| {
+                        transaction.offer.as_ref().and_then(|text| {
+                            transaction.bundle.name().ok().map(|name| {
+                                (
+                                    name,
+                                    text.clone(),
+                                    transaction.broadcast
+                                        == dg_xch_wallet::storage::BroadcastStatus::Offered
+                                        && !transaction.inputs_spent,
+                                )
+                            })
+                        })
+                    })
+                    .collect(),
+            );
             if let Some(account) = state
                 .accounts
                 .iter_mut()
@@ -316,6 +422,7 @@ async fn command_worker(
 ) {
     let mut wallets: HashMap<String, (mpsc::Sender<WalletCommand>, JoinHandle<()>)> =
         HashMap::new();
+    let mut farming_keys = HashMap::new();
     let mut farmer: Option<FarmerService> = None;
     let mut plot: Option<JoinHandle<()>> = None;
     let mut inventory: Option<JoinHandle<()>> = None;
@@ -326,7 +433,7 @@ async fn command_worker(
             _ = tick.tick() => {
                 if let Some(error) = farmer.as_mut().and_then(FarmerService::failure) {
                     if let Some(service) = farmer.take() { service.stop().await; }
-                    update(&state, |state| { state.farmer_running = false; state.notice = error; });
+                    update(&state, |state| { state.farmer_running = false; state.notice = error; state.notice_error = true; });
                 }
                 if let Some(service) = &farmer {
                     let recent = service.state.most_recent_sp.read().await;
@@ -338,22 +445,27 @@ async fn command_worker(
             }
         };
         let settings = configuration.borrow().clone();
+        let importing = matches!(&command, Command::Import { .. });
+        update(&state, |state| {
+            state.notice = "Working…".into();
+            state.notice_error = false;
+        });
         let result: Result<(), Error> = async {
             match command {
                 Command::PlottingKeys { id, password } => {
                     update(&state, |state| state.plotting_keys = None);
                     let account = Account::load(&paths.accounts(), &id)?;
                     if account.network != settings.network { return Err(Error::other("account belongs to another network")); }
-                    let secret = tokio::task::spawn_blocking(move || account.unlock(&password)).await.map_err(Error::other)??;
-                    let farmer = hex::encode(dg_xch_keys::master_sk_to_farmer_sk(&secret)?.sk_to_pk().to_bytes());
-                    let pool = hex::encode(dg_xch_keys::master_sk_to_pool_sk(&secret)?.sk_to_pk().to_bytes());
+                    let keys = account_farming_keys(&account, password, &farming_keys).await?;
+                    let farmer = hex::encode(keys.0.sk_to_pk().to_bytes());
+                    let pool = hex::encode(keys.1.sk_to_pk().to_bytes());
                     update(&state, |state| { state.plotting_keys = Some((id, farmer, pool)); state.notice = "Public plotting keys loaded. No node connection or wallet sync is needed.".into(); });
                 },
                 Command::Import { name, mnemonic, password } => {
                     if state.lock().unwrap_or_else(|error| error.into_inner()).accounts.len() >= 64 { return Err(Error::other("account limit reached")); }
                     let account = tokio::task::spawn_blocking(move || Account::import(name, settings.network, &mnemonic, &password)).await.map_err(Error::other)??;
                     account.save_new(&paths.accounts())?;
-                    update(&state, |state| { state.accounts.push(AccountView { account, unlocked: false, snapshot: None, error: None, updated: None }); state.notice = "Encrypted account imported. Back up your mnemonic independently.".into(); });
+                    update(&state, |state| { state.import_result = Some(Ok(account.id.clone())); state.accounts.push(AccountView { account, unlocked: false, snapshot: None, error: None, updated: None }); state.notice = "Wallet created and encrypted. Unlock it to track its balance.".into(); });
                 },
                 Command::Unlock { id, password } => {
                     if wallets.contains_key(&id) { return Err(Error::other("wallet is already unlocked")); }
@@ -361,15 +473,20 @@ async fn command_worker(
                     if account.network != settings.network { return Err(Error::other("account belongs to another network")); }
                     let genesis = settings.trusted_genesis()?;
                     let secret = tokio::task::spawn_blocking(move || account.unlock(&password)).await.map_err(Error::other)??;
+                    let keys = (dg_xch_keys::master_sk_to_farmer_sk(&secret)?, dg_xch_keys::master_sk_to_pool_sk(&secret)?);
                     let session = WalletSession::new(secret, settings.client()?, Arc::new(settings.constants()?), genesis, paths.data.join("wallets").join(&id).join(format!("{}.sqlite", hex::encode(genesis)))).await?;
                     let (sender, receiver) = mpsc::channel(4);
                     update(&state, |state| if let Some(account) = state.accounts.iter_mut().find(|account| account.account.id == id) { account.unlocked = true; account.snapshot = Some(session.snapshot()); account.error = None; });
                     let worker = tokio::spawn(wallet_worker(id.clone(), session, receiver, state.clone(), settings.poll_seconds));
+                    farming_keys.insert(id.clone(), keys);
                     wallets.insert(id, (sender, worker));
+                    update(&state, |state| state.notice = "Wallet unlocked. Balance tracking is running in the background.".into());
                 },
                 Command::Lock(id) => {
+                    farming_keys.remove(&id);
                     if let Some((_, handle)) = wallets.remove(&id) { handle.abort(); let _ = handle.await; }
                     update(&state, |state| if let Some(account) = state.accounts.iter_mut().find(|account| account.account.id == id) { account.unlocked = false; account.snapshot = None; account.error = None; });
+                    update(&state, |state| state.notice = "Wallet locked. An already-running farmer keeps its separate farming keys until stopped.".into());
                 },
                 Command::Send { id, address, amount, fee } => {
                     let destination = dg_xch_keys::decode_puzzle_hash(&address)?;
@@ -377,8 +494,29 @@ async fn command_worker(
                     wallets.get(&id).ok_or_else(|| Error::other("wallet is locked"))?.0.try_send(WalletCommand::Send { destination, amount, fee }).map_err(Error::other)?;
                     update(&state, |state| state.notice = "Transaction queued for revalidation and signing.".into());
                 },
+                Command::WatchCat { id, asset_id } => {
+                    wallets.get(&id).ok_or_else(|| Error::other("wallet is locked"))?.0.try_send(WalletCommand::WatchCat(asset_id)).map_err(Error::other)?;
+                },
+                Command::Offer { id, genesis, action, fee } => {
+                    if settings.trusted_genesis()? != genesis { return Err(Error::other("network changed; review the offer again")); }
+                    wallets.get(&id).ok_or_else(|| Error::other("wallet is locked"))?.0.try_send(WalletCommand::Offer { action, fee }).map_err(Error::other)?;
+                    update(&state, |state| state.notice = "Offer operation queued for validation and signing.".into());
+                }
+                Command::Asset { id, genesis, action, fee } => {
+                    if genesis != settings.trusted_genesis()? { return Err(Error::other("network changed since you reviewed this asset transaction")); }
+                    wallets.get(&id).ok_or_else(|| Error::other("wallet is locked"))?.0.try_send(WalletCommand::Asset { action, fee }).map_err(Error::other)?;
+                    update(&state, |state| state.notice = "Asset transaction queued for fresh synchronization, validation and signing.".into());
+                },
                 Command::Settings(mut settings) => {
                     settings.normalize_network()?;
+                    let mut appearance_only = configuration.borrow().clone();
+                    appearance_only.theme = settings.theme;
+                    if appearance_only == settings {
+                        paths.save(&settings)?;
+                        configuration.send(settings.clone()).map_err(Error::other)?;
+                        update(&state, |state| { state.settings = Some(settings); state.notice = "Appearance saved.".into(); });
+                        return Ok(());
+                    }
                     if !wallets.is_empty() || farmer.is_some() { return Err(Error::other("lock wallets and stop farming before changing settings")); }
                     paths.save(&settings)?;
                     configuration.send(settings.clone()).map_err(Error::other)?;
@@ -396,7 +534,8 @@ async fn command_worker(
                     if farmer.is_some() { return Err(Error::other("farmer is already running")); }
                     let account = Account::load(&paths.accounts(), &id)?;
                     if account.network != settings.network { return Err(Error::other("farming account belongs to another network")); }
-                    let secret = tokio::task::spawn_blocking(move || account.unlock(&password)).await.map_err(Error::other)??;
+                    let keys = account_farming_keys(&account, password, &farming_keys).await?;
+                    if settings.farmer_payout_address.trim().is_empty() { return Err(Error::other("Set a farmer payout address in Settings before starting the farmer.")); }
                     let constants = settings.constants()?;
                     let payout = dg_xch_keys::decode_puzzle_hash(&settings.farmer_payout_address)?;
                     if dg_xch_keys::encode_puzzle_hash(&payout, constants.bech32_prefix)? != settings.farmer_payout_address.to_lowercase() { return Err(Error::other("farmer payout address belongs to another network")); }
@@ -411,8 +550,8 @@ async fn command_worker(
                     config.ssl_root_path = if settings.farmer_ssl_root.is_empty() { None } else { Some(settings.farmer_ssl_root) };
                     config.payout_address = settings.farmer_payout_address;
                     config.farmer_info.push(dg_xch_farmer::farmer::config::FarmingInfo {
-                        farmer_secret_key: dg_xch_keys::master_sk_to_farmer_sk(&secret)?.to_bytes().into(),
-                        pool_secret_key: Some(dg_xch_keys::master_sk_to_pool_sk(&secret)?.to_bytes().into()),
+                        farmer_secret_key: keys.0.to_bytes().into(),
+                        pool_secret_key: Some(keys.1.to_bytes().into()),
                         ..Default::default()
                     });
                     config.harvester_configs.druid_garden = Some(dg_xch_farmer::farmer::config::DruidGardenHarvesterConfig {
@@ -423,7 +562,24 @@ async fn command_worker(
                 },
                 Command::StopFarmer => {
                     if let Some(service) = farmer.take() { service.stop().await; }
-                    update(&state, |state| { state.farmer_running = false; state.farmer_stats.clear(); });
+                    update(&state, |state| { state.farmer_running = false; state.pool_settings.clear(); state.farmer_stats.clear(); state.notice = "Farmer stopped.".into(); });
+                },
+                Command::LoadPools => {
+                    let service = farmer.as_ref().ok_or_else(|| Error::other("start your configured farmer first"))?;
+                    let pools = service.pool_settings().await?;
+                    update(&state, |state| {
+                        state.notice = if pools.is_empty() { "No pool accounts configured. Select a farmer configuration containing your pool and owner/authentication keys.".into() } else { "Current settings loaded from the pools. No values were changed.".into() };
+                        state.pool_settings = pools;
+                    });
+                },
+                Command::UpdatePool { expected, payout, difficulty } => {
+                    let service = farmer.as_ref().ok_or_else(|| Error::other("farmer is stopped"))?;
+                    let current = service.update_pool_settings(&expected, &payout, difficulty).await?;
+                    update(&state, |state| {
+                        state.pool_settings.retain(|pool| pool.config.launcher_id != current.config.launcher_id);
+                        state.pool_settings.push(current);
+                        state.notice = "Pool changes accepted; current values reloaded from the pool.".into();
+                    });
                 },
                 Command::Plot { request, output, limits, gpu } => {
                     if plot.as_ref().is_some_and(|job| !job.is_finished()) { return Err(Error::other("a plot job is already running")); }
@@ -474,7 +630,7 @@ async fn command_worker(
                         }));
                     }));
                 },
-                Command::CancelPlot => { cancelled.store(true, Ordering::Release); },
+                Command::CancelPlot => { cancelled.store(true, Ordering::Release); update(&state, |state| state.notice = "Cancellation requested. The job will stop at its next cancellation checkpoint.".into()); },
                 Command::ProvePlot { path, challenge, testnet, gpu, memory_bytes, max_work } => {
                     if plot.as_ref().is_some_and(|job| !job.is_finished()) { return Err(Error::other("a plot job is already running")); }
                     let info = dg_xch_plotter::inspect(&path)?;
@@ -530,14 +686,27 @@ async fn command_worker(
                                 Err(error) => plots.push((directory, format!("Directory error: {error}"))),
                             }
                         }
-                        update(&state, |state| state.inventory = plots);
+                        update(&state, |state| { state.notice = format!("Plot scan finished: {} entries. Directory errors, if any, appear in the inventory.", plots.len()); state.notice_error = false; state.inventory = plots; });
                     }));
                 },
             }
             Ok(())
         }.await;
         if let Err(error) = result {
-            update(&state, |state| state.notice = error.to_string());
+            update(&state, |state| {
+                state.notice = error.to_string();
+                state.notice_error = true;
+                if importing {
+                    state.import_result = Some(Err(state.notice.clone()));
+                }
+            });
+        } else {
+            update(&state, |state| {
+                if state.notice == "Working…" {
+                    state.notice =
+                        "Request accepted. Check the job status below for progress.".into();
+                }
+            });
         }
     }
     cancelled.store(true, Ordering::Release);
@@ -547,6 +716,28 @@ async fn command_worker(
     if let Some(service) = farmer {
         service.stop().await;
     }
+}
+
+type FarmingKeys = (blst::min_pk::SecretKey, blst::min_pk::SecretKey);
+
+async fn account_farming_keys(
+    account: &Account,
+    password: Zeroizing<String>,
+    unlocked: &HashMap<String, FarmingKeys>,
+) -> Result<FarmingKeys, Error> {
+    if let Some(keys) = unlocked.get(&account.id) {
+        return Ok(keys.clone());
+    }
+    let account = account.clone();
+    tokio::task::spawn_blocking(move || {
+        let secret = account.unlock(&password)?;
+        Ok((
+            dg_xch_keys::master_sk_to_farmer_sk(&secret)?,
+            dg_xch_keys::master_sk_to_pool_sk(&secret)?,
+        ))
+    })
+    .await
+    .map_err(Error::other)?
 }
 
 async fn resolve_execution(
@@ -750,6 +941,90 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn imports_report_failures_success_and_duplicates_without_overwriting() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config: directory.path().join("config"),
+            data: directory.path().join("data"),
+        };
+        let backend = Backend::for_smoke_test(paths.clone(), Settings::default()).unwrap();
+        let mnemonic = bip39::Mnemonic::from_entropy(&[19; 32])
+            .unwrap()
+            .to_string();
+        let wait = || {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let snapshot = backend.snapshot();
+                if let Some(result) = snapshot.import_result {
+                    return result;
+                }
+                assert!(Instant::now() < deadline, "import timed out");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        for (password, succeeds) in [
+            ("short", false),
+            ("temporary-wallet-password", true),
+            ("temporary-wallet-password", false),
+        ] {
+            backend.command(Command::Import {
+                name: "Temporary wallet".into(),
+                mnemonic: Zeroizing::new(mnemonic.clone()),
+                password: Zeroizing::new(password.into()),
+            });
+            assert_eq!(wait().is_ok(), succeeds);
+            assert_eq!(backend.snapshot().notice_error, !succeeds);
+        }
+        assert_eq!(backend.snapshot().accounts.len(), 1);
+        let id = backend.snapshot().accounts[0].account.id.clone();
+        assert!(
+            Account::load(&paths.accounts(), &id)
+                .unwrap()
+                .unlock("temporary-wallet-password")
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn unlocked_farming_keys_do_not_need_another_password() {
+        let phrase = bip39::Mnemonic::from_entropy(&[21; 32])
+            .unwrap()
+            .to_string();
+        let account = Account::import(
+            "Temporary wallet".into(),
+            "mainnet".into(),
+            &phrase,
+            "temporary-wallet-password",
+        )
+        .unwrap();
+        let mut unlocked = HashMap::new();
+        let keys = account_farming_keys(
+            &account,
+            Zeroizing::new("temporary-wallet-password".into()),
+            &unlocked,
+        )
+        .await
+        .unwrap();
+        let public_key = keys.0.sk_to_pk().to_bytes();
+        unlocked.insert(account.id.clone(), keys);
+        assert_eq!(
+            account_farming_keys(&account, Zeroizing::new(String::new()), &unlocked)
+                .await
+                .unwrap()
+                .0
+                .sk_to_pk()
+                .to_bytes(),
+            public_key
+        );
+        unlocked.remove(&account.id);
+        assert!(
+            account_farming_keys(&account, Zeroizing::new(String::new()), &unlocked)
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn plotting_keys_load_without_a_node_or_wallet_session() {

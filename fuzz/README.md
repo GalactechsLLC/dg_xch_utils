@@ -1,23 +1,18 @@
 # dg-xch-fuzz
 
-Fuzz targets for CLVM parsing, execution, and serialization round trips.
+Developer-only fuzz targets for CLVM parsing, execution, and serialization. No node or wallet is needed.
 
-## Status
+## Install and run
 
-Fuzz targets are developer-only programs. They need neither `dgx init` nor a running node or GUI. Keep corpora separate from real keys, wallets, and node databases.
-
-This package is excluded from normal workspace builds. It requires a nightly Rust toolchain and cargo-fuzz. It does not start a node or validate a network deployment.
-
-## Run
-
-From this directory, with the toolchain and dependencies already installed:
+Install the harness, then run from this directory with a nightly Rust toolchain:
 
 ```sh
+cargo install cargo-fuzz --locked
 cargo +nightly fuzz run parse_program -- -max_total_time=60 -rss_limit_mb=1024
 cargo +nightly fuzz run run_program -- -max_total_time=60 -rss_limit_mb=1024
 cargo +nightly fuzz run roundtrip -- -max_total_time=60 -rss_limit_mb=1024
 ```
 
-Run in an isolated environment with no credentials or network access and explicit process/disk limits. Preserve a minimal failing input as a deterministic regression test after review. Fuzzing is resource-intensive and belongs after ordinary checks, not in every edit cycle.
+This package is outside normal workspace builds. Run it without credentials or network access, with disk/process limits, and retain reviewed minimal failures as regression fixtures.
 
-[Repository overview](../readme.md) · [Core](../core/README.md)
+[Core library](../core/README.md) · [Repository overview](../readme.md)

@@ -223,8 +223,60 @@ pub fn fingerprint(key: &PublicKey) -> u32 {
 }
 
 pub fn encode_puzzle_hash(puzzle_hash: &Bytes32, prefix: &str) -> Result<String, Error> {
-    bech32::encode::<Bech32m>(Hrp::parse_unchecked(prefix), &puzzle_hash.bytes())
+    let prefix = Hrp::parse(prefix).map_err(|error| Error::new(ErrorKind::InvalidInput, error))?;
+    bech32::encode::<Bech32m>(prefix, &puzzle_hash.bytes())
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
+}
+
+pub fn convert_address(input: &str, prefix: &str) -> Result<(Bytes32, String), Error> {
+    let input = input.trim();
+    let hexadecimal = input.strip_prefix("0x").unwrap_or(input);
+    let hash = if hexadecimal.len() == 64
+        && hexadecimal.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        Bytes32::parse(&hex::decode(hexadecimal).map_err(Error::other)?)?
+    } else {
+        let checked = bech32::primitives::decode::CheckedHrpstring::new::<Bech32m>(input).map_err(
+            |error| {
+                Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("Enter a 64-character puzzle hash or a valid Bech32m address: {error}"),
+                )
+            },
+        )?;
+        let bytes: Vec<_> = checked.byte_iter().collect();
+        if bytes.len() != 32 {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "address must contain exactly 32 bytes",
+            ));
+        }
+        Bytes32::parse(&bytes)?
+    };
+    Ok((hash, encode_puzzle_hash(&hash, prefix)?))
+}
+
+#[test]
+fn address_conversion_validates_checksum_length_and_prefix() {
+    let hash = Bytes32::from([17; 32]);
+    let address = encode_puzzle_hash(&hash, "xch").unwrap();
+    assert_eq!(
+        convert_address(&address, "txch").unwrap(),
+        (hash, encode_puzzle_hash(&hash, "txch").unwrap())
+    );
+    assert_eq!(
+        convert_address(&hex::encode(hash.bytes()), "xch")
+            .unwrap()
+            .1,
+        address
+    );
+    let legacy =
+        bech32::encode::<bech32::Bech32>(Hrp::parse("xch").unwrap(), &hash.bytes()).unwrap();
+    assert!(convert_address(&legacy, "xch").is_err());
+    assert!(convert_address("1234", "xch").is_err());
+    assert!(convert_address(&address, "bad prefix").is_err());
+    let short = bech32::encode::<Bech32m>(Hrp::parse("xch").unwrap(), &[0; 31]).unwrap();
+    assert!(convert_address(&short, "xch").is_err());
 }
 
 pub fn decode_puzzle_hash(address: &str) -> Result<Bytes32, Error> {

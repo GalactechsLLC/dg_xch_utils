@@ -7,6 +7,7 @@ pub mod introducer;
 pub mod outbound_limiter;
 pub mod peer_peak;
 pub mod pool;
+pub mod pool_v2;
 pub mod rate_limits;
 pub mod rate_limits_v3;
 pub mod shared;

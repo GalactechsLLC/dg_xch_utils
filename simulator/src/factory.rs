@@ -8,7 +8,6 @@ use dg_xch_core::blockchain::pool_target::PoolTarget;
 use dg_xch_core::blockchain::proof_of_space::{
     ProofBytes, ProofOfSpace, calculate_pos_challenge, calculate_prefix_bits_v2, passes_plot_filter,
 };
-use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::consensus::pot_iterations::{

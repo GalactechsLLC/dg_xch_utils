@@ -69,8 +69,11 @@ where
         client: Arc<RwLock<Option<FarmerClient<T>>>>,
     ) -> Result<Arc<Self>, Error> {
         let constants = config.read().await.constants()?;
+        let pool_client = Arc::new(P::from_configured_client(
+            config.read().await.pool_client()?,
+        )?);
         let s = Self {
-            pool_client: Arc::new(P::default()),
+            pool_client,
             shared_state: shared_state.clone(),
             harvester: harvester.clone(),
             constants,
@@ -341,7 +344,7 @@ where
             warn!("Did not find pool info for {p2_singleton_puzzle_hash}");
             return Ok(());
         }
-        let (pool_url, launcher_id) = if let Some(Some(config)) = self
+        let (pool_url, launcher_id, pooling_version) = if let Some(Some(config)) = self
             .shared_state
             .pool_states
             .read()
@@ -349,7 +352,11 @@ where
             .get(p2_singleton_puzzle_hash)
             .map(|v| v.pool_config.as_ref())
         {
-            (config.pool_url.clone(), config.launcher_id)
+            (
+                config.pool_url.clone(),
+                config.launcher_id,
+                config.pooling_version,
+            )
         } else {
             warn!("No Pool Config for {p2_singleton_puzzle_hash}");
             return Ok(());
@@ -384,7 +391,7 @@ where
         };
         let pool_required_iters =
             calculate_sp_interval_iters(&self.constants, self.constants.pool_sub_slot_iters)?;
-        if required_iters > pool_required_iters {
+        if required_iters >= pool_required_iters {
             warn!("Proof of space not good enough for pool {pool_url}: {pool_dif:?} {qs:?}");
             return Ok(());
         }
@@ -405,7 +412,13 @@ where
         };
         let payload = PostPartialPayload {
             launcher_id,
-            authentication_token: get_current_authentication_token(auth_token_timeout)?,
+            authentication_token: if pooling_version
+                == dg_xch_core::protocols::pool::PoolVersion::V2
+            {
+                0
+            } else {
+                get_current_authentication_token(auth_token_timeout)?
+            },
             proof_of_space: new_pos.proof.clone(),
             sp_hash: new_pos.sp_hash,
             end_of_sub_slot: new_pos.signage_point_index == 0,
@@ -618,14 +631,8 @@ impl<
                         String::from("chia-node-version"),
                         v.software_version.clone(),
                     );
-                    headers.insert(
-                        String::from("chia-farmer-version"),
-                        v.software_version.clone(),
-                    );
-                    headers.insert(
-                        String::from("chia-harvester-version"),
-                        v.software_version.clone(),
-                    );
+                    headers.insert(String::from("chia-farmer-version"), crate::version());
+                    headers.insert(String::from("chia-harvester-version"), crate::version());
                 }
                 headers.extend(HEADERS.clone());
                 match self

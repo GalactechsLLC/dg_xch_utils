@@ -27,6 +27,8 @@ struct Args {
     min_height: u32,
     #[arg(long, default_value_t = 1800)]
     timeout_seconds: u64,
+    #[arg(long)]
+    pooling: bool,
 }
 
 async fn client(args: &Args, node: &str) -> Result<FullnodeClient, Error> {
@@ -130,8 +132,66 @@ async fn check(
             "waiting for an accepted block from each required farmer",
         ));
     }
+    let pooling = if args.pooling {
+        let config: dg_xch_farmer::farmer::config::Config<()> = serde_yaml::from_slice(
+            &std::fs::read(args.root.join("farmer-cpu/pool-config.yaml"))?,
+        )
+        .map_err(Error::other)?;
+        let pool = config
+            .pool_info
+            .first()
+            .ok_or_else(|| Error::other("pool configuration is missing"))?;
+        let ca = std::fs::read(args.root.join("farmer-cpu/pool-ca.crt"))?;
+        let client = dg_xch_clients::api::pool::DefaultPoolClient::with_ca_certificates(&[ca])?;
+        let response = client
+            .client
+            .get(format!("{}/pool_stats", pool.pool_url))
+            .send()
+            .await
+            .map_err(Error::other)?
+            .error_for_status()
+            .map_err(Error::other)?;
+        let bytes = dg_xch_clients::http::bounded_body(response, 64 * 1024).await?;
+        let statistics: serde_json::Value = serde_json::from_slice(&bytes).map_err(Error::other)?;
+        if statistics["farmers"].as_u64() != Some(3)
+            || statistics["accepted_partials"].as_u64().unwrap_or(0) == 0
+            || statistics["confirmed_payouts"].as_u64().unwrap_or(0) == 0
+        {
+            return Err(Error::other(
+                "waiting for three pool registrations, accepted partials, and a confirmed payout",
+            ));
+        }
+        for payout_hash in required {
+            let coins = first
+                .get_coin_records_by_puzzle_hash(payout_hash, Some(true), None, None)
+                .await?;
+            let mut paid_by_pool = false;
+            for coin in coins {
+                if coin.coinbase || coin.coin.amount == 0 {
+                    continue;
+                }
+                if let Some(parent) = first
+                    .get_coin_record_by_name(&coin.coin.parent_coin_info)
+                    .await?
+                    && parent.spent
+                    && parent.coin.puzzle_hash == pool.target_puzzle_hash
+                {
+                    paid_by_pool = true;
+                    break;
+                }
+            }
+            if !paid_by_pool {
+                return Err(Error::other(format!(
+                    "waiting for an on-chain pool payout to {payout_hash}"
+                )));
+            }
+        }
+        Some(statistics)
+    } else {
+        None
+    };
     Ok(
-        serde_json::json!({ "success": true, "nodes": summaries, "required_farmers": args.require_farmer, "genesis_prefarm": 0 }),
+        serde_json::json!({ "success": true, "nodes": summaries, "required_farmers": args.require_farmer, "genesis_prefarm": 0, "pooling": pooling }),
     )
 }
 

@@ -412,8 +412,8 @@ mod tests {
             let mut expected_sums = vec![0u32; values.len()];
             let mut expected_bins = [0u32; BINS];
             let mut total = 0u32;
-            for bucket in 0..BINS {
-                expected_bins[bucket] = total;
+            for (bucket, expected_bin) in expected_bins.iter_mut().enumerate() {
+                *expected_bin = total;
                 let mut prefix = 0u32;
                 for chunk in 0..chunks {
                     let position = bucket * chunks + chunk;

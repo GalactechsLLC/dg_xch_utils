@@ -329,6 +329,7 @@ fn create_farmer(
             ..FarmingInfo::default()
         }],
         pool_info: Vec::new(),
+        pool_ca_certificates: Vec::new(),
         payout_address: encode_puzzle_hash(&payout, "dgx")?,
         harvester_configs: HarvesterConfig {
             druid_garden: Some(DruidGardenHarvesterConfig {

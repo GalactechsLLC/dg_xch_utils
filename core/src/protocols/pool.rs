@@ -6,6 +6,23 @@ use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolVersion {
+    #[default]
+    V1,
+    V2,
+}
+
+impl PoolVersion {
+    pub const fn protocol_number(self) -> u8 {
+        match self {
+            Self::V1 => 1,
+            Self::V2 => 2,
+        }
+    }
+}
+
 #[derive(ChiaSerial, Copy, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum PoolSingletonState {
     SelfPooling = SELF_POOLING as isize,

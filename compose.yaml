@@ -121,7 +121,7 @@ services:
 
   farmer-cpu:
     <<: *service
-    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, /service/config.yaml]
+    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, "/service/${DGX_FARMER_CONFIG:-config.yaml}"]
     depends_on:
       node-cpu:
         condition: service_healthy
@@ -138,12 +138,14 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.cuda
+      additional_contexts:
+        dgx-stack: service:init-stack
       args:
-        STACK_IMAGE: dgx-development:local
+        STACK_IMAGE: dgx-stack
         CUDA_ARCH: ${DGX_CUDA_ARCH:-sm_86}
     platform: linux/amd64
     profiles: [nvidia]
-    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, /service/config.yaml]
+    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, "/service/${DGX_FARMER_CONFIG:-config.yaml}"]
     depends_on:
       node-nvidia:
         condition: service_healthy
@@ -166,7 +168,7 @@ services:
   farmer-amd:
     <<: *service
     profiles: [amd]
-    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, /service/config.yaml]
+    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, "/service/${DGX_FARMER_CONFIG:-config.yaml}"]
     depends_on:
       node-amd:
         condition: service_healthy
@@ -222,6 +224,38 @@ services:
       - farmer-nvidia:/stack/farmer-nvidia:ro
       - farmer-amd:/stack/farmer-amd:ro
 
+  setup-pool:
+    <<: *service
+    profiles: [pooling]
+    restart: "no"
+    entrypoint: [dg_xch_stack_pool, --root, /stack]
+    command: [prepare]
+    network_mode: service:node-cpu
+    volumes:
+      - common:/stack/common:ro
+      - farmer-cpu:/stack/farmer-cpu
+      - farmer-nvidia:/stack/farmer-nvidia
+      - farmer-amd:/stack/farmer-amd
+      - pool:/stack/pool
+
+  pool:
+    <<: *service
+    profiles: [pooling]
+    entrypoint: [dgx, --config-dir, /service/app, pool, --config, /service/config.json]
+    depends_on:
+      node-cpu:
+        condition: service_healthy
+    network_mode: service:node-cpu
+    volumes:
+      - pool:/service
+      - farmer-cpu:/stack/farmer-cpu:ro
+    mem_limit: 1g
+    healthcheck:
+      test: [CMD, curl, --silent, --fail, --cacert, /service/ca.crt, https://node-cpu:8448/pool_info]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
 networks:
   chain:
     internal: true
@@ -236,3 +270,4 @@ volumes:
   farmer-amd:
   introducer:
   timelord:
+  pool:

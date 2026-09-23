@@ -89,6 +89,7 @@ pub fn apply(context: &egui::Context, theme: Theme) {
         Color32::from_rgb(169, 38, 38)
     };
     style.visuals.widgets.noninteractive.bg_fill = surface;
+    style.visuals.widgets.noninteractive.weak_bg_fill = tint;
     style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
     style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, text);
     style.visuals.widgets.inactive.bg_fill = surface;
@@ -98,9 +99,13 @@ pub fn apply(context: &egui::Context, theme: Theme) {
     style.visuals.widgets.hovered.bg_fill = tint;
     style.visuals.widgets.hovered.weak_bg_fill = tint;
     style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, GREEN);
+    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, text);
+    style.visuals.widgets.hovered.expansion = 0.0;
     style.visuals.widgets.active.bg_fill = tint;
     style.visuals.widgets.active.weak_bg_fill = tint;
     style.visuals.widgets.active.bg_stroke = Stroke::new(1.5, GREEN);
+    style.visuals.widgets.active.fg_stroke = Stroke::new(1.0, text);
+    style.visuals.widgets.active.expansion = 0.0;
     style.visuals.widgets.inactive.corner_radius = 8.into();
     style.visuals.widgets.hovered.corner_radius = 8.into();
     style.visuals.widgets.active.corner_radius = 8.into();

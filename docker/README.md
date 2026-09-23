@@ -1,68 +1,35 @@
-# Development stack
+# Integration stack
 
-Three isolated full nodes discover one another through `dg_xch_introducer`. Each farmer connects to its own node, and a regular CPU timelord advances the chain through the CPU node. CPU, native NVIDIA CUDA, and AMD/Vulkan farmers are independent processes, not a central farming service.
+An isolated Compose setup for three nodes, independent CPU/NVIDIA/AMD farmers, an introducer, a CPU timelord, and an optional reference pool.
 
-This is an integration-testing setup, not a claim of a completed production deployment. Container health only checks TLS and `/metrics`; the acceptance tool waits for real blocks and checks agreement. Wallet transfers, forced reorganizations, long-running operation, and hardware-specific performance need separate testing.
+**This is a disposable local simulation, not a Chia mainnet deployment.** For normal Chia setup, use the [dgx installation guide](../readme.md). Never mount production keys, wallets, or chain databases here.
 
-## Requirements
+## Prepare and start
 
-- Docker Engine and Compose, with GPU reservations support for NVIDIA.
-- At least 16 GiB available to plot preparation, plus room for other running services. It creates k28 strength-2 plots sequentially; do not overlap it with benchmarks.
-- A new host directory for disposable plots, writable by container UID 1000, and space for images and node databases. Owning the directory is not sufficient if your host UID differs; arrange access for UID 1000 without making unrelated directories writable.
-- NVIDIA: host driver, NVIDIA Container Toolkit, and the optional CUDA image. The default target is the A4000's `sm_86`; set `DGX_CUDA_ARCH` for another GPU.
-- AMD: Linux render-node access under `/dev/dri`. The ordinary image includes Mesa Vulkan drivers.
+You need Docker Engine with Compose, at least 16 GiB available for sequential plot preparation, and a mounted plot directory writable by container UID 1000. Verify the mount and free space before letting Docker use it.
 
-Never mount production keys, wallets or chain databases. Disposable master keys are plaintext inside private volumes. The ordinary image does not require CUDA; the optional CUDA image currently targets Linux amd64 only.
-
-## Prepare
-
-From the repository root, choose a new directory you own:
+From the repository root, choose a new project name and an existing scratch location:
 
 ```sh
-export DGX_PLOTS_ROOT=/mnt/nvmep1/tmp/dgx-compose-plots
+export COMPOSE_PROJECT_NAME=chia-integration
+export DGX_PLOTS_ROOT=/path/to/mounted/scratch/plots
 mkdir -p "$DGX_PLOTS_ROOT"
-docker compose config --quiet
 docker compose build init-stack
 docker compose run --rm init-stack
 docker compose run --rm --no-deps prepare-plots
-```
-
-Preparation creates one matching CPU-generated plot for each of the CPU, NVIDIA and AMD identities, sequentially. It needs no GPU. Append `--farmers cpu` to prepare only CPU initially; later repeat with `--farmers nvidia,amd`. Matching existing plots are retained, not overwritten. Metadata checks do not scan every compressed payload. An unrelated nonempty plot directory is rejected.
-
-The initializer generates an immutable development manifest, separate node CAs and per-farmer identities. This chain activates PoS2 at genesis, removes the prefarm and uses lower starting work and difficulty for a small farm. Proof verification stays enabled, including real 1024-bit VDFs. The timelord is deliberately paced at 27 iterations/second to leave time for CPU farming. These settings do not change Chia or the production DGX preset.
-
-Old version-1 stack volumes are rejected rather than silently changed to another chain. To preserve an existing run, use a separate `COMPOSE_PROJECT_NAME` and plots directory.
-
-## Start and check
-
-The image's full-node entry point is `dgx --config-dir /data/config full-node`. The stack initializer provisions the same versioned application profile used by `dgx init`, with container-local paths; it does not bypass the initialization requirement. Farmers, timelord, and introducer also use `dgx`, with `/service/app` profiles provisioned by the initializer. Developer preparation/check utilities remain separate executables.
-
-```sh
 docker compose up -d
-docker compose ps
-docker compose logs --tail=100 introducer node-cpu farmer-cpu timelord
-docker compose run --rm --no-deps check-stack --require-farmer cpu
+docker compose run --rm --no-deps check-stack --min-height 100 --require-farmer cpu
 ```
 
-The checker waits up to 30 minutes by default. It uses verified private-CA RPC, requires PoS2 genesis and at least height 3 on all three nodes, compares hashes at a common height, rejects nonzero genesis reward coins, and requires an accepted non-genesis block paying the CPU farmer's target. This does not claim that a wallet has synchronized or spent the reward. Adjust `--min-height` and `--timeout-seconds` deliberately.
+Arrange directory ownership for UID 1000 before preparation. The initializer creates test identities and databases; preparation makes matching k28 strength-2 plots. Existing matching plots are retained. Do not reuse a directory containing unrelated files.
 
-| Service | Role |
-| --- | --- |
-| `init-stack` | Idempotent development identities and configuration; no block injection |
-| `introducer` | Vetted discovery on internal port 8445 |
-| `node-cpu`, `node-nvidia`, `node-amd` | Independent databases and listeners on internal port 8444 |
-| `farmer-cpu` | CPU PoS2 recovery; local connection to its node |
-| `farmer-nvidia` | Optional `nvidia` profile; native CUDA recovery |
-| `farmer-amd` | Optional `amd` profile; Vulkan recovery |
-| `timelord` | Regular CPU scheduler connected to `node-cpu` |
-| `prepare-plots` | Opt-in sequential plot preparation |
-| `check-stack` | Opt-in block-production acceptance check |
+Services run through `dgx` inside the image. The separate preparation/check tools are developer utilities. The bridge is internal with no host ports published by default.
 
-No host ports are published. The bridge is internal. Nodes register with the introducer; there is no manual full-node peer list. Farmers and the timelord share their assigned node's network namespace, not its filesystem or private CA signing key.
+The checker requires accepted blocks and matching history, not just healthy containers. Its default timeout is 30 minutes; use `--timeout-seconds` for longer runs.
 
-## NVIDIA and AMD
+## Optional GPUs
 
-Build the ordinary image first, then the optional CUDA image. Its Dockerfile pins the CUDA base, cuda-oxide revision and Rust nightly; compilation does not need a GPU.
+For NVIDIA, install the host driver and NVIDIA Container Toolkit first. Configure the runtime following [NVIDIA's instructions](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html); any Docker restart interrupts running containers.
 
 ```sh
 export DGX_CUDA_ARCH=sm_86
@@ -71,7 +38,9 @@ docker compose --profile nvidia build farmer-nvidia
 docker compose --profile nvidia up -d
 ```
 
-For AMD, select the render node and its host group:
+Select the architecture for your card; `sm_86` matches the A4000. The CUDA image currently targets Linux amd64.
+
+For AMD, choose the actual render node and its group:
 
 ```sh
 export DGX_AMD_RENDER_NODE=/dev/dri/renderD128
@@ -79,49 +48,48 @@ export DGX_RENDER_GID="$(stat -c %g "$DGX_AMD_RENDER_NODE")"
 docker compose --profile amd up -d
 ```
 
-Use both profiles when both GPUs are available:
+Use both profiles when both GPUs are ready. Each farmer connects to its own node. Explicit GPU backends do not silently fall back to CPU.
+
+## Pooling
+
+The `pooling` profile adds the reference pool. CPU uses v1; NVIDIA and AMD use experimental v2. First let the ordinary stack earn at least three mature, unspent CPU-farmer rewards. Leave farming active while the PlotNFT launches confirm.
 
 ```sh
-docker compose --profile nvidia --profile amd up -d
-docker compose run --rm --no-deps check-stack --require-farmer cpu,nvidia,amd
+docker compose --profile pooling run --rm --no-deps setup-pool prepare
+docker compose --profile pooling up -d --no-deps --wait pool
+docker compose --profile pooling run --rm --no-deps setup-pool register
 ```
 
-Logs distinguish loaded plots, eligible qualities, recovered proofs and errors. Only chain acceptance establishes accepted blocks. Explicit CUDA/Vulkan selections do not silently use CPU hashing. Additional cards need separate farmers, nodes, device mappings and identities; scaling a service would share its device and identity.
-
-`DGX_PLOTS_ROOT` supplies the common preparation directory. `DGX_CPU_PLOTS`, `DGX_NVIDIA_PLOTS`, and `DGX_AMD_PLOTS` can override individual read-only farming mounts, but those locations must contain matching plots for the generated identities and testnet hash domain.
-
-## Restart and inspect
-
-Local validation on 2026-09-22 rebuilt the `dgx` image, repeated initialization without replacing identities, and restored all three nodes at height 8 with the same block hash. The checker confirmed the earlier CPU and AMD farmer payouts and zero genesis prefarm. This was a restart check, not a new 100-block run. The extended run remains unverified because the expected plot disk was unavailable; NVIDIA container execution also remains unverified on this host.
-
-For an extended acceptance run requiring all nodes to reach at least height 100:
+Keep the same Compose project and its volumes. Use a **new** writable directory for portable plots; old pool-public-key plots cannot be converted:
 
 ```sh
-docker compose run --rm --no-deps check-stack \
-  --min-height 100 --timeout-seconds 14400 --require-farmer cpu,amd
+export DGX_PLOTS_ROOT=/path/to/mounted/scratch/pool-plots
+mkdir -p "$DGX_PLOTS_ROOT"
 ```
 
-Start the AMD profile first for this example. Use `cpu` alone when only the CPU farmer is running, or include `nvidia` only with a working CUDA container runtime and its farmer. Verify the plot mount with `findmnt -T "$DGX_PLOTS_ROOT"` and `df -h "$DGX_PLOTS_ROOT"` before preparation: device names can change after reboot. Do not let Docker create a missing mount directory on the wrong filesystem. A checker timeout is a failed/incomplete run, not a pass.
-
-After a successful check, stop and restart without deleting volumes. Require a height beyond the previously reported result:
+Arrange UID 1000 access, then prepare and switch farmers:
 
 ```sh
-docker compose --profile nvidia --profile amd down
-docker compose --profile nvidia --profile amd up -d
-docker compose run --rm --no-deps check-stack --min-height 10 --require-farmer cpu,nvidia,amd
+docker compose --profile prepare run --rm --no-deps prepare-plots --pooling
+export DGX_FARMER_CONFIG=pool-config.yaml
+docker compose --profile pooling --profile nvidia --profile amd up -d --no-deps pool farmer-cpu farmer-nvidia farmer-amd
+docker compose run --rm --no-deps check-stack --pooling \
+  --min-height 100 --timeout-seconds 14400 \
+  --require-farmer cpu,nvidia,amd
 ```
 
-Choose a height beyond the previous result, not always 10, and use only available GPU profiles. This checks renewed advancement and common history; it does not force a competing-branch reorganization.
+Omit unavailable GPU profiles/services and adjust `--require-farmer` accordingly; that checks only the selected farmers. Retain the exported paths and config selection for later restarts. Individual `DGX_CPU_PLOTS`, `DGX_NVIDIA_PLOTS`, and `DGX_AMD_PLOTS` overrides take precedence over `DGX_PLOTS_ROOT`.
+
+A pooling pass requires accepted partials and confirmed on-chain payouts to every selected farmer. The reference worker still lacks automatic reorganization recovery; see [pool limitations](../pool/README.md).
+
+## Stop and inspect
 
 ```sh
-docker compose exec farmer-cpu curl --fail --silent \
-  --cacert /service/ssl/ca/private_ca.crt \
-  --cert /service/ssl/farmer/private_farmer.crt \
-  --key /service/ssl/farmer/private_farmer.key \
-  -H 'Content-Type: application/json' -d '{}' \
-  https://localhost:8444/get_node_details
+docker compose ps
+docker compose logs --tail=100 node-cpu farmer-cpu timelord
+docker compose --profile pooling --profile nvidia --profile amd stop
 ```
 
-`docker compose down` preserves identities and databases. `down --volumes` deliberately destroys them and is not an automatic repair step. New identities need new matching plots; host plots are not removed by Compose. Prefer a new project name and a new plots directory for another independent run.
+Stopping preserves containers, identities, databases, and plots. Do not remove volumes to troubleshoot a stalled chain. Keep backups of the pool journal and signing key alongside the node data.
 
-[Repository overview](../readme.md) · [Farmer](../farmer/README.md) · [Timelord](../timelord/README.md) · [Plotter](../plotter/README.md)
+[Developer tools](../tools/README.md) · [Farmer](../farmer/README.md) · [Pool](../pool/README.md)

@@ -1,46 +1,32 @@
 # dg_full_node
 
-Full-node application library: configuration, chain storage, peer transport, synchronization, RPC, and wallet-query services. The executable entry point is `dgx full-node` in `dg_xch_cli`.
+Full-node application library for Chia: storage, peer connections, synchronization, RPC, and wallet queries. Launch it with `dgx full-node`.
 
-## Status
+## Install and run
 
-The node validates and stores chain data and exposes authenticated diagnostics. Runtime chain selection defaults to Chia mainnet; custom definitions can remove the prefarm and activate PoS2 from genesis. Fresh-chain candidates follow normal header, body and VDF validation, with explicit bootstrap work sent only to trusted timelords on custom chains. The [Compose acceptance checks](../docker/README.md) exercise integration separately from container health. Linux and macOS are the current node build targets; the GMP dependency prevents Windows MSVC node builds.
-
-## Run
-
-From the repository root, choose an empty development data directory:
+From the repository root:
 
 ```sh
-cargo build -p dg_xch_cli --release --features hint
-./target/release/dgx --config-dir ./local-node/config init --non-interactive \
-  --data-dir ./local-node/data --plots-dir ./local-node/plots
-./target/release/dgx --config-dir ./local-node/config full-node \
-  --listen 127.0.0.1:8444 \
-  --db sqlite://./local-node/data/chain.db \
-  --ssl-dir ./local-node/config/ssl \
-  --chain-config ./config/chains/dgx.json \
-  --genesis-sync
+cargo install --path cli --locked
+dgx init
+dgx full-node --network mainnet
 ```
 
-Use `--network mainnet` instead of `--chain-config` only when you intend to connect to Chia mainnet. Do not reuse a database between networks. `--print-chain-info` displays the custom chain identity and constants. `--help` lists the storage, worker, memory, and connection settings.
+Initialization supplies database and TLS paths. The node uses Chia's mainnet introducer by default. Run `dgx gui` separately to watch synchronization, or use `dgx full-node --help` for connection and resource settings.
 
-RPC and peer WebSockets share `--listen`; do not configure the old separate RPC port. Private-CA RPC is the default. The node creates its private CA under `--ssl-dir`; distribute only the CA certificate and an appropriately signed client identity to clients, never the CA private key. The local leaf certificate covers localhost/loopback. The [Compose test harness](../docker/README.md) provisions isolated test identities.
+Linux and macOS are supported build targets. The GMP dependency currently prevents Windows MSVC full-node builds; Windows users can connect the desktop to another node. Mainnet compatibility and sustained operation still need broader validation.
 
-For peer discovery add `--introducer HOST:PORT`; advertise a reachable listener using `--advertise IP:PORT` when required. The advertised address must be a literal IP; bracket IPv6 addresses. See the [introducer](../introducer/README.md). Peer discovery never replaces consensus validation. Trusted timelord access is configured with `--trusted-peer` or `--trusted-cidr`; use narrow addresses and never a blanket public-network trust range.
+## Connections and storage
 
-## Storage and wallet queries
+- RPC and peer WebSockets share port **8444** by default. A Chia reference node commonly uses **8555** for RPC.
+- RPC uses the private CA and client identities created during setup. Share client credentials, not the CA private key. Remote hostnames must match the server certificate.
+- SQLite is the default store. The default CLI installation includes `hint` and `coin-index` for wallets; `postgres` and `mmap` are optional.
+- Stop the node before file-copy backups, or use SQLite-aware backup tooling. Never share one database between running nodes or networks.
 
-The SQLite backend is the default. Build with `coin-index` for standard wallet coin queries, or `hint` for hint-aware wallet queries. PostgreSQL and mmap are optional features. Back up with SQLite-aware tooling or stop the node before copying the database; a live WAL database is not safely backed up by copying only its main file.
+Use `--introducer HOST:PORT` to select a discovery service and `--advertise IP:PORT` when the reachable address differs from the listener. Timelord access should be local or limited to explicitly trusted peers, never a broad public range.
 
-The native desktop's Node page calls the authenticated `get_node_details` endpoint. It reports actual local counters and consensus settings; absent live-peer data is not a fabricated zero-value health signal.
+## Integration
 
-## Validation
+The [node engine](../node/README.md) owns consensus and live state; this package supplies configuration and Portfu routes. Authenticated `get_node_details` serves GUI diagnostics. `get_recent_signage_point_or_eos` reports actual receipt times for cached objects, which pools use for freshness checks.
 
-```sh
-cargo test -p dg_full_node --features coin-index
-cargo test -p dg_full_node --features hint --test puzzle_state
-```
-
-These tests are not proof of a complete new-chain launch or sustained production throughput.
-
-[Repository overview](../readme.md) · [Node engine](../node/README.md) · [Stores](../stores/README.md)
+[CLI](../cli/README.md) · [Stores](../stores/README.md) · [Introducer](../introducer/README.md)

@@ -18,33 +18,41 @@ pub async fn route(
             let req: RecentSignagePointorEOSRequest = parse_or_default(body)?;
             let live = node.live.get();
             if let Some(sp_hash) = req.sp_hash.as_ref() {
-                let signage_point = live
+                let slots = live
                     .ok_or_else(|| sp_not_in_cache(sp_hash))?
                     .slot_state
                     .lock()
-                    .await
+                    .await;
+                let signage_point = slots
                     .get_signage_point(sp_hash)
+                    .ok_or_else(|| sp_not_in_cache(sp_hash))?;
+                let received = slots
+                    .received_time(sp_hash)
                     .ok_or_else(|| sp_not_in_cache(sp_hash))?;
                 let mut response = Map::new();
                 response.insert("signage_point".to_string(), to_value(&signage_point)?);
-                response.insert("time_received".to_string(), Value::from(0.0f64));
+                response.insert("time_received".to_string(), Value::from(received));
                 response.insert("reverted".to_string(), Value::from(false));
                 response
             } else {
                 let challenge_hash = req.challenge_hash.as_ref().ok_or_else(|| {
                     RpcError::BadRequest("sp_hash or challenge_hash required".to_string())
                 })?;
-                let eos = live
+                let slots = live
                     .ok_or_else(|| eos_not_in_cache(challenge_hash))?
                     .slot_state
                     .lock()
-                    .await
+                    .await;
+                let eos = slots
                     .get_sub_slot(challenge_hash)
                     .map(|(eos, _, _)| eos.clone())
                     .ok_or_else(|| eos_not_in_cache(challenge_hash))?;
+                let received = slots
+                    .received_time(challenge_hash)
+                    .ok_or_else(|| eos_not_in_cache(challenge_hash))?;
                 let mut response = Map::new();
                 response.insert("eos".to_string(), to_value(&eos)?);
-                response.insert("time_received".to_string(), Value::from(0.0f64));
+                response.insert("time_received".to_string(), Value::from(received));
                 response.insert("reverted".to_string(), Value::from(false));
                 response
             }

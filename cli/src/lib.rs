@@ -103,6 +103,7 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
                 | RootCommands::Plotter(_)
                 | RootCommands::Timelord(_)
                 | RootCommands::Introducer(_)
+                | RootCommands::Pool(_)
                 | RootCommands::Simulator(_)
         )
     {
@@ -157,6 +158,10 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
             dg_xch_servers::app_config::AppConfig::load(&config_root)?;
             return services::introducer::run(&args.arguments).await;
         }
+        RootCommands::Pool(args) => {
+            dg_xch_servers::app_config::AppConfig::load(&config_root)?;
+            return services::pool::run(&args.arguments).await;
+        }
         RootCommands::Simulator(args) => {
             return setup::launch("dg_xch_simulator", args, &config_root).await;
         }
@@ -204,6 +209,7 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
         | RootCommands::Plotter(_)
         | RootCommands::Timelord(_)
         | RootCommands::Introducer(_)
+        | RootCommands::Pool(_)
         | RootCommands::Simulator(_) => {}
         RootCommands::Chain(args) => chain::run(args)?,
         #[cfg(feature = "full-node")]
