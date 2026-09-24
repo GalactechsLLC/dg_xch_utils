@@ -399,7 +399,9 @@ async fn a_transaction_block_spends_a_reward_coin() {
     // Reward coins pay the `1` identity puzzle, so the farmer reward is spendable: run with the
     // solution as its condition list.
     let identity_ph = Program::to(1_u8).tree_hash();
-    let mut chain = ChainBuilder::new(store().await, constants(), plots, identity_ph);
+    let mut constants = constants();
+    constants.genesis_pre_farm_farmer_puzzle_hash = identity_ph;
+    let mut chain = ChainBuilder::new(store().await, constants, plots, identity_ph);
     chain.farm_genesis().await.expect("genesis");
     // A transaction block claims genesis's rewards, creating the farmer reward coin at height 1.
     chain.farm_next_tx().await.expect("tx block");
