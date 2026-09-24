@@ -239,6 +239,10 @@ async fn infuse(
 #[tokio::test]
 #[ignore = "builds a CPU k18 plot and validates real bootstrap/signage/infusion proofs"]
 async fn native_pos2_genesis_and_successor_through_farmer_timelord_handlers() {
+    let _ = dg_logger::DruidGardenLoggerBuilder::new()
+        .current_level(log::Level::Warn)
+        .build()
+        .init();
     let plot_key = SecretKey::key_gen_v3(&[0x21; 32], &[]).unwrap();
     let pool_key = SecretKey::key_gen_v3(&[0x22; 32], &[]).unwrap();
     let template = ProofOfSpace::v2(
@@ -270,7 +274,9 @@ async fn native_pos2_genesis_and_successor_through_farmer_timelord_handlers() {
     .expect("native CPU plot");
     let (genesis, proof) = (1..=128u8)
         .find_map(|nonce| {
-            let genesis = Bytes32::new([nonce; 32]);
+            let mut genesis = SIMULATOR.genesis_challenge.bytes();
+            genesis[0] = nonce;
+            let genesis = Bytes32::new(genesis);
             farm(&plot, &template, genesis, genesis).map(|proof| (genesis, proof))
         })
         .expect("bounded genesis challenge search");
@@ -377,6 +383,14 @@ async fn native_pos2_genesis_and_successor_through_farmer_timelord_handlers() {
         break;
     }
     let successor = successor.expect("bounded real-signage proof search");
+    let rewards = &successor
+        .transactions_info
+        .as_ref()
+        .unwrap()
+        .reward_claims_incorporated;
+    assert_eq!(rewards.len(), 2);
+    assert_ne!(rewards[0].name(), rewards[1].name());
+    assert!(rewards.iter().all(|coin| coin.amount == 0));
     let block = infuse(&node, &successor, Some(&previous), &registry).await;
     assert_eq!(block.height(), 1);
     assert_eq!(block.prev_header_hash(), previous.header_hash);
@@ -418,6 +432,6 @@ async fn native_pos2_genesis_and_successor_through_farmer_timelord_handlers() {
     );
     assert!(matches!(
         restarted.add_block(&block).await.unwrap(),
-        dg_xch_node::engine::AddBlockOutcome::NewPeak { height: 1 }
+        dg_xch_node::engine::AddBlockOutcome::Extended { height: 1 }
     ));
 }
