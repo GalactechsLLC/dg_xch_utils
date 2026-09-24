@@ -25,15 +25,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Checkout submodules
         run: git submodule update --init --recursive
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential \
-            libssl-dev \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libzstd-dev
+      - uses: ./.github/actions/setup-native-deps
       - name: Run workspace tests
         run: cargo test --workspace --locked
       - name: Run wallet service-tier tests

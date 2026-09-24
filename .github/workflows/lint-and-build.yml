@@ -18,15 +18,7 @@ jobs:
           components: rustfmt, clippy
       - name: Checkout submodules
         run: git submodule update --init --recursive
-      - name: Install Linux GUI dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential \
-            libssl-dev \
-            libxkbcommon-dev \
-            libwayland-dev
+      - uses: ./.github/actions/setup-native-deps
       - name: Run Format
         run: cargo fmt --all -- --check
       - name: Run Clippy
@@ -51,17 +43,10 @@ jobs:
         uses: actions/checkout@v4
       - name: Checkout submodules
         run: git submodule update --init --recursive
-      - name: Install Linux GUI dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential \
-            libssl-dev \
-            libxkbcommon-dev \
-            libwayland-dev
+      - uses: ./.github/actions/setup-native-deps
+      - uses: dtolnay/rust-toolchain@stable
       - name: Build library
-        run: cargo build --release
+        run: cargo build --workspace --release --locked
   audit:
     name: Dependency Audit
     permissions:
@@ -90,11 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux desktop dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes build-essential libssl-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev xvfb libvulkan1 mesa-vulkan-drivers
+      - uses: ./.github/actions/setup-native-deps
       - name: Build unified native desktop
         run: cargo build -p dg_xch_cli --no-default-features --features desktop,vulkan --locked
       - name: Test launcher initialization

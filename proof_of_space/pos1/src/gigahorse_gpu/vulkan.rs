@@ -611,166 +611,6 @@ fn validate_matching_subgroup(
     Ok(())
 }
 
-#[cfg(test)]
-mod subgroup_tests {
-    use super::*;
-
-    #[test]
-    fn bitmap_summary_defaults_only_to_amd() {
-        assert!(first_bitmap_summary_default(0x1002));
-        for vendor_id in [0, 0x10de, 0x8086] {
-            assert!(!first_bitmap_summary_default(vendor_id));
-        }
-    }
-
-    #[test]
-    fn wide_first_partitions_default_only_to_amd() {
-        assert_eq!(first_partitions_default(0x1002), 64);
-        for vendor_id in [0, 0x10de, 0x8086] {
-            assert_eq!(first_partitions_default(vendor_id), 32);
-        }
-    }
-
-    #[test]
-    fn local_csr_threads_override_is_strict() {
-        assert_eq!(parse_local_csr_threads(None).unwrap(), None);
-        for threads in [0_u32, 256, 512] {
-            assert_eq!(
-                parse_local_csr_threads(Some(OsStr::new(&threads.to_string()))).unwrap(),
-                Some(threads)
-            );
-        }
-        for value in ["", "128", "384", "1024", "0256", " 256", "256 "] {
-            assert_eq!(
-                parse_local_csr_threads(Some(OsStr::new(value)))
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidInput
-            );
-        }
-    }
-
-    #[test]
-    fn grouped_partition_scatter_override_is_strict() {
-        assert_eq!(parse_grouped_partition_scatter(None).unwrap(), None);
-        assert_eq!(
-            parse_grouped_partition_scatter(Some(OsStr::new("0"))).unwrap(),
-            Some(false)
-        );
-        assert_eq!(
-            parse_grouped_partition_scatter(Some(OsStr::new("1"))).unwrap(),
-            Some(true)
-        );
-        for value in ["", "2", "true", "false", "01", " 1", "1 "] {
-            assert_eq!(
-                parse_grouped_partition_scatter(Some(OsStr::new(value)))
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidInput
-            );
-        }
-    }
-
-    #[test]
-    fn grouped_partition_threads_override_is_strict() {
-        assert_eq!(parse_grouped_partition_threads(None).unwrap(), None);
-        for threads in [128_u32, 256, 512] {
-            assert_eq!(
-                parse_grouped_partition_threads(Some(OsStr::new(&threads.to_string()))).unwrap(),
-                Some(threads)
-            );
-        }
-        for value in ["", "0", "384", "1024", "0128", " 128", "128 "] {
-            assert_eq!(
-                parse_grouped_partition_threads(Some(OsStr::new(value)))
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidInput
-            );
-        }
-    }
-
-    #[test]
-    fn partition_second_override_is_strict() {
-        assert!(parse_partition_second(None).unwrap());
-        assert!(!parse_partition_second(Some(OsStr::new("0"))).unwrap());
-        assert!(parse_partition_second(Some(OsStr::new("1"))).unwrap());
-        for value in ["", "2", "true", "false", "01", " 1", "1 "] {
-            assert_eq!(
-                parse_partition_second(Some(OsStr::new(value)))
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidInput,
-            );
-        }
-    }
-
-    #[test]
-    fn coarse_histogram_override_accepts_only_explicit_booleans() {
-        assert!(!parse_coarse_histogram(None).unwrap());
-        assert!(!parse_coarse_histogram(Some(OsStr::new("0"))).unwrap());
-        assert!(parse_coarse_histogram(Some(OsStr::new("1"))).unwrap());
-        for value in ["", "2", "true", "false", "01", " 1", "1 ", "default"] {
-            assert_eq!(
-                parse_coarse_histogram(Some(OsStr::new(value)))
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidInput,
-            );
-        }
-    }
-
-    #[test]
-    fn matching_subgroup_override_accepts_only_explicit_sizes() {
-        assert_eq!(parse_matching_subgroup(None).unwrap(), None);
-        for size in ["32", "64"] {
-            assert_eq!(
-                parse_matching_subgroup(Some(OsStr::new(size))).unwrap(),
-                Some(size.parse().unwrap())
-            );
-        }
-        for value in ["", "0", "16", "128", " 32", "032", "default"] {
-            assert_eq!(
-                parse_matching_subgroup(Some(OsStr::new(value)))
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidInput,
-            );
-        }
-    }
-
-    #[test]
-    fn matching_subgroup_override_requires_device_support() {
-        let features =
-            vk::PhysicalDeviceSubgroupSizeControlFeatures::default().subgroup_size_control(true);
-        let properties = vk::PhysicalDeviceSubgroupSizeControlProperties::default()
-            .min_subgroup_size(32)
-            .max_subgroup_size(64)
-            .max_compute_workgroup_subgroups(4)
-            .required_subgroup_size_stages(vk::ShaderStageFlags::COMPUTE);
-        for size in [32, 64] {
-            validate_matching_subgroup(size, &features, &properties).unwrap();
-        }
-        assert!(
-            validate_matching_subgroup(32, &features.subgroup_size_control(false), &properties,)
-                .is_err()
-        );
-        for unsupported in [
-            properties.min_subgroup_size(64),
-            properties.max_subgroup_size(16),
-            properties.max_compute_workgroup_subgroups(3),
-            properties.required_subgroup_size_stages(vk::ShaderStageFlags::FRAGMENT),
-        ] {
-            assert_eq!(
-                validate_matching_subgroup(32, &features, &unsupported)
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::Unsupported,
-            );
-        }
-    }
-}
-
 fn allocate(
     context: &Arc<Context>,
     size: u64,
@@ -1038,6 +878,166 @@ impl super::Device for Device {
                     );
                 }
             })
+        }
+    }
+}
+
+#[cfg(test)]
+mod subgroup_tests {
+    use super::*;
+
+    #[test]
+    fn bitmap_summary_defaults_only_to_amd() {
+        assert!(first_bitmap_summary_default(0x1002));
+        for vendor_id in [0, 0x10de, 0x8086] {
+            assert!(!first_bitmap_summary_default(vendor_id));
+        }
+    }
+
+    #[test]
+    fn wide_first_partitions_default_only_to_amd() {
+        assert_eq!(first_partitions_default(0x1002), 64);
+        for vendor_id in [0, 0x10de, 0x8086] {
+            assert_eq!(first_partitions_default(vendor_id), 32);
+        }
+    }
+
+    #[test]
+    fn local_csr_threads_override_is_strict() {
+        assert_eq!(parse_local_csr_threads(None).unwrap(), None);
+        for threads in [0_u32, 256, 512] {
+            assert_eq!(
+                parse_local_csr_threads(Some(OsStr::new(&threads.to_string()))).unwrap(),
+                Some(threads)
+            );
+        }
+        for value in ["", "128", "384", "1024", "0256", " 256", "256 "] {
+            assert_eq!(
+                parse_local_csr_threads(Some(OsStr::new(value)))
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidInput
+            );
+        }
+    }
+
+    #[test]
+    fn grouped_partition_scatter_override_is_strict() {
+        assert_eq!(parse_grouped_partition_scatter(None).unwrap(), None);
+        assert_eq!(
+            parse_grouped_partition_scatter(Some(OsStr::new("0"))).unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            parse_grouped_partition_scatter(Some(OsStr::new("1"))).unwrap(),
+            Some(true)
+        );
+        for value in ["", "2", "true", "false", "01", " 1", "1 "] {
+            assert_eq!(
+                parse_grouped_partition_scatter(Some(OsStr::new(value)))
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidInput
+            );
+        }
+    }
+
+    #[test]
+    fn grouped_partition_threads_override_is_strict() {
+        assert_eq!(parse_grouped_partition_threads(None).unwrap(), None);
+        for threads in [128_u32, 256, 512] {
+            assert_eq!(
+                parse_grouped_partition_threads(Some(OsStr::new(&threads.to_string()))).unwrap(),
+                Some(threads)
+            );
+        }
+        for value in ["", "0", "384", "1024", "0128", " 128", "128 "] {
+            assert_eq!(
+                parse_grouped_partition_threads(Some(OsStr::new(value)))
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidInput
+            );
+        }
+    }
+
+    #[test]
+    fn partition_second_override_is_strict() {
+        assert!(parse_partition_second(None).unwrap());
+        assert!(!parse_partition_second(Some(OsStr::new("0"))).unwrap());
+        assert!(parse_partition_second(Some(OsStr::new("1"))).unwrap());
+        for value in ["", "2", "true", "false", "01", " 1", "1 "] {
+            assert_eq!(
+                parse_partition_second(Some(OsStr::new(value)))
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidInput,
+            );
+        }
+    }
+
+    #[test]
+    fn coarse_histogram_override_accepts_only_explicit_booleans() {
+        assert!(!parse_coarse_histogram(None).unwrap());
+        assert!(!parse_coarse_histogram(Some(OsStr::new("0"))).unwrap());
+        assert!(parse_coarse_histogram(Some(OsStr::new("1"))).unwrap());
+        for value in ["", "2", "true", "false", "01", " 1", "1 ", "default"] {
+            assert_eq!(
+                parse_coarse_histogram(Some(OsStr::new(value)))
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidInput,
+            );
+        }
+    }
+
+    #[test]
+    fn matching_subgroup_override_accepts_only_explicit_sizes() {
+        assert_eq!(parse_matching_subgroup(None).unwrap(), None);
+        for size in ["32", "64"] {
+            assert_eq!(
+                parse_matching_subgroup(Some(OsStr::new(size))).unwrap(),
+                Some(size.parse().unwrap())
+            );
+        }
+        for value in ["", "0", "16", "128", " 32", "032", "default"] {
+            assert_eq!(
+                parse_matching_subgroup(Some(OsStr::new(value)))
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidInput,
+            );
+        }
+    }
+
+    #[test]
+    fn matching_subgroup_override_requires_device_support() {
+        let features =
+            vk::PhysicalDeviceSubgroupSizeControlFeatures::default().subgroup_size_control(true);
+        let properties = vk::PhysicalDeviceSubgroupSizeControlProperties::default()
+            .min_subgroup_size(32)
+            .max_subgroup_size(64)
+            .max_compute_workgroup_subgroups(4)
+            .required_subgroup_size_stages(vk::ShaderStageFlags::COMPUTE);
+        for size in [32, 64] {
+            validate_matching_subgroup(size, &features, &properties).unwrap();
+        }
+        assert!(
+            validate_matching_subgroup(32, &features.subgroup_size_control(false), &properties,)
+                .is_err()
+        );
+        for unsupported in [
+            properties.min_subgroup_size(64),
+            properties.max_subgroup_size(16),
+            properties.max_compute_workgroup_subgroups(3),
+            properties.required_subgroup_size_stages(vk::ShaderStageFlags::FRAGMENT),
+        ] {
+            assert_eq!(
+                validate_matching_subgroup(32, &features, &unsupported)
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::Unsupported,
+            );
         }
     }
 }
