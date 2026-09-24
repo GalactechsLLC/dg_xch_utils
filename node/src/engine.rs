@@ -409,8 +409,9 @@ pub struct Engine<S, P> {
     // block. `None` = undecided; resolved lazily per transaction block from the store's
     // main-chain floor (`min_record_height == 0` ⇒ full history) or, on an empty store, from
     // whether the first block is genesis. Only the positive answer is cached (see
-    // `coin_rules_enforced`); `Some(true)` forced by [`Engine::with_enforced_coin_rules`].
+    // `coin_rules_enforced`).
     full_history: Option<bool>,
+    enforce_coin_rules: bool,
     // Landed-reorg summaries awaiting the reporting confirm loop ([`ReorgReport`]); FIFO, bounded
     // by REORG_REPORT_CAP (oldest dropped — a lost report loses wallet pushes, never chain state).
     reorg_reports: std::collections::VecDeque<ReorgReport>,
@@ -442,6 +443,7 @@ where
             horizon: crate::cache::BLOCK_RECORD_WINDOW as u32,
             assume_valid: 0,
             full_history: None,
+            enforce_coin_rules: false,
             reorg_reports: std::collections::VecDeque::new(),
         }
     }
@@ -461,9 +463,10 @@ where
     /// strictness override for a caller that asserts the coin set is complete (tests; a full
     /// archive node). The auto-detected default enforces exactly when the chain is held from
     /// genesis (`min_record_height == 0`, or an empty store whose first block is height 0).
+    /// This override does not assert that header ancestry is complete.
     #[must_use]
     pub fn with_enforced_coin_rules(mut self) -> Self {
-        self.full_history = Some(true);
+        self.enforce_coin_rules = true;
         self
     }
 
@@ -1033,7 +1036,9 @@ where
         blocks: &[FullBlock],
         bodies: &HashMap<u32, PrecomputedBody>,
     ) -> Result<(), NodeError> {
-        if self.stage_coins.is_none() || self.full_history != Some(true) {
+        if self.stage_coins.is_none()
+            || (self.full_history != Some(true) && !self.enforce_coin_rules)
+        {
             return Ok(());
         }
         let telemetry = self.store.telemetry();
@@ -1725,7 +1730,7 @@ where
         if v {
             self.full_history = Some(true);
         }
-        Ok(v)
+        Ok(v || self.enforce_coin_rules)
     }
 
     // The block-body rules that read the coin/record store, in rule order. The pure

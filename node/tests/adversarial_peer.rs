@@ -121,6 +121,7 @@ async fn confirmed_peak_advances_beside_every_misbehaving_peer() {
     let block = common::load_full_block(5_000_000);
     for (name, mode) in all_modes(4_999_000) {
         let store = common::new_store().await;
+        common::ancestry::seed_mainnet_parent(&store).await;
         let template = common::load_records()[0].clone();
         store
             .add_block_records(&[seed_record_for(&template, &block)])
@@ -158,6 +159,7 @@ async fn follow_tick_rotation_confirms_the_peak_within_a_bounded_tick_budget() {
     let block = common::load_full_block(5_000_000);
     for (name, mode) in all_modes(4_999_000) {
         let store = common::new_store().await;
+        common::ancestry::seed_mainnet_parent(&store).await;
         let engine = Engine::new(Arc::new(store), NativePrimitives, MAINNET);
         let mut chaser = Chaser::new(engine, confirm_cfg());
         let mut fixture = HashMap::new();

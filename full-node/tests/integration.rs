@@ -67,6 +67,7 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     let listen = SocketAddr::from(([0, 0, 0, 0], port));
     let client_addr = SocketAddr::from(([127, 0, 0, 1], port));
     let node = Arc::new(FullNode::boot(config(listen, listen)).await.expect("boot"));
+    common::ancestry::seed_mainnet_parent(&node.store).await;
 
     // A wallet subscribes to a puzzle hash present in block 5000000's additions, before the sync.
     let adds = common::additions();

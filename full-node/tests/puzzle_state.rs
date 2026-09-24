@@ -487,6 +487,7 @@ async fn peak_advance_broadcasts_new_peak_wallet_to_wallet_peers() {
             .await
             .expect("boot"),
     );
+    common::ancestry::seed_mainnet_parent(&node.store).await;
     let (server, run, _peers) = node.build_peer_server().expect("peer server");
     tokio::spawn(async move { server.run(run).await });
     tokio::time::sleep(Duration::from_millis(150)).await;

@@ -119,6 +119,7 @@ async fn chaser_on_wrong_peak(
     ours: &[FullBlock],
 ) -> Chaser<Arc<dg_xch_stores::SqliteStore>, NativePrimitives> {
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &ours[0]).await;
     let engine = Engine::new(store, NativePrimitives, MAINNET);
     let mut chaser = Chaser::new(
         engine,

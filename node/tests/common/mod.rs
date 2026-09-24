@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod ancestry;
 pub mod fault;
 pub mod lineage;
 pub mod sweep;

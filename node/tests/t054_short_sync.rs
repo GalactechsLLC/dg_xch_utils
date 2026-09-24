@@ -27,6 +27,7 @@ async fn node_b_follows_node_a_new_peak_within_one_block_time() {
     let (port, server_run) = spawn_node_a(api.clone()).await;
 
     let store = common::new_store().await;
+    common::ancestry::seed_mainnet_parent(&store).await;
     let engine = Engine::new(store, NativePrimitives, MAINNET);
     let mut chaser = Chaser::new(
         engine,

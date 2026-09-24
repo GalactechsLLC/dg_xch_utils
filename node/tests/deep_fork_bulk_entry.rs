@@ -87,10 +87,20 @@ fn b_weight(h: u32) -> u128 {
 fn fixture_chains() -> (Vec<FullBlock>, Vec<FullBlock>) {
     let base_a = common::load_full_block(5_000_000);
     let base_b = common::load_full_block(5_000_004);
-    let chain_a = build_chain(&base_a, 100, A_TIP, common::synth_hash(0xaa, 99), a_weight);
+    let parent = parent_block();
+    let chain_a = build_chain(&base_a, 100, A_TIP, parent.header_hash().unwrap(), a_weight);
     let fork_hash = chain_a[(FORK - 100) as usize].header_hash().unwrap();
     let chain_b = build_chain(&base_b, FORK + 1, B_TIP, fork_hash, b_weight);
     (chain_a, chain_b)
+}
+
+fn parent_block() -> FullBlock {
+    link_block(
+        &common::load_full_block(5_000_000),
+        99,
+        BASE_WEIGHT - 10,
+        common::synth_hash(0xaa, 98),
+    )
 }
 
 // The peer on branch B: shared history through FORK, branch B above it.
@@ -140,6 +150,7 @@ async fn chaser_on_branch_a<S>(store: S, chain_a: &[FullBlock]) -> Chaser<S, Nat
 where
     S: CoinStore + BlockStore + Clone + Send + Sync + 'static,
 {
+    seed_parent(&store).await;
     let engine = Engine::new(store, NativePrimitives, MAINNET);
     let mut chaser = Chaser::new(engine, cfg());
     let peak = chaser
@@ -152,6 +163,21 @@ where
         "precondition: our confirmed peak is branch A's tip"
     );
     chaser
+}
+
+async fn seed_parent<S: BlockStore>(store: &S) {
+    let parent = parent_block();
+    let record = seed_record_for(&common::load_records()[0], &parent);
+    store
+        .add_block_records(&[record])
+        .await
+        .expect("parent record");
+    let mut batch = store.begin().await.expect("begin parent body");
+    store
+        .append_many(&mut batch, &[parent])
+        .await
+        .expect("parent body");
+    store.commit(batch).await.expect("commit parent body");
 }
 
 // Seed the headers-first candidate records for branch B — the `sync_headers` product the bulk
@@ -220,6 +246,7 @@ async fn winning_chain_replay(
     Option<dg_xch_core::blockchain::coin_record::CoinRecord>,
 )> {
     let store = Arc::new(common::new_store().await);
+    seed_parent(&store).await;
     let engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
     let mut chaser = Chaser::new(engine, cfg());
     let mut chain: Vec<FullBlock> = chain_a

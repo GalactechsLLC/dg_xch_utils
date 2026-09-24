@@ -35,6 +35,42 @@ async fn engine() -> (tempfile::TempDir, Engine<SqliteStore, NativePrimitives>) 
 }
 
 #[tokio::test]
+async fn enforcing_coin_rules_does_not_claim_complete_header_history() {
+    let (_directory, mut engine) = engine().await;
+    let parent: BlockRecord =
+        serde_json::from_str(include_str!("../fixtures/block_record_4999999.json")).unwrap();
+    engine
+        .store
+        .add_block_records(std::slice::from_ref(&parent))
+        .await
+        .unwrap();
+    assert!(engine.coin_rules_enforced(5_000_000).await.unwrap());
+    assert_ne!(engine.full_history, Some(true));
+    let header = header_block_from_full_block(&block());
+    assert!(
+        engine
+            .derive_required_iters(&header, Some(&parent), None)
+            .is_ok()
+    );
+
+    let mut genesis = parent.clone();
+    genesis.header_hash = Bytes32::from([0x42; 32]);
+    genesis.height = 0;
+    engine
+        .store
+        .add_block_records(std::slice::from_ref(&genesis))
+        .await
+        .unwrap();
+    engine.store.set_peak(&genesis.header_hash).await.unwrap();
+    assert!(engine.coin_rules_enforced(5_000_000).await.unwrap());
+    assert_eq!(engine.full_history, Some(true));
+    assert!(matches!(
+        engine.derive_required_iters(&header, Some(&parent), None),
+        Err(NodeError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound
+    ));
+}
+
+#[tokio::test]
 async fn stale_precompute_cannot_verify_a_different_aggregate_signature() {
     let (_directory, engine) = engine().await;
     let mut block = block();

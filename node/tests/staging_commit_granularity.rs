@@ -47,8 +47,10 @@ fn cfg() -> SyncConfig {
 async fn coin_budgets_split_on_block_boundaries_and_allow_one_oversized_block() {
     let base = common::load_full_block(5_000_000);
     let chain = build_chain(&base, START, START + N - 1, common::synth_hash(0xaa, 99));
-    let mut probe = Engine::new(common::new_store().await, NativePrimitives, MAINNET)
-        .with_assume_valid(10_000_000);
+    let probe_store = common::new_store().await;
+    common::ancestry::seed_synthetic_parent(&probe_store, &chain[0]).await;
+    let mut probe =
+        Engine::new(probe_store, NativePrimitives, MAINNET).with_assume_valid(10_000_000);
     let delta = probe
         .stage_block(&chain[0], &dg_xch_node::header::HeaderSink::default())
         .await
@@ -57,6 +59,7 @@ async fn coin_budgets_split_on_block_boundaries_and_allow_one_oversized_block() 
     for byte_budget in [false, true] {
         for oversized in [false, true] {
             let store = Arc::new(common::new_store().await);
+            common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
             let mut engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
             engine.set_coalesce_coin_writes(true);
             let mut chaser = Chaser::new(engine, cfg());
@@ -112,6 +115,7 @@ async fn transaction_limit_is_independent_of_validation_window() {
     let chain = build_chain(&base, START, START + N - 1, common::synth_hash(0xaa, 99));
     for coalesce in [false, true] {
         let store = Arc::new(common::new_store().await);
+        common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
         let telemetry = store.telemetry().unwrap();
         let mut engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
         engine.set_coalesce_coin_writes(coalesce);
@@ -141,6 +145,7 @@ async fn catch_up_window_stages_in_one_commit() {
     let chain = build_chain(&base, START, START + N - 1, common::synth_hash(0xaa, 99));
 
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
     let telemetry = store.telemetry().expect("sqlite store exposes telemetry");
     // Catch-up band is the store default (near_tip = false); stated explicitly for the contrast
     // with the near-tip test below.
@@ -185,6 +190,7 @@ async fn window_staging_read_amplification_is_bounded() {
     let chain = build_chain(&base, START, START + W - 1, common::synth_hash(0xaa, 99));
 
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
     let telemetry = store.telemetry().expect("sqlite store exposes telemetry");
     store.set_near_tip(false);
     let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
@@ -219,6 +225,7 @@ async fn near_tip_window_persists_per_block() {
     let chain = build_chain(&base, START, START + N - 1, common::synth_hash(0xaa, 99));
 
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
     let telemetry = store.telemetry().expect("sqlite store exposes telemetry");
     store.set_near_tip(true);
     let mut chaser = Chaser::new(Engine::new(store.clone(), NativePrimitives, MAINNET), cfg());

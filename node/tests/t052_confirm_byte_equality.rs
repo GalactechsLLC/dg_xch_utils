@@ -29,6 +29,7 @@ async fn loopback_sync_of_a_real_block_confirms_reference_coin_state() {
 
     // Node B: seed the candidate header record so get_unassociated feeds the reservation window.
     let store = common::new_store().await;
+    common::ancestry::seed_mainnet_parent(&store).await;
     let template = common::load_records()[0].clone();
     store
         .add_block_records(&[seed_record_for(&template, &block)])

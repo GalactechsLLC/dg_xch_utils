@@ -48,6 +48,7 @@ async fn a_precompute_cannot_smuggle_past_an_unresolvable_ref() {
     );
     assert!(provided.contains_key(&107));
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
     store.set_near_tip(false);
     let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
     let confirmed = chaser
@@ -63,6 +64,7 @@ async fn a_confirm_store_failure_retracts_the_staged_overlay() {
     let base = common::load_full_block(5_000_000);
     let chain = build_chain(&base, 100, 107, common::synth_hash(0xae, 99));
     let (store, fail_apply, _) = common::fault::FaultStore::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
     let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
     let mut staged = chaser.stage_window_pre(chain, None).await.unwrap();
     let verdict = drain_staged_window(&NativePrimitives, &MAINNET, staged.take_drain_input());
@@ -80,6 +82,7 @@ async fn a_later_transaction_failure_preserves_committed_prefix_deltas() {
         let base = common::load_full_block(5_000_000);
         let chain = build_chain(&base, 100, 107, common::synth_hash(0xaf, 99));
         let store = common::new_store().await;
+        common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
         store.set_near_tip(near_tip);
         let (store, _, _) = common::fault::FaultStore::new(store);
         let mut chaser = Chaser::new(
@@ -136,6 +139,7 @@ async fn staging_the_next_window_before_the_confirm_matches_the_serial_path() {
 
     // Serial reference: the ordinary follow, window by window.
     let serial_store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&serial_store, &w1[0]).await;
     serial_store.set_near_tip(false);
     let mut serial = Chaser::new(Engine::new(serial_store, NativePrimitives, MAINNET), cfg());
     let serial_p1 = serial.follow_blocks(&w1).await.expect("w1 confirms");
@@ -145,6 +149,7 @@ async fn staging_the_next_window_before_the_confirm_matches_the_serial_path() {
     // confirm(w2). Window 2 stages against window 1's OVERLAY only — nothing of w1 is
     // committed yet.
     let piped_store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&piped_store, &w1[0]).await;
     piped_store.set_near_tip(false);
     let mut piped = Chaser::new(Engine::new(piped_store, NativePrimitives, MAINNET), cfg());
     let mut s1 = piped
@@ -187,6 +192,7 @@ async fn pipelined_windows_still_cost_one_writer_transaction_each() {
     let w2 = build_chain(&base, 108, 115, w1.last().unwrap().header_hash().unwrap());
 
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &w1[0]).await;
     let telemetry = store.telemetry().expect("sqlite store exposes telemetry");
     store.set_near_tip(false);
     let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
@@ -223,6 +229,7 @@ async fn an_abandoned_dry_staged_window_leaves_no_trace_and_replays() {
     let chain = build_chain(&base, 100, 107, common::synth_hash(0xac, 99));
 
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain[0]).await;
     store.set_near_tip(false);
     let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
     let staged = chaser
@@ -265,6 +272,7 @@ async fn entering_tip_with_a_staged_window_preserves_the_confirmed_chain() {
     let bulk = build_chain(&base, 100, 107, common::synth_hash(0xad, 99));
     let follow = build_chain(&base, 108, 110, bulk.last().unwrap().header_hash().unwrap());
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &bulk[0]).await;
     let mut chaser = Chaser::new(Engine::new(store.clone(), NativePrimitives, MAINNET), cfg());
     let mut staged = chaser.stage_window_pre(bulk.clone(), None).await.unwrap();
     store.set_near_tip(true);

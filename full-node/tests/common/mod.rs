@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+#[path = "../../../node/tests/common/ancestry.rs"]
+pub mod ancestry;
+
 use dg_full_node::FullNode;
 use dg_xch_core::blockchain::block_record::BlockRecord;
 use dg_xch_core::blockchain::coin::Coin;

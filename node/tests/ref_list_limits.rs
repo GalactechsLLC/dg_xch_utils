@@ -66,6 +66,7 @@ async fn an_over_cap_ref_list_is_rejected_at_resolution_without_per_entry_reads(
 
     let store = Arc::new(common::new_store().await);
     let telemetry = store.telemetry().expect("sqlite store exposes telemetry");
+    common::ancestry::seed_synthetic_parent(&store, &block).await;
     let mut chaser = Chaser::new(Engine::new(store, NativePrimitives, MAINNET), cfg());
     let before = telemetry.record_reads.load(Ordering::Relaxed);
     let err = chaser

@@ -116,6 +116,7 @@ async fn chaser_on_branch_a(
     chain_a: &[FullBlock],
 ) -> Chaser<Arc<dg_xch_stores::SqliteStore>, NativePrimitives> {
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain_a[0]).await;
     let engine = Engine::new(store, NativePrimitives, MAINNET);
     let mut chaser = Chaser::new(
         engine,
@@ -142,7 +143,7 @@ async fn chaser_on_branch_a(
 fn fixture_chains() -> (Vec<FullBlock>, Vec<FullBlock>) {
     let base_a = common::load_full_block(5_000_000);
     let base_b = common::load_full_block(5_000_004);
-    // Branch A: 100..=105 from an unknown-parent bootstrap entry (empty store accepts a checkpoint base).
+    // Branch A: 100..=105 extends the synthetic parent seeded by chaser_on_branch_a.
     let chain_a = build_chain(&base_a, 100, A_TIP, common::synth_hash(0xaa, 99), a_weight);
     // Branch B forks off A at FORK: B(FORK+1..=B_TIP), first parent = A(FORK).
     let fork_hash = chain_a[(FORK - 100) as usize].header_hash().unwrap();

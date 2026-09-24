@@ -6,6 +6,9 @@ use dg_xch_stores::BlockStore;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "../../../common/ancestry.rs"]
+mod ancestry;
+
 const START: u32 = 100;
 const N: u32 = 8;
 
@@ -49,11 +52,13 @@ async fn split_confirmation_preserves_failure_prefix_and_restarts() {
                 .unwrap(),
         );
         store.set_near_tip(mode == 3);
+        ancestry::seed_synthetic_parent(&store, &chain[0]).await;
         let mut engine = Engine::new(store.clone(), NativePrimitives, MAINNET);
         engine.set_coalesce_coin_writes(true);
         let mut chaser = Chaser::new(engine, cfg());
         chaser.set_confirm_transaction_blocks((mode == 0).then_some(3));
         let window = chaser.stage_window_pre(chain.clone(), None).await.unwrap();
+        assert_eq!(window.staged.len(), chain.len(), "entire fixture stages");
         let coin_limit = window.staged[0].0.coin_mutations() * 3;
         let byte_limit = window.staged[0].0.estimated_coin_bytes() * 3;
         chaser.set_confirm_transaction_coin_limits(

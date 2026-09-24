@@ -100,6 +100,7 @@ async fn chaser_on_branch_a(
     chain_a: &[FullBlock],
 ) -> Chaser<Arc<dg_xch_stores::SqliteStore>, NativePrimitives> {
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain_a[0]).await;
     let engine = Engine::new(store, NativePrimitives, MAINNET);
     let mut chaser = Chaser::new(
         engine,
