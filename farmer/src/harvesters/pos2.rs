@@ -1,9 +1,11 @@
+mod network;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_plotter::proving::ReconstructedPlot;
 use dg_xch_pos::pos2::chainer::SearchLimits;
 use dg_xch_pos::pos2::plotting::PlotLimits;
 use dg_xch_pos::pos2::quality::quality_hash;
 use dg_xch_pos::pos2::{params::ProofParams, plotting::NativePlot};
+pub use network::{Pos2Harvester, Pos2Status};
 use std::io::Error;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;

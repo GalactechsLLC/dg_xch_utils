@@ -1,6 +1,13 @@
-pub mod druid_garden;
+pub mod bladebit;
+pub mod discovery;
+pub mod unified;
+pub use unified::UnifiedHarvester;
+pub mod gigahorse;
+pub mod pos1;
 pub mod pos2;
-mod pos2_network;
+pub mod druid_garden {
+    pub use super::pos1::Pos1Harvester as DruidGardenHarvester;
+}
 use crate::farmer::config::Config;
 use async_trait::async_trait;
 use dg_xch_clients::websocket::farmer::FarmerClient;
@@ -9,9 +16,8 @@ use dg_xch_core::protocols::farmer::FarmerSharedState;
 use dg_xch_core::protocols::harvester::{
     NewProofOfSpace, NewSignagePointHarvester, RequestSignatures, RespondSignatures,
 };
-pub use pos2_network::{Pos2Harvester, Pos2Status};
+pub use pos2::{Pos2Harvester, Pos2Status};
 use std::io::Error;
-use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -108,23 +114,4 @@ pub struct FarmingKeys {
     pub farmer_public_keys: Vec<Bytes48>,
     pub pool_public_keys: Vec<Bytes48>,
     pub pool_contract_hashes: Vec<Bytes32>,
-}
-
-async fn count_plots(
-    path: &Path,
-    count_total: &mut u64,
-    size_total: &mut u64,
-) -> Result<(), Error> {
-    if !path.is_dir() {
-        return Ok(());
-    }
-    let mut dir = tokio::fs::read_dir(path).await?;
-    while let Ok(Some(e)) = dir.next_entry().await {
-        if e.file_name().to_string_lossy().ends_with(".plot") {
-            let file_size = e.metadata().await?.len();
-            *size_total += file_size;
-            *count_total += 1;
-        }
-    }
-    Ok(())
 }

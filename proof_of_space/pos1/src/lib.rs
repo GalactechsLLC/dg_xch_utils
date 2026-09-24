@@ -22,6 +22,10 @@ pub mod constants;
 pub mod encoding;
 pub mod entry_sizes;
 pub mod f_calc;
+pub mod gigahorse;
+pub mod gigahorse_cpu;
+#[cfg(any(feature = "cuda", feature = "vulkan"))]
+pub mod gigahorse_gpu;
 pub mod plots;
 pub mod util;
 pub mod utils;

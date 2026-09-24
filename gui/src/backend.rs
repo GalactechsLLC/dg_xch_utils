@@ -554,9 +554,7 @@ async fn command_worker(
                         pool_secret_key: Some(keys.1.to_bytes().into()),
                         ..Default::default()
                     });
-                    config.harvester_configs.druid_garden = Some(dg_xch_farmer::farmer::config::DruidGardenHarvesterConfig {
-                        plot_directories: settings.plot_directories.iter().map(|path| path.to_string_lossy().into_owned()).collect(),
-                    });
+                    config.harvester_configs.plot_directories = settings.plot_directories.iter().map(|path| path.to_string_lossy().into_owned()).collect();
                     farmer = Some(FarmerService::start(config).await?);
                     update(&state, |state| { state.farmer_running = true; state.notice = "Account farmer started. Derived farming keys are not written to disk.".into(); });
                 },

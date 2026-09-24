@@ -62,13 +62,94 @@ pub struct DruidGardenHarvesterConfig {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HarvesterConfig<C = ()> {
+    #[serde(default)]
+    pub plot_directories: Vec<String>,
     #[serde(default = "default_none")]
+    #[serde(rename = "pos1", alias = "druid_garden")]
     pub druid_garden: Option<DruidGardenHarvesterConfig>,
     #[serde(default)]
     pub pos2: Option<Pos2HarvesterConfig>,
+    #[serde(default)]
+    pub bladebit: Option<Pos1HarvesterConfig>,
+    #[serde(default)]
+    pub gigahorse: Option<GigahorseHarvesterConfig>,
     #[serde(default = "default_none")]
-    #[serde(alias = "gigahorse")] //Support Legacy Gigahorse Configs
     pub custom_config: Option<C>,
+}
+
+impl<C> HarvesterConfig<C> {
+    pub fn directories(&self) -> Vec<std::path::PathBuf> {
+        let mut directories = self.plot_directories.clone();
+        if let Some(config) = &self.druid_garden {
+            directories.extend(config.plot_directories.iter().cloned());
+        }
+        if let Some(config) = &self.bladebit {
+            directories.extend(config.plot_directories.iter().cloned());
+        }
+        if let Some(config) = &self.pos2 {
+            directories.extend(config.plot_directories.iter().cloned());
+        }
+        if let Some(config) = &self.gigahorse {
+            directories.extend(config.plot_directories.iter().cloned());
+        }
+        directories.sort();
+        directories.dedup();
+        directories
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect()
+    }
+}
+
+pub type Pos1HarvesterConfig = DruidGardenHarvesterConfig;
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GigahorseBackend {
+    #[default]
+    Cpu,
+    Cuda,
+    Vulkan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GigahorseHarvesterConfig {
+    pub plot_directories: Vec<String>,
+    pub backend: GigahorseBackend,
+    pub device: usize,
+    pub memory_mib: u64,
+    pub threads: usize,
+    pub deadline_ms: u64,
+}
+
+impl Default for GigahorseHarvesterConfig {
+    fn default() -> Self {
+        Self {
+            plot_directories: Vec::new(),
+            backend: GigahorseBackend::Cpu,
+            device: 0,
+            memory_mib: 12_288,
+            threads: std::thread::available_parallelism().map_or(4, |count| count.get().min(16)),
+            deadline_ms: 20_000,
+        }
+    }
+}
+
+impl GigahorseHarvesterConfig {
+    pub fn validate(&self) -> Result<(), Error> {
+        if !(1..=256).contains(&self.threads)
+            || !(1..=120_000).contains(&self.deadline_ms)
+            || self.memory_mib < 256
+            || self.memory_mib.checked_mul(1024 * 1024).is_none()
+            || (self.backend == GigahorseBackend::Cpu && self.device != 0)
+        {
+            return Err(Error::other(
+                "invalid GigaHorse resource limits or CPU device",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +261,9 @@ impl<C: Clone + Serialize> Config<C> {
         if let Some(config) = &self.harvester_configs.pos2 {
             config.validate()?;
         }
+        if let Some(config) = &self.harvester_configs.gigahorse {
+            config.validate()?;
+        }
         for info in &self.farmer_info {
             for key in [
                 Some(info.farmer_secret_key),
@@ -255,8 +339,11 @@ impl<C: Clone> Default for Config<C> {
             pool_ca_certificates: vec![],
             payout_address: "".to_string(),
             harvester_configs: HarvesterConfig {
+                plot_directories: Vec::new(),
                 druid_garden: Some(DruidGardenHarvesterConfig::default()),
                 pos2: None,
+                bladebit: None,
+                gigahorse: None,
                 custom_config: None,
             },
             metrics: Some(MetricsConfig {
@@ -381,4 +468,43 @@ pub async fn load_keys<C: Clone>(
         auth_secret_keys,
         pool_secret_keys,
     )
+}
+
+#[cfg(test)]
+mod harvester_config_tests {
+    use super::*;
+
+    #[test]
+    fn common_and_legacy_directories_merge_without_changing_compute_settings() {
+        let config: HarvesterConfig = serde_yaml::from_str(
+            "plot_directories: [/shared]\ndruid_garden:\n  plot_directories: [/old, /shared]\nbladebit:\n  plot_directories: [/bladebit]\npos2:\n  plot_directories: [/next]\ngigahorse:\n  plot_directories: [/gh]\n  backend: vulkan\n  device: 2\n",
+        ).unwrap();
+        assert_eq!(
+            config.directories(),
+            ["/bladebit", "/gh", "/next", "/old", "/shared"].map(std::path::PathBuf::from)
+        );
+        assert_eq!(
+            config.gigahorse.as_ref().unwrap().backend,
+            GigahorseBackend::Vulkan
+        );
+        assert_eq!(config.gigahorse.as_ref().unwrap().device, 2);
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        let decoded: HarvesterConfig = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(decoded, config);
+        assert!(serialized.contains("pos1:"));
+        assert!(!serialized.contains("druid_garden:"));
+    }
+
+    #[test]
+    fn common_directories_do_not_require_backend_blocks() {
+        let config: HarvesterConfig = serde_yaml::from_str("plot_directories: [/plots]\n").unwrap();
+        assert_eq!(config.directories(), [std::path::PathBuf::from("/plots")]);
+        assert_eq!(
+            config.gigahorse.unwrap_or_default().backend,
+            GigahorseBackend::Cpu
+        );
+        let legacy: HarvesterConfig =
+            serde_yaml::from_str("pos1:\n  plot_directories: [/old]\n").unwrap();
+        assert_eq!(legacy.directories(), [std::path::PathBuf::from("/old")]);
+    }
 }

@@ -1,8 +1,11 @@
+use super::discovery::{PlotFormat, PlotInventory, read_classic_headers};
 use crate::PROTOCOL_VERSION;
-use crate::farmer::config::{Config, Pos2HarvesterConfig};
+use crate::farmer::config::{Config, GigahorseHarvesterConfig, Pos2HarvesterConfig};
 use crate::farmer::{PathInfo, PlotInfo};
-use crate::harvesters::pos2_network::Pos2Harvester;
-use crate::harvesters::{FarmingKeys, Harvester, ProofHandler, SignatureHandler, count_plots};
+use crate::harvesters::bladebit::BladebitHarvester;
+use crate::harvesters::gigahorse::GigahorseHarvester;
+use crate::harvesters::pos2::Pos2Harvester;
+use crate::harvesters::{FarmingKeys, Harvester, ProofHandler, SignatureHandler};
 use crate::utils::load_client_id;
 use async_trait::async_trait;
 use blst::min_pk::{PublicKey, SecretKey};
@@ -23,7 +26,6 @@ use dg_xch_core::protocols::harvester::{
 use dg_xch_keys::master_sk_to_local_sk;
 use dg_xch_pos::plots::decompressor::DecompressorPool;
 use dg_xch_pos::plots::disk_plot::DiskPlot;
-use dg_xch_pos::plots::plot_reader::{PlotReader, read_all_plot_headers_async};
 use dg_xch_pos::verifier::proof_to_bytes;
 use dg_xch_serialize::ChiaSerialize;
 use futures_util::stream::FuturesUnordered;
@@ -33,7 +35,7 @@ use log::{debug, error, info, warn};
 use rand::random;
 use std::collections::{HashMap, HashSet};
 use std::io::{Error, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::available_parallelism;
@@ -60,7 +62,7 @@ impl<T> Drop for AbortTask<T> {
     }
 }
 
-pub struct DruidGardenHarvester<T: Send + Sync + 'static> {
+pub struct UnifiedHarvester<T: Send + Sync + 'static> {
     pub plots: Arc<Mutex<HashMap<PathInfo, Arc<PlotInfo>>>>,
     pub plot_dirs: Arc<Vec<PathBuf>>,
     pub decompressor_pool: Arc<DecompressorPool>,
@@ -71,15 +73,16 @@ pub struct DruidGardenHarvester<T: Send + Sync + 'static> {
     pub client_id: Bytes32,
     pub shared_state: Arc<FarmerSharedState<T>>,
     pub(crate) pos2: Arc<Pos2Harvester>,
+    pub(crate) gigahorse: Option<Arc<GigahorseHarvester>>,
 }
 #[async_trait]
 impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
-    Harvester<T, DruidGardenHarvester<T>, C> for DruidGardenHarvester<T>
+    Harvester<T, UnifiedHarvester<T>, C> for UnifiedHarvester<T>
 {
     async fn load(
         shared_state: Arc<FarmerSharedState<T>>,
         config: Arc<RwLock<Config<C>>>,
-    ) -> Result<Arc<DruidGardenHarvester<T>>, Error> {
+    ) -> Result<Arc<UnifiedHarvester<T>>, Error> {
         let mut farmer_public_keys = vec![];
         let mut pool_public_keys = vec![];
         let client_id = load_client_id::<C>(config.clone()).await?;
@@ -97,35 +100,22 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
             .iter()
             .map(|w| w.p2_singleton_puzzle_hash)
             .collect::<Vec<Bytes32>>();
-        let mut sum = 0;
-        let mut total_size = 0;
         let farming_keys = Arc::new(FarmingKeys {
             farmer_public_keys,
             pool_public_keys,
             pool_contract_hashes,
         });
-        let dg_config = &config
-            .harvester_configs
-            .druid_garden
-            .clone()
-            .unwrap_or_default();
-        for dir in &dg_config.plot_directories {
-            if let Err(e) = count_plots(Path::new(&dir), &mut sum, &mut total_size).await {
-                error!("Error Counting Plots: {e:?}")
-            }
-        }
-        let harvester = DruidGardenHarvester::new_with_pos2(
-            dg_config
-                .plot_directories
-                .iter()
-                .map(|s| Path::new(s).to_path_buf())
-                .collect(),
+        let harvester = UnifiedHarvester::new_with_backends(
+            config.harvester_configs.directories(),
             farming_keys.clone(),
             shared_state.signal.clone(),
             config.constants()?,
             client_id,
             shared_state.clone(),
-            config.harvester_configs.pos2.clone().unwrap_or_default(),
+            (
+                config.harvester_configs.pos2.clone().unwrap_or_default(),
+                config.harvester_configs.gigahorse.clone(),
+            ),
         )
         .await?;
         Ok(Arc::new(harvester))
@@ -136,10 +126,11 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
         proof_handle: O,
     ) -> Result<(), Error>
     where
-        O: ProofHandler<T, DruidGardenHarvester<T>, C> + Sync + Send + 'static,
+        O: ProofHandler<T, UnifiedHarvester<T>, C> + Sync + Send + 'static,
     {
         let proof_handle = Arc::new(proof_handle);
         let pos2 = self.pos2.clone();
+        let gigahorse = self.gigahorse.clone();
         let pos2_point = signage_point.clone();
         let shared_state = self.shared_state.clone();
         let pos2_proof_handle = proof_handle.clone();
@@ -160,17 +151,28 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
                 return;
             };
             let (sender, mut proofs) = tokio::sync::mpsc::channel(4);
-            let farming = pos2.farm(pos2_point, height, sender);
+            let farming = pos2.farm(pos2_point.clone(), height, sender.clone());
+            let gigahorse_farming = async move {
+                if let Some(backend) = gigahorse {
+                    backend.farm(pos2_point, height, sender).await
+                } else {
+                    Ok(())
+                }
+            };
             let submission = async move {
                 while let Some(proof) = proofs.recv().await {
                     if let Err(error) = pos2_proof_handle.handle_proof(proof).await {
-                        error!("PoS2 proof submission failed: {error}");
+                        error!("Harvester backend proof submission failed: {error}");
                     }
                 }
             };
-            let (result, ()) = tokio::join!(farming, submission);
+            let (result, gigahorse_result, ()) =
+                tokio::join!(farming, gigahorse_farming, submission);
             if let Err(error) = result {
                 warn!("PoS2 signage processing failed: {error}");
+            }
+            if let Err(error) = gigahorse_result {
+                warn!("GigaHorse signage processing failed: {error}");
             }
         });
         let start = self
@@ -476,9 +478,14 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
         response_handle: H,
     ) -> Result<(), Error>
     where
-        H: SignatureHandler<T, DruidGardenHarvester<T>, C> + Sync + Send,
+        H: SignatureHandler<T, UnifiedHarvester<T>, C> + Sync + Send,
     {
         if let Some(response) = self.pos2.sign(&request_signatures).await? {
+            return response_handle.handle_signature(response).await;
+        }
+        if let Some(backend) = &self.gigahorse
+            && let Some(response) = backend.sign(&request_signatures).await?
+        {
             return response_handle.handle_signature(response).await;
         }
         let file_name = request_signatures
@@ -541,7 +548,7 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
     }
 }
 
-impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
+impl<T: Send + Sync + 'static> UnifiedHarvester<T> {
     pub async fn new(
         plot_dirs: Vec<PathBuf>,
         farming_keys: Arc<FarmingKeys>,
@@ -571,14 +578,55 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
         shared_state: Arc<FarmerSharedState<T>>,
         pos2_config: Pos2HarvesterConfig,
     ) -> Result<Self, Error> {
-        let pos2 = Pos2Harvester::new(
+        Self::new_with_backends(
+            plot_dirs,
+            farming_keys,
+            shutdown_signal,
+            constants,
+            client_id,
+            shared_state,
+            (pos2_config, None),
+        )
+        .await
+    }
+
+    pub async fn new_with_backends(
+        plot_dirs: Vec<PathBuf>,
+        farming_keys: Arc<FarmingKeys>,
+        shutdown_signal: Arc<AtomicBool>,
+        constants: ConsensusConstants,
+        client_id: Bytes32,
+        shared_state: Arc<FarmerSharedState<T>>,
+        configs: (Pos2HarvesterConfig, Option<GigahorseHarvesterConfig>),
+    ) -> Result<Self, Error> {
+        let (pos2_config, gigahorse_config) = configs;
+        let gigahorse_config = gigahorse_config.unwrap_or_default();
+        let mut plot_dirs = plot_dirs;
+        plot_dirs.extend(pos2_config.plot_directories.iter().map(PathBuf::from));
+        plot_dirs.extend(gigahorse_config.plot_directories.iter().map(PathBuf::from));
+        plot_dirs.sort();
+        plot_dirs.dedup();
+        let inventory = PlotInventory::scan(plot_dirs.clone()).await?;
+        let pos2 = Pos2Harvester::new_from_paths(
             pos2_config,
             &plot_dirs,
             farming_keys.clone(),
             constants,
             shutdown_signal.clone(),
+            inventory.paths(PlotFormat::Pos2),
         )
         .await?;
+        let gigahorse = Some(
+            GigahorseHarvester::new_from_paths(
+                gigahorse_config,
+                &plot_dirs,
+                farming_keys.clone(),
+                constants,
+                shutdown_signal.clone(),
+                inventory.paths(PlotFormat::Gigahorse),
+            )
+            .await?,
+        );
         let decompressor_pool = Arc::new(DecompressorPool::new(
             1,
             available_parallelism().map(|u| u.get()).unwrap_or(4) as u8,
@@ -586,11 +634,11 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
         let plot_dirs = Arc::new(plot_dirs);
         let plots = Arc::new(Mutex::new(
             load_plots(
-                plot_dirs.clone(),
+                inventory.classic_paths(),
                 &farming_keys.farmer_public_keys,
                 &farming_keys.pool_public_keys,
                 &farming_keys.pool_contract_hashes,
-                pos2.paths().await,
+                Vec::new(),
                 decompressor_pool.clone(),
                 shared_state.metrics.clone(),
             )
@@ -602,6 +650,7 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
         let plot_sync_decompressor_pool = decompressor_pool.clone();
         let plot_sync_shared_state = shared_state.clone();
         let plot_sync_pos2 = pos2.clone();
+        let plot_sync_gigahorse = gigahorse.clone();
         let _plot_sync = tokio::spawn(async move {
             let mut last_sync = Instant::now();
             loop {
@@ -609,10 +658,35 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
                     break;
                 }
                 if last_sync.elapsed() > Duration::from_secs(30) {
-                    if let Err(error) = plot_sync_pos2.refresh().await {
+                    last_sync = Instant::now();
+                    let inventory = match PlotInventory::scan(plot_sync_dirs.as_ref().clone()).await
+                    {
+                        Ok(inventory) => inventory,
+                        Err(error) => {
+                            warn!("Failed to discover plots: {error}");
+                            continue;
+                        }
+                    };
+                    if let Err(error) = plot_sync_pos2
+                        .refresh_paths(inventory.paths(PlotFormat::Pos2))
+                        .await
+                    {
                         warn!("Failed to refresh PoS2 plots: {error}");
                     }
-                    let mut known_paths = plot_sync_pos2.paths().await;
+                    if let Some(backend) = &plot_sync_gigahorse
+                        && let Err(error) = backend
+                            .refresh_paths(inventory.paths(PlotFormat::Gigahorse))
+                            .await
+                    {
+                        warn!("Failed to refresh GigaHorse plots: {error}");
+                    }
+                    let classic_paths = inventory.classic_paths();
+                    let available: HashSet<_> = classic_paths.iter().cloned().collect();
+                    plot_sync_mutex
+                        .lock()
+                        .await
+                        .retain(|info, _| available.contains(&info.path));
+                    let mut known_paths = Vec::new();
                     known_paths.extend(
                         plot_sync_mutex
                             .lock()
@@ -622,7 +696,7 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
                     );
                     let existing_plot_paths: Arc<Vec<PathBuf>> = Arc::new(known_paths);
                     match load_plots(
-                        plot_sync_dirs.clone(),
+                        classic_paths,
                         &plot_sync_farming_keys.farmer_public_keys,
                         &plot_sync_farming_keys.pool_public_keys,
                         &plot_sync_farming_keys.pool_contract_hashes,
@@ -655,12 +729,13 @@ impl<T: Send + Sync + 'static> DruidGardenHarvester<T> {
             uuid: Bytes32::from(random::<[u8; 32]>()),
             shared_state,
             pos2,
+            gigahorse,
         })
     }
 }
 
 async fn load_plots(
-    plot_dirs: Arc<Vec<PathBuf>>,
+    plot_paths: Vec<PathBuf>,
     farmer_public_keys: &[Bytes48],
     pool_public_keys: &[Bytes48],
     pool_contract_hashes: &[Bytes32],
@@ -681,7 +756,16 @@ async fn load_plots(
     let pool_contract_hashes = Arc::new(pool_contract_hashes.to_vec());
     let existing_paths: Arc<Vec<PathBuf>> = Arc::new(existing_plot_paths);
     let futures = FuturesUnordered::new();
-    for dir in plot_dirs.iter() {
+    let mut directories: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    for path in plot_paths {
+        if let Some(parent) = path.parent() {
+            directories
+                .entry(parent.to_path_buf())
+                .or_default()
+                .push(path);
+        }
+    }
+    for (dir, paths) in directories {
         let farmer_public_keys = farmer_public_keys.clone();
         let pool_public_keys = pool_public_keys.clone();
         let pool_contract_hashes = pool_contract_hashes.clone();
@@ -693,16 +777,7 @@ async fn load_plots(
         futures.push(timeout(
             Duration::from_secs(30),
             tokio::spawn(async move {
-                match read_all_plot_headers_async(
-                    &dir,
-                    existing_paths
-                        .iter()
-                        .map(|p| p.as_path())
-                        .collect::<Vec<&Path>>()
-                        .as_slice(),
-                )
-                .await
-                {
+                match read_classic_headers(&paths, &existing_paths).await {
                     Ok((headers, failed)) => {
                         debug!(
                             "Plot Headers Processed: {}, Failed: {}",
@@ -748,13 +823,12 @@ async fn load_plots(
                             if let Some(v) = plot_load {
                                 v.stop_and_record();
                             }
-                            match PlotReader::new(
-                                plot_file,
-                                Some(decompressor_pool.clone()),
-                                Some(decompressor_pool.clone()),
-                            )
-                            .await
-                            {
+                            let reader = if BladebitHarvester::supports(&header) {
+                                BladebitHarvester::open(plot_file, decompressor_pool.clone()).await
+                            } else {
+                                super::pos1::open(plot_file).await
+                            };
+                            match reader {
                                 Ok(reader) => {
                                     let local_master_secret = local_master_secret_key.into();
                                     let (size, modified) = tokio::fs::metadata(&path)

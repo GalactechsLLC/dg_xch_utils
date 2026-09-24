@@ -1010,7 +1010,6 @@ pub fn read_plot_header(file: &mut std::fs::File) -> Result<PlotHeader, Error> {
     let header = if HEADER_V2_MAGIC == full_buffer[0..4] {
         PlotHeader::V2(parse_v2(&full_buffer)?)
     } else if HEADER_MAGIC == full_buffer[0..19] {
-        //TODO Gigahorse plots also follow this format but cant be actually read, memo is encrypted.
         PlotHeader::V1(parse_v1(&full_buffer)?)
     } else {
         return Err(Error::new(
@@ -1149,6 +1148,16 @@ fn parse_v1(mut remaining: &[u8]) -> Result<PlotHeaderV1, Error> {
     };
     plot_header.format_desc =
         header_bytes(&mut remaining, usize::from(plot_header.format_desc_len))?.to_vec();
+    if plot_header.format_desc != b"v1.0" {
+        return Err(Error::new(
+            ErrorKind::Unsupported,
+            if plot_header.format_desc.starts_with(b"mmx-") {
+                "GigaHorse plots require the GigaHorse harvester"
+            } else {
+                "Unsupported PoS1 plot format description"
+            },
+        ));
+    }
     plot_header.memo_len = u16::from_be_bytes(header_array(&mut remaining)?);
     plot_header.memo = PlotMemo::try_from(header_bytes(
         &mut remaining,
@@ -1310,6 +1319,19 @@ mod header_tests {
     use super::{parse_v1, parse_v2, validate_c3_delta_count, validate_plot_header};
     use crate::constants::{HEADER_MAGIC, HEADER_V2_MAGIC, K_CHECKPOINT1INTERVAL};
     use dg_xch_core::plots::{PlotHeader, PlotHeaderV1, PlotHeaderV2};
+
+    #[test]
+    fn gigahorse_is_rejected_before_decoding_the_memo() {
+        for description in [b"mmx-v3.0", b"mmx-v2.5"] {
+            let mut bytes = vec![0; 54];
+            bytes[..19].copy_from_slice(&HEADER_MAGIC);
+            bytes[52..54].copy_from_slice(&(description.len() as u16).to_be_bytes());
+            bytes.extend_from_slice(description);
+            let error = parse_v1(&bytes).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+            assert!(error.to_string().contains("GigaHorse"));
+        }
+    }
 
     fn uncompressed_header() -> PlotHeaderV1 {
         PlotHeaderV1 {

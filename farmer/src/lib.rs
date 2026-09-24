@@ -13,7 +13,7 @@ use crate::farmer::config::{Config, load_keys};
 use crate::farmer::protocols::harvester::new_proof_of_space::NewProofOfSpaceHandle;
 use crate::farmer::protocols::harvester::respond_signatures::RespondSignaturesHandler;
 use crate::harvesters::Harvester;
-use crate::harvesters::druid_garden::DruidGardenHarvester;
+use crate::harvesters::UnifiedHarvester;
 use dg_xch_clients::api::pool::DefaultPoolClient;
 use dg_xch_core::protocols::farmer::FarmerSharedState;
 use dg_xch_serialize::ChiaProtocolVersion;
@@ -40,9 +40,9 @@ pub fn version() -> String {
 }
 
 pub type SignaturesHandler =
-    RespondSignaturesHandler<DefaultPoolClient, (), DruidGardenHarvester<()>, ()>;
+    RespondSignaturesHandler<DefaultPoolClient, (), UnifiedHarvester<()>, ()>;
 pub type NewProofHandler =
-    NewProofOfSpaceHandle<DefaultPoolClient, SignaturesHandler, (), DruidGardenHarvester<()>, ()>;
+    NewProofOfSpaceHandle<DefaultPoolClient, SignaturesHandler, (), UnifiedHarvester<()>, ()>;
 
 pub struct FarmerService {
     pub state: Arc<FarmerSharedState<()>>,
@@ -139,12 +139,11 @@ impl FarmerService {
             ..Default::default()
         });
         let config = Arc::new(RwLock::new(config));
-        let harvester =
-            <DruidGardenHarvester<()> as Harvester<(), DruidGardenHarvester<()>, ()>>::load(
-                state.clone(),
-                config.clone(),
-            )
-            .await?;
+        let harvester = <UnifiedHarvester<()> as Harvester<(), UnifiedHarvester<()>, ()>>::load(
+            state.clone(),
+            config.clone(),
+        )
+        .await?;
         let farmer = Farmer::<DefaultPoolClient, NewProofHandler, SignaturesHandler>::new(
             state.clone(),
             Arc::new(config.read().await.pool_client()?),

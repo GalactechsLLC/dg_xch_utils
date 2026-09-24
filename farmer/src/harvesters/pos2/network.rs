@@ -1,7 +1,8 @@
+use super::DiskHarvester;
 use crate::farmer::PathInfo;
 use crate::farmer::config::{Pos2Backend, Pos2HarvesterConfig};
 use crate::harvesters::FarmingKeys;
-use crate::harvesters::pos2::DiskHarvester;
+use crate::harvesters::discovery::{PlotFormat, PlotInventory};
 use blst::min_pk::{PublicKey, SecretKey};
 use dg_xch_core::blockchain::proof_of_space::{
     ProofOfSpace, calculate_plot_id_v2, calculate_pos_challenge, calculate_prefix_bits_v2,
@@ -26,8 +27,9 @@ use dg_xch_pos::pos2::quality::quality_hash;
 use dg_xch_pos::pos2::validator::ProofValidator;
 use log::{info, warn};
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
 use std::fs::File;
-use std::io::{Error, ErrorKind, Read};
+use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -219,11 +221,36 @@ pub struct Pos2Harvester {
 
 impl Pos2Harvester {
     pub async fn new(
+        config: Pos2HarvesterConfig,
+        inherited_directories: &[PathBuf],
+        keys: Arc<FarmingKeys>,
+        constants: ConsensusConstants,
+        running: Arc<AtomicBool>,
+    ) -> Result<Arc<Self>, Error> {
+        let directories = if config.plot_directories.is_empty() {
+            inherited_directories.to_vec()
+        } else {
+            config.plot_directories.iter().map(PathBuf::from).collect()
+        };
+        let inventory = PlotInventory::scan(directories).await?;
+        Self::new_from_paths(
+            config,
+            inherited_directories,
+            keys,
+            constants,
+            running,
+            inventory.paths(PlotFormat::Pos2),
+        )
+        .await
+    }
+
+    pub(crate) async fn new_from_paths(
         mut config: Pos2HarvesterConfig,
         inherited_directories: &[PathBuf],
         keys: Arc<FarmingKeys>,
         constants: ConsensusConstants,
         running: Arc<AtomicBool>,
+        paths: Vec<PathBuf>,
     ) -> Result<Arc<Self>, Error> {
         config.validate()?;
         if matches!(
@@ -249,7 +276,7 @@ impl Pos2Harvester {
             running,
             counters: Counters::default(),
         });
-        harvester.refresh().await?;
+        harvester.refresh_paths(paths).await?;
         Ok(harvester)
     }
 
@@ -276,15 +303,18 @@ impl Pos2Harvester {
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {
-        let directories = self.directories.clone();
+        let inventory = PlotInventory::scan(self.directories.clone()).await?;
+        self.refresh_paths(inventory.paths(PlotFormat::Pos2)).await
+    }
+
+    pub(crate) async fn refresh_paths(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
         let keys = self.keys.clone();
         let constants = self.constants;
         let running = self.running.clone();
-        let plots = tokio::task::spawn_blocking(move || {
-            discover(&directories, &keys, &constants, &running)
-        })
-        .await
-        .map_err(Error::other)??;
+        let plots =
+            tokio::task::spawn_blocking(move || discover(&paths, &keys, &constants, &running))
+                .await
+                .map_err(Error::other)??;
         let count = plots.len();
         *self.plots.write().await = plots;
         self.counters
@@ -577,59 +607,29 @@ fn recover_local(
 }
 
 fn discover(
-    directories: &[PathBuf],
+    paths: &[PathBuf],
     keys: &FarmingKeys,
     constants: &ConsensusConstants,
     running: &AtomicBool,
 ) -> Result<HashMap<String, Arc<FarmingPlot>>, Error> {
     let mut plots = HashMap::new();
     let mut plot_ids = HashSet::new();
-    for directory in directories {
-        let entries = match std::fs::read_dir(directory) {
-            Ok(entries) => entries,
-            Err(error) => {
-                warn!(
-                    "Cannot scan PoS2 plot directory {}: {error}",
-                    directory.display()
-                );
-                continue;
-            }
-        };
-        for entry in entries {
-            if !running.load(Ordering::Acquire) {
-                return Err(Error::new(ErrorKind::Interrupted, "farmer stopped"));
-            }
-            let entry = entry?;
-            if !entry.file_type()?.is_file()
-                || entry
-                    .path()
-                    .extension()
-                    .is_none_or(|extension| extension != "plot")
-            {
-                continue;
-            }
-            let path = entry.path().canonicalize()?;
-            let mut magic = [0u8; 4];
-            if File::open(&path)
-                .and_then(|mut input| input.read_exact(&mut magic))
-                .is_err()
-                || &magic != b"pos2"
-            {
-                continue;
-            }
-            match FarmingPlot::open(path.clone(), keys, constants) {
-                Ok(plot) => {
-                    if !plot_ids.insert(plot.info.plot_id) {
-                        continue;
-                    }
-                    if plots.len() == MAX_DISCOVERED_PLOTS {
-                        return Err(Error::other("PoS2 plot registry limit exceeded"));
-                    }
-                    plots.try_reserve(1).map_err(Error::other)?;
-                    plots.insert(plot.path.identifier().to_owned(), Arc::new(plot));
+    for path in paths {
+        if !running.load(Ordering::Acquire) {
+            return Err(Error::new(ErrorKind::Interrupted, "farmer stopped"));
+        }
+        match FarmingPlot::open(path.clone(), keys, constants) {
+            Ok(plot) => {
+                if !plot_ids.insert(plot.info.plot_id) {
+                    continue;
                 }
-                Err(error) => warn!("Cannot farm PoS2 plot {}: {error}", path.display()),
+                if plots.len() == MAX_DISCOVERED_PLOTS {
+                    return Err(Error::other("PoS2 plot registry limit exceeded"));
+                }
+                plots.try_reserve(1).map_err(Error::other)?;
+                plots.insert(plot.path.identifier().to_owned(), Arc::new(plot));
             }
+            Err(error) => warn!("Cannot farm PoS2 plot {}: {error}", path.display()),
         }
     }
     Ok(plots)
@@ -1003,19 +1003,21 @@ mod tests {
         assert!(FarmingPlot::open(path, &keys, &constants()).is_err());
     }
 
-    #[test]
-    fn k28_discovery_deduplicates_plot_ids_and_honors_shutdown() {
+    #[tokio::test]
+    async fn k28_discovery_deduplicates_plot_ids_and_honors_shutdown() {
         let directory = tempfile::tempdir().unwrap();
         let (path, keys, _) = fixture(directory.path(), 2, true);
         std::fs::copy(&path, directory.path().join("duplicate.plot")).unwrap();
         let directories = vec![directory.path().to_path_buf()];
+        let inventory = PlotInventory::scan(directories).await.unwrap();
+        let paths = inventory.paths(PlotFormat::Pos2);
         assert_eq!(
-            discover(&directories, &keys, &constants(), &AtomicBool::new(true))
+            discover(&paths, &keys, &constants(), &AtomicBool::new(true))
                 .unwrap()
                 .len(),
             1
         );
-        assert!(discover(&directories, &keys, &constants(), &AtomicBool::new(false)).is_err());
+        assert!(discover(&paths, &keys, &constants(), &AtomicBool::new(false)).is_err());
     }
 
     #[test]

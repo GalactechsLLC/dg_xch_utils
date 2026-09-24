@@ -1654,6 +1654,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cudarc"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38cd60a9a42ec83a2ed7effb0b1f073270264ea99da7acfc44f7e8d74dee0384"
+dependencies = [
+ "libloading",
+]
+
+[[package]]
 name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1984,6 +1993,7 @@ dependencies = [
  "log",
  "once_cell",
  "rand 0.10.2",
+ "rayon",
  "rustls",
  "serde",
  "serde_json",
@@ -2168,11 +2178,16 @@ dependencies = [
 name = "dg_xch_pos1"
 version = "3.0.0"
 dependencies = [
+ "ash",
  "async-trait",
  "blake3",
+ "blst",
+ "bytemuck",
  "criterion",
+ "cudarc",
  "dg_logger",
  "dg_xch_core",
+ "dg_xch_keys",
  "dg_xch_pos_common",
  "futures-util",
  "hex",
@@ -2185,6 +2200,7 @@ dependencies = [
  "rand 0.10.2",
  "rayon",
  "rustc-hash 2.1.3",
+ "serde_json",
  "time",
  "tokio",
  "windows-sys 0.61.2",

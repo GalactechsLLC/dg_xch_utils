@@ -22,3 +22,5 @@ tarpaulin-report.html
 cobertura.xml
 tarpaulin/
 *.profraw
+*.a
+*.lib

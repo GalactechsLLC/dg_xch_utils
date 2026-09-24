@@ -2,7 +2,7 @@ use crate::PROTOCOL_VERSION;
 use crate::farmer::config::Config;
 use crate::farmer::protocols::fullnode::new_signage_point::NewSignagePointHandle;
 use crate::farmer::protocols::fullnode::request_signed_values::RequestSignedValuesHandle;
-use crate::harvesters::druid_garden::DruidGardenHarvester;
+use crate::harvesters::UnifiedHarvester;
 use crate::harvesters::{Harvester, ProofHandler, SignatureHandler};
 use crate::utils::{get_ssl_root_path, load_client_id};
 use dg_xch_clients::ClientSSLConfig;
@@ -102,7 +102,7 @@ pub struct PlotInfo {
     pub time_modified: u64,
 }
 
-pub struct Farmer<P, O, S, T = (), H = DruidGardenHarvester<T>, C = ()>
+pub struct Farmer<P, O, S, T = (), H = UnifiedHarvester<T>, C = ()>
 where
     P: PoolClient + Sized + Sync + Send + 'static,
     O: ProofHandler<T, H, C> + Sync + Send + 'static,

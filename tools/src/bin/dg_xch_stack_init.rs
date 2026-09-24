@@ -18,8 +18,7 @@ use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs_from_bytes, load_ssl_cert_and_key, make_ca_cert_data,
 };
 use dg_xch_farmer::farmer::config::{
-    Config, DruidGardenHarvesterConfig, FarmingInfo, HarvesterConfig, Pos2Backend,
-    Pos2HarvesterConfig,
+    Config, FarmingInfo, HarvesterConfig, Pos2Backend, Pos2HarvesterConfig,
 };
 use dg_xch_keys::{
     encode_puzzle_hash, master_sk_to_farmer_sk, master_sk_to_pool_sk, master_sk_to_wallet_sk,
@@ -332,10 +331,11 @@ fn create_farmer(
         pool_ca_certificates: Vec::new(),
         payout_address: encode_puzzle_hash(&payout, "dgx")?,
         harvester_configs: HarvesterConfig {
-            druid_garden: Some(DruidGardenHarvesterConfig {
-                plot_directories: vec!["/plots".to_owned()],
-            }),
+            plot_directories: vec!["/plots".to_owned()],
+            druid_garden: None,
             custom_config: None,
+            gigahorse: None,
+            bladebit: None,
             pos2: Some(Pos2HarvesterConfig {
                 backend,
                 cuda_helper: if backend == Pos2Backend::Cuda {

@@ -61,6 +61,7 @@ path = "src/bin/leak_probe.rs"
 required-features = ["postgres"]
 
 [features]
+cuda = ["dg_xch_farmer/cuda"]
 vulkan = ["dg_xch_farmer/vulkan", "dg_xch_plotter/vulkan"]
 default = ["sqlite"]
 sqlite = ["dg_full_node/sqlite"]
