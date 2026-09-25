@@ -174,6 +174,30 @@ where
     false
 }
 
+pub async fn wait_for_reconnections(
+    registry: &dg_xch_p2p::PeerRegistry,
+    previous: &[Arc<dg_xch_p2p::OutboundPeer>],
+    timeout: std::time::Duration,
+) -> bool {
+    assert!(
+        !previous.is_empty(),
+        "reconnection requires an existing peer"
+    );
+    wait_until(
+        || async {
+            let current = registry.outbound_peers().await;
+            previous.iter().all(|old| {
+                old.is_closed()
+                    && current.iter().any(|new| {
+                        new.endpoint == old.endpoint && !Arc::ptr_eq(old, new) && !new.is_closed()
+                    })
+            })
+        },
+        timeout,
+    )
+    .await
+}
+
 #[must_use]
 pub fn fast_settings() -> dg_xch_p2p::P2pSettings {
     dg_xch_p2p::P2pSettings {
