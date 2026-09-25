@@ -12,6 +12,7 @@ use sha2::Sha256;
 use std::io::{Error, ErrorKind};
 use std::mem::size_of;
 use std::str::FromStr;
+use zeroize::Zeroizing;
 
 fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -199,23 +200,19 @@ pub fn master_sk_to_pooling_authentication_sk(
 pub fn key_from_mnemonic_str(mnemonic: &str) -> Result<SecretKey, Error> {
     let mnemonic = Mnemonic::from_str(mnemonic)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
-    let seed = mnemonic.to_seed("");
-    SecretKey::key_gen_v3(&seed, &[])
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
+    key_from_mnemonic(&mnemonic)
 }
 
 pub fn key_from_mnemonic(mnemonic: &Mnemonic) -> Result<SecretKey, Error> {
-    let seed = mnemonic.to_seed("");
-    SecretKey::key_gen_v3(&seed, &[])
+    let seed = Zeroizing::new(mnemonic.to_seed(""));
+    SecretKey::key_gen_v3(seed.as_ref(), &[])
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
 }
 
 pub fn random_key() -> Result<SecretKey, Error> {
-    let seed = Mnemonic::generate(24)
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?
-        .to_seed("");
-    SecretKey::key_gen_v3(&seed, &[])
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
+    let mnemonic = Mnemonic::generate(24)
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
+    key_from_mnemonic(&mnemonic)
 }
 
 #[must_use]
@@ -226,8 +223,60 @@ pub fn fingerprint(key: &PublicKey) -> u32 {
 }
 
 pub fn encode_puzzle_hash(puzzle_hash: &Bytes32, prefix: &str) -> Result<String, Error> {
-    bech32::encode::<Bech32m>(Hrp::parse_unchecked(prefix), &puzzle_hash.bytes())
+    let prefix = Hrp::parse(prefix).map_err(|error| Error::new(ErrorKind::InvalidInput, error))?;
+    bech32::encode::<Bech32m>(prefix, &puzzle_hash.bytes())
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
+}
+
+pub fn convert_address(input: &str, prefix: &str) -> Result<(Bytes32, String), Error> {
+    let input = input.trim();
+    let hexadecimal = input.strip_prefix("0x").unwrap_or(input);
+    let hash = if hexadecimal.len() == 64
+        && hexadecimal.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        Bytes32::parse(&hex::decode(hexadecimal).map_err(Error::other)?)?
+    } else {
+        let checked = bech32::primitives::decode::CheckedHrpstring::new::<Bech32m>(input).map_err(
+            |error| {
+                Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("Enter a 64-character puzzle hash or a valid Bech32m address: {error}"),
+                )
+            },
+        )?;
+        let bytes: Vec<_> = checked.byte_iter().collect();
+        if bytes.len() != 32 {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "address must contain exactly 32 bytes",
+            ));
+        }
+        Bytes32::parse(&bytes)?
+    };
+    Ok((hash, encode_puzzle_hash(&hash, prefix)?))
+}
+
+#[test]
+fn address_conversion_validates_checksum_length_and_prefix() {
+    let hash = Bytes32::from([17; 32]);
+    let address = encode_puzzle_hash(&hash, "xch").unwrap();
+    assert_eq!(
+        convert_address(&address, "txch").unwrap(),
+        (hash, encode_puzzle_hash(&hash, "txch").unwrap())
+    );
+    assert_eq!(
+        convert_address(&hex::encode(hash.bytes()), "xch")
+            .unwrap()
+            .1,
+        address
+    );
+    let legacy =
+        bech32::encode::<bech32::Bech32>(Hrp::parse("xch").unwrap(), &hash.bytes()).unwrap();
+    assert!(convert_address(&legacy, "xch").is_err());
+    assert!(convert_address("1234", "xch").is_err());
+    assert!(convert_address(&address, "bad prefix").is_err());
+    let short = bech32::encode::<Bech32m>(Hrp::parse("xch").unwrap(), &[0; 31]).unwrap();
+    assert!(convert_address(&short, "xch").is_err());
 }
 
 pub fn decode_puzzle_hash(address: &str) -> Result<Bytes32, Error> {
@@ -251,8 +300,8 @@ pub fn get_address(key: &SecretKey, index: u32, prefix: &str) -> Result<String, 
 }
 
 pub fn parse_payout_address(s: &str) -> Result<String, Error> {
-    if s.starts_with("xch") || s.starts_with("txch") {
-        return decode_puzzle_hash(s).map(|b| prep_hex_str(b.to_string()));
+    if let Ok(puzzle_hash) = decode_puzzle_hash(s) {
+        return Ok(hex::encode(puzzle_hash));
     }
     let clean_hex = prep_hex_str(s);
     if clean_hex.len() == 64 {
@@ -267,7 +316,67 @@ pub fn parse_payout_address(s: &str) -> Result<String, Error> {
     } else {
         Err(Error::new(
             ErrorKind::InvalidInput,
-            "String does not appear to be a valid XCH Payout Address",
+            "String does not appear to be a valid payout address or puzzle hash",
         ))
+    }
+}
+
+#[cfg(test)]
+mod payout_tests {
+    use super::*;
+
+    #[test]
+    fn payout_addresses_accept_chia_and_custom_prefixes() {
+        let puzzle_hash = Bytes32::from([37; 32]);
+        let expected = hex::encode(puzzle_hash);
+        for prefix in ["xch", "txch", "dgx", "custom"] {
+            let address = encode_puzzle_hash(&puzzle_hash, prefix).unwrap();
+            assert_eq!(parse_payout_address(&address).unwrap(), expected);
+        }
+        assert_eq!(parse_payout_address(&expected).unwrap(), expected);
+        assert_eq!(
+            parse_payout_address(&format!("0x{expected}")).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn payout_addresses_reject_invalid_checksums_and_lengths() {
+        let address = encode_puzzle_hash(&Bytes32::from([37; 32]), "dgx").unwrap();
+        let mut invalid = address.into_bytes();
+        let last = invalid.last_mut().unwrap();
+        *last = if *last == b'q' { b'p' } else { b'q' };
+        assert!(parse_payout_address(std::str::from_utf8(&invalid).unwrap()).is_err());
+        for invalid in ["dgx1", "", "1234", &"z".repeat(64)] {
+            assert!(parse_payout_address(invalid).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod mnemonic_tests {
+    use super::{key_from_mnemonic, key_from_mnemonic_str};
+    use bip39::Mnemonic;
+    use blst::min_pk::SecretKey;
+
+    #[test]
+    fn zeroized_seed_handling_preserves_key_derivation() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let mnemonic = phrase.parse::<Mnemonic>().unwrap();
+        let expected = SecretKey::key_gen_v3(&mnemonic.to_seed(""), &[]).unwrap();
+        assert_eq!(
+            key_from_mnemonic(&mnemonic).unwrap().to_bytes(),
+            expected.to_bytes()
+        );
+        assert_eq!(
+            key_from_mnemonic_str(phrase).unwrap().to_bytes(),
+            expected.to_bytes()
+        );
+    }
+
+    #[test]
+    fn mnemonic_objects_are_zeroized_on_drop() {
+        fn requires_zeroize_on_drop<Secret: zeroize::ZeroizeOnDrop>() {}
+        requires_zeroize_on_drop::<Mnemonic>();
     }
 }

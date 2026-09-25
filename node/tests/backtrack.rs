@@ -116,6 +116,7 @@ async fn chaser_on_branch_a(
     chain_a: &[FullBlock],
 ) -> Chaser<Arc<dg_xch_stores::SqliteStore>, NativePrimitives> {
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &chain_a[0]).await;
     let engine = Engine::new(store, NativePrimitives, MAINNET);
     let mut chaser = Chaser::new(
         engine,
@@ -142,7 +143,7 @@ async fn chaser_on_branch_a(
 fn fixture_chains() -> (Vec<FullBlock>, Vec<FullBlock>) {
     let base_a = common::load_full_block(5_000_000);
     let base_b = common::load_full_block(5_000_004);
-    // Branch A: 100..=105 from an unknown-parent bootstrap entry (empty store accepts a checkpoint base).
+    // Branch A: 100..=105 extends the synthetic parent seeded by chaser_on_branch_a.
     let chain_a = build_chain(&base_a, 100, A_TIP, common::synth_hash(0xaa, 99), a_weight);
     // Branch B forks off A at FORK: B(FORK+1..=B_TIP), first parent = A(FORK).
     let fork_hash = chain_a[(FORK - 100) as usize].header_hash().unwrap();
@@ -199,7 +200,9 @@ async fn backtrack_converges_to_the_fork_branch_tip() {
     let (peak, _deltas) = chaser
         .follow_backtrack_reporting(&peer, A_TIP + 1, B_TIP)
         .await
-        .expect("backtrack finds the fork point and converges");
+        .expect("backtrack finds the fork point and converges")
+        .into_result()
+        .expect("window accepted");
 
     assert_eq!(
         peak,
@@ -325,7 +328,9 @@ async fn backtrack_arm_refetches_the_peak_even_for_a_direct_child() {
     let (peak, _deltas) = chaser
         .follow_backtrack_reporting(&source, A_TIP + 1, A_TIP + 1)
         .await
-        .expect("backtrack confirms the child too");
+        .expect("backtrack confirms the child too")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(peak, Some((child[0].header_hash().unwrap(), A_TIP + 1)));
     // The deviation: the arm reached BELOW peak+1 (it probed the peak at from-1).
     assert!(
@@ -348,7 +353,9 @@ async fn tip_step_extends_a_direct_child_forward_only() {
     let (peak, _deltas) = chaser
         .follow_tip_step_reporting(&source, A_TIP + 1, A_TIP + 1)
         .await
-        .expect("the direct child extends via the forward arm");
+        .expect("the direct child extends via the forward arm")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(
         peak,
         Some((child[0].header_hash().unwrap(), A_TIP + 1)),
@@ -370,7 +377,9 @@ async fn tip_step_falls_back_to_backtrack_on_a_real_reorg() {
     let (peak, _deltas) = chaser
         .follow_tip_step_reporting(&peer, A_TIP + 1, B_TIP)
         .await
-        .expect("the ladder recovers the reorg via the backtrack arm");
+        .expect("the ladder recovers the reorg via the backtrack arm")
+        .into_result()
+        .expect("window accepted");
     assert_eq!(
         peak,
         Some((chain_b.last().unwrap().header_hash().unwrap(), B_TIP)),

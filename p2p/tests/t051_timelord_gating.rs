@@ -15,7 +15,8 @@ use common::{MemApi, connect, spawn_full_node, wait_until};
 use dg_xch_clients::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
-use dg_xch_core::protocols::{NodeType, ProtocolMessageTypes};
+use dg_xch_core::protocols::shared::Handshake;
+use dg_xch_core::protocols::{ChiaMessage, MessageHandler, NodeType, ProtocolMessageTypes};
 use dg_xch_p2p::FullNodeApi;
 use dg_xch_serialize::ChiaProtocolVersion;
 use std::collections::HashMap;
@@ -54,6 +55,7 @@ fn client_config(port: u16) -> Arc<WsClientConfig> {
     Arc::new(WsClientConfig {
         host: "127.0.0.1".to_string(),
         port,
+        server_port: 0,
         network_id: "mainnet".to_string(),
         ssl_info: None,
         software_version: None,
@@ -159,4 +161,46 @@ async fn vdf_frame_from_a_full_node_peer_disconnects_and_bans() {
             .is_banned(&"127.0.0.1".parse::<IpAddr>().unwrap()),
         "the sender-type violation carries the short protocol ban"
     );
+}
+
+#[tokio::test]
+async fn outbound_peer_cannot_claim_a_timelord_role() {
+    let server = spawn_full_node(blind_api()).await;
+    let _client = connect(server.port).await;
+    let (peer_id, peer) = server
+        .peers
+        .read()
+        .await
+        .iter()
+        .next()
+        .map(|(peer_id, peer)| (*peer_id, peer.clone()))
+        .unwrap();
+    let handler = dg_xch_p2p::FullNodeHandler {
+        api: blind_api(),
+        network_id: "mainnet".to_string(),
+        server_port: server.port,
+        respond_handshake: false,
+        counters: Arc::default(),
+    };
+    let version = ChiaProtocolVersion::default();
+    let message = ChiaMessage::new(
+        ProtocolMessageTypes::Handshake,
+        version,
+        &Handshake {
+            network_id: "mainnet".to_string(),
+            protocol_version: version.to_string(),
+            software_version: "test".to_string(),
+            server_port: 0,
+            node_type: NodeType::Timelord as u8,
+            capabilities: Vec::new(),
+        },
+        None,
+    )
+    .unwrap();
+    handler
+        .handle(Arc::new(message), Arc::new(peer_id), server.peers.clone())
+        .await
+        .unwrap();
+    assert!(server.peers.read().await.is_empty());
+    assert_eq!(*peer.node_type.read().await, NodeType::FullNode);
 }

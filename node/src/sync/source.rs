@@ -29,6 +29,10 @@ pub trait BlockRangeSource: Send + Sync {
     /// The connection has closed; the supervisor should drop this source.
     fn is_closed(&self) -> bool;
 
+    fn advertised_height(&self) -> Option<u32> {
+        None
+    }
+
     /// Fetch `start..=end` inclusive.
     ///
     /// # Errors
@@ -36,8 +40,37 @@ pub trait BlockRangeSource: Send + Sync {
     async fn fetch_range(&self, start: u32, end: u32) -> Result<Vec<FullBlock>, SyncError>;
 }
 
-/// One `dg_xch_p2p::OutboundPeer` = one reservation slot. `fetch_range` issues `RequestBlocks`
-/// over the peer's `WsClient` and awaits the matching `RespondBlocks`.
+pub fn select_fetch_source(
+    sources: &[Arc<dyn BlockRangeSource>],
+    rotation: usize,
+    end: u32,
+    load: impl Fn(&dyn BlockRangeSource) -> Option<usize>,
+) -> Option<usize> {
+    let mut selected = None;
+    let mut best_rank = None;
+    for offset in 0..sources.len() {
+        let index = (rotation.wrapping_add(offset)) % sources.len();
+        let source = &sources[index];
+        let height = source.advertised_height();
+        if source.is_closed() || height.is_some_and(|height| height < end) {
+            continue;
+        }
+        let Some(load) = load(source.as_ref()) else {
+            continue;
+        };
+        let rank = (height.is_none(), load);
+        if best_rank.is_none_or(|best| rank < best) {
+            best_rank = Some(rank);
+            selected = Some(index);
+            if rank == (false, 0) {
+                break;
+            }
+        }
+    }
+    selected
+}
+
+/// Fetches block ranges through an outbound peer's `WsClient`.
 pub struct OutboundPeerSource {
     peer: Arc<OutboundPeer>,
     id: u64,
@@ -61,6 +94,9 @@ impl OutboundPeerSource {
 
 #[async_trait]
 impl BlockRangeSource for OutboundPeerSource {
+    fn advertised_height(&self) -> Option<u32> {
+        self.peer.client.peer_peak.height()
+    }
     fn peer_id(&self) -> u64 {
         self.id
     }
@@ -148,6 +184,9 @@ impl CapturingSource {
 
 #[async_trait]
 impl BlockRangeSource for CapturingSource {
+    fn advertised_height(&self) -> Option<u32> {
+        self.inner.advertised_height()
+    }
     fn peer_id(&self) -> u64 {
         self.inner.peer_id()
     }

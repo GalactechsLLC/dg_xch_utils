@@ -21,9 +21,9 @@ use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1::Builder;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
-use hyper_tungstenite::{HyperWebsocket, is_upgrade_request, upgrade};
+use hyper_tungstenite::{is_upgrade_request, upgrade};
 use hyper_util::rt::TokioIo;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 #[cfg(feature = "metrics")]
 use prometheus::core::{AtomicU64, GenericGauge};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -37,7 +37,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
+use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::error::TlsError;
@@ -85,13 +86,14 @@ pub struct WebsocketServer {
     pub peers: PeerMap,
     pub message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     /// Install the per-connection inbound rate limiter on every accepted connection. Off by
-    /// default; the full-node daemon turns it on. Farmer/harvester servers leave it off.
+    /// default; the full-node server turns it on. Farmer/harvester servers leave it off.
     pub rate_limited: bool,
     /// The server-wide timed ban list. The accept path refuses a
     /// host that is banned and not yet expired; the read loop and the message handlers enter a
     /// misbehaving peer's host here (via the registry injected into each [`SocketPeer`]). One
     /// registry per server instance, shared across all its connections.
     pub bans: Arc<BanRegistry>,
+    pub inbound_limit: Arc<Semaphore>,
     #[cfg(feature = "metrics")]
     pub metrics: Arc<Option<WebSocketMetrics>>,
 }
@@ -100,7 +102,6 @@ impl WebsocketServer {
         config: &WebsocketServerConfig,
         peers: PeerMap,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
-        #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
     ) -> Result<Self, Error> {
         let (certs, key, root_certs) = if let Some(ssl_info) = &config.ssl_info {
             (
@@ -136,17 +137,25 @@ impl WebsocketServer {
             message_handlers,
             rate_limited: false,
             bans: Arc::new(BanRegistry::default()),
+            inbound_limit: Arc::new(Semaphore::new(128)),
             #[cfg(feature = "metrics")]
-            metrics,
+            metrics: Arc::new(None),
         })
     }
+
+    #[cfg(feature = "metrics")]
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Arc<Option<WebSocketMetrics>>) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
     pub fn with_ca(
         config: &WebsocketServerConfig,
         peers: PeerMap,
         message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
         cert_data: &str,
         key_data: &str,
-        #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
     ) -> Result<Self, Error> {
         let (cert_bytes, key_bytes) =
             generate_ca_signed_cert_data(cert_data.as_bytes(), key_data.as_bytes())?;
@@ -165,16 +174,17 @@ impl WebsocketServer {
             message_handlers,
             rate_limited: false,
             bans: Arc::new(BanRegistry::default()),
+            inbound_limit: Arc::new(Semaphore::new(128)),
             #[cfg(feature = "metrics")]
-            metrics,
+            metrics: Arc::new(None),
         })
     }
 
     pub async fn run(&self, run: Arc<AtomicBool>) -> Result<(), Error> {
         let listener = TcpListener::bind(self.socket_address).await?;
         let acceptor = TlsAcceptor::from(self.server_config.clone());
-        let mut http = Builder::new();
-        http.keep_alive(true);
+        let handshakes = Arc::new(Semaphore::new(64));
+        let mut connections = JoinSet::new();
         while run.load(Ordering::Relaxed) {
             let run = run.clone();
             let peers = self.peers.clone();
@@ -185,14 +195,25 @@ impl WebsocketServer {
             select!(
                 res = listener.accept() => {
                     match res {
-                        Ok((stream, _)) => {
+                        Ok((stream, address)) => {
+                            if bans.is_banned(&address.ip()) {
+                                continue;
+                            }
+                            let Ok(permit) = handshakes.clone().try_acquire_owned() else {
+                                continue;
+                            };
+                            let acceptor = acceptor.clone();
                             let peers = peers.clone();
                             let message_handlers = handlers.clone();
                             let bans = bans.clone();
                             #[cfg(feature = "metrics")]
                             let metrics = metrics.clone();
-                            match acceptor.accept(stream).await {
-                                Ok(stream) => {
+                            let rate_limited = self.rate_limited;
+                            let inbound_limit = self.inbound_limit.clone();
+                            connections.spawn(async move {
+                            let _permit = permit;
+                            match tokio::time::timeout(Duration::from_secs(5), acceptor.accept(stream)).await {
+                                Ok(Ok(stream)) => {
                                     let addr = stream.get_ref().0.peer_addr().ok();
                                     let mut peer_id = None;
                                     if let Some(certs) = stream.get_ref().1.peer_certificates()
@@ -200,7 +221,6 @@ impl WebsocketServer {
                                             peer_id = Some(Bytes32::new(hash_256(&certs[0])));
                                     }
                                     let peer_id = Arc::new(peer_id);
-                                    let rate_limited = self.rate_limited;
                                     let service = service_fn(move |req| {
                                         let data = ConnectionData {
                                             addr,
@@ -211,6 +231,7 @@ impl WebsocketServer {
                                             run: run.clone(),
                                             rate_limited,
                                             bans: bans.clone(),
+                                            inbound_limit: inbound_limit.clone(),
                                         };
                                         #[cfg(feature = "metrics")]
                                         let metrics = metrics.clone();
@@ -222,28 +243,63 @@ impl WebsocketServer {
                                             )
                                         }
                                     });
+                                    let http = Builder::new();
                                     let connection = http.serve_connection(TokioIo::new(stream), service).with_upgrades();
-                                    tokio::spawn( async move {
-                                        if let Err(e) = connection.await {
-                                            log_connection_error("Error serving connection", &format!("{e:?}"));
-                                        }
-                                        Ok::<(), Error>(())
-                                    });
+                                    if let Ok(Err(error)) = tokio::time::timeout(Duration::from_secs(15), connection).await {
+                                        log_connection_error("Error serving connection", &format!("{error:?}"));
+                                    }
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     log_connection_error("Error accepting connection", &format!("{e:?}"));
                                 }
+                                Err(_) => debug!("Peer TLS handshake timed out"),
                             }
+                            });
                         }
                         Err(e) => {
                             log_connection_error("Error accepting connection", &format!("{e:?}"));
                         }
                     }
                 },
+                Some(result) = connections.join_next(), if !connections.is_empty() => {
+                    if let Err(error) = result {
+                        log_connection_error("Connection task failed", &error.to_string());
+                    }
+                },
                 () = tokio::time::sleep(Duration::from_millis(10)) => {}
             );
         }
+        connections.shutdown().await;
         Ok(())
+    }
+
+    /// Run the Chia peer session over a websocket upgraded by an embedding server.
+    pub async fn handle_stream(
+        &self,
+        peer_addr: SocketAddr,
+        peer_id: Bytes32,
+        websocket: WebsocketMsgStream,
+        run: Arc<AtomicBool>,
+    ) -> Result<(), tungstenite::error::Error> {
+        if self.bans.is_banned(&peer_addr.ip()) {
+            return Err(tungstenite::error::Error::ConnectionClosed);
+        }
+        let _permit = self
+            .inbound_limit
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| tungstenite::error::Error::ConnectionClosed)?;
+        handle_connection(
+            peer_addr,
+            Arc::new(peer_id),
+            websocket,
+            self.peers.clone(),
+            self.message_handlers.clone(),
+            run,
+            self.rate_limited,
+            self.bans.clone(),
+        )
+        .await
     }
 
     pub fn init(
@@ -303,6 +359,7 @@ struct ConnectionData {
     pub run: Arc<AtomicBool>,
     pub rate_limited: bool,
     pub bans: Arc<BanRegistry>,
+    pub inbound_limit: Arc<Semaphore>,
 }
 
 fn connection_handler(
@@ -310,6 +367,15 @@ fn connection_handler(
     #[cfg(feature = "metrics")] metrics: Arc<Option<WebSocketMetrics>>,
 ) -> Result<Response<Full<Bytes>>, Error> {
     if is_upgrade_request(&data.req) {
+        let permit = match data.inbound_limit.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                return Response::builder()
+                    .status(503)
+                    .body(Full::new(Bytes::from("Peer capacity reached")))
+                    .map_err(Error::other);
+            }
+        };
         // Refuse a host that is banned and not yet expired, BEFORE completing the websocket
         // upgrade. Returns HTTP 403 so the dialing client's handshake fails fast; a banned
         // spammer that closes and immediately reconnects is turned away for the rest of its
@@ -338,17 +404,6 @@ fn connection_handler(
             .ok_or_else(|| Error::other("Invalid SocketAddr"))?;
         let peer_id = Arc::new(
             data.peer_id
-                .or_else(|| {
-                    if let Some(key) = data.req.headers().get("ssl-client-cert") {
-                        debug!("Using ssl-client header");
-                        Some(Bytes32::new(hash_256(key.as_bytes())))
-                    } else if let Some(key) = data.req.headers().get("chia-client-cert") {
-                        Some(Bytes32::new(hash_256(key.as_bytes())))
-                    } else {
-                        error!("Invalid Peer - No Cert or Header");
-                        None
-                    }
-                })
                 .ok_or_else(|| {
                     tungstenite::error::Error::Tls(TlsError::Rustls(Box::new(
                         rustls::Error::NoCertificatesPresented,
@@ -363,6 +418,17 @@ fn connection_handler(
             gauge.add(1);
         }
         tokio::spawn(async move {
+            let _permit = permit;
+            let websocket = match websocket.await {
+                Ok(websocket) => WebsocketMsgStream::TokioIo(Box::new(websocket)),
+                Err(error) => {
+                    log_connection_error(
+                        "Error upgrading websocket connection",
+                        &error.to_string(),
+                    );
+                    return;
+                }
+            };
             if let Err(e) = handle_connection(
                 addr,
                 peer_id,
@@ -396,14 +462,15 @@ fn connection_handler(
 async fn handle_connection(
     peer_addr: SocketAddr,
     peer_id: Arc<Bytes32>,
-    websocket: HyperWebsocket,
+    websocket: WebsocketMsgStream,
     peers: PeerMap,
     message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     run: Arc<AtomicBool>,
     rate_limited: bool,
     bans: Arc<BanRegistry>,
 ) -> Result<(), tungstenite::error::Error> {
-    // A full-node listener (the daemon sets `rate_limited`) installs a fresh per-connection
+    let connected_at = std::time::Instant::now();
+    // A full-node listener (the server sets `rate_limited`) installs a fresh per-connection
     // inbound limiter; other server roles leave it off.
     let limiter = if rate_limited {
         Some(Arc::new(RateLimiter::new(true)))
@@ -418,16 +485,18 @@ async fn handle_connection(
         None
     };
     let (websocket, mut stream) = WebsocketConnection::new(
-        WebsocketMsgStream::TokioIo(Box::new(websocket.await?)),
+        websocket,
         message_handlers,
         peer_id.clone(),
         peers.clone(),
         limiter,
+        Arc::<str>::from(format!("inbound endpoint={peer_addr}")),
     );
     // Hold our own handle so the teardown below can prove the map still points at THIS
     // connection (and not a peer that reconnected in the meantime) before removing it.
     let v3 = websocket.v3();
     let socket_peer = Arc::new(SocketPeer {
+        peer_peak: Arc::new(dg_xch_core::protocols::peer_peak::PeerPeak::default()),
         node_type: Arc::new(RwLock::new(NodeType::Unknown)),
         protocol_version: Arc::new(RwLock::new(ChiaProtocolVersion::default())),
         capabilities: Arc::new(RwLock::new(Vec::new())),
@@ -446,6 +515,12 @@ async fn handle_connection(
         let _ = removed.websocket.write().await.close(None).await;
     }
     stream.run(run).await;
+    info!(
+        "inbound peer disconnected endpoint={} peer_id={} lifetime_ms={}",
+        peer_addr,
+        peer_id,
+        connected_at.elapsed().as_millis()
+    );
     // The read loop returned: the connection is dead. Release this peer's slot so the shared
     // inbound PeerMap stays bounded to LIVE connections. Guard on `Arc` identity so a peer that
     // reconnected (replacing the map value) keeps its fresh entry.
@@ -476,76 +551,5 @@ pub(crate) async fn deregister_peer<V>(
 }
 
 #[cfg(test)]
-mod peer_map_tests {
-    use super::deregister_peer;
-    use dg_xch_core::blockchain::sized_bytes::Bytes32;
-    use std::collections::HashMap;
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
-
-    // A distinct peer id per index (the map is keyed by the cert-hash identity in production).
-    fn id(i: u32) -> Bytes32 {
-        let mut b = [0u8; 32];
-        b[..4].copy_from_slice(&i.to_le_bytes());
-        Bytes32::from(b)
-    }
-
-    // The generic helper carries the exact map lifecycle `handle_connection` uses; testing it
-    // over `Arc<u32>` exercises the identity guard without standing up a TLS socket to build a
-    // real `SocketPeer`.
-    type Map = Arc<RwLock<HashMap<Bytes32, Arc<u32>>>>;
-
-    // Insert-only grows the inbound map without bound: one orphaned `SocketPeer` (and its dead
-    // `WebsocketConnection`) per closed connection.
-    #[tokio::test]
-    async fn insert_only_grows_unbounded() {
-        let peers: Map = Arc::new(RwLock::new(HashMap::new()));
-        for i in 0..1_000u32 {
-            peers.write().await.insert(id(i), Arc::new(i));
-        }
-        assert_eq!(
-            peers.read().await.len(),
-            1_000,
-            "without teardown every closed connection leaks its map entry"
-        );
-    }
-
-    // With the teardown, N open/close cycles leave the map flat at baseline — bounded memory
-    // under churn.
-    #[tokio::test]
-    async fn churn_with_teardown_stays_flat() {
-        let peers: Map = Arc::new(RwLock::new(HashMap::new()));
-        for i in 0..10_000u32 {
-            // ids intentionally collide (mod) so the replace path is exercised too.
-            let key = id(i % 251);
-            let ours = Arc::new(i);
-            peers.write().await.insert(key, ours.clone());
-            deregister_peer(&peers, &key, &ours).await;
-        }
-        assert_eq!(
-            peers.read().await.len(),
-            0,
-            "inbound map must return to baseline after connection churn"
-        );
-    }
-
-    // The identity guard: a stale connection's teardown must never evict the entry a peer
-    // installed when it reconnected.
-    #[tokio::test]
-    async fn reconnect_keeps_the_fresh_entry() {
-        let peers: Map = Arc::new(RwLock::new(HashMap::new()));
-        let key = id(7);
-        let first = Arc::new(1u32);
-        peers.write().await.insert(key, first.clone());
-        // Peer reconnects: a fresh handle replaces the map value.
-        let second = Arc::new(2u32);
-        peers.write().await.insert(key, second.clone());
-        // The FIRST (now-dead) connection's teardown must be a no-op — it is not current.
-        assert!(!deregister_peer(&peers, &key, &first).await);
-        assert_eq!(peers.read().await.len(), 1);
-        assert!(Arc::ptr_eq(peers.read().await.get(&key).unwrap(), &second));
-        // The live connection's own teardown clears it.
-        assert!(deregister_peer(&peers, &key, &second).await);
-        assert_eq!(peers.read().await.len(), 0);
-    }
-}
+#[path = "../../tests/unit/websocket/mod/peer_map_tests.rs"]
+mod peer_map_tests;

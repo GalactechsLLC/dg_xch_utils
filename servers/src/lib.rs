@@ -1,4 +1,6 @@
-pub mod rpc;
+pub mod app_config;
+pub mod chain_config;
+pub mod transport;
 pub mod websocket;
 
 fn _version() -> &'static str {

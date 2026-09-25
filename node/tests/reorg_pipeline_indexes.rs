@@ -1,5 +1,5 @@
 //! Reorg-path index build — a reorg driven through the WINDOW-CONFIRM pipeline
-//! (`Engine::confirm_staged_batch`, the entry the daemon's `follow_blocks_reporting` uses) while
+//! (`Engine::confirm_staged_batch`, the entry the server's `follow_blocks_reporting` uses) while
 //! BEHIND tip must complete, and must build the reorg-speed coin indexes it needs.
 //!
 //! The failing case: with the store-backed fork reconstruction in place, a 1-block equal-weight

@@ -28,16 +28,10 @@ impl HarvesterServer {
     ) -> Result<Self, Error> {
         let config = Arc::new(config);
         let handles = Arc::new(RwLock::new(Self::handles(config.clone())));
-        Ok(Self {
-            server: WebsocketServer::new(
-                &config.websocket,
-                Arc::default(),
-                handles,
-                #[cfg(feature = "metrics")]
-                metrics,
-            )?,
-            config,
-        })
+        let server = WebsocketServer::new(&config.websocket, Arc::default(), handles)?;
+        #[cfg(feature = "metrics")]
+        let server = server.with_metrics(metrics);
+        Ok(Self { server, config })
     }
 
     fn handles(config: Arc<HarvesterServerConfig>) -> HashMap<Uuid, Arc<ChiaMessageHandler>> {

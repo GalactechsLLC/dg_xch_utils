@@ -5,7 +5,7 @@
 use crate::blockchain::block_record::BlockRecord;
 use crate::blockchain::class_group_element::ClassgroupElement;
 use crate::blockchain::header_block::HeaderBlock;
-use crate::blockchain::proof_of_space::{ProofOfSpace, is_v1_phased_out};
+use crate::blockchain::proof_of_space::{ProofOfSpace, is_proof_version_active, is_v1_phased_out};
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use crate::blockchain::vdf_info::VdfInfo;
 use crate::blockchain::vdf_proof::VdfProof;
@@ -134,6 +134,13 @@ pub fn validate_pospace_and_get_required_iters(
     difficulty: u64,
     prev_transaction_block_height: u32,
 ) -> Result<Option<u64>, Error> {
+    if !is_proof_version_active(
+        proof_of_space.version,
+        prev_transaction_block_height,
+        constants,
+    ) {
+        return Ok(None);
+    }
     // A v1 proof past the phase-out window is no longer a valid proof of space.
     if proof_of_space.version == 0
         && is_v1_phased_out(
@@ -245,7 +252,7 @@ pub fn validate_unfinished_parts(
         height = 0;
     } else {
         let pb = prev_b.ok_or(e("prev_b"))?;
-        height = pb.height + 1;
+        height = pb.height.checked_add(1).ok_or(e("INVALID_HEIGHT"))?;
         if new_sub_slot {
             let (se, ep) = can_finish_sub_and_full_epoch(
                 c,
@@ -954,10 +961,10 @@ pub fn validate_finished_header_block(
 
     if !genesis_block {
         let pb = prev_b.ok_or(e("prev_b"))?;
-        if block.height() != pb.height + 1 {
+        if pb.height.checked_add(1) != Some(block.height()) {
             return Err(e("INVALID_HEIGHT"));
         }
-        if block.weight() != pb.weight + u128::from(vs.difficulty) {
+        if pb.weight.checked_add(u128::from(vs.difficulty)) != Some(block.weight()) {
             return Err(e("INVALID_WEIGHT"));
         }
     } else {
@@ -992,8 +999,12 @@ pub fn validate_finished_header_block(
             cc_vdf_output = ClassgroupElement::get_default_element();
         } else {
             rc_vdf_challenge = pb.reward_infusion_new_challenge;
-            ip_vdf_iters =
-                u64::try_from(rcb.total_iters - pb.total_iters).map_err(|_| e("ip_vdf_iters"))?;
+            ip_vdf_iters = u64::try_from(
+                rcb.total_iters
+                    .checked_sub(pb.total_iters)
+                    .ok_or(e("ip_vdf_iters"))?,
+            )
+            .map_err(|_| e("ip_vdf_iters"))?;
             cc_vdf_output = pb.challenge_vdf_output;
         }
     }

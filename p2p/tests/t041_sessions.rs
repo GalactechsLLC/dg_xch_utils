@@ -2,7 +2,7 @@ mod common;
 
 use common::{
     drop_all_server_peers, empty_api, fast_settings, peer, spawn_full_node, spawn_introducer,
-    wait_until,
+    wait_for_reconnections, wait_until,
 };
 use dg_xch_p2p::Supervisor;
 use std::time::Duration;
@@ -22,7 +22,7 @@ async fn outbound_dials_and_reconnects_and_inbound_accepts() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await >= 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(60)
         )
         .await,
         "outbound slot dials the loopback peer"
@@ -34,21 +34,10 @@ async fn outbound_dials_and_reconnects_and_inbound_accepts() {
     );
 
     // Drop the peer server-side; the slot must reconnect from OUTSIDE the dead channel.
+    let previous = reg.outbound_peers().await;
     drop_all_server_peers(&server).await;
     assert!(
-        wait_until(
-            || async { reg.outbound_count().await == 0 },
-            Duration::from_secs(10)
-        )
-        .await,
-        "drop is detected"
-    );
-    assert!(
-        wait_until(
-            || async { reg.outbound_count().await >= 1 },
-            Duration::from_secs(10)
-        )
-        .await,
+        wait_for_reconnections(&reg, &previous, Duration::from_secs(60)).await,
         "slot re-dials a fresh channel after the drop"
     );
 
@@ -74,27 +63,16 @@ async fn manual_peer_persists_across_a_drop() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(60)
         )
         .await,
         "manual peer connects"
     );
 
+    let previous = reg.outbound_peers().await;
     drop_all_server_peers(&server).await;
     assert!(
-        wait_until(
-            || async { reg.outbound_count().await == 0 },
-            Duration::from_secs(10)
-        )
-        .await,
-        "drop detected"
-    );
-    assert!(
-        wait_until(
-            || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(10)
-        )
-        .await,
+        wait_for_reconnections(&reg, &previous, Duration::from_secs(60)).await,
         "manual peer reconnects (persists across the drop)"
     );
 

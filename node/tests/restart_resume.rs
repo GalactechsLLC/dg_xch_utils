@@ -8,7 +8,7 @@
 //
 // The kill is modeled at the store seam: dropping the store handle (and any open batch) without
 // commit is the crash-consistency contract SQLite's WAL gives a killed process; the reopen path
-// is the daemon's restart path (SqliteStore::open on the same file + Chaser::warm_engine_cache).
+// is the server's restart path (SqliteStore::open on the same file + Chaser::warm_engine_cache).
 
 mod common;
 
@@ -136,6 +136,7 @@ async fn confirmed_peak_survives_reopen_and_the_rewarmed_engine_resumes() {
     // Session 1: confirm the block, then KILL (drop everything).
     {
         let store = SqliteStore::open(&path).await.expect("open");
+        common::ancestry::seed_mainnet_parent(&store).await;
         let engine = Engine::new(Arc::new(store), NativePrimitives, MAINNET);
         let mut chaser = Chaser::new(engine, cfg());
         let peak = chaser

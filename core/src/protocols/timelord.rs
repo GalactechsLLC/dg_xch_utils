@@ -14,6 +14,14 @@ pub type PreviousRewardChallenge = (Bytes32, u128);
 pub type PreviousRewardChallenges = Vec<(Bytes32, u128)>;
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct NewGenesisTimelord {
+    pub genesis_challenge: Bytes32,
+    pub difficulty: u64,
+    pub sub_slot_iters: u64,
+    pub discriminant_size_bits: u64,
+}
+
+#[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct NewPeakTimelord {
     pub reward_chain_block: RewardChainBlock, //Min Version 0.0.34
     pub difficulty: u64,                      //Min Version 0.0.34

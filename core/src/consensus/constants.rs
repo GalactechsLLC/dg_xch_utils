@@ -38,8 +38,24 @@ impl FromStr for ChiaNetwork {
     }
 }
 
+impl ChiaNetwork {
+    pub fn genesis_header_hash(self) -> Option<Bytes32> {
+        match self {
+            Self::Mainnet => Some(Bytes32::const_hex(
+                "d780d22c7a87c9e01d98b49a0910f6701c3b95015741316b3fda042e5d7b81d2",
+            )),
+            Self::Testnet11 => Some(Bytes32::const_hex(
+                "3068458e6ce87dbb5e2ace5378bb84185cb0638da84ab28c39153f665e7b2c97",
+            )),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusConstants {
+    #[serde(default)]
+    pub rewards: crate::consensus::block_rewards::RewardSchedule,
     pub slot_blocks_target: u32, //How many blocks to target per sub-slot
     pub min_blocks_per_challenge_block: u8, //How many blocks must be created per slot (to make challenge sb)
     //Max number of blocks that can be infused into a sub-slot.
@@ -164,6 +180,7 @@ impl From<ChiaNetwork> for ConsensusConstants {
     }
 }
 pub const MAINNET: ConsensusConstants = ConsensusConstants {
+    rewards: crate::consensus::block_rewards::RewardSchedule::CHIA,
     slot_blocks_target: 32,
     min_blocks_per_challenge_block: 16,
     max_sub_slot_blocks: 128,

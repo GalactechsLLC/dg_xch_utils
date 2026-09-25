@@ -17,10 +17,8 @@ use tokio::sync::RwLock;
 // zero over the REAL p2p RequestBlocks/RespondBlocks path. It also exercises the exact wire path whose bugs
 // (introducer seeding, NewPeak tip tracking, RejectBlocks handling) we kept catching only in the deploy loop.
 //
-// Fixture reality: only a real block with valid PoW/VDF can traverse `add_block` (re-stamped synthetic blocks
-// fail header validation and are download-only, see t051). So the confirmed range here is the single committed
-// real block via the empty-store `prev = None` entry point; a contiguous real full-block range fixture would
-// let this assert a multi-block climb (see the report's fixture recommendation).
+// The fixture seeds the real parent record and body, leaving the confirmed peak unset.
+// The candidate's body must still download and confirm before the peak can advance.
 
 fn one_peer_cfg() -> SyncConfig {
     SyncConfig {
@@ -32,13 +30,12 @@ fn one_peer_cfg() -> SyncConfig {
     }
 }
 
-// A fresh empty chaser whose store already carries the headers-first candidate record for `block` (what
-// `sync_headers` emits) so `get_unassociated` feeds the reservation window — the exact from-empty precondition
-// bulk_sync reaches after a validated proof.
+// A chaser with no confirmed peak, a stored parent, and a candidate awaiting its body.
 async fn empty_chaser_awaiting_body(
     block: &dg_xch_core::blockchain::full_block::FullBlock,
 ) -> Chaser<Arc<dg_xch_stores::SqliteStore>, NativePrimitives> {
     let store = common::new_store().await;
+    common::ancestry::seed_mainnet_parent(&store).await;
     let template = common::load_records()[0].clone();
     store
         .add_block_records(&[seed_record_for(&template, block)])
@@ -98,8 +95,8 @@ async fn fast_sync_from_empty_advances_peak_over_real_p2p() {
     server_run.store(false, Ordering::Relaxed);
 }
 
-// Regression guard: confirming a body at a weight-proof checkpoint (prev record absent — the
-// exact from-empty anchor entry point above) must KEEP the headers-first candidate record's attested
+// Regression guard: confirming a body at a weight-proof checkpoint with partial ancestry
+// must KEEP the headers-first candidate record's attested
 // sub_slot_iters, never fabricate `sub_slot_iters_starting` into the confirmed record. Records
 // are epoch-adjusted at creation, and when the deep ancestry is absent the proof's summaries
 // substitute; the candidate record carries that attested epoch value here. Fabrication would

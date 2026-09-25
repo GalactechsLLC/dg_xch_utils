@@ -148,6 +148,7 @@ async fn stalled_peer_moves_the_reclaim_signal() {
 async fn confirm_signals_track_the_follow_window_exactly() {
     let block = common::load_full_block(5_000_000);
     let store = common::new_store().await;
+    common::ancestry::seed_mainnet_parent(&store).await;
     let mut chaser = Chaser::new(
         Engine::new(Arc::new(store), NativePrimitives, MAINNET),
         cfg(),

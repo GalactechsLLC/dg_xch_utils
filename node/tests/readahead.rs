@@ -12,7 +12,7 @@ mod common;
 
 use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_node::SyncMetrics;
-use dg_xch_node::sync::source::BlockRangeSource;
+use dg_xch_node::sync::source::{BlockRangeSource, select_fetch_source};
 use dg_xch_node::sync::{
     PrefetchConfig, READAHEAD_MAX_DEPTH, READAHEAD_START_DEPTH, SyncError, WindowReadahead,
 };
@@ -121,6 +121,100 @@ impl Rig {
 
 fn readahead() -> WindowReadahead {
     WindowReadahead::new(Arc::new(SyncMetrics::default()), TIMEOUT)
+}
+
+struct AdvertisedSource {
+    inner: Arc<dyn BlockRangeSource>,
+    height: Option<u32>,
+    closed: bool,
+}
+
+#[async_trait::async_trait]
+impl BlockRangeSource for AdvertisedSource {
+    fn peer_id(&self) -> u64 {
+        self.inner.peer_id()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    fn advertised_height(&self) -> Option<u32> {
+        self.height
+    }
+
+    async fn fetch_range(&self, start: u32, end: u32) -> Result<Vec<FullBlock>, SyncError> {
+        self.inner.fetch_range(start, end).await
+    }
+}
+
+#[test]
+fn selection_respects_announced_height_capacity_and_rotation() {
+    let rig = Rig::new();
+    let sources: Vec<Arc<dyn BlockRangeSource>> = [
+        (None, false),
+        (Some(99), false),
+        (Some(100), true),
+        (Some(100), false),
+        (Some(101), false),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (height, closed))| {
+        Arc::new(AdvertisedSource {
+            inner: rig.peer(index as u64),
+            height,
+            closed,
+        }) as Arc<dyn BlockRangeSource>
+    })
+    .collect();
+    assert_eq!(select_fetch_source(&sources, 0, 100, |_| Some(0)), Some(3));
+    assert_eq!(select_fetch_source(&sources, 4, 100, |_| Some(0)), Some(4));
+    assert_eq!(select_fetch_source(&sources, 0, 101, |_| Some(0)), Some(4));
+    assert_eq!(select_fetch_source(&sources, 0, 102, |_| Some(0)), Some(0));
+    assert_eq!(
+        select_fetch_source(&sources[1..], 0, 102, |_| Some(0)),
+        None
+    );
+    assert_eq!(
+        select_fetch_source(&sources, 0, 100, |source| {
+            Some(usize::from(source.peer_id() == 3))
+        }),
+        Some(4)
+    );
+    assert_eq!(
+        select_fetch_source(&sources, 0, 100, |source| {
+            (source.peer_id() == 0).then_some(0)
+        }),
+        Some(0)
+    );
+    assert_eq!(select_fetch_source(&sources, 0, 100, |_| None), None);
+    assert_eq!(select_fetch_source(&[], 0, 100, |_| Some(0)), None);
+}
+
+#[tokio::test]
+async fn readahead_only_dispatches_ranges_within_announced_height() {
+    let rig = Rig::new();
+    let sources: Vec<Arc<dyn BlockRangeSource>> = [99, 131, 163]
+        .into_iter()
+        .enumerate()
+        .map(|(index, height)| {
+            Arc::new(AdvertisedSource {
+                inner: rig.peer(index as u64),
+                height: Some(height),
+                closed: false,
+            }) as Arc<dyn BlockRangeSource>
+        })
+        .collect();
+    let mut ahead = readahead();
+    ahead.fill(&sources, 100, 200, BATCH);
+    assert_eq!(ahead.inflight(), 2);
+    assert_eq!(ahead.take(100, 131).await.unwrap().len(), 32);
+    assert_eq!(ahead.take(132, 163).await.unwrap().len(), 32);
+    let mut served = rig.served.lock().unwrap().clone();
+    served.sort_unstable();
+    assert_eq!(served, vec![(1, 100, 131), (2, 132, 163)]);
+    assert_eq!(ahead.inflight(), 0);
 }
 
 // Property 1 — striping: START_DEPTH adjacent contiguous windows, each on a DIFFERENT peer.
@@ -295,6 +389,25 @@ async fn fresh_readahead_reports_zero_signals() {
     assert_eq!(m.follow_fetch_wait_micros.load(Ordering::Relaxed), 0);
     assert_eq!(m.follow_step_micros.load(Ordering::Relaxed), 0);
     assert_eq!(m.readahead_inflight.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dropping_readahead_clears_the_inflight_gauge() {
+    let rig = Rig::new();
+    let metrics = Arc::new(SyncMetrics::default());
+    let mut ra = WindowReadahead::new(metrics.clone(), TIMEOUT);
+    let sources: Vec<_> = (0..4)
+        .map(|i| rig.scripted(i, Duration::ZERO, true, false))
+        .collect();
+    ra.fill(&sources, 0, 10_000, BATCH);
+    assert_eq!(
+        metrics.readahead_inflight.load(Ordering::Relaxed),
+        READAHEAD_START_DEPTH as u64
+    );
+
+    drop(ra);
+    assert_eq!(metrics.readahead_inflight.load(Ordering::Relaxed), 0);
+    assert!(rig.drained().await, "drop aborts every fetch future");
 }
 
 fn served_by_peer(rig: &Rig) -> HashMap<u64, usize> {

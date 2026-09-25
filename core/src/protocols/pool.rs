@@ -6,6 +6,23 @@ use dg_xch_macros::ChiaSerial;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolVersion {
+    #[default]
+    V1,
+    V2,
+}
+
+impl PoolVersion {
+    pub const fn protocol_number(self) -> u8 {
+        match self {
+            Self::V1 => 1,
+            Self::V2 => 2,
+        }
+    }
+}
+
 #[derive(ChiaSerial, Copy, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum PoolSingletonState {
     SelfPooling = SELF_POOLING as isize,
@@ -69,6 +86,15 @@ impl From<u8> for PoolErrorCode {
 pub struct PoolError {
     pub error_code: u8,        //Min Version 0.0.34
     pub error_message: String, //Min Version 0.0.34
+}
+
+impl From<std::io::Error> for PoolError {
+    fn from(error: std::io::Error) -> Self {
+        Self {
+            error_code: PoolErrorCode::RequestFailed as u8,
+            error_message: error.to_string(),
+        }
+    }
 }
 
 #[derive(ChiaSerial, PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
@@ -175,15 +201,20 @@ pub struct ErrorResponse {
     pub error_message: Option<String>, //Min Version 0.0.34
 }
 
-#[allow(clippy::cast_sign_loss)]
-#[must_use]
-pub fn get_current_authentication_token(timeout: u8) -> u64 {
-    let now: u64 = OffsetDateTime::now_utc().unix_timestamp() as u64;
-    now / 60 / u64::from(timeout)
+pub fn get_current_authentication_token(timeout: u8) -> Result<u64, std::io::Error> {
+    if timeout == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "pool authentication timeout must be nonzero",
+        ));
+    }
+    let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp())
+        .map_err(|_| std::io::Error::other("system clock precedes the Unix epoch"))?;
+    Ok(now / 60 / u64::from(timeout))
 }
 
 #[must_use]
 pub fn validate_authentication_token(token: u64, timeout: u8) -> bool {
-    let dif = token.abs_diff(get_current_authentication_token(timeout));
-    dif <= u64::from(timeout)
+    get_current_authentication_token(timeout)
+        .is_ok_and(|current| token.abs_diff(current) <= u64::from(timeout))
 }

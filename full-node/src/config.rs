@@ -1,3 +1,5 @@
+use dg_xch_core::consensus::chain_definition::{ChainDefinition, ChainSelection, ResolvedChain};
+use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_p2p::P2pSettings;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -59,31 +61,12 @@ impl RpcTlsMode {
     }
 }
 
-impl RpcTlsMode {
-    /// The effective RPC socket bind for this mode. `Local` is UNAUTHENTICATED, so a routable
-    /// configured bind is DOWNGRADED to loopback (returning `true`) rather than exposing an
-    /// unauthenticated RPC to the network; the caller logs a loud warning and the operator opts
-    /// into `--rpc-tls private-ca` for an authenticated network RPC. `PrivateCa` binds
-    /// exactly as configured.
-    #[must_use]
-    pub fn resolve_bind(&self, configured: SocketAddr) -> (SocketAddr, bool) {
-        match self {
-            RpcTlsMode::Local if !configured.ip().is_loopback() => (
-                SocketAddr::new(
-                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-                    configured.port(),
-                ),
-                true,
-            ),
-            _ => (configured, false),
-        }
-    }
-}
-
-// The daemon's runtime configuration, honoring the documented CLI flags: --listen (P2P peer server), --rpc
-// (local RPC), --introducer (seed bootstrap), --advertise (WAN address for gossip behind NAT), --db (backend).
+// The server's runtime configuration. The full node requires `listen == rpc` because Portfu owns
+// one unified listener; `rpc` remains in this shared config for simulator compatibility.
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub chain_definition: Option<ChainDefinition>,
+    pub performance: PerformanceConfig,
     pub listen: SocketAddr,
     pub rpc: SocketAddr,
     pub rpc_tls: RpcTlsMode,
@@ -93,8 +76,6 @@ pub struct Config {
     pub advertise: Option<SocketAddr>,
     pub backend: Backend,
     pub network_id: String,
-    // Prometheus /metrics listen address. `Some` (default on); `None` when `--metrics off` disabled it.
-    pub metrics: Option<SocketAddr>,
     // Debug: directory to capture real sync data into for offline replay — the fetched weight proof
     // (`weight_proof_<tip_height>.bin`) and every downloaded block range (`blocks_<start>_<end>.bin`).
     // Lets the whole fast-sync pipeline be validated + profiled offline with no live peer.
@@ -114,19 +95,15 @@ pub struct Config {
     // RespondCompactProofOfTime through the same validate/swap/re-gossip path as compact-VDF
     // gossip. With no timelord peer the scan runs and sends nothing.
     pub uncompact: bool,
-    // `--prefetch-memory-mb <N>`: RAM budget (MiB) for the window readahead's resident block bodies.
-    // `None` = the shipped default (256 MiB, adaptive depth ≤ 8, one window per peer) — no change
-    // for existing deployments. `Some(N)` opts a large-RAM, fetch-starved node into aggressive
-    // prefetch: the budget becomes a HARD resident ceiling that drives a deeper lookahead K (allowed
-    // past 8) AND raises the aggregate in-flight fetch concurrency (spread across peers) so the buffer
-    // refills as fast as the validator drains it. OOM-safe: at huge block sizes the byte budget still
-    // collapses depth toward one window.
+    // `--prefetch-memory-mb <N>`: RAM budget (MiB) for resident sync-window block bodies.
+    // `None` = 256 MiB. The full-node fetch width defaults to two requests per configured outbound
+    // peer; `Some(N)` raises only the resident ceiling so a fetch-starved, large-RAM node can sustain
+    // a deeper lookahead. At huge block sizes the byte budget collapses depth toward one window.
     pub prefetch_memory_mb: Option<u64>,
     // `--prefetch-max-inflight <N>`: optional cap on the AGGREGATE outstanding block-range requests
-    // (the concurrency knob, a COUNT — distinct from the byte budget above). `None` = derive from the
-    // anti-flood ceiling (`peers × per-peer cap`). Spread across peers as `ceil(N / peers)` per
-    // connection, never flooding one. Only takes effect alongside `--prefetch-memory-mb` (or on its
-    // own, on the default budget).
+    // (the concurrency knob, a COUNT — distinct from the byte budget above). `None` = two requests
+    // per configured outbound peer. Explicit values are spread across peers as `ceil(N / peers)`,
+    // within the hard aggregate and per-peer ceilings.
     pub prefetch_max_inflight: Option<usize>,
     pub p2p: P2pSettings,
     // `--trusted-peer <node-id-hex>` (repeatable): the cert-hash node ids granted the trusted tier —
@@ -138,6 +115,77 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn bind_chain_identity(&self) -> Result<(), std::io::Error> {
+        use std::io::{Error, ErrorKind};
+        let constants = self.consensus_constants().map_err(Error::other)?;
+        let custom = self.allows_chain_bootstrap();
+        let (marker, occupied) = match &self.backend {
+            Backend::Sqlite(path) => {
+                let mut marker = path.as_os_str().to_os_string();
+                marker.push(".chain-identity");
+                let occupied = match std::fs::metadata(path) {
+                    Ok(metadata) => metadata.len() != 0,
+                    Err(error) if error.kind() == ErrorKind::NotFound => false,
+                    Err(error) => return Err(error),
+                };
+                (PathBuf::from(marker), occupied)
+            }
+            Backend::Mmap(path) => {
+                let occupied = match std::fs::read_dir(path) {
+                    Ok(mut entries) => entries.next().transpose()?.is_some(),
+                    Err(error) if error.kind() == ErrorKind::NotFound => false,
+                    Err(error) => return Err(error),
+                };
+                (path.join("chain-identity"), occupied)
+            }
+            Backend::Postgres(_) if custom => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "custom chains currently require SQLite or mmap storage for persisted chain identity",
+                ));
+            }
+            Backend::Postgres(_) => return Ok(()),
+        };
+        let identity = constants.genesis_challenge.to_string();
+        match std::fs::read_to_string(&marker) {
+            Ok(stored) if stored == identity => return Ok(()),
+            Ok(_) => {
+                return Err(Error::other(
+                    "database belongs to a different chain definition; use a separate database",
+                ));
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        if !custom {
+            return Ok(());
+        }
+        if occupied {
+            return Err(Error::other(
+                "custom chain requires an empty database or an existing matching chain-identity marker",
+            ));
+        }
+        dg_xch_servers::chain_config::write_new(&marker, identity.as_bytes())
+    }
+
+    pub fn consensus_constants(&self) -> Result<ConsensusConstants, String> {
+        self.resolved_chain().map(|chain| chain.constants)
+    }
+
+    pub fn resolved_chain(&self) -> Result<ResolvedChain, String> {
+        ChainSelection::from_config(&self.network_id, self.chain_definition.as_ref())?.resolve()
+    }
+
+    pub fn handshake_network_id(&self) -> Result<String, String> {
+        self.resolved_chain()
+            .map(|chain| chain.handshake_network_id)
+    }
+
+    pub fn allows_chain_bootstrap(&self) -> bool {
+        self.resolved_chain()
+            .is_ok_and(|chain| chain.allows_bootstrap)
+    }
+
     /// Build a config from the parsed CLI strings.
     ///
     /// # Errors
@@ -152,7 +200,6 @@ impl Config {
         advertise: Option<&str>,
         db: &str,
         network: &str,
-        metrics: &str,
         capture_dir: Option<&str>,
         genesis_sync: bool,
         sync_from: u32,
@@ -173,9 +220,10 @@ impl Config {
         let advertise = advertise
             .map(|a| SocketAddr::from_str(a).map_err(|e| format!("bad --advertise: {e}")))
             .transpose()?;
-        let metrics = parse_metrics(metrics)?;
         p2p.validate()?;
         Ok(Self {
+            chain_definition: None,
+            performance: PerformanceConfig::default(),
             listen,
             rpc,
             introducer,
@@ -183,7 +231,6 @@ impl Config {
             advertise,
             backend: Backend::parse(db),
             network_id: network.to_string(),
-            metrics,
             capture_dir: capture_dir.map(PathBuf::from),
             genesis_sync,
             sync_from,
@@ -199,13 +246,77 @@ impl Config {
     }
 }
 
-// `--metrics`: an address enables the endpoint (default on), `off`/`none`/empty disables it.
-fn parse_metrics(s: &str) -> Result<Option<SocketAddr>, String> {
-    match s.trim() {
-        "off" | "none" | "" => Ok(None),
-        addr => Ok(Some(
-            SocketAddr::from_str(addr).map_err(|e| format!("bad --metrics: {e}"))?,
-        )),
+#[derive(Clone, Debug)]
+pub struct PerformanceConfig {
+    pub compute_workers: Option<usize>,
+    pub validation_window_blocks: Option<u32>,
+    pub validation_window_mb: u64,
+    pub confirm_transaction_blocks: Option<usize>,
+    pub confirm_transaction_coin_changes: Option<usize>,
+    pub confirm_transaction_coin_mb: Option<u64>,
+    pub sqlite_writer_cache_mb: Option<u64>,
+    pub coalesce_coin_writes: bool,
+}
+
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self {
+            compute_workers: None,
+            validation_window_blocks: None,
+            validation_window_mb: 128,
+            confirm_transaction_blocks: None,
+            confirm_transaction_coin_changes: None,
+            confirm_transaction_coin_mb: None,
+            sqlite_writer_cache_mb: None,
+            coalesce_coin_writes: false,
+        }
+    }
+}
+
+impl PerformanceConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self
+            .confirm_transaction_coin_changes
+            .is_some_and(|value| !(1..=100_000_000).contains(&value))
+        {
+            return Err("confirmation coin changes must be between 1 and 100000000".into());
+        }
+        if self.confirm_transaction_coin_mb.is_some_and(|value| {
+            !(1..=65536).contains(&value)
+                || usize::try_from(value.saturating_mul(1024 * 1024)).is_err()
+        }) {
+            return Err(
+                "confirmation coin MiB must be between 1 and 65536 and fit this platform".into(),
+            );
+        }
+        if self
+            .compute_workers
+            .is_some_and(|workers| workers == 0 || workers > 1024)
+        {
+            return Err("--compute-workers must be between 1 and 1024".into());
+        }
+        if self
+            .validation_window_blocks
+            .is_some_and(|blocks| !(1..=4096).contains(&blocks))
+        {
+            return Err("--validation-window-blocks must be between 1 and 4096".into());
+        }
+        if !(1..=65536).contains(&self.validation_window_mb) {
+            return Err("--validation-window-mb must be between 1 and 65536".into());
+        }
+        if self
+            .confirm_transaction_blocks
+            .is_some_and(|blocks| !(1..=4096).contains(&blocks))
+        {
+            return Err("--confirm-transaction-blocks must be between 1 and 4096".into());
+        }
+        if self
+            .sqlite_writer_cache_mb
+            .is_some_and(|size| !(1..=1048576).contains(&size))
+        {
+            return Err("--sqlite-writer-cache-mb must be between 1 and 1048576".into());
+        }
+        Ok(())
     }
 }
 
@@ -220,134 +331,5 @@ fn parse_host_port(s: &str) -> Result<(String, u16), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn cfg(peers: &[&str]) -> Result<Config, String> {
-        let owned: Vec<String> = peers.iter().map(|s| (*s).to_string()).collect();
-        Config::build(
-            "0.0.0.0:8444",
-            "0.0.0.0:8555",
-            None,
-            &owned,
-            None,
-            "sqlite:///data/chain.db",
-            "mainnet",
-            "off",
-            None,
-            false,
-            0,
-            false,
-            None,
-            None,
-            P2pSettings::default(),
-            &[],
-            &[],
-        )
-    }
-
-    #[test]
-    fn trusted_peers_default_empty_and_pass_through() {
-        assert!(cfg(&[]).unwrap().trusted_peers.is_empty());
-        assert!(cfg(&[]).unwrap().trusted_cidrs.is_empty());
-        let c = Config::build(
-            "0.0.0.0:8444",
-            "0.0.0.0:8555",
-            None,
-            &[],
-            None,
-            "sqlite:///data/chain.db",
-            "mainnet",
-            "off",
-            None,
-            false,
-            0,
-            false,
-            None,
-            None,
-            P2pSettings::default(),
-            &["aa".repeat(32)],
-            &["10.0.0.0/8".to_string()],
-        )
-        .unwrap();
-        assert_eq!(c.trusted_peers, vec!["aa".repeat(32)]);
-        assert_eq!(c.trusted_cidrs, vec!["10.0.0.0/8".to_string()]);
-    }
-
-    #[test]
-    fn no_peer_flags_yield_empty_manual_peers() {
-        assert!(cfg(&[]).unwrap().manual_peers.is_empty());
-    }
-
-    #[test]
-    fn repeated_peer_flags_all_parse_in_order() {
-        // A DNS service name and a bare IP must both parse; order is preserved.
-        let c = cfg(&["chia-node-0.peers.example:8444", "10.101.159.8:8444"]).unwrap();
-        assert_eq!(
-            c.manual_peers,
-            vec![
-                ("chia-node-0.peers.example".to_string(), 8444),
-                ("10.101.159.8".to_string(), 8444),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_peer_without_a_port_is_rejected() {
-        assert!(cfg(&["chia-node-0.peers"]).is_err());
-    }
-
-    #[test]
-    fn p2p_settings_are_validated_and_preserved() {
-        let mut p2p = P2pSettings {
-            host_pool_capacity: 2_000,
-            heartbeat: std::time::Duration::from_secs(30),
-            ..P2pSettings::default()
-        };
-        let c = Config::build(
-            "0.0.0.0:8444",
-            "127.0.0.1:8555",
-            None,
-            &[],
-            None,
-            "sqlite:///data/chain.db",
-            "mainnet",
-            "off",
-            None,
-            false,
-            0,
-            false,
-            None,
-            None,
-            p2p,
-            &[],
-            &[],
-        )
-        .unwrap();
-        assert_eq!(c.p2p, p2p);
-
-        p2p.address_lower = p2p.address_upper + 1;
-        assert!(
-            Config::build(
-                "0.0.0.0:8444",
-                "127.0.0.1:8555",
-                None,
-                &[],
-                None,
-                "sqlite:///data/chain.db",
-                "mainnet",
-                "off",
-                None,
-                false,
-                0,
-                false,
-                None,
-                None,
-                p2p,
-                &[],
-                &[],
-            )
-            .is_err()
-        );
-    }
-}
+#[path = "../tests/unit/config.rs"]
+mod tests;

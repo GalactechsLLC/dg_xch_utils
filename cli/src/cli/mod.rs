@@ -1,14 +1,23 @@
 use bip39::Mnemonic;
 use clap::{Parser, Subcommand, ValueEnum};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use dialoguer::Input;
+use dialoguer::Password;
 use dialoguer::theme::ColorfulTheme;
 use std::io::{Error, ErrorKind};
 use std::str::FromStr;
 
+#[cfg(feature = "full-node")]
+use crate::full_node::FullNodeArgs;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
+    #[arg(
+        long,
+        global = true,
+        help = "Application configuration directory (or DGX_CONFIG_DIR)"
+    )]
+    pub config_dir: Option<std::path::PathBuf>,
     #[arg(short, long, value_name = "Path to the chia ssl folder")]
     pub ssl_path: Option<String>,
     #[arg(short, long, value_name = "Timeout When Connecting to Fullnode")]
@@ -33,6 +42,28 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum RootCommands {
+    #[command(about = "Set up local configuration, storage and TLS before starting services")]
+    Init(crate::setup::InitArgs),
+    #[command(about = "Open the native desktop")]
+    Gui(crate::setup::ServiceArgs),
+    #[command(about = "Run the integrated farmer and harvester")]
+    Farmer(crate::setup::ServiceArgs),
+    #[command(about = "Run the plotter independently of node sync")]
+    Plotter(crate::setup::ServiceArgs),
+    Timelord(crate::setup::ServiceArgs),
+    Introducer(crate::setup::ServiceArgs),
+    #[command(about = "Run the reference pool (pooling v2 requires explicit experimental opt-in)")]
+    Pool(crate::setup::ServiceArgs),
+    Simulator(crate::setup::ServiceArgs),
+    #[command(about = "Initialize or inspect a chain without creating blocks")]
+    Chain(crate::chain::ChainArgs),
+    #[command(
+        name = "full-node",
+        alias = "node",
+        about = "Run the dg_xch validating full node"
+    )]
+    #[cfg(feature = "full-node")]
+    FullNode(Box<FullNodeArgs>),
     //START OF FULLNODE API
     #[command(about = "Get the current BlockchainState", long_about = None)]
     PrintPlottingInfo {
@@ -357,8 +388,10 @@ pub enum WalletAction {
 
 pub fn prompt_for_mnemonic() -> Result<Mnemonic, Error> {
     Mnemonic::from_str(
-        &Input::<String>::with_theme(&ColorfulTheme::default())
+        &Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Please Input Your Mnemonic: ")
+            .allow_empty_password(false)
+            .report(false)
             .validate_with(|input: &String| -> Result<(), &str> {
                 if Mnemonic::from_str(input).is_ok() {
                     Ok(())
@@ -366,7 +399,7 @@ pub fn prompt_for_mnemonic() -> Result<Mnemonic, Error> {
                     Err("You did not input a valid Mnemonic, Please try again.")
                 }
             })
-            .interact_text()
+            .interact()
             .map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidInput,

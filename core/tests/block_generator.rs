@@ -35,6 +35,30 @@ const HISTORICAL_BLOCK_4671894: &str =
 const HISTORICAL_BLOCK_4671894_REF: &str =
     include_str!("fixtures/chia_generator_tests/block-4671894.env");
 
+#[test]
+fn historical_block_6755796_completes_with_exact_cost() {
+    let input = BlockGeneratorInput {
+        transactions_generator: SerializedProgram::from_hex(
+            include_str!("fixtures/chia_generator_tests/block-6755796.txt").trim(),
+        )
+        .unwrap(),
+        generator_refs: Vec::new(),
+        constants: MAINNET,
+        height: 6_755_796,
+        flags: BlockGeneratorFlags::for_height(&MAINNET, 6_755_796),
+    };
+    let (completion, completed) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = completion.send(execute_block_generator_result(&input));
+    });
+    let conditions = completed
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("historical generator regressed to a superlinear checkpoint walk")
+        .unwrap();
+    assert_eq!(conditions.cost, 1_755_381_849);
+    assert_eq!(conditions.spends.len(), 5);
+}
+
 #[derive(Debug)]
 struct ExpectedGeneratorOutput {
     generator: SerializedProgram,

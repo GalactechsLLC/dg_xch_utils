@@ -9,6 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+zeroize = "1.9.0"
 async-trait = "0.1.89"
 blst = { version = "0.3.16", features = ["portable"] }
 dg_xch_core = {path = "../core", version = "3.0.0", default-features = false, features = ["bls"]}
@@ -20,7 +21,7 @@ hex = "0.4.3"
 log = "0.4.29"
 prometheus = {version="0.14.0", features=["protobuf"], optional = true}
 reqwest = {version="0.12.24", default-features = false, features = ["rustls-tls", "json"] }
-rustls = {version = "0.23.37" }
+rustls = {version = "0.23.45" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tokio = {version = "1.50.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}

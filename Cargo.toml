@@ -7,7 +7,9 @@ members = [
     "clients",
     "core",
     "full-node",
-    "gui/src-tauri",
+    "gui",
+    "farmer",
+    "wallet",
     "keys",
     "logging",
     "macros",
@@ -15,17 +17,26 @@ members = [
     "p2p",
     "parser_macro",
     "proof_of_space",
+    "proof_of_space/pos1",
+    "proof_of_space/pos2",
+    "proof_of_space/pos_common",
     "puzzles",
-    "roots",
     "serialize",
     "servers",
     "simulator",
     "stores",
-    "tools/dev-tools",
-    "tests",
+    "tools",
+    "timelord",
+    "introducer",
+    "plotter",
+    "pool",
     "vdf",
     "weight-proof"
 ]
+
+[workspace.dependencies]
+blake3 = "1.8.3"
+dg_xch_core = { path = "core", version = "3.0.0", default-features = false }
 
 [workspace.package]
 version = "3.0.0"
@@ -38,3 +49,10 @@ repository = "https://github.com/GalactechsLLC/dg_xch_utils"
 [profile.bench]
 debug = true
 strip = "debuginfo"
+
+[profile.release-perf]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+debug = 1
+strip = "none"

@@ -4,7 +4,7 @@
 // never-draining sink in core's `send_timeout_tests`), reject-all-ranges, stale-peak (honest but
 // behind), disconnect-mid-window. The misbehaving peer's reservations must be reclaimed (t051's
 // stall-reclaim generalized across modes), its failure budget must retire it, and the good peer
-// must finish the range; the daemon-shaped follow rotation must confirm the peak within a fixed
+// must finish the range; the server-shaped follow rotation must confirm the peak within a fixed
 // tick budget.
 
 mod common;
@@ -121,6 +121,7 @@ async fn confirmed_peak_advances_beside_every_misbehaving_peer() {
     let block = common::load_full_block(5_000_000);
     for (name, mode) in all_modes(4_999_000) {
         let store = common::new_store().await;
+        common::ancestry::seed_mainnet_parent(&store).await;
         let template = common::load_records()[0].clone();
         store
             .add_block_records(&[seed_record_for(&template, &block)])
@@ -149,7 +150,7 @@ async fn confirmed_peak_advances_beside_every_misbehaving_peer() {
     }
 }
 
-// The daemon-shaped follow tick: rotate to the next peer each tick (the registry.live_peers +
+// The server-shaped follow tick: rotate to the next peer each tick (the registry.live_peers +
 // follow_rotation pattern — closed peers are skipped, a failed or timed-out tick rotates), each
 // tick bounded like the driver's request timeout. The confirmed peak must land within a fixed tick
 // budget for every mode — a misbehaving peer costs at most its own tick, never a wedge.
@@ -158,6 +159,7 @@ async fn follow_tick_rotation_confirms_the_peak_within_a_bounded_tick_budget() {
     let block = common::load_full_block(5_000_000);
     for (name, mode) in all_modes(4_999_000) {
         let store = common::new_store().await;
+        common::ancestry::seed_mainnet_parent(&store).await;
         let engine = Engine::new(Arc::new(store), NativePrimitives, MAINNET);
         let mut chaser = Chaser::new(engine, confirm_cfg());
         let mut fixture = HashMap::new();
