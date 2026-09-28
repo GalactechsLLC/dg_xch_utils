@@ -1,5 +1,5 @@
 // The `dgx full-node` process shares the allocator expected by full-node memory metrics.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "full-node"))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 

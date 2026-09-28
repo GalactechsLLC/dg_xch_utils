@@ -37,7 +37,7 @@ dg_logger = { path="../logging", version="3.0.0" }
 dg_xch_clients = {path = "../clients", version="3.0.0"}
 dg_xch_core = {path = "../core", version = "3.0.0", default-features = false, features = ["bls"]}
 dg_xch_keys = {path = "../keys", version="3.0.0"}
-dg_xch_p2p = { path = "../p2p", version = "3.0.0" }
+dg_xch_p2p = { path = "../p2p", version = "3.0.0", optional = true }
 dg_xch_puzzles = {path = "../puzzles", version="3.0.0"}
 dg_xch_serialize= {path = "../serialize", version="3.0.0"}
 dg_xch_servers = { path = "../servers", version = "3.0.0" }
@@ -51,23 +51,23 @@ serde_json = "1.0.149"
 tokio = {version = "1.50.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
+tikv-jemallocator = { version = "0.6", features = ["background_threads"], optional = true }
 
 [target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
-tikv-jemallocator = "0.6"
+tikv-jemallocator = { version = "0.6", optional = true }
 
 [features]
 default = ["hint", "desktop", "vulkan", "timelord"]
 desktop = ["dep:dg_xch_gui"]
 vulkan = ["dg_xch_farmer/vulkan", "dg_xch_plotter/vulkan", "dg_xch_pos2/vulkan"]
 timelord = ["dep:dg_xch_timelord", "dep:dg_xch_vdf"]
-full-node = ["dep:dg_full_node"]
+# Wallet and RPC consumers can omit the validating node and its native dependencies.
+full-node = ["dep:dg_full_node", "dep:dg_xch_p2p", "dep:tikv-jemallocator"]
 sqlite = ["full-node", "dg_full_node/sqlite"]
 coin-index = ["full-node", "dg_full_node/coin-index"]
 hint = ["coin-index", "dg_full_node/hint"]
 postgres = ["full-node", "dg_full_node/postgres"]
 mmap = ["full-node", "dg_full_node/mmap"]
 profiling = ["full-node", "dg_full_node/profiling", "tikv-jemallocator/profiling"]
-
 [dev-dependencies]
 tempfile = "3"
