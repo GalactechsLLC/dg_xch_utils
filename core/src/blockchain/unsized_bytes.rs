@@ -27,24 +27,24 @@ impl From<&[u8]> for UnsizedBytes {
     }
 }
 
-impl From<String> for UnsizedBytes {
-    fn from(hex: String) -> Self {
-        let bytes: Vec<u8> = decode(prep_hex_str(&hex)).unwrap();
-        UnsizedBytes::new(bytes)
+impl TryFrom<String> for UnsizedBytes {
+    type Error = hex::FromHexError;
+    fn try_from(hex: String) -> Result<Self, Self::Error> {
+        Self::try_from(hex.as_str())
     }
 }
 
-impl From<&String> for UnsizedBytes {
-    fn from(hex: &String) -> Self {
-        let bytes: Vec<u8> = decode(prep_hex_str(hex)).unwrap();
-        UnsizedBytes::new(bytes)
+impl TryFrom<&String> for UnsizedBytes {
+    type Error = hex::FromHexError;
+    fn try_from(hex: &String) -> Result<Self, Self::Error> {
+        Self::try_from(hex.as_str())
     }
 }
 
-impl From<&str> for UnsizedBytes {
-    fn from(hex: &str) -> Self {
-        let bytes: Vec<u8> = decode(prep_hex_str(hex)).unwrap();
-        UnsizedBytes::new(bytes)
+impl TryFrom<&str> for UnsizedBytes {
+    type Error = hex::FromHexError;
+    fn try_from(hex: &str) -> Result<Self, Self::Error> {
+        decode(prep_hex_str(hex)).map(Self::new)
     }
 }
 
@@ -108,16 +108,16 @@ impl Visitor<'_> for UnsizedBytesVisitor {
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
     where
-        E: std::error::Error,
+        E: serde::de::Error,
     {
-        Ok(value.into())
+        UnsizedBytes::try_from(value).map_err(E::custom)
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
-        E: std::error::Error,
+        E: serde::de::Error,
     {
-        Ok(value.into())
+        UnsizedBytes::try_from(value).map_err(E::custom)
     }
 }
 
@@ -152,7 +152,20 @@ impl fmt::Debug for UnsizedBytes {
 }
 impl ChiaSerialize for UnsizedBytes {
     fn to_bytes(&self, version: ChiaProtocolVersion) -> Result<Vec<u8>, Error> {
-        self.bytes.to_bytes(version)
+        let mut bytes = Vec::with_capacity(4 + self.bytes.len());
+        self.append_bytes(&mut bytes, version)?;
+        Ok(bytes)
+    }
+    fn append_bytes(
+        &self,
+        bytes: &mut Vec<u8>,
+        _version: ChiaProtocolVersion,
+    ) -> Result<(), Error> {
+        let length = u32::try_from(self.bytes.len())
+            .map_err(|_| Error::new(ErrorKind::InvalidInput, "byte string exceeds wire length"))?;
+        bytes.extend_from_slice(&length.to_be_bytes());
+        bytes.extend_from_slice(&self.bytes);
+        Ok(())
     }
     fn from_bytes(bytes: &mut Cursor<&[u8]>, version: ChiaProtocolVersion) -> Result<Self, Error>
     where

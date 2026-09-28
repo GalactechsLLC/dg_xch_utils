@@ -18,6 +18,7 @@ async fn add_real_mainnet_block_matches_reference_and_advances_peak() {
     let block = common::load_full_block(5_000_000);
     let (ref_adds, ref_rems) = common::load_adds_rems(5_000_000);
     let store = common::new_store().await;
+    common::ancestry::seed_mainnet_parent(&store).await;
     let mut engine = Engine::new(store, NativePrimitives, MAINNET);
 
     let outcome = engine.add_block(&block).await.expect("add_block");
@@ -124,12 +125,28 @@ async fn peak_engine() -> (
 ) {
     let parent = common::load_full_block(5_000_000);
     let store = common::new_store().await;
+    common::ancestry::seed_mainnet_parent(&store).await;
     let mut engine = Engine::new(store, NativePrimitives, MAINNET);
     engine
         .add_block(&parent)
         .await
         .expect("parent becomes peak");
     (engine, parent)
+}
+
+#[tokio::test]
+async fn unanchored_mainnet_block_is_rejected_without_writing() {
+    let block = common::load_full_block(5_000_000);
+    let hash = block.header_hash().unwrap();
+    let store = common::new_store().await;
+    let mut engine = Engine::new(store, NativePrimitives, MAINNET);
+    assert!(matches!(
+        engine.add_block(&block).await,
+        Err(dg_xch_node::NodeError::Orphan(_))
+    ));
+    assert_eq!(engine.store().get_peak().await.unwrap(), None);
+    assert_eq!(engine.store().get_block(&hash).await.unwrap(), None);
+    assert_eq!(engine.store().get_block_record(&hash).await.unwrap(), None);
 }
 
 #[tokio::test]

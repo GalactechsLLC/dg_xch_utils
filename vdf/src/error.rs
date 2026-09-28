@@ -19,6 +19,7 @@ pub enum Error {
         max_vdf_witness_size: u64,
     },
     TargetVdfMismatch,
+    ProverMemoryLimit,
 }
 
 impl Display for Error {
@@ -54,6 +55,7 @@ impl Display for Error {
             Error::TargetVdfMismatch => {
                 f.write_str("VDF info does not match the expected target VDF info")
             }
+            Error::ProverMemoryLimit => f.write_str("VDF prover memory budget is insufficient"),
         }
     }
 }
@@ -78,6 +80,7 @@ impl dg_xch_core::errors::ErrorCode for Error {
             Error::InvalidProofParameters => 10,
             Error::WitnessTooLarge { .. } => 11,
             Error::TargetVdfMismatch => 12,
+            Error::ProverMemoryLimit => 13,
         }
     }
 }

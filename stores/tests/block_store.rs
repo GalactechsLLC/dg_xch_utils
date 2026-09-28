@@ -161,6 +161,48 @@ async fn get_by_height_returns_the_confirmed_record() {
     assert_eq!(peak, (top, 5_000_029));
 }
 
+#[tokio::test]
+async fn validated_extension_fast_path_marks_only_the_supplied_chain() {
+    let records = common::load_records();
+    let template = &records[0];
+    let path = common::unique_db_path();
+    let store = common::new_store_at(&path).await;
+
+    let base = linked(template, 0, 100, Bytes32::from([0u8; 32]));
+    let a1 = linked(template, 0xa1, 101, base.header_hash);
+    let a2 = linked(template, 0xa2, 102, a1.header_hash);
+    let sibling = linked(template, 0xb1, 101, base.header_hash);
+    store
+        .add_block_records(&[base.clone(), a1.clone(), a2.clone(), sibling])
+        .await
+        .unwrap();
+    store.set_peak(&base.header_hash).await.unwrap();
+
+    let mut batch = store.begin().await.unwrap();
+    let links = store
+        .extend_peak_in(&mut batch, &[a1.header_hash, a2.header_hash], a2.height)
+        .await
+        .unwrap();
+    store.commit(batch).await.unwrap();
+
+    assert_eq!(links, 2);
+    assert_eq!(
+        store.get_peak().await.unwrap(),
+        Some((a2.header_hash, a2.height))
+    );
+    assert_eq!(
+        store
+            .get_block_record_by_height(a1.height)
+            .await
+            .unwrap()
+            .unwrap()
+            .header_hash,
+        a1.header_hash,
+        "the same-height sibling must remain a candidate"
+    );
+    assert_eq!(main_chain_heights(&path).await, vec![100, 101, 102]);
+}
+
 // T012a: a same-height sibling reorg must leave exactly one in_main_chain record per height, and
 // get_block_record_by_height must return the new branch. Base B0@100; branch A (A1@101,A2@102) confirmed
 // first, then heavier sibling branch B (B1@101,B2@102) takes the peak.

@@ -1,0 +1,38 @@
+name: Install native dependencies
+description: Install native build tools, the GLSL compiler, and Linux desktop runtime dependencies
+runs:
+  using: composite
+  steps:
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes \
+          build-essential cmake m4 pkg-config glslang-tools \
+          libssl-dev libzstd-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev \
+          xvfb xauth libvulkan1 mesa-vulkan-drivers
+    - name: Install macOS dependencies
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew install cmake m4 pkg-config glslang
+    - name: Install Windows dependencies
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $sdk = 'C:\VulkanSDK\ci'
+        choco install vulkan-sdk --yes --no-progress --params "/InstallDir:$sdk"
+        if ($LASTEXITCODE -ne 0) { throw 'Vulkan SDK installation failed' }
+        choco install nasm --yes --no-progress
+        if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
+        $sdkBin = Join-Path $sdk 'Bin'
+        if (-not (Test-Path (Join-Path $sdkBin 'glslangValidator.exe'))) {
+          throw 'Vulkan SDK installation is missing glslangValidator.exe'
+        }
+        $sdkBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        "$env:ProgramFiles\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    - name: Verify native build tools
+      shell: bash
+      run: |
+        cmake --version
+        glslangValidator --version

@@ -300,90 +300,9 @@ fn siphash24(k0: u64, k1: u64, data: &[u8]) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::chia_block_filter;
-    use crate::utils::hash_256;
-
-    fn sha256(bytes: &[u8]) -> Vec<u8> {
-        hash_256(bytes).to_vec()
-    }
-
-    // Reference vector: the filter over sha256("abc"), sha256("xyz"), sha256("123") encodes
-    // to [3, 174, 90, 204, 224, 219, 7, 253, 91]. The leading 3 is the compact-size N; this
-    // pins P, M, the zero siphash key, map-into-range and the MSB-first bit writer at once.
-    #[test]
-    fn chia_block_filter_matches_chiabip158_vector() {
-        let items = vec![sha256(b"abc"), sha256(b"xyz"), sha256(b"123")];
-        assert_eq!(
-            chia_block_filter(&items),
-            vec![3u8, 174, 90, 204, 224, 219, 7, 253, 91],
-            "must match chiabip158 rust-bindings test_filter vector byte-for-byte"
-        );
-    }
-
-    // Genesis / no-tx-content: the empty element set encodes to [0], so
-    // filter_hash == sha256([0]).
-    #[test]
-    fn empty_filter_is_single_zero_byte() {
-        assert_eq!(chia_block_filter(&[]), vec![0u8]);
-        assert_eq!(hash_256(chia_block_filter(&[])), hash_256(vec![0u8]));
-    }
-
-    // Duplicate raw elements collapse: the N prefix counts distinct elements, so a filter
-    // over [x, x] equals the filter over [x].
-    #[test]
-    fn duplicate_elements_are_deduplicated() {
-        let x = sha256(b"dup");
-        let once = chia_block_filter(std::slice::from_ref(&x));
-        let twice = chia_block_filter(&[x.clone(), x]);
-        assert_eq!(
-            once, twice,
-            "duplicate elements must collapse to one (N distinct)"
-        );
-        assert_eq!(once[0], 1, "N == 1 distinct element");
-    }
-
-    // Element order does not change the encoding: the hashed values are sorted before
-    // Golomb-Rice encoding, so a permutation of the same set yields identical bytes.
-    #[test]
-    fn element_order_does_not_matter() {
-        let a = sha256(b"abc");
-        let b = sha256(b"xyz");
-        let c = sha256(b"123");
-        let forward = chia_block_filter(&[a.clone(), b.clone(), c.clone()]);
-        let shuffled = chia_block_filter(&[c, a, b]);
-        assert_eq!(forward, shuffled);
-    }
-}
+#[path = "../../tests/unit/consensus/block_filter/tests.rs"]
+mod tests;
 
 #[cfg(test)]
-mod decode_tests {
-    use super::*;
-
-    #[test]
-    fn decode_round_trips_and_matches() {
-        let items: Vec<Vec<u8>> = (0u8..100).map(|i| vec![i; 32]).collect();
-        let filter = chia_block_filter(&items);
-        let decoded = decode_chia_block_filter(&filter).expect("well-formed filter decodes");
-        assert_eq!(decoded.len(), 100, "N survives the round trip");
-        for item in &items {
-            assert!(
-                chia_block_filter_match(&decoded, item),
-                "every encoded member matches"
-            );
-        }
-        // A non-member misses (false-positive odds 1 in M = 2^20 per probe).
-        assert!(!chia_block_filter_match(&decoded, &[0xAB; 33]));
-    }
-
-    #[test]
-    fn decode_is_defensive_on_garbage() {
-        // truncated CompactSize
-        assert!(decode_chia_block_filter(&[0xfd]).is_none());
-        // empty filter: the single zero byte
-        assert_eq!(decode_chia_block_filter(&[0]), Some(Vec::new()));
-        assert!(decode_chia_block_filter(&[]).is_none());
-        // element count with a body too short to carry it
-        assert!(decode_chia_block_filter(&[5, 0x01]).is_none());
-    }
-}
+#[path = "../../tests/unit/consensus/block_filter/decode_tests.rs"]
+mod decode_tests;

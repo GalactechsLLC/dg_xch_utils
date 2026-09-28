@@ -246,6 +246,7 @@ async fn third_concurrent_request_over_the_window_disconnects_and_bans() {
         (*k, v.clone())
     };
     let swapped = Arc::new(SocketPeer {
+        peer_peak: old.peer_peak.clone(),
         node_type: old.node_type.clone(),
         protocol_version: old.protocol_version.clone(),
         capabilities: old.capabilities.clone(),

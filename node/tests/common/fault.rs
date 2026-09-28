@@ -23,6 +23,7 @@ pub struct FaultStore<S> {
     inner: S,
     fail_apply: Arc<AtomicBool>,
     fail_set_peak: Arc<AtomicBool>,
+    fail_apply_at: Option<u32>,
 }
 
 impl<S> FaultStore<S> {
@@ -34,6 +35,7 @@ impl<S> FaultStore<S> {
                 inner,
                 fail_apply: fail_apply.clone(),
                 fail_set_peak: fail_set_peak.clone(),
+                fail_apply_at: None,
             },
             fail_apply,
             fail_set_peak,
@@ -42,6 +44,11 @@ impl<S> FaultStore<S> {
 
     fn injected(site: &str) -> StoreError {
         StoreError::Corrupt(format!("injected {site} fault"))
+    }
+
+    pub fn with_apply_failure_at(mut self, height: u32) -> Self {
+        self.fail_apply_at = Some(height);
+        self
     }
 }
 
@@ -109,7 +116,7 @@ impl<S: CoinStore + Send + Sync> CoinStore for FaultStore<S> {
         additions: &[CoinRecord],
         removals: &[Bytes32],
     ) -> Result<(), StoreError> {
-        if self.fail_apply.load(Ordering::Relaxed) {
+        if self.fail_apply.load(Ordering::Relaxed) || self.fail_apply_at == Some(height) {
             return Err(Self::injected("apply_block"));
         }
         self.inner
@@ -124,7 +131,7 @@ impl<S: CoinStore + Send + Sync> CoinStore for FaultStore<S> {
         additions: &[CoinRecord],
         removals: &[Bytes32],
     ) -> Result<(), StoreError> {
-        if self.fail_apply.load(Ordering::Relaxed) {
+        if self.fail_apply.load(Ordering::Relaxed) || self.fail_apply_at == Some(height) {
             return Err(Self::injected("apply_block_in"));
         }
         self.inner

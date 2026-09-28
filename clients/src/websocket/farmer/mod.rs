@@ -32,6 +32,16 @@ impl<T> FarmerClient<T> {
         let network = ChiaNetwork::from_str(&client_config.network_id)
             .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
         let constants = CONSENSUS_CONSTANTS[network as usize];
+        Self::new_with_constants(client_config, shared_state, run, timeout, constants).await
+    }
+
+    pub async fn new_with_constants(
+        client_config: Arc<WsClientConfig>,
+        shared_state: Arc<FarmerSharedState<T>>,
+        run: Arc<AtomicBool>,
+        timeout: u64,
+        constants: ConsensusConstants,
+    ) -> Result<Self, Error> {
         let handles = Arc::new(RwLock::new(handles(constants, &shared_state)));
         let client = WsClient::with_ca(
             client_config,

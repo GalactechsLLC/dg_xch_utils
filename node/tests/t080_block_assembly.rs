@@ -133,7 +133,7 @@ fn mempool_at_peak() -> Mempool {
     mp
 }
 
-// Admit a REAL bundle: conditions computed by the exact admission path the daemon runs
+// Admit a REAL bundle: conditions computed by the exact admission path the server runs
 // (conditions_from_spend_bundle at the next block's height).
 async fn admit_real(mp: &mut Mempool, store: &SqliteStore, bundle: SpendBundle) -> Bytes32 {
     let conds =

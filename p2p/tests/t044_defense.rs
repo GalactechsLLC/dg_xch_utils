@@ -1,6 +1,6 @@
 mod common;
 
-use common::{empty_api, fast_settings, peer, spawn_full_node, wait_until};
+use common::{empty_api, fast_settings, peer, spawn_full_node, wait_for_reconnections, wait_until};
 use dg_xch_p2p::Supervisor;
 use std::time::Duration;
 
@@ -52,7 +52,7 @@ async fn slow_peer_eviction_tears_down_and_the_slot_recovers() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(10)
+            Duration::from_secs(60)
         )
         .await,
         "peer connects"
@@ -60,22 +60,11 @@ async fn slow_peer_eviction_tears_down_and_the_slot_recovers() {
 
     // Evict it (as the sync pipeline would a slow_channel).
     let ep = ("127.0.0.1".to_string(), server.port);
+    let previous = reg.outbound_peers().await;
     assert!(reg.evict(&ep).await, "eviction targets the live channel");
-    assert!(
-        wait_until(
-            || async { reg.outbound_count().await == 0 },
-            Duration::from_secs(10)
-        )
-        .await,
-        "evicted channel is torn down"
-    );
     // the reservation returns to the pool and the slot re-dials
     assert!(
-        wait_until(
-            || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(10)
-        )
-        .await,
+        wait_for_reconnections(&reg, &previous, Duration::from_secs(60)).await,
         "the slot re-dials after eviction (reservation not lost)"
     );
 

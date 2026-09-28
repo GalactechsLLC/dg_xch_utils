@@ -128,6 +128,7 @@ async fn unknown_message_type_disconnects_and_bans() {
         Arc::new(dg_xch_clients::websocket::WsClientConfig {
             host: "127.0.0.1".to_string(),
             port: server.port,
+            server_port: 0,
             network_id: "mainnet".to_string(),
             ssl_info: None,
             software_version: None,

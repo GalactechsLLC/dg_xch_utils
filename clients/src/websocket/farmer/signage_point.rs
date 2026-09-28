@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use dg_xch_core::blockchain::proof_of_space::calculate_prefix_bits;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
-use dg_xch_core::constants::POOL_SUB_SLOT_ITERS;
 #[cfg(feature = "metrics")]
 use dg_xch_core::protocols::farmer::FarmerMetrics;
 use dg_xch_core::protocols::farmer::{
@@ -60,7 +59,7 @@ impl MessageHandler for NewSignagePointHandle {
                     debug!("Setting Difficulty for pool: {difficulty}");
                     pool_difficulties.push(PoolDifficulty {
                         difficulty,
-                        sub_slot_iters: POOL_SUB_SLOT_ITERS,
+                        sub_slot_iters: self.constants.pool_sub_slot_iters,
                         pool_contract_puzzle_hash: *p2_singleton_puzzle_hash,
                     });
                 } else {

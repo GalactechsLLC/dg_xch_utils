@@ -12,6 +12,7 @@ pub mod sync;
 pub mod unfinished;
 
 pub use cache::{BLOCK_RECORD_WINDOW, BlockRecordCache};
+pub use dg_xch_vdf::memo::metrics as vdf_cache_metrics;
 pub use engine::{
     AddBlockOutcome, BlockDelta, Engine, PrecomputedBody, ReorgReport,
     header_block_from_full_block, run_body_expensive, validate_unfinished_block_body,

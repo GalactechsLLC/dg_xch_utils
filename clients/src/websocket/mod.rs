@@ -35,7 +35,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{env, fs};
-use tokio::select;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
@@ -64,12 +63,31 @@ pub fn version() -> String {
     format!("{}: {}", _pkg_name(), _version())
 }
 
+fn outbound_handshake(
+    config: &WsClientConfig,
+    node_type: NodeType,
+    protocol_version: ChiaProtocolVersion,
+) -> Handshake {
+    Handshake {
+        network_id: config.network_id.clone(),
+        protocol_version: protocol_version.to_string(),
+        software_version: config.software_version.clone().unwrap_or_else(version),
+        server_port: config.server_port,
+        node_type: node_type as u8,
+        capabilities: CAPABILITIES
+            .iter()
+            .map(|entry| (entry.0, entry.1.to_string()))
+            .collect(),
+    }
+}
+
 #[test]
 fn test_version() {
     println!("{}", version());
 }
 
 pub struct WsClient {
+    pub peer_peak: Arc<dg_xch_core::protocols::peer_peak::PeerPeak>,
     pub connection: Arc<RwLock<WebsocketConnection>>,
     pub client_config: Arc<WsClientConfig>,
     pub handshake: Option<Handshake>,
@@ -204,7 +222,10 @@ impl WsClient {
                 )
             })?,
         );
-        let peer_id = Arc::new(Bytes32::new(hash_256(certs[0].as_ref())));
+        let certificate = certs.first().ok_or_else(|| {
+            Error::new(ErrorKind::InvalidData, "client certificate file is empty")
+        })?;
+        let peer_id = Arc::new(Bytes32::new(hash_256(certificate.as_ref())));
         let (stream, _) = timeout(
             Duration::from_secs(timeout_secs),
             connect_async_tls_with_config(
@@ -240,13 +261,19 @@ impl WsClient {
             peer_id.clone(),
             peers.clone(),
             limiter,
+            Arc::<str>::from(format!(
+                "outbound endpoint={}:{}",
+                client_config.host, client_config.port
+            )),
         );
         let v3 = ws_con.v3();
+        let peer_peak = Arc::new(dg_xch_core::protocols::peer_peak::PeerPeak::default());
         let connection = Arc::new(RwLock::new(ws_con));
         let peer_capabilities = Arc::new(RwLock::new(Vec::new()));
         peers.write().await.insert(
             *peer_id.as_ref(),
             Arc::new(SocketPeer {
+                peer_peak: peer_peak.clone(),
                 node_type: Arc::new(RwLock::new(NodeType::Harvester)),
                 protocol_version: Arc::new(RwLock::new(ChiaProtocolVersion::default())),
                 capabilities: peer_capabilities.clone(),
@@ -260,6 +287,7 @@ impl WsClient {
         let handle_run = run.clone();
         let protocol_version = client_config.protocol_version;
         let mut ws_client = WsClient {
+            peer_peak,
             connection,
             client_config,
             handshake: None,
@@ -269,7 +297,8 @@ impl WsClient {
         };
         ws_client
             .perform_handshake(node_type, protocol_version)
-            .await?;
+            .await
+            .map_err(|error| Error::other(format!("Chia handshake failed: {error}")))?;
         // The server's handshake reply is consumed by the oneshot correlation path, not the handler,
         // so record its advertised capabilities on our own peer entry here — this is what the read
         // loop's rate limiter reads to pick the v1/v2 numbers for the peer we dialed.
@@ -284,8 +313,8 @@ impl WsClient {
         self.connection.write().await.shutdown().await
     }
 
-    pub async fn join(self) -> Result<(), Error> {
-        self.handle
+    pub async fn join(mut self) -> Result<(), Error> {
+        (&mut self.handle)
             .await
             .map_err(|e| Error::other(format!("Failed to join farmer: {e:?}")))
     }
@@ -333,17 +362,7 @@ impl WsClient {
             ChiaMessage::new(
                 ProtocolMessageTypes::Handshake,
                 chia_protocol_version,
-                &Handshake {
-                    network_id: self.client_config.network_id.to_string(),
-                    protocol_version: chia_protocol_version.to_string(),
-                    software_version: version(),
-                    server_port: self.client_config.port,
-                    node_type: node_type as u8,
-                    capabilities: CAPABILITIES
-                        .iter()
-                        .map(|e| (e.0, e.1.to_string()))
-                        .collect(),
-                },
+                &outbound_handshake(&self.client_config, node_type, chia_protocol_version),
                 None,
             )?,
             Some(ProtocolMessageTypes::Handshake),
@@ -352,14 +371,32 @@ impl WsClient {
             Some(15000),
         )
         .await?;
+        if handshake.network_id != self.client_config.network_id
+            || NodeType::from(handshake.node_type) == NodeType::Unknown
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "Peer handshake has an invalid network or node type",
+            ));
+        }
         self.handshake = Some(handshake);
         Ok(())
     }
 }
 
+impl Drop for WsClient {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
 pub struct WsClientConfig {
     pub host: String,
+    /// Remote WebSocket port to dial.
     pub port: u16,
+    /// Our listening port advertised in the Chia handshake, or zero when this client does not
+    /// accept inbound peer connections.
+    pub server_port: u16,
     pub network_id: String,
     pub ssl_info: Option<ClientSSLConfig>,
     //Used to control software version sent to server, default is dg_xch_clients: VERSION
@@ -369,6 +406,33 @@ pub struct WsClientConfig {
     /// Install the per-connection inbound rate limiter on this link.
     /// Set by the p2p full-node dialer; false for harvester/farmer/wallet client roles.
     pub rate_limited: bool,
+}
+
+#[cfg(test)]
+mod handshake_tests {
+    use super::*;
+
+    #[test]
+    fn handshake_uses_local_identity_not_remote_destination() {
+        let config = WsClientConfig {
+            host: "remote.example".to_string(),
+            port: 18444,
+            server_port: 58444,
+            network_id: "testnet11".to_string(),
+            ssl_info: None,
+            software_version: Some("test-client".to_string()),
+            protocol_version: ChiaProtocolVersion::Chia0_0_37,
+            additional_headers: None,
+            rate_limited: false,
+        };
+        let handshake =
+            outbound_handshake(&config, NodeType::FullNode, ChiaProtocolVersion::Chia0_0_37);
+
+        assert_eq!(handshake.network_id, "testnet11");
+        assert_eq!(handshake.server_port, 58444);
+        assert_ne!(handshake.server_port, config.port);
+        assert_eq!(handshake.software_version, "test-client");
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -389,8 +453,7 @@ impl MessageHandler for OneShotHandler {
         _peer_id: Arc<Bytes32>,
         _peers: PeerMap,
     ) -> Result<(), Error> {
-        debug!("{:?}", msg.as_ref());
-        let _ = &self.channel.send(msg.data.bytes.clone()).await;
+        let _ = self.channel.try_send(msg.data.bytes.clone());
         Ok(())
     }
 }
@@ -412,7 +475,6 @@ async fn acquire_v3_out_window(
             Ok(_) => return Ok(()),
             Err(()) => {
                 if waited >= WAIT_CAP_MS {
-                    connection.read().await.cancel_request(id);
                     return Err(Error::new(
                         ErrorKind::TimedOut,
                         format!(
@@ -431,30 +493,39 @@ async fn acquire_v3_out_window(
 pub async fn oneshot_message(
     connection: Arc<RwLock<WebsocketConnection>>,
     mut msg: ChiaMessage,
-    _custom_fn: Option<dg_xch_core::protocols::FilterFunction>,
+    custom_fn: Option<dg_xch_core::protocols::FilterFunction>,
     _msg_id: Option<u16>,
     timeout: Option<u64>,
 ) -> Result<Arc<ChiaMessage>, Error> {
-    let (id, rx) = connection.read().await.register_request();
+    let mut request = connection
+        .read()
+        .await
+        .register_guarded_request_matching(Arc::new(ChiaMessageFilter {
+            msg_type: None,
+            id: None,
+            custom_fn,
+        }))?;
+    let id = request.id();
     msg.id = Some(id);
     acquire_v3_out_window(&connection, &msg, id).await?;
-    if let Err(e) = connection.write().await.send(msg.into()).await {
-        connection.read().await.cancel_request(id);
+    let frame = tokio_tungstenite::tungstenite::Message::Binary(
+        msg.to_bytes(ChiaProtocolVersion::default())?.into(),
+    );
+    if let Err(e) = connection.write().await.send(frame).await {
         return Err(Error::new(
             ErrorKind::InvalidData,
             format!("Failed to send data: {e:?}"),
         ));
     }
-    match tokio::time::timeout(Duration::from_millis(timeout.unwrap_or(15000)), rx).await {
+    match tokio::time::timeout(
+        Duration::from_millis(timeout.unwrap_or(15000)),
+        request.recv(),
+    )
+    .await
+    {
         Ok(Ok(reply)) => Ok(reply),
-        Ok(Err(_)) => {
-            connection.read().await.cancel_request(id);
-            Err(Error::other("Channel Closed before response received"))
-        }
-        Err(_) => {
-            connection.read().await.cancel_request(id);
-            Err(Error::other("Timeout before oneshot_message completed"))
-        }
+        Ok(Err(_)) => Err(Error::other("Channel Closed before response received")),
+        Err(_) => Err(Error::other("Timeout before oneshot_message completed")),
     }
 }
 
@@ -470,35 +541,56 @@ pub async fn oneshot<R: ChiaSerialize>(
     // fix). The id-less case (the Handshake verack, which correlates by type and happens once, before
     // any concurrent traffic exists) keeps the legacy type-filtered handler path below.
     if msg_id.is_some() || msg.id.is_some() {
-        let (id, rx) = connection.read().await.register_request();
+        let mut request = connection
+            .read()
+            .await
+            .register_guarded_request_matching(Arc::new(ChiaMessageFilter {
+                msg_type: None,
+                id: None,
+                custom_fn: Some(Box::new(move |reply| {
+                    resp_type.is_none_or(|expected| {
+                        reply.msg_type == expected
+                            || matches!(
+                                (expected, reply.msg_type),
+                                (
+                                    ProtocolMessageTypes::RespondBlock,
+                                    ProtocolMessageTypes::RejectBlock
+                                ) | (
+                                    ProtocolMessageTypes::RespondBlocks,
+                                    ProtocolMessageTypes::RejectBlocks
+                                )
+                            )
+                    })
+                })),
+            }))?;
+        let id = request.id();
         msg.id = Some(id);
         acquire_v3_out_window(&connection, &msg, id).await?;
-        if let Err(e) = connection.write().await.send(msg.into()).await {
-            connection.read().await.cancel_request(id);
+        let frame =
+            tokio_tungstenite::tungstenite::Message::Binary(msg.to_bytes(protocol_version)?.into());
+        if let Err(e) = connection.write().await.send(frame).await {
             return Err(Error::new(
                 ErrorKind::InvalidData,
                 format!("Failed to parse send data: {e:?}"),
             ));
         }
-        return match tokio::time::timeout(Duration::from_millis(timeout.unwrap_or(15000)), rx).await
+        return match tokio::time::timeout(
+            Duration::from_millis(timeout.unwrap_or(15000)),
+            request.recv(),
+        )
+        .await
         {
             Ok(Ok(reply)) => {
-                let mut cursor = Cursor::new(reply.data.bytes.as_slice());
-                R::from_bytes(&mut cursor, protocol_version).map_err(|e| {
-                    Error::new(
+                if resp_type.is_some_and(|expected| expected != reply.msg_type) {
+                    return Err(Error::new(
                         ErrorKind::InvalidData,
-                        format!("Failed to parse msg: {e:?}"),
-                    )
-                })
+                        "Peer rejected the request",
+                    ));
+                }
+                decode_oneshot_reply(reply.data.bytes.as_slice(), protocol_version)
             }
-            Ok(Err(_)) => {
-                connection.read().await.cancel_request(id);
-                Err(Error::other("Channel Closed before response received"))
-            }
-            Err(_) => {
-                connection.read().await.cancel_request(id);
-                Err(Error::other("Timeout before oneshot completed"))
-            }
+            Ok(Err(_)) => Err(Error::other("Channel Closed before response received")),
+            Err(_) => Err(Error::other("Timeout before oneshot completed")),
         };
     }
     let handle_uuid = Uuid::new_v4();
@@ -516,55 +608,45 @@ pub async fn oneshot<R: ChiaSerialize>(
         }),
         handle: handle.clone(),
     });
-    connection
-        .write()
-        .await
-        .subscribe(handle.id, chia_handle)
-        .await;
-    let res_handle = tokio::spawn(async move {
-        let res = rx.recv().await;
-        rx.close();
-        res
-    });
-    connection
-        .write()
-        .await
-        .send(msg.into())
-        .await
-        .map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("Failed to parse send data: {e:?}"),
-            )
-        })?;
-    select!(
-        () = tokio::time::sleep(Duration::from_millis(timeout.unwrap_or(15000))) => {
-            connection.write().await.unsubscribe(handle.id).await;
-            Err(Error::other(
-                "Timeout before oneshot completed",
-            ))
-        }
-        res = res_handle => {
-            let res = res?;
-            let resp = if let Some(v) = res {
-                let retn = {
-                    let values = v;
-                    let mut cursor = Cursor::new(values.as_slice());
-                    R::from_bytes(&mut cursor, protocol_version).map_err(|e| {
-                        Error::new(
-                            ErrorKind::InvalidData,
-                            format!("Failed to parse msg: {e:?}"),
-                        )
-                    })?
-                };
-                Ok(retn)
-            } else {
-                Err(Error::other(
-                    "Channel Closed before response received",
-                ))
-            };
-            connection.read().await.unsubscribe(handle.id).await;
-            resp
-        }
-    )
+    let _subscription = connection.read().await.subscribe_guarded(chia_handle).await;
+    let frame =
+        tokio_tungstenite::tungstenite::Message::Binary(msg.to_bytes(protocol_version)?.into());
+    connection.write().await.send(frame).await.map_err(|e| {
+        Error::new(
+            ErrorKind::InvalidData,
+            format!("Failed to parse send data: {e:?}"),
+        )
+    })?;
+    match tokio::time::timeout(Duration::from_millis(timeout.unwrap_or(15000)), rx.recv()).await {
+        Ok(Some(bytes)) => decode_oneshot_reply(&bytes, protocol_version),
+        Ok(None) => Err(Error::other("Channel Closed before response received")),
+        Err(_) => Err(Error::other("Timeout before oneshot completed")),
+    }
+}
+
+fn decode_oneshot_reply<R: ChiaSerialize>(
+    bytes: &[u8],
+    protocol_version: ChiaProtocolVersion,
+) -> Result<R, Error> {
+    let mut cursor = Cursor::new(bytes);
+    let response = R::from_bytes(&mut cursor, protocol_version)?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "Trailing data in response",
+        ));
+    }
+    Ok(response)
+}
+
+#[cfg(test)]
+mod oneshot_decode_tests {
+    use super::*;
+
+    #[test]
+    fn reply_decoding_rejects_trailing_data() {
+        let version = ChiaProtocolVersion::default();
+        assert_eq!(decode_oneshot_reply::<u8>(&[42], version).unwrap(), 42);
+        assert!(decode_oneshot_reply::<u8>(&[42, 0], version).is_err());
+    }
 }

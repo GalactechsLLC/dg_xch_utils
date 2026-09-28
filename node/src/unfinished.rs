@@ -69,6 +69,20 @@ fn evict_worst(group: &mut HashMap<Option<Bytes32>, UnfinishedBlockEntry>) {
 }
 
 impl UnfinishedCache {
+    pub fn diagnostic_counts(&self) -> (usize, usize, usize) {
+        let entries = self.blocks.values().flat_map(|group| group.values());
+        let mut received = 0;
+        let mut requesting = 0;
+        for entry in entries {
+            if entry.block.is_some() {
+                received += 1;
+            } else {
+                requesting += 1;
+            }
+        }
+        (received, requesting, self.seen.len())
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self::default()

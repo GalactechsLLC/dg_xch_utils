@@ -93,7 +93,7 @@ fn ssi_difficulty_walk_computes_at_every_sub_epoch_boundary_offset_class() {
     }
 }
 
-// An UnfinishedBlock whose parent is `prev` — the daemon's reconstruction shape
+// An UnfinishedBlock whose parent is `prev` in the server's reconstruction shape.
 // (next_sub_epoch_summary reads only the signage point index, the prev-block hash, the finished
 // sub-slots, and total_iters). Non-overflow, no freshly finished sub-slots: the mid-chain steady
 // state.

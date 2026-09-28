@@ -1116,6 +1116,8 @@ impl Default for FarmerConfig {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PoolWalletConfig {
     #[serde(default)]
+    pub pooling_version: crate::protocols::pool::PoolVersion,
+    #[serde(default)]
     pub launcher_id: Bytes32,
     #[serde(default)]
     pub pool_url: String,

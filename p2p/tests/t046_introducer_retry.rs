@@ -1,5 +1,28 @@
 mod common;
 
+#[tokio::test]
+async fn registration_runs_even_when_outbound_target_is_already_met() {
+    let intro_port = common::free_port();
+    let (introducer, queries) = common::spawn_introducer_on(intro_port, vec![]).await;
+    let settings = dg_xch_p2p::P2pSettings {
+        target_outbound: 0,
+        ..common::fast_settings()
+    };
+    let mut supervisor = dg_xch_p2p::Supervisor::new(settings);
+    supervisor.start_introducer_registration("127.0.0.1", intro_port);
+    assert!(
+        common::wait_until(
+            || async { queries.load(std::sync::atomic::Ordering::Relaxed) > 0 },
+            std::time::Duration::from_secs(15),
+        )
+        .await
+    );
+    supervisor.stop().await;
+    introducer
+        .run
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 use common::{fast_settings, free_port, peer, spawn_introducer_on, wait_until};
 use dg_xch_p2p::Supervisor;
 use std::sync::atomic::Ordering;
@@ -88,4 +111,36 @@ async fn introducer_is_quiet_once_the_outbound_target_is_met() {
 
     sup.stop().await;
     intro.run.store(false, Ordering::Relaxed);
+}
+
+#[tokio::test]
+async fn introducer_refreshes_while_all_pooled_candidates_are_cooling() {
+    let intro_port = free_port();
+    let (intro, queries) = spawn_introducer_on(intro_port, vec![peer("2.2.2.2", 8444, 42)]).await;
+    let settings = fast_settings();
+    let mut sup = Supervisor::new(settings);
+    sup.seed_addresses(&[peer("1.1.1.1", 8444, 42)]).await;
+    let cooling = sup.book.lock().await.take().expect("seeded candidate");
+    sup.book
+        .lock()
+        .await
+        .cooldown(&cooling, Duration::from_secs(30));
+
+    sup.start_introducer("127.0.0.1", intro_port);
+    let book = sup.book.clone();
+    assert!(
+        wait_until(
+            || {
+                let book = book.clone();
+                async move { book.lock().await.len() == 2 }
+            },
+            Duration::from_secs(15),
+        )
+        .await,
+        "a non-empty book with no ready candidates must not suppress introducer refresh"
+    );
+    assert!(queries.load(std::sync::atomic::Ordering::Relaxed) > 0);
+
+    sup.stop().await;
+    intro.run.store(false, std::sync::atomic::Ordering::Relaxed);
 }

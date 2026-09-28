@@ -9,6 +9,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+chia-puzzles = "=0.20.3"
+hex = "0.4.3"
 blst = { version = "0.3.16", features = ["portable"] }
 dg_xch_core = {path = "../core", version = "3.0.0", default-features = false, features = ["bls"]}
 dg_xch_serialize = {path = "../serialize", version="3.0.0"}
@@ -19,3 +21,6 @@ num-bigint = "0.4.6"
 num-integer = "0.1.46"
 num-traits = "0.2.19"
 tokio = {version = "1.50.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+
+[dev-dependencies]
+serde_json = "1.0.149"

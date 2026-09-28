@@ -37,12 +37,18 @@ fn block_with_bad_signature() -> dg_xch_core::blockchain::full_block::FullBlock 
 async fn default_milestone_validates_signatures() {
     let block = block_with_bad_signature();
     let store = common::new_store().await;
+    common::ancestry::seed_mainnet_parent(&store).await;
     let mut engine = Engine::new(store, NativePrimitives, MAINNET);
     assert_eq!(engine.assume_valid(), 0, "fresh genesis default is off");
     let result = engine.add_block(&block).await;
     assert!(
-        result.is_err(),
-        "with the default milestone the bad aggregate signature is caught"
+        matches!(
+            result,
+            Err(dg_xch_node::NodeError::Consensus(
+                dg_xch_core::errors::ChiaError::BadAggregateSignature
+            ))
+        ),
+        "expected the signature check to reject the block, got {result:?}"
     );
 }
 
@@ -53,6 +59,7 @@ async fn below_milestone_bypasses_signature_but_still_confirms() {
     let block = block_with_bad_signature();
     let hh = block.header_hash().unwrap();
     let store = common::new_store().await;
+    common::ancestry::seed_mainnet_parent(&store).await;
     let mut engine = Engine::new(store, NativePrimitives, MAINNET).with_assume_valid(5_000_001);
 
     let outcome = engine

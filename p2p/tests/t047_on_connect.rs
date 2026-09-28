@@ -6,7 +6,7 @@ use dg_xch_clients::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::protocols::full_node::{NewPeak, RequestMempoolTransactions};
-use dg_xch_core::protocols::timelord::NewPeakTimelord;
+use dg_xch_core::protocols::timelord::{NewGenesisTimelord, NewPeakTimelord};
 use dg_xch_core::protocols::{
     ChiaMessage, ChiaMessageFilter, ChiaMessageHandler, MessageHandler, NodeType, PeerMap,
     ProtocolMessageTypes,
@@ -21,12 +21,12 @@ use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
-// A store-blind api with canned on-connect greetings — the loopback stand-in for the daemon's
-// StoreApi overrides.
+// A store-blind API with canned on-connect greetings, used as the loopback server stand-in.
 struct GreetingApi {
     inner: Arc<MemApi>,
     peak: Option<NewPeak>,
     timelord: Option<Box<NewPeakTimelord>>,
+    genesis: Option<NewGenesisTimelord>,
     filter: Option<Vec<u8>>,
 }
 
@@ -47,6 +47,9 @@ impl FullNodeApi for GreetingApi {
     async fn timelord_peak(&self) -> Option<Box<NewPeakTimelord>> {
         self.timelord.clone()
     }
+    async fn timelord_genesis(&self) -> Option<NewGenesisTimelord> {
+        self.genesis.clone()
+    }
     async fn mempool_sync_filter(&self) -> Option<Vec<u8>> {
         self.filter.clone()
     }
@@ -64,7 +67,7 @@ fn canned_peak() -> NewPeak {
 
 fn canned_timelord_peak() -> Box<NewPeakTimelord> {
     // Field values are opaque to the dispatch layer — arrival + byte-faithful decode is the
-    // contract under test, not consensus contents (the daemon's builder owns those).
+    // contract under test, not consensus contents (the server's builder owns those).
     let block = common::load_full_block(5_000_000);
     Box::new(NewPeakTimelord {
         reward_chain_block: block.reward_chain_block,
@@ -124,6 +127,7 @@ async fn dial_as(port: u16, node_type: NodeType, handlers: HandlerMap) -> WsClie
     let cfg = Arc::new(WsClientConfig {
         host: "127.0.0.1".to_string(),
         port,
+        server_port: 0,
         network_id: "mainnet".to_string(),
         ssl_info: None,
         software_version: None,
@@ -159,6 +163,7 @@ async fn full_node_peer_is_greeted_with_new_peak_on_connect() {
         inner: empty_api(),
         peak: Some(canned_peak()),
         timelord: None,
+        genesis: None,
         filter: None,
     })
     .await;
@@ -185,6 +190,7 @@ async fn synced_node_requests_mempool_sync_on_full_node_connect() {
         inner: empty_api(),
         peak: Some(canned_peak()),
         timelord: None,
+        genesis: None,
         filter: Some(filter.clone()),
     })
     .await;
@@ -210,6 +216,7 @@ async fn unsynced_node_does_not_request_mempool_sync_on_connect() {
         inner: empty_api(),
         peak: Some(canned_peak()),
         timelord: None,
+        genesis: None,
         filter: None,
     })
     .await;
@@ -241,6 +248,7 @@ async fn timelord_peer_is_greeted_with_new_peak_timelord() {
         inner: empty_api(),
         peak: Some(canned_peak()),
         timelord: Some(want.clone()),
+        genesis: None,
         filter: None,
     })
     .await;
@@ -266,6 +274,7 @@ async fn peakless_node_sends_no_greeting() {
         inner: empty_api(),
         peak: None,
         timelord: None,
+        genesis: None,
         filter: None,
     })
     .await;
@@ -286,4 +295,61 @@ async fn peakless_node_sends_no_greeting() {
     server
         .run
         .store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[tokio::test]
+async fn explicit_genesis_work_is_sent_only_to_timelords_without_a_peak() {
+    let genesis = NewGenesisTimelord {
+        genesis_challenge: Bytes32::const_new([0x63; 32]),
+        difficulty: 1,
+        sub_slot_iters: 16_384,
+        discriminant_size_bits: 1024,
+    };
+    for (role, peak) in [
+        (NodeType::Timelord, None),
+        (NodeType::FullNode, None),
+        (NodeType::Farmer, None),
+        (NodeType::Timelord, Some(canned_timelord_peak())),
+    ] {
+        let expected_genesis = role == NodeType::Timelord && peak.is_none();
+        let expected_peak = peak.is_some();
+        let server = spawn_greeting_node(GreetingApi {
+            inner: empty_api(),
+            peak: None,
+            timelord: peak,
+            genesis: Some(genesis.clone()),
+            filter: None,
+        })
+        .await;
+        let (handlers, mut receiver) = capture_handlers(&[
+            ProtocolMessageTypes::NewGenesisTimelord,
+            ProtocolMessageTypes::NewPeakTimelord,
+        ]);
+        let _client = dial_as(server.port, role, handlers).await;
+        if expected_genesis {
+            let message = recv_within(&mut receiver, "explicit genesis work").await;
+            assert_eq!(message.msg_type, ProtocolMessageTypes::NewGenesisTimelord);
+            let received = NewGenesisTimelord::from_bytes(
+                &mut Cursor::new(message.data.as_slice()),
+                ChiaProtocolVersion::default(),
+            )
+            .unwrap();
+            assert_eq!(received, genesis);
+        } else if expected_peak {
+            assert_eq!(
+                recv_within(&mut receiver, "existing timelord peak")
+                    .await
+                    .msg_type,
+                ProtocolMessageTypes::NewPeakTimelord
+            );
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), receiver.recv())
+                .await
+                .is_err()
+        );
+        server
+            .run
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
 }

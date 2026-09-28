@@ -63,14 +63,15 @@ impl<T: PoolClient + Sized + Sync + Send + 'static, S: Sync + Send + 'static> Fa
             full_node_client,
             additional_headers,
         )));
+        let server = WebsocketServer::new(
+            &config.websocket,
+            shared_state.harvester_peers.clone(),
+            handles,
+        )?;
+        #[cfg(feature = "metrics")]
+        let server = server.with_metrics(metrics);
         Ok(Self {
-            server: WebsocketServer::new(
-                &config.websocket,
-                shared_state.harvester_peers.clone(),
-                handles,
-                #[cfg(feature = "metrics")]
-                metrics,
-            )?,
+            server,
             shared_state,
             pool_client,
             config,
@@ -166,7 +167,7 @@ pub async fn get_farmer<
     client: Arc<T>,
     additional_headers: Arc<HashMap<String, String, S>>,
 ) -> Result<GetFarmerResponse, PoolError> {
-    let authentication_token = get_current_authentication_token(authentication_token_timeout);
+    let authentication_token = get_current_authentication_token(authentication_token_timeout)?;
     let msg = AuthenticationPayload {
         method_name: "get_farmer".to_string(),
         launcher_id,
@@ -224,7 +225,7 @@ pub async fn post_farmer<
 ) -> Result<PostFarmerResponse, PoolError> {
     let payload = PostFarmerPayload {
         launcher_id: pool_config.launcher_id,
-        authentication_token: get_current_authentication_token(authentication_token_timeout),
+        authentication_token: get_current_authentication_token(authentication_token_timeout)?,
         authentication_public_key: do_auth(pool_config, owner_sk)?,
         payout_instructions: parse_payout_address(payout_instructions).map_err(|e| PoolError {
             error_code: PoolErrorCode::InvalidPayoutInstructions as u8,
@@ -277,7 +278,7 @@ pub async fn put_farmer<
     let authentication_public_key = do_auth(pool_config, owner_sk)?;
     let payload = PutFarmerPayload {
         launcher_id: pool_config.launcher_id,
-        authentication_token: get_current_authentication_token(authentication_token_timeout),
+        authentication_token: get_current_authentication_token(authentication_token_timeout)?,
         authentication_public_key: Some(authentication_public_key),
         payout_instructions: Some(parse_payout_address(payout_instructions).map_err(|e| {
             PoolError {

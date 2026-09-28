@@ -40,6 +40,43 @@ pub struct FullnodeClient {
 }
 
 impl FullnodeClient {
+    pub async fn get_node_details(&self) -> Result<serde_json::Value, Error> {
+        let response: serde_json::Value = crate::rpc::post(
+            &self.client,
+            &(self.url_function)(&self.host, self.port, "get_node_details"),
+            &serde_json::Map::new(),
+            &self.additional_headers,
+        )
+        .await?;
+        if response.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+            return Err(Error::other(
+                "node diagnostics unavailable on this RPC server",
+            ));
+        }
+        response
+            .get("node_details")
+            .cloned()
+            .ok_or_else(|| Error::other("missing node diagnostics"))
+    }
+
+    pub fn new_verified(
+        host: &str,
+        port: u16,
+        timeout: u64,
+        ssl_path: Option<ClientSSLConfig>,
+        additional_headers: &Option<HashMap<String, String>>,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            client: get_client(&ssl_path, timeout)?,
+            secure: true,
+            host: host.to_owned(),
+            port,
+            ssl_path,
+            additional_headers: additional_headers.clone(),
+            url_function: Arc::new(get_url),
+        })
+    }
+
     pub fn new(
         host: &str,
         port: u16,
@@ -47,16 +84,7 @@ impl FullnodeClient {
         ssl_path: Option<ClientSSLConfig>,
         additional_headers: &Option<HashMap<String, String>>,
     ) -> Result<Self, Error> {
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        Ok(FullnodeClient {
-            client: get_client(&ssl_path, timeout)?,
-            secure: true,
-            host: host.to_string(),
-            port,
-            ssl_path,
-            additional_headers: additional_headers.clone(),
-            url_function: Arc::new(get_url),
-        })
+        Self::new_verified(host, port, timeout, ssl_path, additional_headers)
     }
     pub fn new_simulator(host: &str, port: u16, timeout: u64) -> Result<Self, Error> {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();

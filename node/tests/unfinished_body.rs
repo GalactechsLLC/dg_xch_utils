@@ -153,7 +153,7 @@ fn non_tx_unfinished_block_passes_untouched() {
     assert!(out.is_none(), "no conditions for a non-transaction block");
 }
 
-// A non-transaction block carrying a generator is structurally invalid (the daemon-level red
+// A non-transaction block carrying a generator is structurally invalid (the server-level red
 // test drives this same species through the full relay path).
 #[test]
 fn non_tx_unfinished_block_with_generator_is_rejected() {

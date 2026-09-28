@@ -3,7 +3,6 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 use sha2::{Digest, Sha256};
-use std::sync::Mutex;
 
 const MAX_DISCRIMINANT_SIZE_BITS: usize = 1024;
 
@@ -14,39 +13,10 @@ const MAX_DISCRIMINANT_SIZE_BITS: usize = 1024;
 /// deliberately NOT cached.
 const DISCRIMINANT_CACHE_CAPACITY: usize = 200;
 
-/// `(seed, size_bits, prime)`, least-recently-used at the front. Linear scan + Vec rotate: at 200
-/// entries the whole structure is a few KB and a lookup is microseconds against a ~56 ms miss.
-static DISCRIMINANT_CACHE: Mutex<Vec<(Vec<u8>, usize, BigInt)>> = Mutex::new(Vec::new());
-
-fn discriminant_cache_get(seed: &[u8], size_bits: usize) -> Option<BigInt> {
-    let mut cache = DISCRIMINANT_CACHE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let idx = cache
-        .iter()
-        .position(|(s, bits, _)| *bits == size_bits && s == seed)?;
-    let entry = cache.remove(idx);
-    let prime = entry.2.clone();
-    cache.push(entry);
-    Some(prime)
-}
-
-fn discriminant_cache_put(seed: &[u8], size_bits: usize, prime: &BigInt) {
-    let mut cache = DISCRIMINANT_CACHE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // Concurrent verifiers of the same challenge race the derivation; first insert wins, the
-    // duplicate result is identical by construction (the derivation is deterministic).
-    if cache
-        .iter()
-        .any(|(s, bits, _)| *bits == size_bits && s == seed)
-    {
-        return;
-    }
-    if cache.len() >= DISCRIMINANT_CACHE_CAPACITY {
-        cache.remove(0);
-    }
-    cache.push((seed.to_vec(), size_bits, prime.clone()));
+pub(crate) fn discriminant_memo() -> &'static crate::memo::Memo<(Vec<u8>, usize), BigInt> {
+    static MEMO: std::sync::OnceLock<crate::memo::Memo<(Vec<u8>, usize), BigInt>> =
+        std::sync::OnceLock::new();
+    MEMO.get_or_init(|| crate::memo::Memo::new(DISCRIMINANT_CACHE_CAPACITY))
 }
 
 pub fn create_discriminant(seed: &[u8], result: &mut [u8]) -> bool {
@@ -75,12 +45,10 @@ pub(crate) fn create_discriminant_int(seed: &[u8], size_bits: usize) -> Result<B
         return Err(Error::EmptySeed);
     }
 
-    if let Some(prime) = discriminant_cache_get(seed, size_bits) {
-        return Ok(-prime);
-    }
-    let prime = hash_prime(seed, size_bits, &[0, 1, 2, size_bits - 1]);
-    discriminant_cache_put(seed, size_bits, &prime);
-    Ok(-prime)
+    let prime = discriminant_memo().get_or_init((seed.to_vec(), size_bits), || {
+        hash_prime(seed, size_bits, &[0, 1, 2, size_bits - 1])
+    });
+    Ok(-prime.get().expect("discriminant initialized"))
 }
 
 pub(crate) fn hash_prime(seed: &[u8], size_bits: usize, bitmask: &[usize]) -> BigInt {
@@ -473,98 +441,5 @@ pub(crate) fn u64_low_word(value: &BigInt) -> u64 {
 }
 
 #[cfg(test)]
-mod cache_tests {
-    use super::*;
-
-    #[test]
-    fn cached_discriminant_is_byte_identical_to_direct_derivation() {
-        for i in 0..3u8 {
-            let seed = [0x40 | i; 32];
-            let direct = -hash_prime(&seed, 512, &[0, 1, 2, 511]);
-            let first = create_discriminant_int(&seed, 512).expect("derivation succeeds");
-            let second = create_discriminant_int(&seed, 512).expect("derivation succeeds");
-            assert_eq!(direct, first, "miss path must equal direct derivation");
-            assert_eq!(first, second, "hit path must equal miss path");
-        }
-    }
-
-    /// The cache stays bounded past capacity, and an evicted entry re-derives byte-identically.
-    #[test]
-    fn cache_stays_bounded_and_eviction_rederives_identically() {
-        let mut first_seed = [0u8; 32];
-        first_seed[0] = 0x80;
-        let direct = -hash_prime(&first_seed, 512, &[0, 1, 2, 511]);
-        assert_eq!(
-            create_discriminant_int(&first_seed, 512).expect("derivation succeeds"),
-            direct
-        );
-
-        for i in 0..(DISCRIMINANT_CACHE_CAPACITY as u32 + 8) {
-            let mut seed = [0u8; 32];
-            seed[0] = 0x81;
-            seed[28..32].copy_from_slice(&i.to_be_bytes());
-            create_discriminant_int(&seed, 512).expect("derivation succeeds");
-        }
-
-        {
-            let cache = DISCRIMINANT_CACHE
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            assert!(
-                cache.len() <= DISCRIMINANT_CACHE_CAPACITY,
-                "cache exceeded its bound: {}",
-                cache.len()
-            );
-        }
-
-        // first_seed has been evicted by now; the re-derivation must match the original.
-        assert_eq!(
-            create_discriminant_int(&first_seed, 512).expect("derivation succeeds"),
-            direct
-        );
-    }
-
-    #[test]
-    fn small_factor_screen_never_changes_the_verdict() {
-        let raw = |n: &BigUint| {
-            let g = rug::Integer::from_digits(&n.to_bytes_be(), rug::integer::Order::MsfBe);
-            g.is_probably_prime(24) != rug::integer::IsPrime::No
-        };
-        let mut cases: Vec<BigUint> = Vec::new();
-        for p in [2u64, 3, 5, 127, 311, 313, 331] {
-            cases.push(BigUint::from(p));
-        }
-        for c in [
-            4u64,
-            9,
-            15,
-            121,
-            311 * 313,
-            97 * 89,
-            2 * 3 * 5 * 7 * 11 * 13,
-        ] {
-            cases.push(BigUint::from(c));
-        }
-        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
-        for _ in 0..300 {
-            x ^= x >> 12;
-            x ^= x << 25;
-            x ^= x >> 27;
-            let mut bytes = [0u8; 33];
-            for (i, b) in bytes.iter_mut().enumerate() {
-                *b = (x.wrapping_mul(i as u64 + 1) >> 32) as u8;
-            }
-            let mut n = BigUint::from_bytes_be(&bytes);
-            n.set_bit(0, true);
-            n.set_bit(263, true);
-            cases.push(n);
-        }
-        for n in cases {
-            assert_eq!(
-                is_probable_prime(&n),
-                raw(&n),
-                "screen changed the verdict for {n}"
-            );
-        }
-    }
-}
+#[path = "../tests/unit/discriminant/cache_tests.rs"]
+mod cache_tests;

@@ -1,5 +1,6 @@
 pub mod blockchain;
 pub mod clvm;
+pub mod compute;
 pub mod config;
 pub mod consensus;
 pub mod constants;

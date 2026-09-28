@@ -24,7 +24,7 @@ use crate::blockchain::blockchain_state::BlockchainState;
 #[cfg(feature = "bls")]
 use crate::protocols::shared::Handshake;
 #[cfg(feature = "bls")]
-use portfu::pfcore::cache::CircularCache;
+use crate::utils::CircularCache;
 #[cfg(feature = "metrics")]
 use prometheus::core::{
     AtomicI64, AtomicU64, GenericCounter, GenericCounterVec, GenericGauge, GenericGaugeVec,

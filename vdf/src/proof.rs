@@ -21,19 +21,9 @@ pub fn verify_n_wesolowski(
 
 const VERIFY_MEMO_CAPACITY: usize = 1000;
 
-struct VerifyMemo {
-    map: std::collections::HashMap<Vec<u8>, (bool, u64)>,
-    tick: u64,
-}
-
-fn verify_memo() -> &'static std::sync::Mutex<VerifyMemo> {
-    static MEMO: std::sync::OnceLock<std::sync::Mutex<VerifyMemo>> = std::sync::OnceLock::new();
-    MEMO.get_or_init(|| {
-        std::sync::Mutex::new(VerifyMemo {
-            map: std::collections::HashMap::with_capacity(VERIFY_MEMO_CAPACITY),
-            tick: 0,
-        })
-    })
+pub(crate) fn verify_memo() -> &'static crate::memo::Memo<Vec<u8>, bool> {
+    static MEMO: std::sync::OnceLock<crate::memo::Memo<Vec<u8>, bool>> = std::sync::OnceLock::new();
+    MEMO.get_or_init(|| crate::memo::Memo::new(VERIFY_MEMO_CAPACITY))
 }
 
 fn verify_memo_key(
@@ -53,36 +43,6 @@ fn verify_memo_key(
     key.extend_from_slice(&num_iterations.to_be_bytes());
     key.extend_from_slice(&recursion.to_be_bytes());
     key
-}
-
-fn verify_memo_get(key: &[u8]) -> Option<bool> {
-    let mut memo = verify_memo().lock().ok()?;
-    memo.tick += 1;
-    let tick = memo.tick;
-    let (result, last_used) = memo.map.get_mut(key)?;
-    *last_used = tick;
-    Some(*result)
-}
-
-fn verify_memo_put(key: Vec<u8>, result: bool) {
-    let Ok(mut memo) = verify_memo().lock() else {
-        return;
-    };
-    if memo.map.len() >= VERIFY_MEMO_CAPACITY && !memo.map.contains_key(&key) {
-        // Evict the least-recently-used entry: O(capacity) scan on insert, but the map is
-        // bounded at 1000 entries and the scan is a u64 compare per entry.
-        if let Some(oldest) = memo
-            .map
-            .iter()
-            .min_by_key(|(_, (_, used))| *used)
-            .map(|(k, _)| k.clone())
-        {
-            memo.map.remove(&oldest);
-        }
-    }
-    memo.tick += 1;
-    let tick = memo.tick;
-    memo.map.insert(key, (result, tick));
 }
 
 pub fn verify_vdf(
@@ -145,20 +105,18 @@ fn verify_vdf_impl(
         num_iterations,
         recursion,
     );
-    if let Some(hit) = verify_memo_get(&key) {
-        return hit;
-    }
-    let result = verify_vdf_uncached(
-        challenge,
-        x_s,
-        proof,
-        discriminant_size_bits,
-        num_iterations,
-        recursion,
-        parallel,
-    );
-    verify_memo_put(key, result);
-    result
+    let result = verify_memo().get_or_init(key, || {
+        verify_vdf_uncached(
+            challenge,
+            x_s,
+            proof,
+            discriminant_size_bits,
+            num_iterations,
+            recursion,
+            parallel,
+        )
+    });
+    *result.get().expect("verification initialized")
 }
 
 fn verify_vdf_uncached(
@@ -213,6 +171,46 @@ pub fn prove_result(
     let discriminant = create_discriminant_int(challenge, discriminant_size_bits)?;
     let x = Form::deserialize(&discriminant, x_s)?;
     prove_with_discriminant(&discriminant, &x, num_iterations)
+}
+
+pub fn prove_result_bounded(
+    challenge: &[u8],
+    input: &[u8],
+    discriminant_bits: usize,
+    iterations: u64,
+    memory_bytes: u64,
+) -> Result<Vec<u8>> {
+    let (spacing, window) = bounded_parameters(iterations, memory_bytes)?;
+    let discriminant = create_discriminant_int(challenge, discriminant_bits)?;
+    let input = Form::deserialize(&discriminant, input)?;
+    prove_with_parameters(&discriminant, &input, iterations, spacing, window)
+}
+
+fn bounded_parameters(iterations: u64, memory_bytes: u64) -> Result<(u64, u64)> {
+    const FORM_BUDGET: u64 = 512;
+    const FIXED_BUDGET: u64 = 64 * 1024;
+    let available = memory_bytes
+        .checked_sub(FIXED_BUDGET)
+        .ok_or(Error::ProverMemoryLimit)?;
+    let (initial_spacing, mut window) = approximate_parameters(iterations).unwrap_or((1, 20));
+    while window > 1 && (1u64 << window) > available / (4 * FORM_BUDGET) {
+        window -= 1;
+    }
+    let bucket_bytes = (1u64 << window)
+        .checked_mul(FORM_BUDGET)
+        .ok_or(Error::ProverMemoryLimit)?;
+    let checkpoints = available
+        .checked_sub(bucket_bytes)
+        .ok_or(Error::ProverMemoryLimit)?
+        / FORM_BUDGET;
+    if checkpoints == 0 {
+        return Err(Error::ProverMemoryLimit);
+    }
+    let span = window
+        .checked_mul(checkpoints)
+        .ok_or(Error::ProverMemoryLimit)?;
+    let spacing = initial_spacing.max(iterations.div_ceil(span));
+    Ok((spacing, window))
 }
 
 pub fn check_n_wesolowski(
@@ -355,12 +353,30 @@ fn prove_with_discriminant(
     x: &Form,
     num_iterations: u64,
 ) -> Result<Vec<u8>> {
+    let (spacing, window) = approximate_parameters(num_iterations)?;
+    prove_with_parameters(discriminant, x, num_iterations, spacing, window)
+}
+
+fn prove_with_parameters(
+    discriminant: &BigInt,
+    x: &Form,
+    num_iterations: u64,
+    l: u64,
+    k: u64,
+) -> Result<Vec<u8>> {
     let d_bits = bit_len(discriminant);
     let mut y = x.clone();
-    let (l, k) = approximate_parameters(num_iterations)?;
     let kl = k.checked_mul(l).ok_or(Error::InvalidProofParameters)?;
+    if kl == 0 || k > 20 {
+        return Err(Error::InvalidProofParameters);
+    }
     let intermediate_count = num_iterations.div_ceil(kl);
-    let mut intermediates = Vec::with_capacity(intermediate_count as usize);
+    let mut intermediates = Vec::new();
+    intermediates
+        .try_reserve_exact(
+            usize::try_from(intermediate_count).map_err(|_| Error::ProverMemoryLimit)?,
+        )
+        .map_err(|_| Error::ProverMemoryLimit)?;
     // NUCOMP bound computed once for the whole iterated-squaring run.
     let nl = nucomp_bound(discriminant);
 
@@ -405,11 +421,23 @@ fn generate_wesolowski(
     for j in (0..l).rev() {
         x = fast_pow_form_with(&x, discriminant, &nl, &(BigInt::one() << k as usize))?;
 
-        let mut ys = vec![Form::identity(discriminant)?; bucket_count];
-        let chunks = num_iterations.div_ceil(k * l);
+        let mut ys = Vec::new();
+        ys.try_reserve_exact(bucket_count)
+            .map_err(|_| Error::ProverMemoryLimit)?;
+        ys.resize(bucket_count, Form::identity(discriminant)?);
+        let chunks =
+            num_iterations.div_ceil(k.checked_mul(l).ok_or(Error::InvalidProofParameters)?);
         for i in 0..chunks {
-            if num_iterations >= k * (i * l + j + 1) {
-                let block = get_block(i * l + j, k, num_iterations, &b)?;
+            let block_number = i
+                .checked_mul(l)
+                .and_then(|base| base.checked_add(j))
+                .ok_or(Error::InvalidProofParameters)?;
+            if block_number
+                .checked_add(1)
+                .and_then(|next| k.checked_mul(next))
+                .is_some_and(|end| num_iterations >= end)
+            {
+                let block = get_block(block_number, k, num_iterations, &b)?;
                 let block_index =
                     usize::try_from(block).map_err(|_| Error::InvalidProofParameters)?;
                 if block_index >= ys.len() {
@@ -482,121 +510,9 @@ fn approximate_parameters(t: u64) -> Result<(u64, u64)> {
 
 #[cfg(test)]
 fn verify_memo_len() -> usize {
-    verify_memo().lock().map(|m| m.map.len()).unwrap_or(0)
+    verify_memo().len()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::discriminant::create_discriminant_int;
-    use crate::form::{B_BYTES, get_b};
-
-    #[test]
-    fn memoized_verify_vdf_is_identical_to_uncached() {
-        let challenge =
-            hex::decode("9f1fbdf9b1a0b6912cd5e2a4b40a2ffb1810b513994b1dd6c4e6df9c30de5f6e")
-                .expect("challenge hex is valid");
-        let discriminant = create_discriminant_int(&challenge, 1024).unwrap();
-        let mut x_s = [0u8; 100];
-        x_s[0] = 0x08;
-        let x = Form::deserialize(&discriminant, &x_s).unwrap();
-        let proof = prove_with_discriminant(&discriminant, &x, 100).unwrap();
-
-        // Miss, then hit — both must equal the uncached result.
-        assert!(verify_vdf(&challenge, &x_s, &proof, 1024, 100, 0));
-        assert!(verify_vdf(&challenge, &x_s, &proof, 1024, 100, 0));
-        assert!(verify_vdf_uncached(
-            &challenge, &x_s, &proof, 1024, 100, 0, true
-        ));
-
-        // An invalid proof of the correct length: a distinct key, recomputed, false — on the
-        // miss and the hit path (i.e. `false` results are cached too, and a bad proof can never
-        // inherit the valid proof's cached `true`).
-        let bad = vec![0xFFu8; proof.len()];
-        assert!(!verify_vdf(&challenge, &x_s, &bad, 1024, 100, 0));
-        assert!(!verify_vdf(&challenge, &x_s, &bad, 1024, 100, 0));
-        assert!(!verify_vdf_uncached(
-            &challenge, &x_s, &bad, 1024, 100, 0, true
-        ));
-
-        // A changed iteration count is a distinct key (length-prefixed fields, fixed-width
-        // trailer — no concatenation ambiguity), so the cached `true` above cannot leak here.
-        assert!(!verify_vdf(&challenge, &x_s, &proof, 1024, 101, 0));
-    }
-
-    /// The serial (no inner threads) verification path must be result-identical to the parallel
-    /// path, below the memo — valid proof, valid recursive proof, and an invalid proof alike.
-    #[test]
-    fn serial_verification_is_result_identical_to_parallel() {
-        let challenge =
-            hex::decode("1f0c94d5d1f5ea25be3b04e04d17806bcc9a0dbcdcc16346eb388937b5981c37")
-                .expect("challenge hex is valid");
-        let discriminant = create_discriminant_int(&challenge, 1024).unwrap();
-        let mut x_s = [0u8; 100];
-        x_s[0] = 0x08;
-        let x = Form::deserialize(&discriminant, &x_s).unwrap();
-        let proof = prove_with_discriminant(&discriminant, &x, 73).unwrap();
-
-        assert!(check_n_wesolowski_impl(&discriminant, &x_s, &proof, 73, 0, true).is_ok());
-        assert!(check_n_wesolowski_impl(&discriminant, &x_s, &proof, 73, 0, false).is_ok());
-        // Wrong iteration count: both paths must reject.
-        assert!(check_n_wesolowski_impl(&discriminant, &x_s, &proof, 74, 0, true).is_err());
-        assert!(check_n_wesolowski_impl(&discriminant, &x_s, &proof, 74, 0, false).is_err());
-        // The public serial entry point (through the memo) agrees as well.
-        assert!(verify_vdf_serial(&challenge, &x_s, &proof, 1024, 73, 0));
-    }
-
-    /// The memo stays bounded past capacity.
-    #[test]
-    fn verify_memo_stays_bounded() {
-        let challenge =
-            hex::decode("8be26af52b34a1a7c47a35c7f0c1add793d5b6e2b0e56e6e970cbd6bd4e17e2a")
-                .expect("challenge hex is valid");
-        let x_s = [0u8; 100];
-        for i in 0..(VERIFY_MEMO_CAPACITY as u64 + 100) {
-            let _ = verify_vdf(&challenge, &x_s, &[0u8; 8], 1024, i, 0);
-        }
-        assert!(verify_memo_len() <= VERIFY_MEMO_CAPACITY);
-    }
-
-    #[test]
-    fn recursive_proof_verifies_segment_before_final_witness() {
-        let challenge =
-            hex::decode("ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb")
-                .expect("challenge hex is valid");
-        let discriminant = create_discriminant_int(&challenge, 1024).unwrap();
-        let mut x_s = [0u8; 100];
-        x_s[0] = 0x08;
-        let x = Form::deserialize(&discriminant, &x_s).unwrap();
-
-        let segment_iterations = 24;
-        let final_iterations = 31;
-        let segment_proof = prove_with_discriminant(&discriminant, &x, segment_iterations).unwrap();
-        let segment_y = Form::deserialize(&discriminant, &segment_proof[..FORM_SIZE]).unwrap();
-        let segment_witness = &segment_proof[FORM_SIZE..FORM_SIZE * 2];
-        let segment_b = get_b(&discriminant, &x, &segment_y).unwrap();
-
-        let mut recursive_proof =
-            prove_with_discriminant(&discriminant, &segment_y, final_iterations).unwrap();
-        recursive_proof.extend_from_slice(&segment_iterations.to_be_bytes());
-        recursive_proof.extend_from_slice(&fixed_be_bytes(&segment_b, B_BYTES));
-        recursive_proof.extend_from_slice(segment_witness);
-
-        check_n_wesolowski(
-            &discriminant,
-            &x_s,
-            &recursive_proof,
-            segment_iterations + final_iterations,
-            1,
-        )
-        .expect("depth-1 proof should verify");
-    }
-
-    fn fixed_be_bytes(value: &BigInt, size: usize) -> Vec<u8> {
-        let (_, bytes) = value.to_bytes_be();
-        assert!(bytes.len() <= size);
-        let mut out = vec![0u8; size - bytes.len()];
-        out.extend_from_slice(&bytes);
-        out
-    }
-}
+#[path = "../tests/unit/proof/tests.rs"]
+mod tests;

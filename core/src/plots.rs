@@ -56,18 +56,22 @@ pub trait PlotFile<'a, F: AsyncSeek + AsyncRead> {
     fn table_size(&'a self, plot_table: PlotTable) -> u64 {
         let table_pointers = match self.header() {
             PlotHeader::V1(h) => &h.table_begin_pointers,
-            PlotHeader::V2(h) => &h.table_begin_pointers,
+            PlotHeader::V2(h) => return h.table_sizes[plot_table as usize],
             PlotHeader::GHv2_5(_) => {
                 return 0;
             }
         };
         let address = table_pointers[plot_table as usize];
-        if let Some(next) = table_pointers.get(plot_table as usize + 1)
-            && *next > address
-        {
-            return next - address;
+        if address == 0 {
+            return 0;
         }
-        self.plot_size() - address
+        table_pointers
+            .iter()
+            .copied()
+            .filter(|next| *next > address)
+            .min()
+            .unwrap_or(*self.plot_size())
+            .saturating_sub(address)
     }
     fn k(&'a self) -> u8 {
         self.header().k()

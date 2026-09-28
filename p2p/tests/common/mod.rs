@@ -101,6 +101,7 @@ fn client_config(port: u16, rate_limited: bool) -> Arc<WsClientConfig> {
     Arc::new(WsClientConfig {
         host: "127.0.0.1".to_string(),
         port,
+        server_port: 0,
         network_id: "mainnet".to_string(),
         ssl_info: None::<ClientSSLConfig>,
         software_version: None,
@@ -173,6 +174,30 @@ where
     false
 }
 
+pub async fn wait_for_reconnections(
+    registry: &dg_xch_p2p::PeerRegistry,
+    previous: &[Arc<dg_xch_p2p::OutboundPeer>],
+    timeout: std::time::Duration,
+) -> bool {
+    assert!(
+        !previous.is_empty(),
+        "reconnection requires an existing peer"
+    );
+    wait_until(
+        || async {
+            let current = registry.outbound_peers().await;
+            previous.iter().all(|old| {
+                old.is_closed()
+                    && current.iter().any(|new| {
+                        new.endpoint == old.endpoint && !Arc::ptr_eq(old, new) && !new.is_closed()
+                    })
+            })
+        },
+        timeout,
+    )
+    .await
+}
+
 #[must_use]
 pub fn fast_settings() -> dg_xch_p2p::P2pSettings {
     dg_xch_p2p::P2pSettings {
@@ -240,7 +265,7 @@ pub async fn spawn_full_node(api: Arc<dyn FullNodeApi>) -> RunningServer {
 }
 
 // Same as `spawn_full_node` but with the per-connection inbound rate limiter active — the
-// production full-node listener posture (daemon sets `WebsocketServer::rate_limited = true`).
+// production full-node listener posture (the server sets `WebsocketServer::rate_limited = true`).
 pub async fn spawn_full_node_rate_limited(api: Arc<dyn FullNodeApi>) -> RunningServer {
     install_crypto();
     let port = free_port();

@@ -44,9 +44,9 @@ pub use source::{BlockRangeSource, OutboundPeerSource, request_weight_proof};
 pub use watchdog::StallWatchdog;
 pub use window::{Claim, Reservation, ReservationWindow};
 
-// Reservation-window width and outbound-slot target are one cross-crate contract: W == P ==
-// `dg_xch_p2p::P2pSettings::target_outbound` (8). Over-provisioning past W wastes connections; under-
-// provisioning starves the window.
+// Baseline reservation-window width and outbound-slot target. The full-node follow pipeline derives
+// its live fan-out from `P2pSettings::target_outbound`; this remains the default for standalone
+// `SyncConfig` users and the minimum aggressive readahead ceiling.
 pub const TARGET_OUTBOUND: usize = 8;
 
 /// How far below the confirmed peak the short-sync backtrack searches for the fork point before
@@ -241,9 +241,34 @@ impl Default for SyncConfig {
     }
 }
 
-/// One confirmed block the reporting follow paths hand the daemon for the per-peak side effects
+/// Durable confirmation results, including a possible failure after the confirmed prefix.
+/// Consume `deltas` before surfacing `rejection` to preserve wallet and mempool updates.
+#[must_use]
+#[derive(Debug)]
+pub struct ConfirmedWindow {
+    pub peak: Option<(Bytes32, u32)>,
+    pub deltas: Vec<ConfirmedDelta>,
+    pub rejection: Option<SyncError>,
+}
+
+impl ConfirmedWindow {
+    /// Convert to the success-only form for callers that do not consume confirmation side effects.
+    ///
+    /// # Errors
+    /// Returns the rejection, discarding any committed-prefix deltas.
+    pub fn into_result(self) -> Result<ConfirmedBlocks, SyncError> {
+        match self.rejection {
+            Some(error) => Err(error),
+            None => Ok((self.peak, self.deltas)),
+        }
+    }
+}
+
+pub type ConfirmedBlocks = (Option<(Bytes32, u32)>, Vec<ConfirmedDelta>);
+
+/// One confirmed block the reporting follow paths hand the server for per-peak side effects
 /// (wallet coin-state push + mempool revalidation). `reorg` is `Some` exactly on the first delta
-/// of a reorg's re-applied branch — the daemon pushes the rolled-back states (with the true fork
+/// of a reorg's re-applied branch. The server pushes the rolled-back states (with the true fork
 /// height) before the branch's own coin deltas.
 #[derive(Debug)]
 pub struct ConfirmedDelta {
@@ -305,10 +330,21 @@ fn expand_confirmed(
 /// simultaneously-resident downloaded blocks stay bounded as chain height grows.
 #[derive(Default)]
 pub struct SyncMetrics {
+    pub confirm_coin_mutations: AtomicU64,
+    pub confirm_coin_bytes: AtomicU64,
+    pub confirm_oversized_coin_blocks: AtomicU64,
+    pub stage_total_micros: AtomicU64,
+    pub confirm_total_micros: AtomicU64,
+    pub post_confirm_total_micros: AtomicU64,
+    pub drain_wait_total_micros: AtomicU64,
+    pub pre_wait_total_micros: AtomicU64,
+    pub confirm_parts: AtomicU64,
     pub blocks_downloaded: AtomicU64,
     pub blocks_confirmed: AtomicU64,
     pub reclaimed: AtomicU64,
     pub peak_window: AtomicUsize,
+    // Peak blocks held by the headers-first body downloader. The decoupled follow pipeline reports
+    // its independent residency through queue_len and queue_resident_bytes.
     pub peak_inflight_blocks: AtomicUsize,
     // Last-window phase wall times in microseconds.
     pub window_vdf_micros: AtomicU64,
@@ -336,12 +372,12 @@ pub struct SyncMetrics {
     pub engine_cache_records: AtomicU64,
     pub engine_pending_orphans: AtomicU64,
     pub engine_staged_generators: AtomicU64,
-    // How many records the daemon's consensus-walk maps took from the in-memory record window vs
+    // How many records the server's consensus-walk maps took from the in-memory record window vs
     // re-read from the store.
     pub difficulty_window_cache_hits: AtomicU64,
     pub difficulty_window_store_reads: AtomicU64,
-    // Cumulative µs the follow driver waited on the network for its next window, and cumulative
-    // µs of whole follow steps. Validator idle fraction = rate(fetch_wait) / rate(step).
+    // Cumulative producer-side network wait and consumer-cycle wall time. These can overlap in the
+    // decoupled pipeline and must not be divided to infer validator idle time.
     pub follow_fetch_wait_micros: AtomicU64,
     pub follow_step_micros: AtomicU64,
     // Window readahead: current adaptive depth K, windows in flight, and hit/miss counters.
@@ -489,6 +525,9 @@ impl From<dg_xch_stores::StoreError> for SyncError {
 pub struct Chaser<S, P> {
     engine: Engine<S, P>,
     config: SyncConfig,
+    confirm_transaction_blocks: Option<usize>,
+    confirm_transaction_coin_changes: Option<usize>,
+    confirm_transaction_coin_bytes: Option<usize>,
     metrics: Arc<SyncMetrics>,
     // Bounded height window of candidate header records the headers-first pass populates; the ancestry the
     // full validator then reads (bounded — flat in chain height).
@@ -512,7 +551,7 @@ where
     pub fn constants(&self) -> dg_xch_core::consensus::constants::ConsensusConstants {
         *self.engine.constants()
     }
-    /// Whether the store is in the near-tip band — the daemon's stage-ahead pipeline drains and
+    /// Whether the store is in the near-tip band. The server's stage-ahead pipeline drains and
     /// falls back to the serial per-block path there (farming latency beats throughput at tip).
     #[must_use]
     pub fn near_tip(&self) -> bool {
@@ -536,6 +575,9 @@ where
         Self {
             engine: engine.with_assume_valid(config.assume_valid),
             config,
+            confirm_transaction_blocks: None,
+            confirm_transaction_coin_changes: None,
+            confirm_transaction_coin_bytes: None,
             metrics: Arc::new(SyncMetrics::default()),
             header_cache: BlockRecordCache::with_default_window(),
         }
@@ -549,6 +591,19 @@ where
     #[must_use]
     pub fn metrics(&self) -> &Arc<SyncMetrics> {
         &self.metrics
+    }
+
+    pub fn set_confirm_transaction_blocks(&mut self, blocks: Option<usize>) {
+        self.confirm_transaction_blocks = blocks.map(|value| value.max(1));
+    }
+
+    pub fn set_confirm_transaction_coin_limits(
+        &mut self,
+        changes: Option<usize>,
+        bytes: Option<usize>,
+    ) {
+        self.confirm_transaction_coin_changes = changes.map(|value| value.max(1));
+        self.confirm_transaction_coin_bytes = bytes.map(|value| value.max(1));
     }
 
     #[must_use]
@@ -898,7 +953,8 @@ where
     /// Returns the confirmed peak.
     ///
     /// # Errors
-    /// Returns [`SyncError`] if the peer cannot serve the delta or a block fails validation.
+    /// Returns [`SyncError`] if fetching or staging fails before confirmation. Consume returned
+    /// deltas before handling any rejection carried by the confirmed window.
     pub async fn follow_to(
         &mut self,
         source: &Arc<dyn BlockRangeSource>,
@@ -927,10 +983,10 @@ where
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
     ) -> Result<Option<(Bytes32, u32)>, SyncError> {
         // The window pipeline lives in follow_blocks_reporting; this caller drops the deltas.
-        Ok(self.follow_blocks_reporting(blocks).await?.0)
+        Ok(self.follow_blocks_reporting(blocks).await?.into_result()?.0)
     }
 
-    /// Short sync that also returns the per-block deltas of newly confirmed blocks — the daemon feeds
+    /// Short sync that also returns the per-block deltas of newly confirmed blocks. The server feeds
     /// these to the wallet coin-state subscription server and the mempool's new-peak revalidation. Deltas are
     /// returned in height order; `AlreadyHave` and orphan outcomes contribute none.
     ///
@@ -941,7 +997,7 @@ where
         source: &Arc<dyn BlockRangeSource>,
         from_height: u32,
         to_height: u32,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         // As in `follow_to`, the span covers only the fetch+sort.
         log::debug!("sync.short from={} to={}", from_height, to_height);
         let blocks = async {
@@ -972,7 +1028,7 @@ where
         source: &Arc<dyn BlockRangeSource>,
         from_height: u32,
         to_height: u32,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         let peak_height = from_height.saturating_sub(1);
         let floor = peak_height.saturating_sub(BACKTRACK_MAX_DEPTH);
         // The span covers only the collection; follow_blocks_reporting emits its own window.* spans.
@@ -1045,11 +1101,21 @@ where
         source: &Arc<dyn BlockRangeSource>,
         from_height: u32,
         to_height: u32,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         match self
             .follow_to_reporting(source, from_height, to_height)
             .await
         {
+            Ok(confirmed)
+                if confirmed.deltas.is_empty()
+                    && confirmed
+                        .rejection
+                        .as_ref()
+                        .is_some_and(SyncError::is_orphan) =>
+            {
+                self.follow_backtrack_reporting(source, from_height, to_height)
+                    .await
+            }
             Err(e) if e.is_orphan() => {
                 self.follow_backtrack_reporting(source, from_height, to_height)
                     .await
@@ -1073,7 +1139,7 @@ where
         &mut self,
         source: &Arc<dyn BlockRangeSource>,
         fork_point: u32,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         let Some((entry_hash, entry_height)) = self.engine.store().get_peak().await? else {
             return Err(SyncError::Io(std::io::Error::other(
                 "long-sync reland requires a confirmed peak (from-zero is the fast-sync band)",
@@ -1099,16 +1165,26 @@ where
                     return Err(SyncError::Exhausted(lo));
                 }
                 blocks.sort_by_key(FullBlock::height);
-                let (window_peak, mut window_deltas) =
-                    self.follow_blocks_reporting(&blocks).await?;
-                deltas.append(&mut window_deltas);
-                if let Some(p) = window_peak {
+                let mut confirmed = self.follow_blocks_reporting(&blocks).await?;
+                deltas.append(&mut confirmed.deltas);
+                if confirmed.rejection.is_some() {
+                    return Ok(ConfirmedWindow {
+                        peak: confirmed.peak,
+                        deltas,
+                        rejection: confirmed.rejection,
+                    });
+                }
+                if let Some(p) = confirmed.peak {
                     peak = Some(p);
                 }
                 if let Some((hash, _)) = peak
                     && hash != entry_hash
                 {
-                    return Ok((peak, deltas));
+                    return Ok(ConfirmedWindow {
+                        peak,
+                        deltas,
+                        rejection: None,
+                    });
                 }
                 lo = hi.saturating_add(1);
             }
@@ -1122,7 +1198,7 @@ where
 
     /// Generator back-ref heights in `blocks` that neither the span itself, the staged
     /// overlay, nor the confirmed store can resolve. A mid-chain anchor (`--sync-from`) hits
-    /// these when a compression ref points below the anchor span; the daemon fetches each from
+    /// these when a compression ref points below the anchor span; the server fetches each from
     /// a peer and seeds it via [`Self::seed_ref_generator`] before following the window.
     pub async fn missing_ref_heights(
         &self,
@@ -1135,6 +1211,11 @@ where
             .collect();
         let mut missing = std::collections::BTreeSet::new();
         for block in blocks {
+            if block.transactions_generator_ref_list.len()
+                > self.engine.constants().max_generator_ref_list_size as usize
+            {
+                continue;
+            }
             for r in &block.transactions_generator_ref_list {
                 if in_span.contains(r)
                     || missing.contains(r)
@@ -1169,6 +1250,11 @@ where
             .collect();
         let mut out = std::collections::HashMap::new();
         for block in blocks {
+            if block.transactions_generator_ref_list.len()
+                > self.engine.constants().max_generator_ref_list_size as usize
+            {
+                continue;
+            }
             for r in &block.transactions_generator_ref_list {
                 if in_span.contains(r) || out.contains_key(r) {
                     continue;
@@ -1191,7 +1277,7 @@ where
         self.engine.seed_generator(height, generator);
     }
 
-    /// Wipe the out-of-span seed cache — the daemon calls this at the start of each
+    /// Wipe the out-of-span seed cache. The server calls this at the start of each
     /// `seed_missing_refs` pass so the cache carries only the current window's refs (bounded,
     /// eviction-free). See [`crate::engine::Engine::clear_seed_generators`].
     pub fn clear_seed_generators(&mut self) {
@@ -1202,11 +1288,12 @@ where
     /// the driver overlaps the next window's download with this window's validation.
     ///
     /// # Errors
-    /// Returns [`SyncError`] if a block fails validation or the store errors.
+    /// Returns [`SyncError`] before confirmation; failures after a committed prefix are carried
+    /// in the returned window so its deltas can still be consumed.
     pub async fn follow_blocks_reporting(
         &mut self,
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         self.follow_blocks_reporting_pre(blocks, None).await
     }
 
@@ -1223,7 +1310,7 @@ where
         &mut self,
         blocks: &[dg_xch_core::blockchain::full_block::FullBlock],
         provided: Option<std::collections::HashMap<u32, crate::engine::PrecomputedBody>>,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
         let mut window = match self.stage_window_pre(blocks.to_vec(), provided).await {
             Ok(w) => w,
             Err(e) => {
@@ -1241,10 +1328,10 @@ where
     }
 
     /// Stage a whole window into the engine's overlay WITHOUT touching the writer or running the
-    /// deferred drains — the first third of the follow step, separable so the daemon can stage
+    /// deferred drains: the first third of the follow step, separable so the server can stage
     /// window N+1 while window N's drain still owns the CPU and window N's confirm still owns the
-    /// writer. Near the tip the per-block staging path (its own archive commit per block) runs
-    /// instead and the returned window is marked `archive_written`.
+    /// writer. Archive rows are persisted only after verification; near-tip confirmation still
+    /// commits one block per transaction.
     ///
     /// A mid-window stage rejection is carried IN the returned window (`stage_err`) — the staged
     /// prefix still confirms. An `Err` here (a poisoned sink, a preload/store failure) leaves the
@@ -1257,8 +1344,17 @@ where
     pub async fn stage_window_pre(
         &mut self,
         blocks: Vec<dg_xch_core::blockchain::full_block::FullBlock>,
-        provided: Option<std::collections::HashMap<u32, crate::engine::PrecomputedBody>>,
+        mut provided: Option<std::collections::HashMap<u32, crate::engine::PrecomputedBody>>,
     ) -> Result<StagedWindow, SyncError> {
+        if let Some(bodies) = provided.as_mut() {
+            let by_height: std::collections::HashMap<_, _> =
+                blocks.iter().map(|block| (block.height(), block)).collect();
+            bodies.retain(|height, body| {
+                by_height
+                    .get(height)
+                    .is_some_and(|block| body.matches(block, self.engine.constants()))
+            });
+        }
         {
             let (cache, pending, staged) = self.engine.collection_sizes();
             self.metrics
@@ -1274,7 +1370,7 @@ where
         // Window body precompute: the expensive pure half of body validation (CLVM generator run
         // + BLS aggregate verify) for every transaction block of the window runs across all cores
         // before the sequential stage loop. The engine accepts a precompute only when its own
-        // stage-time flag key matches; otherwise it recomputes inline.
+        // block inputs and consensus constants match; otherwise it recomputes inline.
         let mut pre_bodies: std::collections::HashMap<u32, crate::engine::PrecomputedBody> = {
             let by_height: std::collections::HashMap<u32, &FullBlock> =
                 blocks.iter().map(|b| (b.height(), b)).collect();
@@ -1289,6 +1385,11 @@ where
                     continue;
                 }
                 tx_total += 1;
+                if block.transactions_generator_ref_list.len()
+                    > self.engine.constants().max_generator_ref_list_size as usize
+                {
+                    continue;
+                }
                 if provided
                     .as_ref()
                     .is_some_and(|m| m.contains_key(&block.height()))
@@ -1374,22 +1475,17 @@ where
         // that block's deferred work, so the batch attributes the failing height precisely.
         let mut staged: Vec<(BlockDelta, usize, usize, usize)> = Vec::new();
         let mut stage_err: Option<SyncError> = None;
-        // Phase-aware staging: near the tip each staged block commits its own archive transaction
-        // (unchanged); during bulk catch-up NO archive row is written here — the confirm persists
-        // them inside its single window transaction, so a concurrently-open confirm never contends
-        // this staging for the writer.
-        let per_block_staging = self.engine.store().near_tip();
         let stage_started = std::time::Instant::now();
         // Batch the loop's per-block store reads for the whole window (one candidate multi-get +
         // one peak read) so the staging loop awaits no per-block point reads.
         self.engine.preload_stage_context(&blocks).await?;
+        if let Err(error) = self.engine.preload_stage_coins(&blocks, &pre_bodies).await {
+            self.engine.clear_stage_preload();
+            return Err(error.into());
+        }
         for (bi, block) in blocks.iter().enumerate() {
             let pre = pre_bodies.remove(&block.height());
-            let outcome = if per_block_staging {
-                self.engine.stage_block_pre(block, &sink, pre).await
-            } else {
-                self.engine.stage_block_pre_dry(block, &sink, pre).await
-            };
+            let outcome = self.engine.stage_block_pre_dry(block, &sink, pre).await;
             match outcome {
                 Ok(Some(delta)) => {
                     let vdf_mark = sink.vdf.lock().map(|q| q.len()).unwrap_or(0);
@@ -1410,6 +1506,10 @@ where
             stage_started.elapsed().as_micros() as u64,
             Ordering::Relaxed,
         );
+        self.metrics.stage_total_micros.fetch_add(
+            stage_started.elapsed().as_micros() as u64,
+            Ordering::Relaxed,
+        );
 
         // A poisoned sink (a panicked staging thread) must fail the window, never yield an empty
         // queue — that would confirm every staged block with its VDF verification silently
@@ -1425,21 +1525,153 @@ where
             queue,
             sig_queue,
             stage_err,
-            archive_written: per_block_staging,
         })
     }
 
     /// The confirm third of the follow step: persist the dry-staged archive rows and the window's
-    /// coins + peak in ONE transaction, gated by the drain's verdict. Behavior (fork choice,
-    /// error precedence, reported deltas) matches the serial path byte for byte.
+    /// coins + peak atomically per confirmation part, gated by the drain's verdict. By default
+    /// a bulk window is one part; the configured transaction limit splits it in height order.
     ///
     /// # Errors
-    /// Returns [`SyncError`] if a block failed validation in stage or drain, or the store errors.
+    /// Store errors before any confirmation return an error. A rejected suffix or a later
+    /// transaction failure is returned in `ConfirmedWindow::rejection` alongside committed deltas.
     pub async fn confirm_window_pre(
         &mut self,
         window: StagedWindow,
         verdict: WindowVerdict,
-    ) -> Result<(Option<(Bytes32, u32)>, Vec<ConfirmedDelta>), SyncError> {
+    ) -> Result<ConfirmedWindow, SyncError> {
+        let result = self.confirm_window_inner(window, verdict).await;
+        if result.is_err()
+            || result
+                .as_ref()
+                .is_ok_and(|confirmed| confirmed.rejection.is_some())
+        {
+            self.engine.clear_staged_overlay();
+        }
+        result
+    }
+
+    async fn confirm_window_inner(
+        &mut self,
+        window: StagedWindow,
+        verdict: WindowVerdict,
+    ) -> Result<ConfirmedWindow, SyncError> {
+        let limit = if self.engine.store().near_tip() {
+            1
+        } else {
+            self.confirm_transaction_blocks.unwrap_or(usize::MAX)
+        };
+        let coin_limit = self.confirm_transaction_coin_changes.unwrap_or(usize::MAX);
+        let byte_limit = self.confirm_transaction_coin_bytes.unwrap_or(usize::MAX);
+        let mut ranges = Vec::new();
+        let mut count = 0usize;
+        let mut coins = 0usize;
+        let mut bytes = 0usize;
+        for entry in &window.staged {
+            let next_coins = entry.0.coin_mutations();
+            let next_bytes = entry.0.estimated_coin_bytes();
+            if count > 0
+                && (count >= limit
+                    || coins.saturating_add(next_coins) > coin_limit
+                    || bytes.saturating_add(next_bytes) > byte_limit)
+            {
+                ranges.push(count);
+                count = 0;
+                coins = 0;
+                bytes = 0;
+            }
+            count += 1;
+            coins = coins.saturating_add(next_coins);
+            bytes = bytes.saturating_add(next_bytes);
+        }
+        if count > 0 {
+            ranges.push(count);
+        }
+        if ranges.len() <= 1 {
+            return self.confirm_window_part(window, verdict).await;
+        }
+        let StagedWindow {
+            blocks,
+            staged,
+            stage_err,
+            ..
+        } = window;
+        let total = staged.len();
+        let confirm_upto = verdict.confirm_upto.min(total);
+        let mut remaining_error = verdict.err.or(stage_err);
+        let mut blocks = blocks.into_iter().enumerate().peekable();
+        let mut staged = staged.into_iter();
+        let mut offset = 0usize;
+        let mut reported = Vec::new();
+        let mut peak = None;
+        for count in ranges {
+            let mut part: Vec<_> = staged.by_ref().take(count).collect();
+            let last_index = part.last().expect("nonempty transaction").3;
+            let mut part_blocks = Vec::new();
+            let first_index = blocks.peek().map_or(0, |(index, _)| *index);
+            while blocks.peek().is_some_and(|(index, _)| *index <= last_index) {
+                part_blocks.push(blocks.next().expect("peeked block").1);
+            }
+            for entry in &mut part {
+                entry.3 -= first_index;
+            }
+            let count = part.len();
+            let boundary = confirm_upto.saturating_sub(offset).min(count);
+            let final_part = offset + count >= total || boundary < count;
+            let error = if final_part {
+                remaining_error.take()
+            } else {
+                None
+            };
+            let subwindow = StagedWindow {
+                from: part.first().expect("nonempty transaction").0.height,
+                to: part.last().expect("nonempty transaction").0.height,
+                blocks: part_blocks,
+                staged: part,
+                queue: Vec::new(),
+                sig_queue: Vec::new(),
+                stage_err: None,
+            };
+            let subverdict = WindowVerdict {
+                confirm_upto: boundary,
+                err: error,
+                vdf_micros: verdict.vdf_micros,
+                sig_micros: verdict.sig_micros,
+            };
+            let confirmed = match self.confirm_window_part(subwindow, subverdict).await {
+                Ok(confirmed) => confirmed,
+                Err(error) if !reported.is_empty() => {
+                    return Ok(ConfirmedWindow {
+                        peak,
+                        deltas: reported,
+                        rejection: Some(error),
+                    });
+                }
+                Err(error) => return Err(error),
+            };
+            peak = confirmed.peak;
+            reported.extend(confirmed.deltas);
+            if confirmed.rejection.is_some() {
+                return Ok(ConfirmedWindow {
+                    peak,
+                    deltas: reported,
+                    rejection: confirmed.rejection,
+                });
+            }
+            offset += count;
+        }
+        Ok(ConfirmedWindow {
+            peak,
+            deltas: reported,
+            rejection: None,
+        })
+    }
+
+    async fn confirm_window_part(
+        &mut self,
+        window: StagedWindow,
+        verdict: WindowVerdict,
+    ) -> Result<ConfirmedWindow, SyncError> {
         self.metrics
             .window_vdf_micros
             .store(verdict.vdf_micros, Ordering::Relaxed);
@@ -1450,26 +1682,27 @@ where
             blocks,
             mut staged,
             stage_err,
-            archive_written,
             ..
         } = window;
         let confirm_upto = verdict.confirm_upto.min(staged.len());
         let vdf_err = verdict.err;
         let confirm_started = std::time::Instant::now();
-        // Deferred archive persistence: EVERY staged row lands (the confirmed prefix plus any
-        // rejected tail's candidates — matching the batch the staging loop used to carry), before
-        // coins + set_peak in the same transaction.
+        let prepared_coins = self
+            .engine
+            .prepare_confirmation_coins(
+                &staged[..confirm_upto]
+                    .iter()
+                    .map(|entry| &entry.0)
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
         let mut window_batch: Option<dg_xch_stores::BatchHandle> = None;
-        if !archive_written && !staged.is_empty() {
-            let mut batch = self.engine.store().begin().await?;
-            let rows: Vec<(&FullBlock, &BlockDelta)> = staged
-                .iter()
-                .map(|(delta, _, _, bi)| (&blocks[*bi], delta))
-                .collect();
-            self.engine
-                .persist_archive_window(&rows, &mut batch)
-                .await?;
-            window_batch = Some(batch);
+        if confirm_upto > 0 {
+            window_batch = Some(
+                self.engine
+                    .persist_archive_window(blocks, &staged[..confirm_upto])
+                    .await?,
+            );
         }
         // One store batch confirms the whole window; the engine falls back to per-block fork
         // choice the moment a delta isn't a plain extension.
@@ -1483,12 +1716,39 @@ where
         log::debug!("window.confirm blocks={}", to_confirm.len());
         let outcomes = self
             .engine
-            .confirm_staged_batch_in(to_confirm, window_batch.take())
+            .confirm_staged_batch_prepared(to_confirm, window_batch.take(), prepared_coins)
             .await?;
         self.metrics.window_confirm_micros.store(
             confirm_started.elapsed().as_micros() as u64,
             Ordering::Relaxed,
         );
+        self.metrics.confirm_total_micros.fetch_add(
+            confirm_started.elapsed().as_micros() as u64,
+            Ordering::Relaxed,
+        );
+        self.metrics.confirm_parts.fetch_add(1, Ordering::Relaxed);
+        for (outcome, delta) in outcomes.iter().zip(&reported) {
+            if matches!(
+                outcome,
+                AddBlockOutcome::AlreadyHave | AddBlockOutcome::Orphan { .. }
+            ) {
+                continue;
+            }
+            self.metrics
+                .confirm_coin_mutations
+                .fetch_add(delta.coin_mutations() as u64, Ordering::Relaxed);
+            self.metrics
+                .confirm_coin_bytes
+                .fetch_add(delta.estimated_coin_bytes() as u64, Ordering::Relaxed);
+            if delta.coin_mutations() > self.confirm_transaction_coin_changes.unwrap_or(usize::MAX)
+                || delta.estimated_coin_bytes()
+                    > self.confirm_transaction_coin_bytes.unwrap_or(usize::MAX)
+            {
+                self.metrics
+                    .confirm_oversized_coin_blocks
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
         for (outcome, delta) in outcomes.iter().zip(&reported) {
             if let AddBlockOutcome::Reorg { fork_height, .. } = outcome {
                 self.metrics.last_reorg_depth.store(
@@ -1511,13 +1771,20 @@ where
             || self.engine.pop_reorg_report(),
             &mut deltas,
         );
-        if let Some(e) = vdf_err.or(stage_err) {
-            // Unconfirmed staged blocks retry next tick and re-stage; their overlay entries
-            // must not linger meanwhile.
-            self.engine.clear_staged_overlay();
-            return Err(e);
-        }
-        Ok((self.engine.store().get_peak().await?, deltas))
+        let mut rejection = vdf_err.or(stage_err);
+        let peak = match self.engine.store().get_peak().await {
+            Ok(peak) => peak,
+            Err(error) if !deltas.is_empty() => {
+                rejection = Some(error.into());
+                None
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(ConfirmedWindow {
+            peak,
+            deltas,
+            rejection,
+        })
     }
 }
 
@@ -1790,13 +2057,8 @@ pub fn drain_header_sink(
     Ok((vdf, sig))
 }
 
-/// Core-bounded execution of a window's body-precompute jobs — shared by the inline path in
-/// [`Chaser::follow_blocks_reporting_pre`] and the cross-window standalone precompute below.
-/// Workers are bounded by the core count, not the job count: each generator run holds its own
-/// large CLVM heap, so a thread per transaction block would oversubscribe the CPUs and multiply
-/// peak memory by the window size.
 /// A window staged into the engine's overlay but not yet drained or confirmed — the unit the
-/// daemon's stage-ahead pipeline carries between iterations. During bulk catch-up its archive
+/// server's stage-ahead pipeline carries between iterations. During bulk catch-up its archive
 /// rows are NOT yet persisted (they land inside the confirm transaction), so a crash loses the
 /// window wholly and resume re-fetches from the durable peak.
 pub struct StagedWindow {
@@ -1808,11 +2070,10 @@ pub struct StagedWindow {
     queue: Vec<crate::header::QueuedVdf>,
     sig_queue: Vec<crate::header::QueuedSig>,
     stage_err: Option<SyncError>,
-    archive_written: bool,
 }
 
 impl StagedWindow {
-    /// The window's first and last block heights (the daemon's post-step handling keys on them).
+    /// The window's first and last block heights (the server's post-step handling keys on them).
     #[must_use]
     pub fn bounds(&self) -> (u32, u32) {
         (self.from, self.to)
@@ -1868,7 +2129,7 @@ impl WindowVerdict {
 }
 
 /// Drain a staged window's deferred VDF and header-signature queues — pure CPU against the
-/// primitives, no engine or store access, so the daemon runs it on a blocking thread while the
+/// primitives, no engine or store access, so the server runs it on a blocking thread while the
 /// next window stages. Two-tier per queue: the whole-window batch first, then on a failure a
 /// per-block slice replay that attributes the exact failing height. The confirm boundary is the
 /// minimum of the VDF- and sig-determined boundaries; the reported error is whichever fails at
@@ -1980,46 +2241,22 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
     if jobs.is_empty() {
         return std::collections::HashMap::new();
     }
-    let workers = std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(4)
-        .min(jobs.len());
-    let chunk = jobs.len().div_ceil(workers);
-    std::thread::scope(|s| {
-        let handles: Vec<_> = jobs
-            .chunks(chunk)
-            .map(|part| {
-                s.spawn(move || {
-                    part.iter()
-                        .filter_map(|(block, refs, verify_sig)| {
-                            crate::engine::run_body_expensive(
-                                primitives,
-                                constants,
-                                block,
-                                refs,
-                                *verify_sig,
-                            )
-                            .ok()
-                            .map(|(conds, verified)| {
-                                (
-                                    block.height(),
-                                    crate::engine::PrecomputedBody {
-                                        conds,
-                                        agg_sig_verified: verified,
-                                    },
-                                )
-                            })
-                        })
-                        .collect::<Vec<_>>()
+    dg_xch_core::compute::map(
+        dg_xch_core::compute::Phase::Body,
+        jobs,
+        |(block, refs, verify_sig)| {
+            crate::engine::run_body_expensive(primitives, constants, block, refs, *verify_sig)
+                .ok()
+                .and_then(|(conds, verified)| {
+                    crate::engine::PrecomputedBody::new(block, constants, conds, verified, refs)
+                        .ok()
+                        .map(|body| (block.height(), body))
                 })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .filter_map(|h| h.join().ok())
-            .flatten()
-            .collect()
-    })
+        },
+    )
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// The expensive pure half of body validation for a window (CLVM generator run + BLS aggregate
@@ -2027,7 +2264,7 @@ fn run_precompute_jobs<P: crate::primitives::ConsensusPrimitives + Sync>(
 /// body pipeline. Generator refs resolve from the window itself or from `extra` (the driver's
 /// confirmed-store snapshot, [`Chaser::confirmed_ref_generators`]); a block with a ref neither
 /// can serve is skipped here and takes the engine's inline path, and the engine's stage-time
-/// flag-key check still guards every entry — a mismatch degrades to an inline recompute, never
+/// block-input check still guards every entry — a mismatch degrades to an inline recompute, never
 /// to a changed verdict.
 #[must_use]
 pub fn precompute_window_bodies_standalone<P: crate::primitives::ConsensusPrimitives + Sync>(
@@ -2046,6 +2283,11 @@ pub fn precompute_window_bodies_standalone<P: crate::primitives::ConsensusPrimit
     )> = Vec::new();
     for block in blocks {
         if !block.is_transaction_block() || block.transactions_generator.is_none() {
+            continue;
+        }
+        if block.transactions_generator_ref_list.len()
+            > constants.max_generator_ref_list_size as usize
+        {
             continue;
         }
         let mut refs = Vec::with_capacity(block.transactions_generator_ref_list.len());
@@ -2100,118 +2342,5 @@ impl dg_xch_core::errors::ErrorCode for SyncError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::tip_epoch_from;
-    use dg_xch_core::blockchain::sized_bytes::Bytes32;
-    use dg_xch_core::blockchain::sub_epoch_summary::SubEpochSummary;
-
-    fn ses(new_difficulty: Option<u64>, new_sub_slot_iters: Option<u64>) -> SubEpochSummary {
-        SubEpochSummary {
-            prev_subepoch_summary_hash: Bytes32::default(),
-            reward_chain_hash: Bytes32::default(),
-            num_blocks_overflow: 0,
-            new_difficulty,
-            new_sub_slot_iters,
-        }
-    }
-
-    #[test]
-    fn empty_summaries_fall_back_to_genesis_constants() {
-        assert_eq!(tip_epoch_from(&[], 128, 7), (128, 7));
-    }
-
-    #[test]
-    fn tip_epoch_takes_the_last_declared_values() {
-        let s = [
-            ses(Some(7), Some(128)),
-            ses(Some(9), None),
-            ses(None, Some(1024)),
-        ];
-        // last new_difficulty is 9 (third has None), last new_sub_slot_iters is 1024
-        assert_eq!(tip_epoch_from(&s, 64, 3), (1024, 9));
-    }
-
-    #[test]
-    fn undeclared_fields_hold_the_starting_value() {
-        let s = [ses(None, None), ses(None, None)];
-        assert_eq!(tip_epoch_from(&s, 64, 3), (64, 3));
-    }
-
-    // Pending-boundary depth math, pinned to mainnet constants (epoch_blocks = 4608,
-    // sub_epoch_blocks = 384, boundary 4,575,744, previous surpass 4,571,136): every position that
-    // can still trigger the 4,575,744 retarget must demand records down to 4,571,008.
-    #[test]
-    fn epoch_backfill_low_covers_the_pending_boundary_retarget() {
-        use super::epoch_backfill_low;
-        let (e, s) = (4608u32, 384u32);
-        // Mid-epoch anchor base (a sync leg's --sync-from=4575000 span base H-64): the next
-        // boundary IS the pending boundary; old and new formulas agree.
-        assert_eq!(epoch_backfill_low(4_574_936, e, s), 4_571_008);
-        // Peak just past the boundary, retarget trigger still ahead: naive next-boundary rounding
-        // would demand only 4,575,616 — one full epoch short.
-        assert_eq!(epoch_backfill_low(4_575_757, e, s), 4_571_008);
-        // The boundary block itself and the last height inside the trigger window.
-        assert_eq!(epoch_backfill_low(4_575_744, e, s), 4_571_008);
-        assert_eq!(epoch_backfill_low(4_576_127, e, s), 4_571_008);
-        // Past the trigger window: the 4,575,744 retarget must have fired; only the NEXT
-        // boundary (4,580,352) remains pending, whose surpass depth is 4,575,616.
-        assert_eq!(epoch_backfill_low(4_576_128, e, s), 4_575_616);
-        // Genesis-side saturation: never underflows.
-        assert_eq!(epoch_backfill_low(0, e, s), 0);
-        assert_eq!(epoch_backfill_low(383, e, s), 0);
-    }
-
-    #[test]
-    fn is_missing_record_matches_only_the_notfound_walk_error() {
-        use super::SyncError;
-        use crate::error::NodeError;
-        let missing = SyncError::Node(NodeError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "block record not found: 0xdead",
-        )));
-        assert!(missing.is_missing_record());
-        assert!(!missing.is_orphan());
-        let invalid = SyncError::Node(NodeError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "INVALID_VDF",
-        )));
-        assert!(!invalid.is_missing_record());
-        let orphan = SyncError::Node(NodeError::Orphan("h".into()));
-        assert!(!orphan.is_missing_record());
-        let io = SyncError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "socket"));
-        assert!(!io.is_missing_record());
-    }
-
-    #[test]
-    fn epoch_schedule_resolves_per_height_and_matches_the_tip_anchor() {
-        use super::EpochSchedule;
-        let sub_epoch_blocks = 64u32;
-        // sub-epoch 0 summary declares (d=9, ssi=1024) -> active from sub-epoch 1;
-        // sub-epoch 2 summary declares (d=11, ssi=2048) -> active from sub-epoch 3.
-        let s = [
-            ses(Some(9), Some(1024)),
-            ses(None, None),
-            ses(Some(11), Some(2048)),
-            ses(None, None),
-        ];
-        let sched = EpochSchedule::from_summaries(&s, sub_epoch_blocks, 128, 7);
-        assert_eq!(
-            sched.at(0),
-            (128, 7),
-            "before any activation: starting values"
-        );
-        assert_eq!(sched.at(63), (128, 7), "last block of sub-epoch 0");
-        assert_eq!(
-            sched.at(64),
-            (1024, 9),
-            "first block of sub-epoch 1: summary 0 active"
-        );
-        assert_eq!(sched.at(191), (1024, 9), "held through sub-epoch 2");
-        assert_eq!(sched.at(192), (2048, 11), "sub-epoch 3: summary 2 active");
-        assert_eq!(
-            sched.at(64 * 10),
-            tip_epoch_from(&s, 128, 7),
-            "at the tip the schedule equals the tip anchor"
-        );
-    }
-}
+#[path = "../../tests/unit/sync/mod/tests.rs"]
+mod tests;

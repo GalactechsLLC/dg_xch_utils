@@ -1,0 +1,43 @@
+[package]
+name = "dg_xch_wallet"
+description = "Native wallet accounts, synchronization and signing"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
+async-trait = "0.1.89"
+blst = { version = "0.3.16", features = ["portable"] }
+chacha20poly1305 = "0.10.1"
+chia-sdk-driver = { version = "=0.36.0", features = ["offer-compression"] }
+chia-bls = "=0.36.1"
+indexmap = "2"
+chia-sdk-types = "=0.36.0"
+chia-protocol = "=0.36.1"
+chia-puzzle-types = "=0.36.1"
+clvm-traits = "=0.36.1"
+clvmr = "=0.16.2"
+dashmap = "6.1.0"
+dg_xch_clients = { path = "../clients" }
+dg_xch_core = { path = "../core", default-features = false, features = ["bls"] }
+dg_xch_keys = { path = "../keys" }
+dg_xch_puzzles = { path = "../puzzles" }
+hex = "0.4.3"
+log = "0.4.29"
+num-traits = "0.2.19"
+rand = "0.10.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tempfile = "3"
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "time", "macros"] }
+zeroize = "1.9.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+chia-sdk-test = "=0.36.0"

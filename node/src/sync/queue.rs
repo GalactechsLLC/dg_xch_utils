@@ -69,6 +69,8 @@ pub struct BlockQueue {
     space: Notify,
     /// Consumer wakeup: fired when the slot at `low_water` becomes `Present`.
     ready: Notify,
+    /// Producer cancellation: fired whenever a rebase invalidates the current fetch plan.
+    replan: Notify,
     metrics: Arc<SyncMetrics>,
 }
 
@@ -88,6 +90,7 @@ impl BlockQueue {
             resident_bytes: AtomicU64::new(0),
             space: Notify::new(),
             ready: Notify::new(),
+            replan: Notify::new(),
             metrics,
         }
     }
@@ -220,13 +223,22 @@ impl BlockQueue {
     /// window. Returns an empty vec when the head is absent or still `InFlight`. Advances
     /// `low_water` past every drained block and releases their bytes, waking producers.
     pub fn drain_ready_window(&self, max: u32) -> Vec<FullBlock> {
+        self.drain_ready_window_bounded(max, u64::MAX)
+    }
+
+    pub fn drain_ready_window_bounded(&self, max: u32, budget: u64) -> Vec<FullBlock> {
         let mut inner = self.lock();
         let mut out = Vec::new();
+        let mut bytes = 0u64;
         while (out.len() as u32) < max {
             let head = inner.low_water;
-            let Some(Slot::Present { .. }) = inner.slots.get(&head) else {
+            let Some(Slot::Present { nbytes, .. }) = inner.slots.get(&head) else {
                 break; // head absent or InFlight — never surface a non-head slot
             };
+            if !out.is_empty() && bytes.saturating_add(*nbytes) > budget {
+                break;
+            }
+            bytes = bytes.saturating_add(*nbytes);
             let Some(Slot::Present { block, nbytes }) = inner.slots.remove(&head) else {
                 break;
             };
@@ -249,13 +261,22 @@ impl BlockQueue {
     /// or reclaim intervenes), never advances `low_water`, and never uncharges bytes.
     #[must_use]
     pub fn peek_ready_window(&self, max: u32) -> Vec<FullBlock> {
+        self.peek_ready_window_bounded(max, u64::MAX)
+    }
+
+    pub fn peek_ready_window_bounded(&self, max: u32, budget: u64) -> Vec<FullBlock> {
         let inner = self.lock();
         let mut out = Vec::new();
         let mut head = inner.low_water;
+        let mut bytes = 0u64;
         while (out.len() as u32) < max {
-            let Some(Slot::Present { block, .. }) = inner.slots.get(&head) else {
+            let Some(Slot::Present { block, nbytes }) = inner.slots.get(&head) else {
                 break;
             };
+            if !out.is_empty() && bytes.saturating_add(*nbytes) > budget {
+                break;
+            }
+            bytes = bytes.saturating_add(*nbytes);
             out.push((**block).clone());
             head = head.saturating_add(1);
         }
@@ -278,6 +299,7 @@ impl BlockQueue {
         self.publish_gauges(&inner);
         drop(inner);
         self.space.notify_waiters();
+        self.replan.notify_waiters();
     }
 
     /// Release an `InFlight` claim (the scheduler's stall reclaim): the height returns to
@@ -345,6 +367,19 @@ impl BlockQueue {
         loop {
             let notified = self.space.notified();
             if self.can_admit() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Wait until `generation` is no longer current. Fetchers select this beside network waits so a
+    /// watchdog/reorg rebase cancels the stale operation immediately rather than waiting for it to
+    /// return before observing the generation bump.
+    pub async fn wait_replan(&self, generation: u64) {
+        loop {
+            let notified = self.replan.notified();
+            if self.current_gen() != generation {
                 return;
             }
             notified.await;

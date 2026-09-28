@@ -119,6 +119,7 @@ async fn chaser_on_wrong_peak(
     ours: &[FullBlock],
 ) -> Chaser<Arc<dg_xch_stores::SqliteStore>, NativePrimitives> {
     let store = Arc::new(common::new_store().await);
+    common::ancestry::seed_synthetic_parent(&store, &ours[0]).await;
     let engine = Engine::new(store, NativePrimitives, MAINNET);
     let mut chaser = Chaser::new(
         engine,
@@ -189,7 +190,9 @@ async fn backtrack_flips_a_wrong_block_at_the_peak_to_the_canonical_branch() {
     let (peak, _deltas) = chaser
         .follow_backtrack_reporting(&peer, PEAK + 1, B_TIP)
         .await
-        .expect("backtrack finds the fork at peak - 1 and converges");
+        .expect("backtrack finds the fork at peak - 1 and converges")
+        .into_result()
+        .expect("window accepted");
 
     assert_eq!(
         peak,

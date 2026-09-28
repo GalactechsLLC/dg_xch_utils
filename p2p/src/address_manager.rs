@@ -1,10 +1,25 @@
 use crate::config::P2pSettings;
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
 use rand::seq::IndexedRandom;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 pub type Endpoint = (String, u16);
+
+const RETRY_BACKOFF_CAP: Duration = Duration::from_secs(300);
+
+#[derive(Clone, Copy)]
+struct RetryState {
+    failures: u32,
+    ready_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetryStatus {
+    pub failures: u32,
+    pub delay: Duration,
+}
 
 fn endpoint(p: &TimestampedPeerInfo) -> Endpoint {
     (p.host.clone(), p.port)
@@ -16,6 +31,7 @@ pub struct AddressBook {
     pool: VecDeque<TimestampedPeerInfo>,
     pooled: HashSet<Endpoint>,
     reserved: HashSet<Endpoint>,
+    retry: HashMap<Endpoint, RetryState>,
     selfs: HashSet<Endpoint>,
     capacity: usize,
     address_lower: usize,
@@ -29,6 +45,7 @@ impl AddressBook {
             pool: VecDeque::with_capacity(settings.host_pool_capacity),
             pooled: HashSet::new(),
             reserved: HashSet::new(),
+            retry: HashMap::new(),
             selfs: HashSet::new(),
             capacity: settings.host_pool_capacity,
             address_lower: settings.address_lower,
@@ -69,7 +86,9 @@ impl AddressBook {
             if self.pool.len() >= self.capacity
                 && let Some(old) = self.pool.pop_front()
             {
-                self.pooled.remove(&endpoint(&old));
+                let old_endpoint = endpoint(&old);
+                self.pooled.remove(&old_endpoint);
+                self.retry.remove(&old_endpoint);
             }
             self.pooled.insert(ep);
             self.pool.push_back(p.clone());
@@ -80,15 +99,44 @@ impl AddressBook {
 
     // Random dial candidate; moved to the reserved (connected) set.
     pub fn take(&mut self) -> Option<TimestampedPeerInfo> {
-        if self.pool.is_empty() {
+        self.take_at(Instant::now())
+    }
+
+    fn take_at(&mut self, now: Instant) -> Option<TimestampedPeerInfo> {
+        let ready: Vec<usize> = self
+            .pool
+            .iter()
+            .enumerate()
+            .filter_map(|(index, peer)| {
+                self.retry
+                    .get(&endpoint(peer))
+                    .is_none_or(|state| state.ready_at <= now)
+                    .then_some(index)
+            })
+            .collect();
+        if ready.is_empty() {
             return None;
         }
-        let idx = rand::random_range(0..self.pool.len());
+        let idx = ready[rand::random_range(0..ready.len())];
         let picked = self.pool.remove(idx)?;
         let ep = endpoint(&picked);
         self.pooled.remove(&ep);
         self.reserved.insert(ep);
         Some(picked)
+    }
+
+    /// Whether at least one pooled endpoint is currently outside its retry cooldown.
+    #[must_use]
+    pub fn has_ready(&self) -> bool {
+        self.has_ready_at(Instant::now())
+    }
+
+    fn has_ready_at(&self, now: Instant) -> bool {
+        self.pool.iter().any(|peer| {
+            self.retry
+                .get(&endpoint(peer))
+                .is_none_or(|state| state.ready_at <= now)
+        })
     }
 
     // On channel stop: drop the reservation; a non-violating peer is returned to the
@@ -97,6 +145,7 @@ impl AddressBook {
     pub fn reclaim(&mut self, peer: &TimestampedPeerInfo, forget: bool) {
         let ep = endpoint(peer);
         self.reserved.remove(&ep);
+        self.retry.remove(&ep);
         if forget || self.pooled.contains(&ep) {
             return;
         }
@@ -104,6 +153,43 @@ impl AddressBook {
             self.pooled.insert(ep);
             self.pool.push_back(peer.clone());
         }
+    }
+
+    /// Return a failed endpoint to the pool behind a per-address exponential cooldown. This keeps
+    /// saturated or incompatible public nodes from occupying a hot reconnect loop while preserving
+    /// them for a later attempt.
+    pub fn cooldown(&mut self, peer: &TimestampedPeerInfo, retry_base: Duration) -> RetryStatus {
+        self.cooldown_at(peer, retry_base, Instant::now())
+    }
+
+    fn cooldown_at(
+        &mut self,
+        peer: &TimestampedPeerInfo,
+        retry_base: Duration,
+        now: Instant,
+    ) -> RetryStatus {
+        let ep = endpoint(peer);
+        self.reserved.remove(&ep);
+        let failures = self
+            .retry
+            .get(&ep)
+            .map_or(1, |state| state.failures.saturating_add(1));
+        let multiplier = 1u32 << failures.saturating_sub(1).min(8);
+        let delay = retry_base.saturating_mul(multiplier).min(RETRY_BACKOFF_CAP);
+        self.retry.insert(
+            ep.clone(),
+            RetryState {
+                failures,
+                ready_at: now + delay,
+            },
+        );
+        if !self.pooled.contains(&ep) && self.pool.len() < self.capacity {
+            self.pooled.insert(ep.clone());
+            self.pool.push_back(peer.clone());
+        } else if !self.pooled.contains(&ep) {
+            self.retry.remove(&ep);
+        }
+        RetryStatus { failures, delay }
     }
 
     // Randomized-size subset for RespondPeers gossip so pool size is not fingerprinted
@@ -139,6 +225,8 @@ impl AddressBook {
             if p.timestamp >= cutoff {
                 self.pooled.insert(endpoint(&p));
                 kept.push_back(p);
+            } else {
+                self.retry.remove(&endpoint(&p));
             }
         }
         self.pool = kept;
@@ -184,101 +272,5 @@ impl AddressBook {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn peer(host: &str, port: u16, ts: u64) -> TimestampedPeerInfo {
-        TimestampedPeerInfo {
-            host: host.to_string(),
-            port,
-            timestamp: ts,
-        }
-    }
-
-    #[test]
-    fn gossiped_peers_are_stored_and_deduped_on_intake() {
-        let mut book = AddressBook::new(&P2pSettings::default());
-        let accepted = book.insert_many(&[peer("1.1.1.1", 8444, 10), peer("2.2.2.2", 8444, 10)]);
-        assert_eq!(accepted, 2);
-        // re-gossip of the same endpoints is fully deduped
-        let again = book.insert_many(&[peer("1.1.1.1", 8444, 99), peer("2.2.2.2", 8444, 99)]);
-        assert_eq!(again, 0);
-        assert_eq!(book.len(), 2);
-    }
-
-    #[test]
-    fn a_flood_of_junk_holds_the_ring_at_its_cap() {
-        let settings = P2pSettings {
-            host_pool_capacity: 64,
-            ..P2pSettings::default()
-        };
-        let mut book = AddressBook::new(&settings);
-        let flood: Vec<_> = (0..100_000u32)
-            .map(|i| {
-                let o = i.to_le_bytes();
-                peer(&format!("{}.{}.{}.{}", o[0], o[1], o[2], o[3]), 8444, 1)
-            })
-            .collect();
-        let accepted = book.insert_many(&flood);
-        assert_eq!(book.len(), 64, "ring bounded at capacity under flood");
-        assert!(accepted <= 100_000);
-    }
-
-    #[test]
-    fn take_moves_to_reserved_and_reclaim_returns() {
-        let mut book = AddressBook::new(&P2pSettings::default());
-        book.insert_many(&[peer("1.1.1.1", 8444, 10)]);
-        let taken = book.take().expect("a candidate");
-        assert!(book.is_empty(), "taken address leaves the pool");
-        // a duplicate gossip while reserved is skipped
-        assert_eq!(book.insert_many(&[peer("1.1.1.1", 8444, 20)]), 0);
-        book.reclaim(&taken, false);
-        assert_eq!(book.len(), 1, "clean disconnect returns to pool");
-    }
-
-    #[test]
-    fn violation_reclaim_forgets_the_peer() {
-        let mut book = AddressBook::new(&P2pSettings::default());
-        book.insert_many(&[peer("1.1.1.1", 8444, 10)]);
-        let taken = book.take().expect("a candidate");
-        book.reclaim(&taken, true);
-        assert!(book.is_empty(), "a violating peer is not returned");
-    }
-
-    #[test]
-    fn self_authority_is_never_stored() {
-        let mut book = AddressBook::new(&P2pSettings::default());
-        book.add_self("9.9.9.9", 8444);
-        let accepted = book.insert_many(&[peer("9.9.9.9", 8444, 10), peer("1.1.1.1", 8444, 10)]);
-        assert_eq!(accepted, 1, "own advertised authority is skipped on intake");
-    }
-
-    #[test]
-    fn age_drops_stale_entries() {
-        let mut book = AddressBook::new(&P2pSettings::default());
-        book.insert_many(&[peer("1.1.1.1", 8444, 100), peer("2.2.2.2", 8444, 9000)]);
-        book.age(10_000, 6000);
-        assert_eq!(book.len(), 1, "entry older than threshold aged out");
-    }
-
-    #[test]
-    fn persist_round_trips_and_dedups_on_reload() {
-        let mut a = AddressBook::new(&P2pSettings::default());
-        a.insert_many(&[peer("1.1.1.1", 8444, 10), peer("2.2.2.2", 8444, 20)]);
-        let blob = a.serialize();
-        let mut b = AddressBook::new(&P2pSettings::default());
-        assert_eq!(b.load_str(&blob), 2, "restart reloads the persisted pool");
-        assert_eq!(b.load_str(&blob), 0, "reload is deduped on intake");
-        assert_eq!(b.len(), 2);
-    }
-
-    #[test]
-    fn fetch_returns_a_bounded_random_subset() {
-        let settings = P2pSettings::default();
-        let mut book = AddressBook::new(&settings);
-        let many: Vec<_> = (0..50u16).map(|i| peer("1.1.1.1", 8000 + i, 1)).collect();
-        book.insert_many(&many);
-        let sample = book.fetch();
-        assert!(sample.len() >= settings.address_lower && sample.len() <= settings.address_upper);
-    }
-}
+#[path = "../tests/unit/address_manager/tests.rs"]
+mod tests;

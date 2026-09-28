@@ -79,6 +79,8 @@ pub struct PeakSlotContext<'a> {
 }
 
 pub struct SlotState {
+    received_times: HashMap<Bytes32, f64>,
+    peak_hash: Option<Bytes32>,
     constants: ConsensusConstants,
     finished_sub_slots: Vec<FinishedSubSlot>,
     // End-of-sub-slots that chain onto an infusion we have not seen, keyed by that infusion's
@@ -92,6 +94,8 @@ impl SlotState {
     #[must_use]
     pub fn new(constants: ConsensusConstants) -> Self {
         let mut state = Self {
+            received_times: HashMap::new(),
+            peak_hash: None,
             constants,
             finished_sub_slots: Vec::new(),
             future_eos: KeyedCache::new(FUTURE_CACHE_MAX_KEYS, FUTURE_EOS_MAX_PER_KEY),
@@ -106,11 +110,39 @@ impl SlotState {
     }
 
     pub fn initialize_genesis_sub_slot(&mut self) {
+        self.peak_hash = None;
         self.finished_sub_slots = vec![FinishedSubSlot {
             eos: None,
             sps: self.empty_sps(),
             start_total_iters: 0,
         }];
+    }
+
+    pub fn peak_hash(&self) -> Option<Bytes32> {
+        self.peak_hash
+    }
+
+    pub fn received_time(&self, hash: &Bytes32) -> Option<f64> {
+        self.received_times.get(hash).copied()
+    }
+
+    fn record_received(&mut self, hash: Bytes32) {
+        if self.received_times.contains_key(&hash) {
+            return;
+        }
+        let Ok(time) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+            return;
+        };
+        if self.received_times.len() >= 4096
+            && let Some(oldest) = self
+                .received_times
+                .iter()
+                .min_by(|left, right| left.1.total_cmp(right.1))
+                .map(|(hash, _)| *hash)
+        {
+            self.received_times.remove(&oldest);
+        }
+        self.received_times.insert(hash, time.as_secs_f64());
     }
 
     // The finished sub-slot whose challenge-chain hash is `challenge_hash`, with its index and
@@ -272,7 +304,7 @@ impl SlotState {
     /// Backtrack a reward-chain challenge through the empty finished sub-slots we hold: while a
     /// stored EOS's reward-chain hashes to the current `rc_challenge`, step to that slot's
     /// reward-chain end-of-slot VDF challenge. Resolves the reward-chain challenge the candidate's
-    /// previous block must carry before the block-store backtrack (which the daemon runs).
+    /// previous block must carry before the block-store backtrack (which the server runs).
     #[must_use]
     pub fn backtrack_rc_challenge(&self, mut rc_challenge: Bytes32) -> Bytes32 {
         for slot in self.finished_sub_slots.iter().rev() {
@@ -586,6 +618,7 @@ impl SlotState {
         }
 
         let sps = self.empty_sps();
+        self.record_received(eos.challenge_chain.hash().ok()?);
         self.finished_sub_slots.push(FinishedSubSlot {
             eos: Some(eos.clone()),
             sps,
@@ -793,6 +826,10 @@ impl SlotState {
                 return false;
             }
 
+            let Ok(hash) = sp_cc_vdf.output.hash() else {
+                return false;
+            };
+            self.record_received(hash);
             self.finished_sub_slots[slot_idx].sps[index as usize] = Some(signage_point.clone());
             return true;
         }
@@ -922,10 +959,12 @@ impl SlotState {
                 new_sps.push((index, sp));
             }
         }
+        self.peak_hash = Some(peak.header_hash);
         (new_eos, new_sps)
     }
 
     pub fn clear_slots(&mut self) {
+        self.received_times.clear();
         self.finished_sub_slots.clear();
         self.future_eos.clear();
         self.future_sp.clear();
@@ -938,35 +977,5 @@ impl SlotState {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use dg_xch_core::consensus::constants::MAINNET;
-
-    // A fresh SlotState holds only the genesis slot (eos == None), so the [1..] iteration is empty.
-
-    #[test]
-    fn get_finished_sub_slots_returns_empty_when_last_equals_chain() {
-        // last_challenge_to_add == challenge_in_chain -> [] (nothing to add).
-        let state = SlotState::new(MAINNET);
-        let c = Bytes32::from([9; 32]);
-        assert_eq!(state.get_finished_sub_slots(c, c), Some(Vec::new()));
-    }
-
-    #[test]
-    fn get_finished_sub_slots_bails_when_last_not_connected() {
-        // With no finished (post-genesis) slots, a distinct last challenge cannot be found -> None.
-        let state = SlotState::new(MAINNET);
-        assert_eq!(
-            state.get_finished_sub_slots(MAINNET.genesis_challenge, Bytes32::from([7; 32])),
-            None
-        );
-    }
-
-    #[test]
-    fn backtrack_rc_challenge_is_identity_without_matching_slots() {
-        // The genesis slot carries no eos, so nothing matches and the challenge passes through.
-        let state = SlotState::new(MAINNET);
-        let rc = Bytes32::from([3; 32]);
-        assert_eq!(state.backtrack_rc_challenge(rc), rc);
-    }
-}
+#[path = "../tests/unit/slots/tests.rs"]
+mod tests;

@@ -175,7 +175,7 @@ async fn heavier_branch_reorg_coin_store_equals_replay() {
 }
 
 // Reorg wallet delta: a landed reorg must surface the rolled-back records and the re-applied
-// branch, so the daemon can push the post-rollback coin states to wallet subscribers.
+// branch, so the server can push the post-rollback coin states to wallet subscribers.
 #[tokio::test]
 async fn reorg_report_carries_rollback_states_and_the_reapplied_branch() {
     let records = common::load_records();
@@ -280,7 +280,7 @@ async fn reorg_report_carries_rollback_states_and_the_reapplied_branch() {
 // a crash anywhere means the reorg never happened. These tests inject a store fault at the two
 // interior seams (before the first branch re-apply; before the peak flip) and assert the store is
 // left EXACTLY as it was — never "coins reverted above the fork while the peak still points at the
-// old branch". The FaultStore is the daemon.rs precedent: a REAL backend underneath, one call
+// old branch". The FaultStore uses a real backend underneath with one call
 // armed to fail.
 // ---------------------------------------------------------------------------------------------
 

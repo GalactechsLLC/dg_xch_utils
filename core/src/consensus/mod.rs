@@ -7,6 +7,8 @@ pub mod block_generator;
 #[cfg(feature = "bls")]
 pub mod block_header_validation;
 pub mod block_rewards;
+mod chain_baseline;
+pub mod chain_definition;
 pub mod coinbase;
 pub mod constants;
 pub mod deficit;

@@ -2,7 +2,7 @@ mod common;
 
 use common::{
     empty_api, fast_settings, keepalive_settings, peer, spawn_full_node, spawn_silent_node,
-    wait_until,
+    wait_for_reconnections, wait_until,
 };
 use dg_xch_p2p::{P2pSettings, Supervisor};
 use std::time::{Duration, Instant};
@@ -59,22 +59,11 @@ async fn mass_drop_reconnects_all_slots() {
     println!("[MEASURED] slots connected: {}", reg.outbound_count().await);
     assert!(connected, "all four slots connect");
 
+    let previous = reg.outbound_peers().await;
     for srv in &servers {
         common::drop_all_server_peers(srv).await;
     }
-    assert!(
-        wait_until(
-            || async { reg.outbound_count().await == 0 },
-            Duration::from_secs(30)
-        )
-        .await,
-        "the whole fleet detects the drop and tears down"
-    );
-    let recovered = wait_until(
-        || async { reg.outbound_count().await == 4 },
-        Duration::from_secs(60),
-    )
-    .await;
+    let recovered = wait_for_reconnections(&reg, &previous, Duration::from_secs(60)).await;
     if !recovered {
         let pooled = sup.book.lock().await.len();
         let server_state: Vec<_> = servers

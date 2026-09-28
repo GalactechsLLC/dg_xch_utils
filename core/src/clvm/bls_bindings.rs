@@ -23,6 +23,14 @@ pub fn aggregate_verify_signature(
     msgs: &Vec<&[u8]>,
     signature: &Signature,
 ) -> bool {
+    if public_keys.len() != msgs.len() {
+        return false;
+    }
+    if public_keys.is_empty() {
+        let mut identity = [0u8; 96];
+        identity[0] = 0xc0;
+        return signature.to_bytes() == identity;
+    }
     let mut new_msgs: Vec<Vec<u8>> = Vec::new();
     let mut keys: Vec<PublicKey> = Vec::new();
     for (key, msg) in public_keys.iter().zip(msgs) {
@@ -30,7 +38,10 @@ pub fn aggregate_verify_signature(
         combined.extend(*key);
         combined.extend(*msg);
         new_msgs.push(combined);
-        keys.push((*key).into());
+        let Ok(public_key) = PublicKey::key_validate(key.as_ref()) else {
+            return false;
+        };
+        keys.push(public_key);
     }
     matches!(
         signature.aggregate_verify(
@@ -85,4 +96,39 @@ pub fn sign(local_sk: &SecretKey, msg: &[u8]) -> Signature {
 #[must_use]
 pub fn sign_prepend(local_sk: &SecretKey, msg: &[u8], prepend_pk: &PublicKey) -> Signature {
     local_sk.sign(msg, AUG_SCHEME_DST, &prepend_pk.to_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_aggregate_requires_identity_and_matching_message_count() {
+        let secret = SecretKey::key_gen(&[42; 32], &[]).unwrap();
+        let key = Bytes48::from(secret.sk_to_pk().to_bytes());
+        let message = b"pool reward test";
+        let signature = sign(&secret, message);
+        let mut identity = [0u8; 96];
+        identity[0] = 0xc0;
+        let identity = Signature::from_bytes(&identity).unwrap();
+        assert!(aggregate_verify_signature(&[], &vec![], &identity));
+        assert!(!aggregate_verify_signature(&[], &vec![], &signature));
+        assert!(!aggregate_verify_signature(&[], &vec![message], &identity));
+        assert!(!aggregate_verify_signature(&[key], &vec![], &signature));
+        assert!(aggregate_verify_signature(
+            &[key],
+            &vec![message],
+            &signature
+        ));
+        assert!(!aggregate_verify_signature(
+            &[key],
+            &vec![message, message],
+            &signature
+        ));
+        assert!(!aggregate_verify_signature(
+            &[[0; 48].into()],
+            &vec![message],
+            &signature
+        ));
+    }
 }

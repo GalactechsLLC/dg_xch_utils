@@ -636,6 +636,17 @@ async fn honest_synthetic_spend_is_accepted() {
     );
 }
 
+#[tokio::test]
+async fn configured_reward_schedule_rejects_chia_reward_claims() {
+    let mut constants = MAINNET;
+    constants.rewards.initial_farmer += 1_000_000;
+    let create = ConditionWithArgs::CreateCoin(Bytes32::new([0x77; 32]), 9_000, Vec::new());
+    let error = run_synth_spend(vec![create], 10_000, 1_000, constants)
+        .await
+        .expect_err("claims from a different reward schedule must fail");
+    assert_eq!(consensus_err(error), ChiaError::InvalidRewardCoins);
+}
+
 // Rule 16, MINTING_COIN: additions exceed removals. The engine must compare the two amounts.
 #[tokio::test]
 async fn minting_block_is_rejected() {

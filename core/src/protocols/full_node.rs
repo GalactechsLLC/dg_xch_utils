@@ -189,20 +189,20 @@ pub struct RespondPeers {
 #[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct FeeEstimate {
     pub estimates: Vec<u64>,
-    target_times: Vec<u64>,
-    current_fee_rate: f64,
-    mempool_size: u64,
-    mempool_fees: u64,
-    num_spends: u64,
-    mempool_max_size: u64,
-    full_node_synced: bool,
-    peak_height: u64,
-    last_peak_timestamp: u64,
-    node_time_utc: u64,
-    last_block_cost: u64,
-    fees_last_block: Option<u64>,
-    fee_rate_last_block: f64,
-    last_tx_block_height: u32,
+    pub target_times: Vec<u64>,
+    pub current_fee_rate: f64,
+    pub mempool_size: u64,
+    pub mempool_fees: u64,
+    pub num_spends: u64,
+    pub mempool_max_size: u64,
+    pub full_node_synced: bool,
+    pub peak_height: u32,
+    pub last_peak_timestamp: u64,
+    pub node_time_utc: u64,
+    pub last_block_cost: u64,
+    pub fees_last_block: u64,
+    pub fee_rate_last_block: f64,
+    pub last_tx_block_height: u32,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
@@ -214,8 +214,47 @@ pub struct BlockRequest {
 pub struct BlocksRequest {
     pub start: u32,
     pub end: u32,
+    #[serde(default)]
     pub exclude_header_hash: bool,
+    #[serde(default)]
     pub exclude_reorged: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoinQueryWindow {
+    #[serde(default)]
+    pub include_spent_coins: bool,
+    #[serde(default)]
+    pub start_height: Option<u32>,
+    #[serde(default)]
+    pub end_height: Option<u32>,
+}
+
+impl CoinQueryWindow {
+    #[must_use]
+    pub fn from_options(
+        include_spent_coins: Option<bool>,
+        start_height: Option<u32>,
+        end_height: Option<u32>,
+    ) -> Self {
+        Self {
+            include_spent_coins: include_spent_coins.unwrap_or(false),
+            start_height,
+            end_height,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionsRequest {
+    #[serde(default)]
+    pub node_type: Option<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AdditionsAndRemovals {
+    pub additions: Vec<CoinRecord>,
+    pub removals: Vec<CoinRecord>,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
@@ -246,7 +285,7 @@ pub struct NetworkSpaceRequest {
     pub newer_block_header_hash: Bytes32,
 }
 
-#[derive(ChiaSerial, Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(ChiaSerial, Clone, Default, PartialEq, Serialize, Deserialize, Debug)]
 pub struct RecentSignagePointorEOSRequest {
     pub sp_hash: Option<Bytes32>,
     pub challenge_hash: Option<Bytes32>,

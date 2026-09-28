@@ -66,7 +66,7 @@ pub struct QueuedSig {
 /// drains the whole window across all cores in one batch — per-block batches leave most cores
 /// idle. Two queues, drained by [`verify_vdf_batch`] and [`verify_sig_batch`].
 /// A `std::sync::Mutex` per queue, not a `RefCell`: the staging loop holds the sink across
-/// `.await` points, and the daemon runs it inside spawned tasks whose futures must be `Send`.
+/// `.await` points, and the server runs it inside spawned tasks whose futures must be `Send`.
 #[derive(Default)]
 pub struct HeaderSink {
     pub vdf: std::sync::Mutex<Vec<QueuedVdf>>,
@@ -185,10 +185,6 @@ pub(crate) fn verify_vdf_batch<P: ConsensusPrimitives + Sync>(
         return true;
     }
     log::debug!("vdf.batch proofs={}", queue.len());
-    if queue.len() == 1 {
-        let q = &queue[0];
-        return primitives.verify_vdf(constants, &q.input, &q.info, &q.proof, q.target.as_ref());
-    }
     let mut seen: std::collections::HashSet<Vec<u8>> =
         std::collections::HashSet::with_capacity(queue.len());
     let mut order: Vec<usize> = Vec::with_capacity(queue.len());
@@ -198,15 +194,9 @@ pub(crate) fn verify_vdf_batch<P: ConsensusPrimitives + Sync>(
         }
     }
     drop(seen);
-    // Longest-processing-time dispatch over a shared cursor: per-proof cost scales with the
-    // segment count (witness_type + 1), so fixed chunks pin the wall at the heaviest chunk's sum.
-    // The cursor bounds the tail at one proof, and handing out the heaviest proofs first bounds
-    // that tail by the lightest stragglers.
     order.sort_by_key(|&i| std::cmp::Reverse(queue[i].proof.witness_type));
-    let workers = std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(4)
-        .min(order.len());
+    #[cfg(feature = "drain-probe")]
+    let workers = dg_xch_core::compute::worker_count().min(order.len());
     #[cfg(feature = "drain-probe")]
     let probe = drain_probe::BatchProbe::start(
         primitives,
@@ -215,53 +205,25 @@ pub(crate) fn verify_vdf_batch<P: ConsensusPrimitives + Sync>(
         workers,
         queue.len().div_ceil(workers),
     );
-    // With at least one proof per worker the pool already saturates every core: verify on the
-    // worker thread only. Small batches keep the internal split to fill idle cores.
-    let saturated = order.len() >= workers;
-    let next = std::sync::atomic::AtomicUsize::new(0);
     let failed = std::sync::atomic::AtomicBool::new(false);
-    let ok = std::thread::scope(|s| {
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                s.spawn(|| {
-                    loop {
-                        // A failed proof anywhere makes the batch's AND false; the remaining
-                        // workers stop dispatching (the window bisect attributes the height).
-                        if failed.load(std::sync::atomic::Ordering::Relaxed) {
-                            return false;
-                        }
-                        let n = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(&i) = order.get(n) else {
-                            return true;
-                        };
-                        let q = &queue[i];
-                        let valid = if saturated {
-                            primitives.verify_vdf_serial(
-                                constants,
-                                &q.input,
-                                &q.info,
-                                &q.proof,
-                                q.target.as_ref(),
-                            )
-                        } else {
-                            primitives.verify_vdf(
-                                constants,
-                                &q.input,
-                                &q.info,
-                                &q.proof,
-                                q.target.as_ref(),
-                            )
-                        };
-                        if !valid {
-                            failed.store(true, std::sync::atomic::Ordering::Relaxed);
-                            return false;
-                        }
-                    }
-                })
-            })
-            .collect();
-        handles.into_iter().all(|h| h.join().unwrap_or(false))
+    let results = dg_xch_core::compute::map(dg_xch_core::compute::Phase::Vdf, &order, |index| {
+        if failed.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        let proof = &queue[*index];
+        let valid = primitives.verify_vdf_serial(
+            constants,
+            &proof.input,
+            &proof.info,
+            &proof.proof,
+            proof.target.as_ref(),
+        );
+        if !valid {
+            failed.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        valid
     });
+    let ok = results.into_iter().all(|valid| valid);
     #[cfg(feature = "drain-probe")]
     probe.finish(ok, queue.len());
     ok
@@ -271,8 +233,8 @@ fn verify_one_sig(q: &QueuedSig) -> bool {
     bls_verify(&q.pk, &q.msg, &q.sig)
 }
 
-/// Verify a queued batch of header BLS signatures across every available core, ANDed. Same
-/// shared-cursor work-stealing as `verify_vdf_batch`, but without the LPT sort or dedup pass:
+/// Verify a queued batch of header BLS signatures on the shared CPU pool, ANDed. Same
+/// work-stealing pool as `verify_vdf_batch`, but without the witness sort or dedup pass:
 /// each header sig is one AugScheme pairing of uniform cost. Each signature is verified through
 /// the same `bls_verify` the inline path calls, so the outcome is identical.
 #[must_use]
@@ -281,39 +243,19 @@ pub(crate) fn verify_sig_batch(queue: &[QueuedSig]) -> bool {
         return true;
     }
     log::debug!("sig.batch sigs={}", queue.len());
-    if queue.len() == 1 {
-        return verify_one_sig(&queue[0]);
-    }
-    let workers = std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(4)
-        .min(queue.len());
-    let next = std::sync::atomic::AtomicUsize::new(0);
     let failed = std::sync::atomic::AtomicBool::new(false);
-    std::thread::scope(|s| {
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                s.spawn(|| {
-                    loop {
-                        // A failed sig anywhere makes the batch's AND false; remaining workers
-                        // stop dispatching (`first_failing_sig` attributes the failure).
-                        if failed.load(std::sync::atomic::Ordering::Relaxed) {
-                            return false;
-                        }
-                        let n = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(q) = queue.get(n) else {
-                            return true;
-                        };
-                        if !verify_one_sig(q) {
-                            failed.store(true, std::sync::atomic::Ordering::Relaxed);
-                            return false;
-                        }
-                    }
-                })
-            })
-            .collect();
-        handles.into_iter().all(|h| h.join().unwrap_or(false))
+    dg_xch_core::compute::map(dg_xch_core::compute::Phase::Signature, queue, |signature| {
+        if failed.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        let valid = verify_one_sig(signature);
+        if !valid {
+            failed.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        valid
     })
+    .into_iter()
+    .all(|valid| valid)
 }
 
 #[must_use]
@@ -615,61 +557,5 @@ mod drain_probe {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{QueuedSig, first_failing_sig, verify_sig_batch};
-    use dg_xch_core::blockchain::sized_bytes::{Bytes48, Bytes96};
-    use dg_xch_core::consensus::block_header_validation::HeaderSigTag;
-
-    // Lock the tag -> rejection-string mapping for all five gates. A rename here is a
-    // consensus-visible error-string change and must be a deliberate edit.
-    #[test]
-    fn tag_rejection_strings_are_exact() {
-        assert_eq!(
-            HeaderSigTag::RewardChainSp.rejection(),
-            "INVALID_RC_SIGNATURE"
-        );
-        assert_eq!(
-            HeaderSigTag::ChallengeChainSp.rejection(),
-            "INVALID_CC_SIGNATURE"
-        );
-        assert_eq!(
-            HeaderSigTag::FoliageBlockData.rejection(),
-            "INVALID_PLOT_SIGNATURE (block data)"
-        );
-        assert_eq!(
-            HeaderSigTag::FoliageTransactionBlock.rejection(),
-            "INVALID_PLOT_SIGNATURE (ftb)"
-        );
-        assert_eq!(HeaderSigTag::Pool.rejection(), "INVALID_POOL_SIGNATURE");
-    }
-
-    fn garbage(tag: HeaderSigTag) -> QueuedSig {
-        // A zero public key / zero signature is not a valid G1/G2 point, so `bls_verify` fails
-        // closed (no panic) — exactly the malformed-input path, and enough to drive the batch's
-        // failure/ordering logic without real crypto.
-        QueuedSig {
-            pk: Bytes48::from([0u8; 48]),
-            msg: vec![1, 2, 3],
-            sig: Bytes96::from([0u8; 96]),
-            tag,
-        }
-    }
-
-    #[test]
-    fn empty_batch_is_vacuously_ok() {
-        assert!(verify_sig_batch(&[]));
-        assert_eq!(first_failing_sig(&[]), None);
-    }
-
-    #[test]
-    fn first_failing_sig_returns_the_first_bad_in_push_order() {
-        // Two failing sigs; `first_failing_sig` must return the first in slice order so the
-        // reported rejection matches the inline first-failure.
-        let q = [
-            garbage(HeaderSigTag::RewardChainSp),
-            garbage(HeaderSigTag::Pool),
-        ];
-        assert!(!verify_sig_batch(&q));
-        assert_eq!(first_failing_sig(&q), Some(HeaderSigTag::RewardChainSp));
-    }
-}
+#[path = "../tests/unit/header/tests.rs"]
+mod tests;

@@ -574,6 +574,10 @@ macro_rules! impl_sized_bytes {
                 }
             }
             impl ChiaSerialize for $name {
+                fn append_bytes(&self, bytes: &mut Vec<u8>, _version: ChiaProtocolVersion) -> Result<(), Error> {
+                    bytes.extend_from_slice(&self.bytes);
+                    Ok(())
+                }
                 fn to_bytes(&self, _version: ChiaProtocolVersion) -> Result<Vec<u8>, std::io::Error> {
                     Ok(self.bytes().to_vec())
                 }

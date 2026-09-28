@@ -179,10 +179,23 @@ pub fn get_delay_puzzle_info_from_launcher_spend(
     let rest = rest.rest()?;
     let extra_data = rest.first()?;
     let as_map = extra_data.to_map()?;
-    let seconds_vec = as_map.get(&Program::to("t")).unwrap();
-    let hash_vec = as_map.get(&Program::to("h")).unwrap();
+    let seconds_vec = as_map.get(&Program::to("t")).ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            "PlotNFT launcher has no delay time",
+        )
+    })?;
+    let hash_vec = as_map.get(&Program::to("h")).ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            "PlotNFT launcher has no delayed puzzle hash",
+        )
+    })?;
+    let seconds = seconds_vec
+        .as_vec()
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "PlotNFT delay time is not an atom"))?;
     Ok((
-        number_from_slice(&seconds_vec.as_vec().unwrap())
+        number_from_slice(&seconds)
             .to_u64()
             .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Failed to convert Atom to Int"))?,
         hash_vec.try_into()?,
@@ -244,6 +257,32 @@ pub fn create_absorb_spend(
     delay_time: u64,
     delay_ph: Bytes32,
 ) -> Result<Vec<CoinSpend>, Error> {
+    create_absorb_spend_with_reward(
+        last_coin_spend,
+        current,
+        launcher_coin,
+        height,
+        genesis_challenge,
+        delay_time,
+        delay_ph,
+        calculate_pool_reward(height),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_absorb_spend_with_reward(
+    last_coin_spend: &CoinSpend,
+    current: &PoolState,
+    launcher_coin: Coin,
+    height: u32,
+    genesis_challenge: Bytes32,
+    delay_time: u64,
+    delay_ph: Bytes32,
+    reward_amount: u64,
+) -> Result<Vec<CoinSpend>, Error> {
+    if reward_amount == 0 {
+        return Err(Error::other("pool reward must be positive"));
+    }
     let inner_puzzle: Program = pool_state_to_inner_puzzle(
         current,
         launcher_coin.name(),
@@ -251,7 +290,6 @@ pub fn create_absorb_spend(
         delay_time,
         delay_ph,
     )?;
-    let reward_amount = calculate_pool_reward(height);
     let inner_sol = if is_pool_member_inner_puzzle(&inner_puzzle)? {
         //inner sol is (spend_type, pool_reward_amount, pool_reward_height, extra_data)
         Program::to(&[SExp::from(reward_amount), SExp::from(height)])
