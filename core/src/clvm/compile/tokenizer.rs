@@ -89,14 +89,26 @@ impl<'a> Tokenizer<'a> {
             None
         } else {
             let chr = &self.stream[self.index.load(Ordering::Relaxed)];
-            if START_CONS_CHARS.contains(chr) {
+            if START_CONS_CHARS.contains(chr)
+                && (*chr != b'.'
+                    || self
+                        .stream
+                        .get(self.index.load(Ordering::Relaxed) + 1)
+                        .is_none_or(|c| {
+                            SPACE_CHARS.contains(c) || EOL_CHARS.contains(c) || *c == END_CONS_CHAR
+                        }))
+            {
                 let token = Token {
                     bytes: Cow::Borrowed(
                         &self.stream[self.index.load(Ordering::Relaxed)
                             ..=self.index.load(Ordering::Relaxed)],
                     ),
                     index: self.index.load(Ordering::Relaxed),
-                    t_type: TokenType::StartCons,
+                    t_type: if *chr == b'.' {
+                        TokenType::DotCons
+                    } else {
+                        TokenType::StartCons
+                    },
                 };
                 self.index.fetch_add(1, Ordering::Relaxed);
                 Some(token)
@@ -111,6 +123,26 @@ impl<'a> Tokenizer<'a> {
                 };
                 self.index.fetch_add(1, Ordering::Relaxed);
                 Some(token)
+            } else if matches!(chr, b'"' | b'\'') {
+                let start = self.index.fetch_add(1, Ordering::Relaxed);
+                let mut escaped = false;
+                while let Some(byte) = self.stream.get(self.index.load(Ordering::Relaxed)) {
+                    self.index.fetch_add(1, Ordering::Relaxed);
+                    if escaped {
+                        escaped = false;
+                    } else if byte == chr {
+                        return Some(Token {
+                            bytes: Cow::Borrowed(
+                                &self.stream[start..self.index.load(Ordering::Relaxed)],
+                            ),
+                            index: start,
+                            t_type: TokenType::Expression,
+                        });
+                    } else if *byte == b'\\' {
+                        escaped = true;
+                    }
+                }
+                None
             } else if chr == &COMMENT_CHAR {
                 self.consume_comment_chars();
                 let start = self.index.load(Ordering::Relaxed);
