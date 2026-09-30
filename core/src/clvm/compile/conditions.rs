@@ -1,10 +1,13 @@
 use crate::clvm::compile::tokenizer::{Token, TokenType, Tokenizer};
-use crate::clvm::compile::{Constant, Function};
+use crate::clvm::compile::{Compiler, Constant, Function, UnparsedCondition, classic};
+use crate::constants::COMPAT_CHIA;
 use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::fs;
 use std::io::{Error, ErrorKind};
+use std::mem::take;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::vec::IntoIter;
 
 pub fn parse_assign_pattern<'a>(
@@ -338,4 +341,385 @@ pub fn read_form<'a>(tokens: &mut IntoIter<Token<'a>>) -> Result<Vec<Token<'a>>,
         result.push(token);
     }
     Ok(result)
+}
+
+impl<'a> Compiler<'a> {
+    pub(super) fn ensure_token(&'a self, t_type: TokenType) -> Result<Token<'a>, Error> {
+        while let Some(token) = self.reader.next_token() {
+            if token.t_type == TokenType::Comment {
+                continue;
+            }
+            return if token.t_type != t_type {
+                Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!(
+                        "Unexpected Token, Expected {t_type:?} Got {:?}",
+                        token.t_type
+                    ),
+                ))
+            } else {
+                Ok(token)
+            };
+        }
+        Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            format!("Expected {t_type:?}"),
+        ))
+    }
+    pub(super) fn ensure_token_value(
+        &'a self,
+        t_type: TokenType,
+        expected_val: &[u8],
+    ) -> Result<Token<'a>, Error> {
+        let token = self.ensure_token(t_type)?;
+        if token.bytes != expected_val {
+            Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!("Unexpected token value got {token:?}"),
+            ))
+        } else {
+            Ok(token)
+        }
+    }
+    pub(super) fn parse_argument_names(&'a self) -> Result<(), Error> {
+        let first = std::iter::from_fn(|| self.reader.next_token())
+            .find(|token| token.t_type != TokenType::Comment)
+            .ok_or(Error::new(
+                ErrorKind::UnexpectedEof,
+                "Expected module arguments",
+            ))?;
+        if first.t_type == TokenType::Expression && self.flags & COMPAT_CHIA != 0 {
+            self.argument_names.write().push(first.clone());
+            *self.argument_pattern.write() = vec![first];
+            return Ok(());
+        }
+        if first.t_type != TokenType::StartCons {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Expected module arguments",
+            ));
+        }
+        let mut pattern = vec![first];
+        let mut depth = 1;
+        while let Some(token) = self.reader.next_token() {
+            match token.t_type {
+                TokenType::StartCons => depth += 1,
+                TokenType::EndCons => depth -= 1,
+                TokenType::Comment => continue,
+                _ => {}
+            }
+            pattern.push(token);
+            if depth == 0 {
+                break;
+            }
+        }
+        if depth != 0 {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "Unclosed argument list",
+            ));
+        }
+        let nested = pattern[1..pattern.len() - 1]
+            .iter()
+            .any(|token| matches!(token.t_type, TokenType::StartCons | TokenType::DotCons));
+        if nested {
+            if self.flags & COMPAT_CHIA == 0 {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "Nested module arguments require COMPAT_CHIA",
+                ));
+            }
+            let mut bindings = vec![];
+            parse_assign_pattern(
+                &mut pattern.clone().into_iter(),
+                num_bigint::BigInt::from(1u8),
+                &mut bindings,
+            )?;
+            self.argument_names
+                .write()
+                .extend(bindings.into_iter().map(|(name, _)| name));
+            *self.argument_pattern.write() = pattern;
+        } else {
+            self.argument_names.write().extend(
+                pattern
+                    .into_iter()
+                    .filter(|token| token.t_type == TokenType::Expression),
+            );
+        }
+        Ok(())
+    }
+    pub(super) fn parse_conditions(&'a self) -> Result<(), Error> {
+        let mut conditions = vec![];
+        while let Some(token) = self.reader.next_token() {
+            if token.t_type == TokenType::Comment {
+                continue;
+            }
+            if token.t_type == TokenType::StartCons {
+                let mut tokens = vec![token];
+                let mut depth = 0;
+                while let Some(token) = self.reader.next_token() {
+                    match token.t_type {
+                        TokenType::EndCons => {
+                            tokens.push(token);
+                            if depth == 0 {
+                                break;
+                            }
+                            depth -= 1;
+                        }
+                        TokenType::Expression | TokenType::DotCons | TokenType::Comment => {
+                            tokens.push(token);
+                        }
+                        TokenType::StartCons => {
+                            tokens.push(token);
+                            depth += 1;
+                        }
+                    }
+                }
+                let cond = UnparsedCondition { tokens };
+                conditions.push(cond);
+            } else if token.t_type == TokenType::EndCons {
+                match conditions.pop() {
+                    Some(entry_node) => {
+                        for condition in conditions {
+                            self.parse_condition(condition, 0)?
+                        }
+                        *self.body.lock().as_mut() = entry_node.tokens;
+                    }
+                    None => {
+                        return Err(Error::new(
+                            ErrorKind::InvalidInput,
+                            "Expected At Least 1 Condition",
+                        ));
+                    }
+                }
+                return Ok(());
+            } else {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("Unexpected token, Expected Start Cons got {token:?}"),
+                ));
+            }
+        }
+        Err(Error::new(ErrorKind::UnexpectedEof, "Expected Start Cons"))
+    }
+    fn parse_condition(
+        &'a self,
+        condition: UnparsedCondition<'a>,
+        include_depth: usize,
+    ) -> Result<(), Error> {
+        let mut conditions_queue = condition.tokens.into_iter();
+        if conditions_queue.next().map(|token| token.t_type) != Some(TokenType::StartCons) {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Expected declaration list",
+            ));
+        }
+        let operator = conditions_queue.next().ok_or(Error::new(
+            ErrorKind::UnexpectedEof,
+            "Expected declaration name",
+        ))?;
+        if operator.t_type != TokenType::Expression {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Expected declaration name",
+            ));
+        }
+        match operator.bytes.as_ref() {
+            b"defmacro" => {
+                if self.compiler_version.load(Ordering::Relaxed) >= 25 {
+                    return Err(Error::new(
+                        ErrorKind::Unsupported,
+                        "Macros require classic Chia compatibility or CL21/CL23",
+                    ));
+                }
+                let name = conditions_queue
+                    .next()
+                    .ok_or(Error::new(ErrorKind::UnexpectedEof, "Expected macro name"))?;
+                if name.t_type != TokenType::Expression {
+                    return Err(Error::new(ErrorKind::InvalidInput, "Expected macro name"));
+                }
+                let pattern = read_form(&mut conditions_queue)?;
+                let body = read_form(&mut conditions_queue)?;
+                if conditions_queue.next().map(|token| token.t_type) != Some(TokenType::EndCons)
+                    || conditions_queue.next().is_some()
+                {
+                    return Err(Error::new(ErrorKind::InvalidInput, "Expected end of macro"));
+                }
+                self.macros.write().push(classic::Macro {
+                    name: name.bytes.into_owned(),
+                    pattern: self
+                        .process_quoted(&mut pattern.into_iter(), false)
+                        .map_err(|e| Error::new(e.kind(), format!("Macro pattern: {e}")))?
+                        .to_owned(),
+                    body: self
+                        .process_quoted(&mut body.into_iter(), false)
+                        .map_err(|e| Error::new(e.kind(), format!("Macro body: {e}")))?
+                        .to_owned(),
+                });
+            }
+            b"defconstant" => {
+                self.constants
+                    .write()
+                    .push(parse_constant(&mut conditions_queue)?);
+            }
+            b"embed-file" => {
+                let mut conditions_queue = conditions_queue
+                    .filter(|v| v.t_type != TokenType::Comment)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+                let name = conditions_queue.next().ok_or(Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "Expected embedded file name",
+                ))?;
+                let kind = conditions_queue.next().ok_or(Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "Expected embedded file kind",
+                ))?;
+                if name.t_type != TokenType::Expression || kind.t_type != TokenType::Expression {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Expected embedded file name and kind",
+                    ));
+                }
+                if kind.bytes.as_ref() != b"bin" {
+                    return Err(Error::new(
+                        ErrorKind::Unsupported,
+                        "Only binary embed-file is supported",
+                    ));
+                }
+                let data = read_include(&mut conditions_queue, self.include_dirs)?;
+                self.declaration_order.write().push(name.bytes.clone());
+                let value = self.byte_atom(data);
+                self.embedded_files.write().push((name, value));
+            }
+            b"defun" | b"defun-inline" => {
+                let function =
+                    parse_function(&mut conditions_queue, self.flags & COMPAT_CHIA != 0)?;
+                self.reference_names.lock().record_function(&function)?;
+                self.declaration_order
+                    .write()
+                    .push(function.name.bytes.clone());
+                if operator.bytes.as_ref() == b"defun-inline" {
+                    self.inline_functions.write().push(function);
+                } else {
+                    self.functions.write().push(function);
+                }
+            }
+            b"include" => self.process_include(conditions_queue, include_depth)?,
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("Unexpected Expression: {operator:?}"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn process_include(
+        &'a self,
+        conditions_queue: IntoIter<Token<'a>>,
+        include_depth: usize,
+    ) -> Result<(), Error> {
+        let mut conditions_queue = conditions_queue
+            .filter(|v| v.t_type != TokenType::Comment)
+            .collect::<Vec<_>>()
+            .into_iter();
+        let name = conditions_queue.as_slice().first().ok_or(Error::new(
+            ErrorKind::UnexpectedEof,
+            "Expected include name",
+        ))?;
+        if name.t_type == TokenType::Expression
+            && name.bytes.starts_with(b"*")
+            && name.bytes.ends_with(b"*")
+        {
+            return self.parse_sigil(&conditions_queue);
+        }
+        if include_depth >= 64 {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Include nesting limit exceeded",
+            ));
+        }
+        let first = self.declaration_order.read().len();
+        let reader = parse_include(&mut conditions_queue, self.include_dirs)?;
+        let mut tokens = vec![];
+        let mut depth = 0;
+        let mut found_start = false;
+        let mut found_end = false;
+        while let Some(token) = reader.next_token() {
+            if token.t_type == TokenType::Comment {
+                continue;
+            }
+            if !found_start {
+                if token.t_type != TokenType::StartCons {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Expected include declaration list",
+                    ));
+                }
+                found_start = true;
+                continue;
+            }
+            if found_end {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "Unexpected token after include declaration list",
+                ));
+            }
+            match token.t_type {
+                TokenType::StartCons => depth += 1,
+                TokenType::EndCons if depth == 0 => {
+                    found_end = true;
+                    continue;
+                }
+                TokenType::EndCons => depth -= 1,
+                _ if depth == 0 => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Expected include declaration",
+                    ));
+                }
+                _ => {}
+            }
+            // Included declarations must outlive the temporary reader.
+            tokens.push(Token {
+                bytes: Cow::Owned(token.bytes.into_owned()),
+                index: token.index,
+                t_type: token.t_type,
+            });
+            if depth == 0 {
+                if tokens.len() < 3 || tokens[1].t_type != TokenType::Expression {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Expected include declaration",
+                    ));
+                }
+                self.parse_condition(
+                    UnparsedCondition {
+                        tokens: take(&mut tokens),
+                    },
+                    include_depth + 1,
+                )?;
+            }
+        }
+        for name in &self.declaration_order.read()[first..] {
+            if let Some(function) = self
+                .functions
+                .read()
+                .iter()
+                .chain(self.inline_functions.read().iter())
+                .find(|function| &function.name.bytes == name)
+            {
+                self.reference_names.lock().record_function(function)?;
+            }
+        }
+        if !found_end {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "Unclosed include declaration list",
+            ));
+        }
+        Ok(())
+    }
 }

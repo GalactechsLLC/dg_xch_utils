@@ -1,14 +1,15 @@
-use crate::clvm::compile::Function;
 use crate::clvm::compile::conditions::read_form;
 use crate::clvm::compile::tokenizer::{Token, TokenType};
-use crate::clvm::compile::utils::parse_value;
+use crate::clvm::compile::utils::{get_program_size, parse_value};
+use crate::clvm::compile::{Compiler, Function};
 use crate::clvm::sexp::SExp;
-use crate::constants::NULL_SEXP;
+use crate::constants::{COMPAT_CHIA, NULL_SEXP, OPT_SIZE};
 use crate::traits::SizedBytes;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::Error;
 use std::ops::Range;
+use std::sync::atomic::Ordering;
 
 // Only ordering metadata is reproduced here; the standard macros themselves
 // are implemented directly by the compiler. chialisp 0.4.5 with CL26 reserves
@@ -365,4 +366,167 @@ fn write_expression<'a>(
         result = output;
     }
     result
+}
+
+impl<'a> Compiler<'a> {
+    pub(super) fn optimize_assigns(
+        &'a self,
+        functions: &[Function<'a>],
+        mut inline_names: HashSet<Cow<'a, [u8]>>,
+    ) -> Result<(), Error> {
+        let dependencies: Vec<Vec<usize>> = functions
+            .iter()
+            .map(|function| {
+                functions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, other)| {
+                        function
+                            .function_body
+                            .iter()
+                            .any(|token| token.bytes == other.name.bytes)
+                    })
+                    .map(|(index, _)| index)
+                    .collect()
+            })
+            .collect();
+        let mut groups = vec![];
+        for (index, function) in functions.iter().enumerate() {
+            if !dependencies[index].is_empty()
+                || (!function.generated && !inline_names.contains(&function.name.bytes))
+            {
+                continue;
+            }
+            let mut roots = vec![];
+            let mut visited = HashSet::new();
+            let mut pending = vec![index];
+            while let Some(index) = pending.pop() {
+                if !visited.insert(index) {
+                    continue;
+                }
+                let function = &functions[index];
+                if !function.generated && !inline_names.contains(&function.name.bytes) {
+                    roots.push(index);
+                } else {
+                    pending.extend(
+                        dependencies
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, deps)| deps.contains(&index))
+                            .map(|(index, _)| index),
+                    );
+                }
+            }
+            if roots.is_empty() {
+                roots.push(index);
+            }
+            roots.sort_by(|a, b| functions[*a].name.bytes.cmp(&functions[*b].name.bytes));
+            roots.dedup();
+            groups.push(roots);
+        }
+        groups.sort_by_key(|group| {
+            group
+                .iter()
+                .map(|index| functions[*index].name.bytes.clone())
+                .collect::<Vec<_>>()
+        });
+        groups.dedup();
+        let groups: Vec<Vec<usize>> = groups
+            .into_iter()
+            .map(|roots| {
+                let mut reached = HashSet::new();
+                let mut pending: Vec<_> = roots
+                    .iter()
+                    .flat_map(|index| dependencies[*index].clone())
+                    .collect();
+                while let Some(index) = pending.pop() {
+                    if reached.insert(index) {
+                        pending.extend_from_slice(&dependencies[index]);
+                    }
+                }
+                if reached.is_empty() {
+                    reached.extend(roots);
+                }
+                let mut candidates: Vec<_> = reached
+                    .into_iter()
+                    .filter(|index| functions[*index].generated)
+                    .collect();
+                candidates.sort_by(|a, b| functions[*a].name.bytes.cmp(&functions[*b].name.bytes));
+                candidates
+            })
+            .collect();
+        let set_functions = |names: &HashSet<Cow<'a, [u8]>>| {
+            let (inline, regular): (Vec<_>, Vec<_>) = functions
+                .iter()
+                .cloned()
+                .partition(|f| names.contains(&f.name.bytes));
+            *self.table_names.write() = self
+                .declaration_order
+                .read()
+                .iter()
+                .filter(|name| {
+                    regular.iter().any(|f| &f.name.bytes == *name)
+                        || self
+                            .embedded_files
+                            .read()
+                            .iter()
+                            .any(|(token, _)| &token.bytes == *name)
+                })
+                .cloned()
+                .collect();
+            *self.functions.write() = regular;
+            *self.inline_functions.write() = inline;
+        };
+        if self.compiler_version.load(Ordering::Relaxed) == 21 {
+            // CL21 keeps let helpers inline; later dialects select them by program size.
+            inline_names.extend(
+                functions
+                    .iter()
+                    .filter(|f| f.generated)
+                    .map(|f| f.name.bytes.clone()),
+            );
+            set_functions(&inline_names);
+            return Ok(());
+        }
+        set_functions(&inline_names);
+        let program_size = || -> Result<u64, Error> {
+            let program = self.process()?;
+            Ok(
+                if self.opt_level == OPT_SIZE || self.flags & COMPAT_CHIA == 0 {
+                    program.serialized()?.as_ref().len() as u64
+                } else {
+                    get_program_size(program.sexp(), &self.byte_atoms.lock())
+                },
+            )
+        };
+        let mut size = program_size()?;
+        for group in groups {
+            loop {
+                let previous_size = size;
+                for index in &group {
+                    let function = &functions[*index];
+                    let was_inline = inline_names.remove(&function.name.bytes);
+                    if !was_inline {
+                        inline_names.insert(function.name.bytes.clone());
+                    }
+                    set_functions(&inline_names);
+                    let candidate_size = program_size()?;
+                    if candidate_size < size {
+                        size = candidate_size;
+                    } else {
+                        if was_inline {
+                            inline_names.insert(function.name.bytes.clone());
+                        } else {
+                            inline_names.remove(&function.name.bytes);
+                        }
+                        set_functions(&inline_names);
+                    }
+                }
+                if size == previous_size {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
 }

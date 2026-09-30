@@ -103,6 +103,90 @@ fn test_classic_reference_bytes() {
 }
 
 #[test]
+fn test_inline_destructuring_with_rest() {
+    use dg_xch_core::clvm::assemble::assemble_text;
+    use dg_xch_core::clvm::compile::{Compiler, OPT_REFERENCE};
+    use dg_xch_core::clvm::utils::INFINITE_COST;
+    use std::borrow::Cow;
+
+    // Reference compiler 0.4.5, -O. Classic rest forms are applied as source;
+    // CL23 rest arguments are lists. Empty rest arguments must not panic.
+    for (source, expected, env, result) in [
+        (
+            "(mod (X Y)  (defun-inline F ((A . B) . R) (list A B R)) (F X Y))",
+            "ff04ff04ffff04ff06ffff04ffff02ff05ffff04ff02ff808080ff80808080",
+            "((4 . 5) (q . 9))",
+            "(4 5 9)",
+        ),
+        (
+            "(mod (X Y)  (defun-inline F ((A . B) . R) (list A B R)) (F X))",
+            "ff04ff04ffff04ff06ffff01ff80808080",
+            "((4 . 5) (q . 9))",
+            "(4 5 ())",
+        ),
+        (
+            "(mod (X Y)  (defun-inline F ((A . B) . R) (list A B R)) (F X Y Y))",
+            "ff04ff04ffff04ff06ffff04ffff02ff05ffff04ff02ffff04ff05ff80808080ff80808080",
+            "((4 . 5) (q . 9))",
+            "(4 5 9)",
+        ),
+        (
+            "(mod (X Y) (include *standard-cl-23*) (defun-inline F ((A . B) . R) (list A B R)) (F X Y))",
+            "ff04ff04ffff04ff06ffff04ffff04ff05ff8080ff80808080",
+            "((4 . 5) 9)",
+            "(4 5 (9))",
+        ),
+        (
+            "(mod (X Y) (include *standard-cl-23*) (defun-inline F ((A . B) . R) (list A B R)) (F X))",
+            "ff04ff04ffff04ff06ffff01ff80808080",
+            "((4 . 5) 9)",
+            "(4 5 ())",
+        ),
+        (
+            "(mod (X Y) (include *standard-cl-23*) (defun-inline F ((A . B) . R) (list A B R)) (F X Y Y))",
+            "ff04ff04ffff04ff06ffff04ffff04ff05ffff04ff05ff808080ff80808080",
+            "((4 . 5) 9)",
+            "(4 5 (9 9))",
+        ),
+    ] {
+        let compiler = Compiler::new(
+            Cow::Borrowed(source.as_bytes()),
+            COMPAT_CHIA,
+            OPT_REFERENCE,
+            &[],
+        );
+        let program = compiler.compile().unwrap();
+        assert_eq!(
+            hex::encode(program.serialized().unwrap().as_ref()),
+            expected,
+            "{source}"
+        );
+        assert_eq!(
+            program
+                .run(INFINITE_COST, 0, &assemble_text(env).unwrap())
+                .unwrap()
+                .1,
+            assemble_text(result).unwrap(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn test_invalid_declaration_returns_error() {
+    use dg_xch_core::clvm::compile::{Compiler, OPT_REFERENCE};
+    use std::borrow::Cow;
+
+    for source in ["(mod () () (list))", "(mod () ((x)) (list))"] {
+        for flags in [0, COMPAT_CHIA] {
+            let compiler =
+                Compiler::new(Cow::Borrowed(source.as_bytes()), flags, OPT_REFERENCE, &[]);
+            assert!(compiler.compile().is_err(), "{source}");
+        }
+    }
+}
+
+#[test]
 fn test_cl21_cl23_reference_bytes_and_execution() {
     use dg_xch_core::clvm::assemble::assemble_text;
     use dg_xch_core::clvm::compile::{Compiler, OPT_REFERENCE};

@@ -21,6 +21,19 @@ pub fn parse_value(value: &[u8]) -> Result<SExp<'static>, ClvmError> {
     }
 }
 
+pub(super) fn eval_constant(entries: &[SExp<'_>]) -> Option<SExp<'static>> {
+    if !entries.iter().skip(1).all(|value| {
+        *value == NULL_SEXP
+            || matches!(value, SExp::Pair(pair) if pair.first() == &crate::constants::QUOTE_SEXP)
+    }) {
+        return None;
+    }
+    crate::clvm::runtime::ClvmRuntime::new(10_000_000, 0)
+        .run(&SExp::from(entries.to_vec()), &NULL_SEXP)
+        .ok()
+        .map(|(_, value)| value)
+}
+
 pub fn get_function_pointer(
     function_index: usize,
     const_count: usize,
