@@ -76,14 +76,15 @@ impl<'a> Cat<'a> {
         }
     }
     pub fn curried_tree_hash(&self) -> Result<Bytes32, Error> {
-        Ok(match self {
-            Cat::V1(args, _) => CAT_1_PROGRAM
-                .curry(&[Program::new(args.into())])
-                .tree_hash(),
-            Cat::V2(args, _) => CAT_2_PROGRAM
-                .curry(&[Program::new(args.into())])
-                .tree_hash(),
-        })
+        let args = self.curried_args();
+        Ok(self
+            .puzzle_reveal()
+            .curry(&[
+                Program::new(args.mod_hash.into()),
+                Program::new(args.tail_program_hash.into()),
+                args.inner_puzzle.to_owned(),
+            ])
+            .tree_hash())
     }
     pub fn curried_args(&'a self) -> &'a CatPuzzleCurriedArgs<'a> {
         match self {
@@ -104,7 +105,18 @@ impl<'a> Cat<'a> {
         }
     }
     pub fn run(&'a self, solution: CatSolution<'a>) -> Result<Program<'static>, Error> {
-        let args = Program::to(&[SExp::from(self.curried_args()), SExp::from(solution)]);
+        let curried_args = self.curried_args();
+        let args = Program::new(
+            SExp::from(curried_args.mod_hash).cons(
+                SExp::from(curried_args.tail_program_hash).cons(
+                    curried_args
+                        .inner_puzzle
+                        .sexp()
+                        .to_owned()
+                        .cons(solution.into()),
+                ),
+            ),
+        );
         let (_cost, results) = self.puzzle_reveal().run(INFINITE_COST, 0, &args)?;
         Ok(results.to_owned())
     }
@@ -192,5 +204,79 @@ impl TryFrom<&SExp<'_>> for NextCoinProof {
                 .to_u64()
                 .ok_or(Error::new(ErrorKind::InvalidData, "Invalid prev_subtotal"))?,
         })
+    }
+}
+
+#[test]
+fn test_cat_currying_and_run() {
+    for (module, mod_hash, expected_hash) in [
+        (
+            &CAT_1_PROGRAM,
+            CAT_1_TREE_HASH,
+            "9e18a400acfd3b2662be43e4bbf288aa837a5486981e8913a1b31f87ca4e5cf9",
+        ),
+        (
+            &CAT_2_PROGRAM,
+            CAT_2_TREE_HASH,
+            "9c05187421ca70664cb10a27e355b930a42f063aad534e5a42b0fb6adea8e375",
+        ),
+    ] {
+        let args = CatPuzzleCurriedArgs {
+            mod_hash,
+            tail_program_hash: [15; 32].into(),
+            inner_puzzle: Program::to(1),
+        };
+        let puzzle = module.curry(&[
+            Program::new(args.mod_hash.into()),
+            Program::new(args.tail_program_hash.into()),
+            args.inner_puzzle.clone(),
+        ]);
+        let parent = Coin {
+            parent_coin_info: [27; 32].into(),
+            puzzle_hash: puzzle.tree_hash(),
+            amount: 100,
+        };
+        let coin = Coin {
+            parent_coin_info: parent.name(),
+            ..parent
+        };
+        let inner_puzzle_hash = args.inner_puzzle.tree_hash();
+        let solution = SExp::from(CatSolution {
+            inner_puzzle_solution: Program::to(&[SExp::from(vec![
+                SExp::from(51),
+                inner_puzzle_hash.into(),
+                SExp::from(100u64),
+            ])]),
+            lineage_proof: LineageProof {
+                parent_parent_id: parent.parent_coin_info,
+                parent_inner_puzzle_hash: inner_puzzle_hash,
+                parent_amount: parent.amount,
+            },
+            prev_coin_id: coin.name(),
+            this_coin_info: coin,
+            next_coin_proof: NextCoinProof {
+                parent_coin_info: coin.parent_coin_info,
+                inner_puzzle_hash,
+                amount: coin.amount,
+            },
+            prev_subtotal: 0,
+            extra_delta: Program::to(0),
+        });
+        let cat = if mod_hash == CAT_1_TREE_HASH {
+            Cat::new_v1(args, CatSolution::try_from(&solution).unwrap())
+        } else {
+            Cat::new(args, CatSolution::try_from(&solution).unwrap())
+        };
+        assert_eq!(
+            cat.curried_tree_hash().unwrap(),
+            Bytes32::const_hex(expected_hash)
+        );
+        let (_, expected) = puzzle
+            .run(INFINITE_COST, 0, &Program::new(solution.clone()))
+            .unwrap();
+        assert_eq!(
+            cat.run(CatSolution::try_from(&solution).unwrap()).unwrap(),
+            expected
+        );
     }
 }

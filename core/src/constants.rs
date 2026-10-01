@@ -40,7 +40,9 @@ pub const ANY: u8 = 0x21;
 pub const ALL: u8 = 0x22;
 pub const SOFTFORK: u8 = 0x24;
 
-const PAIRS: [(u8, &str); 32] = [
+pub const COINID: u8 = 0x30;
+
+const PAIRS: [(u8, &str); 33] = [
     (QUOTE, "q"),
     (APPLY, "a"),
     (IF, "i"),
@@ -73,6 +75,7 @@ const PAIRS: [(u8, &str); 32] = [
     (ANY, "any"),
     (ALL, "all"),
     (SOFTFORK, "softfork"),
+    (COINID, "coinid"),
 ];
 
 pub static KEYWORD_FROM_ATOM: Lazy<HashMap<Vec<u8>, String>> =
@@ -116,6 +119,21 @@ pub const END_CONS: Token = Token {
 //Compiler Flags
 pub const INLINE_CONSTS: u32 = 0b_0000_0000_0000_0000_0000_0000_0000_0001;
 pub const INLINE_DEFUNS: u32 = 0b_0000_0000_0000_0000_0000_0000_0000_0010;
+// Keep assign values in nested environments instead of substituting expressions.
+pub const NESTED_ASSIGN: u32 = 0b_0000_0000_0000_0000_0000_0000_0000_0100;
+
+// Enable Chia compatibility: classic without a sigil, or the selected Chia sigil.
+// Classic support is incremental and requires OPT_REFERENCE without optimization flags.
+pub const COMPAT_CHIA: u32 = 0b_0000_0000_0000_0000_0000_0000_0000_1000;
+
+//Compiler Optimization Levels
+// Default: DG optimized output; with COMPAT_CHIA, target Chia reference bytes.
+pub const OPT_DEFAULT: u8 = 0;
+pub const OPT_REFERENCE: u8 = OPT_DEFAULT;
+// Prefer serialized size over reference byte layout.
+pub const OPT_SIZE: u8 = 1;
+// Evaluate assign bindings once using nested environments.
+pub const OPT_COST: u8 = 2;
 
 //BLS SCHEMES
 //const BASIC_SCHEME_DST: &[u8; 43] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
