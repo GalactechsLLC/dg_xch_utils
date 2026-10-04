@@ -474,7 +474,7 @@ async fn command_worker(
                     let genesis = settings.trusted_genesis()?;
                     let secret = tokio::task::spawn_blocking(move || account.unlock(&password)).await.map_err(Error::other)??;
                     let keys = (dg_xch_keys::master_sk_to_farmer_sk(&secret)?, dg_xch_keys::master_sk_to_pool_sk(&secret)?);
-                    let session = WalletSession::new(secret, settings.client()?, Arc::new(settings.constants()?), genesis, paths.data.join("wallets").join(&id).join(format!("{}.sqlite", hex::encode(genesis)))).await?;
+                    let session = WalletSession::new_with_mode(secret, settings.client()?, Arc::new(settings.constants()?), genesis, paths.data.join("wallets").join(&id).join(format!("{}.sqlite", hex::encode(genesis))), settings.wallet_sync_mode).await?;
                     let (sender, receiver) = mpsc::channel(4);
                     update(&state, |state| if let Some(account) = state.accounts.iter_mut().find(|account| account.account.id == id) { account.unlocked = true; account.snapshot = Some(session.snapshot()); account.error = None; });
                     let worker = tokio::spawn(wallet_worker(id.clone(), session, receiver, state.clone(), settings.poll_seconds));

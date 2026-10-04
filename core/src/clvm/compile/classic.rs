@@ -129,6 +129,14 @@ impl Expansion {
                 }
                 Ok(result)
             }
+            _ if self
+                .macros
+                .iter()
+                .any(|definition| definition.name == op.as_ref()) =>
+            {
+                let expanded = self.expand(value, depth + 1)?;
+                self.eval(&expanded, bindings, depth + 1)
+            }
             _ => {
                 let operator = B_KEYWORD_TO_SEXP.get(op.as_ref()).ok_or_else(|| {
                     Error::new(
@@ -172,10 +180,37 @@ impl Expansion {
         };
         if let SExp::Atom(op) = pair.first() {
             if op.as_ref() == b"qq" {
-                return Err(Error::new(
-                    ErrorKind::Unsupported,
-                    "Nested classic quasiquotation is not supported yet",
+                let names = SExp::from(
+                    bindings
+                        .iter()
+                        .map(|(name, _)| SExp::from(name.clone()))
+                        .collect::<Vec<_>>(),
+                );
+                let body = SExp::from(vec![SExp::from(b"qq".to_vec()), value.to_owned()]);
+                let module = SExp::from(vec![SExp::from(b"mod".to_vec()), names, body]);
+                let mut tokens = vec![];
+                emit(&module, &mut tokens);
+                let source = tokens
+                    .into_iter()
+                    .flat_map(|token| {
+                        let mut bytes = token.bytes.into_owned();
+                        bytes.push(b' ');
+                        bytes
+                    })
+                    .collect::<Vec<_>>();
+                let compiler =
+                    Compiler::new(Cow::Owned(source), crate::constants::COMPAT_CHIA, 0, &[]);
+                let program = compiler.compile()?;
+                let environment = crate::clvm::program::Program::new(SExp::from(
+                    bindings
+                        .iter()
+                        .map(|(_, value)| value.clone())
+                        .collect::<Vec<_>>(),
                 ));
+                return program
+                    .run(10_000_000, 0, &environment)
+                    .map(|(_, result)| result.sexp().to_owned())
+                    .map_err(Error::other);
             }
             if op.as_ref() == b"unquote" {
                 let args = arguments(pair.rest())?;
@@ -225,7 +260,7 @@ fn bind(
     Ok(())
 }
 
-fn emit(value: &SExp, tokens: &mut Vec<Token<'static>>) {
+pub(super) fn emit(value: &SExp, tokens: &mut Vec<Token<'static>>) {
     let token = |bytes: Vec<u8>, t_type| Token {
         bytes: Cow::Owned(bytes),
         index: 0,

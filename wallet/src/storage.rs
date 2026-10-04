@@ -354,7 +354,7 @@ impl WalletDatabase {
     }
 }
 
-fn private_file(path: &Path) -> Result<File, Error> {
+pub(crate) fn private_file(path: &Path) -> Result<File, Error> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => {
             return Err(Error::new(

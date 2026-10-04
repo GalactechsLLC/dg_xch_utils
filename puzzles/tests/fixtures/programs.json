@@ -1,0 +1,457 @@
+[
+  {
+    "name": "CAT_PUZZLE",
+    "path": "cat_puzzles/cat_v2.clsp.hex",
+    "hash": "37bef360ee858133b69d595a906dc45d01af50379dad515eb9518abb7c1d2a7a"
+  },
+  {
+    "name": "DELEGATED_TAIL",
+    "path": "cat_puzzles/delegated_tail.clsp.hex",
+    "hash": "999c3696e167f8a79d938adc11feba3a3dcb39ccff69a426d570706e7b8ec399"
+  },
+  {
+    "name": "EVERYTHING_WITH_SIGNATURE",
+    "path": "cat_puzzles/everything_with_signature.clsp.hex",
+    "hash": "1720d13250a7c16988eaf530331cefa9dd57a76b2c82236bec8bbbff91499b89"
+  },
+  {
+    "name": "EVERYTHING_WITH_SINGLETON",
+    "path": "cat_puzzles/everything_with_singleton.clsp.hex",
+    "hash": "0876da2005fe6262d4504c27a1b6379227aba8adbbad3758cb0e329a4e74c6cc"
+  },
+  {
+    "name": "GENESIS_BY_COIN_ID_OR_SINGLETON",
+    "path": "cat_puzzles/genesis_by_coin_id_or_singleton.clsp.hex",
+    "hash": "40170305e3a71c3e7523f37fbcfc3188f9f949da0818a6331f28251e76e8c56f"
+  },
+  {
+    "name": "GENESIS_BY_COIN_ID",
+    "path": "cat_puzzles/genesis_by_coin_id.clsp.hex",
+    "hash": "493afb89eed93ab86741b2aa61b8f5de495d33ff9b781dfc8919e602b2afa150"
+  },
+  {
+    "name": "GENESIS_BY_PUZZLE_HASH",
+    "path": "cat_puzzles/genesis_by_puzzle_hash.clsp.hex",
+    "hash": "de5a6e06d41518be97ff6365694f4f89475dda773dede267caa33da63b434e36"
+  },
+  {
+    "name": "DAO_CAT_EVE",
+    "path": "dao_puzzles/dao_cat_eve.clsp.hex",
+    "hash": "488f55bedaca5a599544dfd5ab341e2e5c7e6fca67d9b98a3d856f876c52f53e"
+  },
+  {
+    "name": "DAO_CAT_LAUNCHER",
+    "path": "dao_puzzles/dao_cat_launcher.clsp.hex",
+    "hash": "a01a838d18d4e031e937c79fa3f80f213fa00a3e64af6c16a1f137770cd3a567"
+  },
+  {
+    "name": "DAO_FINISHED_STATE",
+    "path": "dao_puzzles/dao_finished_state.clsp.hex",
+    "hash": "694c99e1fb07671771bbca3d110880693a9ecc37a6529891ec979d0f3e760eba"
+  },
+  {
+    "name": "DAO_LOCKUP",
+    "path": "dao_puzzles/dao_lockup.clsp.hex",
+    "hash": "d6215f0916715a69fbbf2d1a679f437fde81787adeb90c666642fb9c2deff7ce"
+  },
+  {
+    "name": "DAO_PROPOSAL_TIMER",
+    "path": "dao_puzzles/dao_proposal_timer.clsp.hex",
+    "hash": "1acd912fca662d1474f7a6c762280fc1430875bef518883387086c1125027526"
+  },
+  {
+    "name": "DAO_PROPOSAL_VALIDATOR",
+    "path": "dao_puzzles/dao_proposal_validator.clsp.hex",
+    "hash": "92209b0f7efb2dbaaaa3aab94dcadcafa9d008d39661763841c7d92065b3fd34"
+  },
+  {
+    "name": "DAO_PROPOSAL",
+    "path": "dao_puzzles/dao_proposal.clsp.hex",
+    "hash": "fe6d5c0373c1750598d137ce50b5b025a203655ccab4ab3329315abad49c3586"
+  },
+  {
+    "name": "DAO_SPEND_P2_SINGLETON",
+    "path": "dao_puzzles/dao_spend_p2_singleton_v2.clsp.hex",
+    "hash": "7bc8942159e600f56a87e1d9c059c8705307ec2fb996a949503298dedfed00be"
+  },
+  {
+    "name": "DAO_TREASURY",
+    "path": "dao_puzzles/dao_treasury.clsp.hex",
+    "hash": "637d78acd395b6bb03211bcfc5f5f2e878cba2d62b2f53871d49a8b928411b19"
+  },
+  {
+    "name": "DAO_UPDATE_PROPOSAL",
+    "path": "dao_puzzles/dao_update_proposal.clsp.hex",
+    "hash": "fc032384cfece9b542c3e1ea77ba119fb1013a3d74b622302c0b670447e4343d"
+  },
+  {
+    "name": "DID_INNERPUZ",
+    "path": "did_puzzles/did_innerpuz.clsp.hex",
+    "hash": "33143d2bef64f14036742673afd158126b94284b4530a28c354fac202b0c910e"
+  },
+  {
+    "name": "GRAFTROOT_DL_OFFERS",
+    "path": "dl_puzzles/graftroot_dl_offers.clsp.hex",
+    "hash": "0893e36a88c064fddfa6f8abdb42c044584a98cb4273b80cccc83b4867b701a1"
+  },
+  {
+    "name": "CREATE_NFT_LAUNCHER_FROM_DID",
+    "path": "nft_puzzles/create_nft_launcher_from_did.clsp.hex",
+    "hash": "7a32d2d9571d3436791c0ad3d7fcfdb9c43ace2b0f0ff13f98d29f0cc093f445"
+  },
+  {
+    "name": "NFT_INTERMEDIATE_LAUNCHER",
+    "path": "nft_puzzles/nft_intermediate_launcher.clsp.hex",
+    "hash": "7a32d2d9571d3436791c0ad3d7fcfdb9c43ace2b0f0ff13f98d29f0cc093f445"
+  },
+  {
+    "name": "NFT_METADATA_UPDATER_DEFAULT",
+    "path": "nft_puzzles/nft_metadata_updater_default.clsp.hex",
+    "hash": "fe8a4b4e27a2e29a4d3fc7ce9d527adbcaccbab6ada3903ccf3ba9a769d2d78b"
+  },
+  {
+    "name": "NFT_METADATA_UPDATER_UPDATEABLE",
+    "path": "nft_puzzles/nft_metadata_updater_updateable.clsp.hex",
+    "hash": "0b1ffba1601777c06b78ab38636e9624f2f8da73be9b36e0ce17c8d8ef3bad9f"
+  },
+  {
+    "name": "NFT_OWNERSHIP_LAYER",
+    "path": "nft_puzzles/nft_ownership_layer.clsp.hex",
+    "hash": "c5abea79afaa001b5427dfa0c8cf42ca6f38f5841b78f9b3c252733eb2de2726"
+  },
+  {
+    "name": "NFT_OWNERSHIP_TRANSFER_PROGRAM_ONE_WAY_CLAIM_WITH_ROYALTIES",
+    "path": "nft_puzzles/nft_ownership_transfer_program_one_way_claim_with_royalties.clsp.hex",
+    "hash": "025dee0fb1e9fa110302a7e9bfb6e381ca09618e2778b0184fa5c6b275cfce1f"
+  },
+  {
+    "name": "NFT_STATE_LAYER",
+    "path": "nft_puzzles/nft_state_layer.clsp.hex",
+    "hash": "a04d9f57764f54a43e4030befb4d80026e870519aaa66334aef8304f5d0393c2"
+  },
+  {
+    "name": "CONDITIONS_W_FEE_ANNOUNCE",
+    "path": "vc_puzzles/cr_puzzles/conditions_w_fee_announce.clsp.hex",
+    "hash": "1a169582dc619f2542f8eb79f02823e1595ba0aca53820f503eda5ff20b47856"
+  },
+  {
+    "name": "CREDENTIAL_RESTRICTION",
+    "path": "vc_puzzles/cr_puzzles/credential_restriction.clsp.hex",
+    "hash": "2fdfc1f058cfd65e7ec4e253bfeb394da163ecd0036f508df8629b0a2b8fde96"
+  },
+  {
+    "name": "FLAG_PROOFS_CHECKER",
+    "path": "vc_puzzles/cr_puzzles/flag_proofs_checker.clsp.hex",
+    "hash": "fe2e3c631562fbb9be095297f762bf573705a0197164e9361ad5d50e045ba241"
+  },
+  {
+    "name": "COVENANT_LAYER",
+    "path": "vc_puzzles/covenant_layer.clsp.hex",
+    "hash": "b982796850336aabf9ab17c3f21e299f0c633444117ab5e9ebeafadf1860d9fc"
+  },
+  {
+    "name": "EML_COVENANT_MORPHER",
+    "path": "vc_puzzles/eml_covenant_morpher.clsp.hex",
+    "hash": "6a87946257f555ae82aca6a11b5205058b844f634ecb6c7dc6b0c54eb2996308"
+  },
+  {
+    "name": "EML_TRANSFER_PROGRAM_COVENANT_ADAPTER",
+    "path": "vc_puzzles/eml_transfer_program_covenant_adapter.clsp.hex",
+    "hash": "4218fbebbb6f3c0907ebe8a672fa5d1e4bc655645a3a0073601e6c9b50b07c47"
+  },
+  {
+    "name": "EML_UPDATE_METADATA_WITH_DID",
+    "path": "vc_puzzles/eml_update_metadata_with_DID.clsp.hex",
+    "hash": "d3a9a1fc20f247d009b4b0e941707d50b91885c99d0b27ef882e1294e771139d"
+  },
+  {
+    "name": "EXIGENT_METADATA_LAYER",
+    "path": "vc_puzzles/exigent_metadata_layer.clsp.hex",
+    "hash": "d5fd32e069fda83e230ccd8f6a7c4f652231aed5c755514b3d996cbeff4182b8"
+  },
+  {
+    "name": "P2_ANNOUNCED_DELEGATED_PUZZLE",
+    "path": "vc_puzzles/p2_announced_delegated_puzzle.clsp.hex",
+    "hash": "c4d24c3c5349376f3e8f3aba202972091713b4ec4915f0f26192ae4ace0bd04d"
+  },
+  {
+    "name": "STANDARD_VC_REVOCATION_PUZZLE",
+    "path": "vc_puzzles/standard_vc_revocation_puzzle.clsp.hex",
+    "hash": "fbce76408ebaf9b3d0b8cd90cc68607755eeca67cd7432d5eea85f3f498cc002"
+  },
+  {
+    "name": "STD_PARENT_MORPHER",
+    "path": "vc_puzzles/std_parent_morpher.clsp.hex",
+    "hash": "8c3f1dc2e46c0d7ec4c2cbd007e23c0368ff8f80c5bc0101647a5c27626ebce6"
+  },
+  {
+    "name": "REVOCATION_LAYER",
+    "path": "vc_puzzles/revocation_layer.clsp.hex",
+    "hash": "00848115554ea674131f89f311707a959ad3f4647482648f3fe91ba289131f51"
+  },
+  {
+    "name": "ACS_TRANSFER_PROGRAM",
+    "path": "vc_puzzles/acs_transfer_program.clsp.hex",
+    "hash": "664e6e57ac6a184334a3e743c446c5d28c0dd2ae6f84bad6dacec29ab7a0bd43"
+  },
+  {
+    "name": "AUGMENTED_CONDITION",
+    "path": "augmented_condition.clsp.hex",
+    "hash": "d303eafa617bedf0bc05850dd014e10fbddf622187dc07891a2aacba9d8a93f6"
+  },
+  {
+    "name": "NOTIFICATION",
+    "path": "notification.clsp.hex",
+    "hash": "b8b9d8ffca6d5cba5422ead7f477ecfc8f6aaaa1c024b8c3aeb1956b24a0ab1e"
+  },
+  {
+    "name": "P2_1_OF_N",
+    "path": "p2_1_of_n.clsp.hex",
+    "hash": "46b29fd87fbeb6737600c4543931222a6c1ed3db6fa5601a3ca284a9f4efe780"
+  },
+  {
+    "name": "P2_CONDITIONS",
+    "path": "p2_conditions.clsp.hex",
+    "hash": "1c77d7d5efde60a7a1d2d27db6d746bc8e568aea1ef8586ca967a0d60b83cc36"
+  },
+  {
+    "name": "P2_DELEGATED_CONDITIONS",
+    "path": "p2_delegated_conditions.clsp.hex",
+    "hash": "0ff94726f1a8dea5c3f70d3121945190778d3b2b3fcda3735a1f290977e98341"
+  },
+  {
+    "name": "P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE",
+    "path": "p2_delegated_puzzle_or_hidden_puzzle.clsp.hex",
+    "hash": "e9aaa49f45bad5c889b86ee3341550c155cfdd10c3a6757de618d20612fffd52"
+  },
+  {
+    "name": "P2_DELEGATED_PUZZLE",
+    "path": "p2_delegated_puzzle.clsp.hex",
+    "hash": "542cde70d1102cd1b763220990873efc8ab15625ded7eae22cc11e21ef2e2f7c"
+  },
+  {
+    "name": "P2_M_OF_N_DELEGATE_DIRECT",
+    "path": "p2_m_of_n_delegate_direct.clsp.hex",
+    "hash": "0f199d5263ac1a62b077c159404a71abd3f9691cc57520bf1d4c5cb501504457"
+  },
+  {
+    "name": "P2_PARENT",
+    "path": "p2_parent.clsp.hex",
+    "hash": "b10ce2d0b18dcf8c21ddfaf55d9b9f0adcbf1e0beb55b1a8b9cad9bbff4e5f22"
+  },
+  {
+    "name": "P2_SINGLETON_AGGREGATOR",
+    "path": "p2_singleton_aggregator.clsp.hex",
+    "hash": "f79a31fcfe3736cc75720617b4cdcb4376b4b8f8f71108617710612b909a4924"
+  },
+  {
+    "name": "P2_SINGLETON_OR_DELAYED_PUZHASH",
+    "path": "p2_singleton_or_delayed_puzhash.clsp.hex",
+    "hash": "adb656e0211e2ab4f42069a4c5efc80dc907e7062be08bf1628c8e5b6d94d25b"
+  },
+  {
+    "name": "P2_SINGLETON_VIA_DELEGATED_PUZZLE",
+    "path": "p2_singleton_via_delegated_puzzle.clsp.hex",
+    "hash": "9590eaa169e45b655a31d3c06bbd355a3e2b2e3e410d3829748ce08ab249c39e"
+  },
+  {
+    "name": "P2_SINGLETON",
+    "path": "p2_singleton.clsp.hex",
+    "hash": "40f828d8dd55603f4ff9fbf6b73271e904e69406982f4fbefae2c8dcceaf9834"
+  },
+  {
+    "name": "P2_PUZZLE_HASH",
+    "path": "p2_puzzle_hash.clsp.hex",
+    "hash": "13e29a62b42cd2ef72a79e4bacdc59733ca6310d65af83d349360d36ec622363"
+  },
+  {
+    "name": "SETTLEMENT_PAYMENT",
+    "path": "settlement_payments.clsp.hex",
+    "hash": "cfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7"
+  },
+  {
+    "name": "SINGLETON_LAUNCHER",
+    "path": "singleton_launcher.clsp.hex",
+    "hash": "eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9"
+  },
+  {
+    "name": "SINGLETON_TOP_LAYER_V1_1",
+    "path": "singleton_top_layer_v1_1.clsp.hex",
+    "hash": "7faa3253bfddd1e0decb0906b2dc6247bbc4cf608f58345d173adb63e8b47c9f"
+  },
+  {
+    "name": "SINGLETON_TOP_LAYER",
+    "path": "singleton_top_layer.clsp.hex",
+    "hash": "24e044101e57b3d8c908b8a38ad57848afd29d3eecc439dba45f4412df4954fd"
+  },
+  {
+    "name": "ONE_OF_N",
+    "path": "mips_puzzles/architecture_puzzles/1_of_n.clsp.hex",
+    "hash": "bcb9aa74893bebcfa2da87271b0330bf2773b6391144ae72262b6824d9c55939"
+  },
+  {
+    "name": "M_OF_N",
+    "path": "mips_puzzles/architecture_puzzles/m_of_n.clsp.hex",
+    "hash": "de27deb2ebc7f1e1b77e1d38cc2f9d90fbd54d4b13dd4e6fa1f659177e36ed4f"
+  },
+  {
+    "name": "N_OF_N",
+    "path": "mips_puzzles/architecture_puzzles/n_of_n.clsp.hex",
+    "hash": "d4394f50cb1d6ef130788db2e69ab0087ef79b0737179f201c1d1d2a52df1e59"
+  },
+  {
+    "name": "DELEGATED_PUZZLE_FEEDER",
+    "path": "mips_puzzles/architecture_puzzles/delegated_puzzle_feeder.clsp.hex",
+    "hash": "9db33d93853179903d4dd272a00345ee6630dc94907dbcdd96368df6931060fd"
+  },
+  {
+    "name": "RESTRICTIONS",
+    "path": "mips_puzzles/architecture_puzzles/restrictions.clsp.hex",
+    "hash": "a28d59d39f964a93159c986b1914694f6f2f1c9901178f91e8b0ba4045980eef"
+  },
+  {
+    "name": "BLS_MEMBER_PUZZLE_ASSERT",
+    "path": "mips_puzzles/member_puzzles/bls_member_puzzle_assert.clsp.hex",
+    "hash": "0db2c7260209fc59f28c2d188f62d8d85818f61744ade7794d675b4123acef19"
+  },
+  {
+    "name": "BLS_MEMBER",
+    "path": "mips_puzzles/member_puzzles/bls_member.clsp.hex",
+    "hash": "21a3ae8b3ce64d41ca98d6d8df8f465c9e1bfb19ab40284a5da8479ba7fade78"
+  },
+  {
+    "name": "BLS_WITH_TAPROOT_MEMBER_PUZZLE_ASSERT",
+    "path": "mips_puzzles/member_puzzles/bls_with_taproot_member_puzzle_assert.clsp.hex",
+    "hash": "b9ca4641016fc97006e363e94195101bbdd97a8b95aaaca977aaea3dd8f36e89"
+  },
+  {
+    "name": "BLS_WITH_TAPROOT_MEMBER",
+    "path": "mips_puzzles/member_puzzles/bls_with_taproot_member.clsp.hex",
+    "hash": "35d2ad31aaf0df91c965909e5112294c57a18354ee4a5aae80572080ec3b6842"
+  },
+  {
+    "name": "FIXED_PUZZLE_MEMBER",
+    "path": "mips_puzzles/member_puzzles/fixed_puzzle_member.clsp.hex",
+    "hash": "34ede3eadc52ed750e405f2b9dea9891506547f651290bb606356d997c64f219"
+  },
+  {
+    "name": "PASSKEY_MEMBER_PUZZLE_ASSERT",
+    "path": "mips_puzzles/member_puzzles/passkey_member_puzzle_assert.clsp.hex",
+    "hash": "e6db5ba2eeded13c47216512a7a4662b95121c145580db6312cb711aaadcec32"
+  },
+  {
+    "name": "PASSKEY_MEMBER",
+    "path": "mips_puzzles/member_puzzles/passkey_member.clsp.hex",
+    "hash": "1d66225b71ec6caf33e3771ebaa7fcd50826fd31844dc8258116b37b3ff3c7ae"
+  },
+  {
+    "name": "SECP256K1_MEMBER_PUZZLE_ASSERT",
+    "path": "mips_puzzles/member_puzzles/secp256k1_member_puzzle_assert.clsp.hex",
+    "hash": "67d591ffeb00571269d401f41a6a43ceb927b5087074ad4446ff22400a010e87"
+  },
+  {
+    "name": "SECP256K1_MEMBER",
+    "path": "mips_puzzles/member_puzzles/secp256k1_member.clsp.hex",
+    "hash": "2b05daf134c9163acc8f2ac05b61f7d8328fca3dcc963154a28e89bcfc4dbfca"
+  },
+  {
+    "name": "SECP256R1_MEMBER_PUZZLE_ASSERT",
+    "path": "mips_puzzles/member_puzzles/secp256r1_member_puzzle_assert.clsp.hex",
+    "hash": "d77bbc050bff8dfe4eb4544fa2bf0d0fd0463b96801bf6445687bd35985e71db"
+  },
+  {
+    "name": "SECP256R1_MEMBER",
+    "path": "mips_puzzles/member_puzzles/secp256r1_member.clsp.hex",
+    "hash": "05aaa1f2fb6c48b5bce952b09f3da99afa4241989878a9919aafb7d74b70ac54"
+  },
+  {
+    "name": "SINGLETON_MEMBER_WITH_MODE",
+    "path": "mips_puzzles/member_puzzles/singleton_member_with_mode.clsp.hex",
+    "hash": "a7611d7cf6246399ff07469211d6efed96e47a44fc3be6ac9375aee995b0e010"
+  },
+  {
+    "name": "SINGLETON_MEMBER",
+    "path": "mips_puzzles/member_puzzles/singleton_member.clsp.hex",
+    "hash": "6f1cebc5a6d3661ad87d3558146259ca580729b244b7662757f8d1c34a6a9ad9"
+  },
+  {
+    "name": "FORCE_1_OF_2_W_RESTRICTED_VARIABLE",
+    "path": "mips_puzzles/restriction_puzzles/wrappers/force_1_of_2_w_restricted_variable.clsp.hex",
+    "hash": "4f7bc8f30deb6dad75a1e29ceacb67fd0fe0eda79173e45295ff2cfbb8de53c6"
+  },
+  {
+    "name": "FORCE_ASSERT_COIN_ANNOUNCEMENT",
+    "path": "mips_puzzles/restriction_puzzles/wrappers/force_assert_coin_announcement.clsp.hex",
+    "hash": "ca0daca027e5ebd4a61fad7e32cfe1e984ad5b561c2fc08dea30accf3a191fab"
+  },
+  {
+    "name": "FORCE_COIN_MESSAGE",
+    "path": "mips_puzzles/restriction_puzzles/wrappers/force_coin_message.clsp.hex",
+    "hash": "9618c96b30b96362f6c01716a11f76c630a786697d5bac92345f5ff90b882268"
+  },
+  {
+    "name": "PREVENT_CONDITION_OPCODE",
+    "path": "mips_puzzles/restriction_puzzles/wrappers/prevent_condition_opcode.clsp.hex",
+    "hash": "046dfa794bb1df14d5dc891b23764a0e31f119546d2c56cdc8df0d31daaa555f"
+  },
+  {
+    "name": "PREVENT_MULTIPLE_CREATE_COINS",
+    "path": "mips_puzzles/restriction_puzzles/wrappers/prevent_multiple_create_coins.clsp.hex",
+    "hash": "93b8c8abeab8f6bdba4acb49ed49362ecba94b703a48b15c8784f966547b7846"
+  },
+  {
+    "name": "TIMELOCK",
+    "path": "mips_puzzles/restriction_puzzles/wrappers/timelock.clsp.hex",
+    "hash": "a6f96d8ecf9bd29e8c41822d231408823707b587bc0d372e5db4ac9733cbea3c"
+  },
+  {
+    "name": "ADD_DPUZ_WRAPPER",
+    "path": "mips_puzzles/restriction_puzzles/add_dpuz_wrapper.clsp.hex",
+    "hash": "6427724905f2dcf8187300ef9a0436a3c96198e4fcd17101d1ded9bc61c3f3bf"
+  },
+  {
+    "name": "ENFORCE_DPUZ_WRAPPERS",
+    "path": "mips_puzzles/restriction_puzzles/enforce_dpuz_wrappers.clsp.hex",
+    "hash": "1f94aa2381c1c02fec90687c0b045ef3cad4b458f8eac5bd90695b4d89624f09"
+  },
+  {
+    "name": "POOL_MEMBER_INNERPUZ",
+    "path": "pool_puzzles/pool_member_innerpuz.clsp.hex",
+    "hash": "a8490702e333ddd831a3ac9c22d0fa26d2bfeaf2d33608deb22f0e0123eb0494"
+  },
+  {
+    "name": "POOL_WAITINGROOM_INNERPUZ",
+    "path": "pool_puzzles/pool_waitingroom_innerpuz.clsp.hex",
+    "hash": "a317541a765bf8375e1c6e7c13503d0d2cbf56cacad5182befe947e78e2c0307"
+  },
+  {
+    "name": "CHIALISP_DESERIALISATION",
+    "path": "consensus_puzzles/chialisp_deserialisation.clsp.hex",
+    "hash": "94ec19077f9a34e0b11ad2456af0170f4cc03f11230ca42e3f82e6e644ac4f5d"
+  },
+  {
+    "name": "ROM_BOOTSTRAP_GENERATOR",
+    "path": "consensus_puzzles/rom_bootstrap_generator.clsp.hex",
+    "hash": "161bade1f822dcd62ab712ebaf30f3922a301e48a639e4295c5685f8bece7bd9"
+  },
+  {
+    "name": "BLOCK_PROGRAM_ZERO",
+    "path": "full_node_puzzles/block_program_zero.clsp.hex",
+    "hash": "f0a38c8efe58895ae527c65c37f700a4238504691b83990e5dd91bd8b3c30eae"
+  },
+  {
+    "name": "DECOMPRESS_COIN_SPEND_ENTRY_WITH_PREFIX",
+    "path": "full_node_puzzles/decompress_coin_spend_entry_with_prefix.clsp.hex",
+    "hash": "92aa4bc8060a8836355a1884075141b4791ce1b67ae6092bb166b2845954bc89"
+  },
+  {
+    "name": "DECOMPRESS_COIN_SPEND_ENTRY",
+    "path": "full_node_puzzles/decompress_coin_spend_entry.clsp.hex",
+    "hash": "9d98ed08770d31be4bd1bde4705dab388db5e7e9c349f5a76fc3c347aa3a0b79"
+  },
+  {
+    "name": "DECOMPRESS_PUZZLE",
+    "path": "full_node_puzzles/decompress_puzzle.clsp.hex",
+    "hash": "fe94c58f1117afe315e0450daca1c62460ec1a1c439cd4018d79967a5d7d1370"
+  }
+]

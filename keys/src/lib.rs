@@ -1,6 +1,6 @@
 use bech32::{Bech32m, Hrp};
 use bip39::Mnemonic;
-use blst::min_pk::{PublicKey, SecretKey};
+use blst::min_pk::{AggregatePublicKey, PublicKey, SecretKey};
 use blst::{blst_bendian_from_scalar, blst_scalar, blst_scalar_from_be_bytes, blst_sk_add_n_check};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::formatting::prep_hex_str;
@@ -99,6 +99,45 @@ fn derive_child_sk_unhardened(key: &SecretKey, index: u32) -> Result<SecretKey, 
         out
     };
     SecretKey::from_bytes(&agg).map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))
+}
+
+pub fn derive_child_pk_unhardened(key: &PublicKey, index: u32) -> Result<PublicKey, Error> {
+    key.validate()
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
+    let mut input = Vec::with_capacity(52);
+    input.extend_from_slice(&key.to_bytes());
+    input.extend_from_slice(&index.to_be_bytes());
+    let hash = hash_256(&input);
+    let mut scalar = blst_scalar::default();
+    let mut bytes = [0u8; 32];
+    unsafe {
+        blst_scalar_from_be_bytes(&mut scalar, hash.as_ptr(), hash.len());
+        blst_bendian_from_scalar(bytes.as_mut_ptr(), &scalar);
+    }
+    if bytes == [0; 32] {
+        return Ok(*key);
+    }
+    let offset = SecretKey::from_bytes(&bytes)
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
+    let mut result = AggregatePublicKey::from_public_key(key);
+    result
+        .add_public_key(&offset.sk_to_pk(), false)
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
+    Ok(result.to_public_key())
+}
+
+#[test]
+fn public_derivation_matches_secret_derivation() {
+    for seed in [0u8, 1, 42, 255] {
+        let key = SecretKey::key_gen_v3(&[seed; 32], &[]).unwrap();
+        for index in [0, 1, 12381, u32::MAX] {
+            let expected = derive_child_sk_unhardened(&key, index).unwrap().sk_to_pk();
+            assert_eq!(
+                derive_child_pk_unhardened(&key.sk_to_pk(), index).unwrap(),
+                expected
+            );
+        }
+    }
 }
 
 pub fn derive_path(key: &SecretKey, paths: Vec<u32>) -> Result<SecretKey, Error> {

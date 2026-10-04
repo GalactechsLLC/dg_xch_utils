@@ -322,7 +322,9 @@ pub fn read_include(
     }
 }
 
-pub fn read_form<'a>(tokens: &mut IntoIter<Token<'a>>) -> Result<Vec<Token<'a>>, Error> {
+pub fn read_form<'a>(
+    tokens: &mut impl Iterator<Item = Token<'a>>,
+) -> Result<Vec<Token<'a>>, Error> {
     let token = tokens
         .find(|token| token.t_type != TokenType::Comment)
         .ok_or(Error::new(ErrorKind::UnexpectedEof, "Expected Expression"))?;
@@ -423,12 +425,6 @@ impl<'a> Compiler<'a> {
             .iter()
             .any(|token| matches!(token.t_type, TokenType::StartCons | TokenType::DotCons));
         if nested {
-            if self.flags & COMPAT_CHIA == 0 {
-                return Err(Error::new(
-                    ErrorKind::InvalidInput,
-                    "Nested module arguments require COMPAT_CHIA",
-                ));
-            }
             let mut bindings = vec![];
             parse_assign_pattern(
                 &mut pattern.clone().into_iter(),
@@ -477,6 +473,10 @@ impl<'a> Compiler<'a> {
                 }
                 let cond = UnparsedCondition { tokens };
                 conditions.push(cond);
+            } else if token.t_type == TokenType::Expression {
+                conditions.push(UnparsedCondition {
+                    tokens: vec![token],
+                });
             } else if token.t_type == TokenType::EndCons {
                 match conditions.pop() {
                     Some(entry_node) => {
@@ -526,12 +526,6 @@ impl<'a> Compiler<'a> {
         }
         match operator.bytes.as_ref() {
             b"defmacro" => {
-                if self.compiler_version.load(Ordering::Relaxed) >= 25 {
-                    return Err(Error::new(
-                        ErrorKind::Unsupported,
-                        "Macros require classic Chia compatibility or CL21/CL23",
-                    ));
-                }
                 let name = conditions_queue
                     .next()
                     .ok_or(Error::new(ErrorKind::UnexpectedEof, "Expected macro name"))?;
@@ -562,7 +556,8 @@ impl<'a> Compiler<'a> {
                     .write()
                     .push(parse_constant(&mut conditions_queue)?);
             }
-            b"embed-file" => {
+            b"embed-file" | b"compile-file" => {
+                let compile_file = operator.bytes.as_ref() == b"compile-file";
                 let mut conditions_queue = conditions_queue
                     .filter(|v| v.t_type != TokenType::Comment)
                     .collect::<Vec<_>>()
@@ -571,25 +566,91 @@ impl<'a> Compiler<'a> {
                     ErrorKind::UnexpectedEof,
                     "Expected embedded file name",
                 ))?;
-                let kind = conditions_queue.next().ok_or(Error::new(
-                    ErrorKind::UnexpectedEof,
-                    "Expected embedded file kind",
-                ))?;
+                let kind = if compile_file {
+                    Token {
+                        bytes: Cow::Borrowed(b"compiled"),
+                        ..name.clone()
+                    }
+                } else {
+                    conditions_queue.next().ok_or(Error::new(
+                        ErrorKind::UnexpectedEof,
+                        "Expected embedded file kind",
+                    ))?
+                };
                 if name.t_type != TokenType::Expression || kind.t_type != TokenType::Expression {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
                         "Expected embedded file name and kind",
                     ));
                 }
-                if kind.bytes.as_ref() != b"bin" {
-                    return Err(Error::new(
-                        ErrorKind::Unsupported,
-                        "Only binary embed-file is supported",
-                    ));
-                }
                 let data = read_include(&mut conditions_queue, self.include_dirs)?;
+                let value = match kind.bytes.as_ref() {
+                    b"bin" => self.byte_atom(data),
+                    b"compiled" if compile_file => {
+                        if self.compile_depth >= 64 {
+                            return Err(Error::new(
+                                ErrorKind::InvalidInput,
+                                "Compile-file nesting limit exceeded",
+                            ));
+                        }
+                        let mut compiler = Compiler::new(
+                            Cow::Owned(data),
+                            self.flags,
+                            self.opt_level,
+                            self.include_dirs,
+                        );
+                        compiler.compile_depth = self.compile_depth + 1;
+                        compiler.compiler_version.store(
+                            self.compiler_version.load(Ordering::Relaxed),
+                            Ordering::Relaxed,
+                        );
+                        compiler.compile()?.sexp().to_owned()
+                    }
+                    b"hex" => {
+                        let data = hex::decode(
+                            data.into_iter()
+                                .filter(|b| !b.is_ascii_whitespace())
+                                .collect::<Vec<_>>(),
+                        )
+                        .map_err(Error::other)?;
+                        let mut cursor = std::io::Cursor::new(data.as_slice());
+                        let value = crate::clvm::parser::sexp_from_bytes(&mut cursor)?.to_owned();
+                        if cursor.position() != data.len() as u64 {
+                            return Err(Error::new(
+                                ErrorKind::InvalidInput,
+                                "Trailing embedded program bytes",
+                            ));
+                        }
+                        value
+                    }
+                    b"sexp" => {
+                        let reader = Tokenizer::new(Cow::Owned(data));
+                        let mut tokens = std::iter::from_fn(|| reader.next_token())
+                            .filter(|token| token.t_type != TokenType::Comment)
+                            .map(|token| Token {
+                                bytes: Cow::Owned(token.bytes.into_owned()),
+                                index: token.index,
+                                t_type: token.t_type,
+                            })
+                            .collect::<Vec<_>>()
+                            .into_iter();
+                        let value = self.process_quoted(&mut tokens, false)?.to_owned();
+                        if tokens.next().is_some() {
+                            return Err(Error::new(
+                                ErrorKind::InvalidInput,
+                                "Expected one embedded expression",
+                            ));
+                        }
+                        value
+                    }
+                    _ => {
+                        return Err(Error::new(
+                            ErrorKind::InvalidInput,
+                            "Expected bin, hex or sexp embed-file kind",
+                        ));
+                    }
+                };
                 self.declaration_order.write().push(name.bytes.clone());
-                let value = self.byte_atom(data);
                 self.embedded_files.write().push((name, value));
             }
             b"defun" | b"defun-inline" => {

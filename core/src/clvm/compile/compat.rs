@@ -14,6 +14,7 @@ impl<'a> Compiler<'a> {
         function_args: &[Token<'a>],
         mapped_args: &[SExp<'a>],
         env_depth: usize,
+        level: usize,
     ) -> Result<SExp<'a>, Error> {
         let token = token_stream
             .find(|token| token.t_type != TokenType::Comment)
@@ -36,11 +37,48 @@ impl<'a> Compiler<'a> {
             ));
         }
         if let Some(token) = token_stream.as_slice().first() {
-            if token.bytes.as_ref() == b"qq" {
-                return Err(Error::new(
-                    ErrorKind::Unsupported,
-                    "Nested classic quasiquotation is not supported yet",
-                ));
+            if token.bytes.as_ref() == b"qq" || (token.bytes.as_ref() == b"unquote" && level > 1) {
+                let operator = token.bytes.to_vec();
+                token_stream.next();
+                let value = self.process_quasiquote(
+                    token_stream,
+                    function_args,
+                    mapped_args,
+                    env_depth,
+                    if operator == b"qq" {
+                        level + 1
+                    } else {
+                        level - 1
+                    },
+                )?;
+                if token_stream
+                    .next()
+                    .is_none_or(|token| token.t_type != TokenType::EndCons)
+                {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Expected one quasiquote argument",
+                    ));
+                }
+                // Classic qq compiles this constructed expression a second time. Paths in
+                // the nested result therefore become literal numbers at this boundary.
+                let expression = SExp::from(vec![
+                    CONS_SEXP.clone(),
+                    SExp::from(operator),
+                    SExp::from(vec![
+                        CONS_SEXP.clone(),
+                        value,
+                        QUOTE_SEXP.clone().cons(NULL_SEXP),
+                    ]),
+                ]);
+                let mut tokens = vec![];
+                super::classic::emit(&expression, &mut tokens);
+                return self.process_expression(
+                    &mut tokens.into_iter(),
+                    function_args,
+                    mapped_args,
+                    env_depth,
+                );
             }
             if token.bytes.as_ref() == b"unquote" {
                 token_stream.next();
@@ -76,6 +114,7 @@ impl<'a> Compiler<'a> {
                         function_args,
                         mapped_args,
                         env_depth,
+                        1,
                     )?;
                     if token_stream
                         .next()
@@ -93,6 +132,7 @@ impl<'a> Compiler<'a> {
                     function_args,
                     mapped_args,
                     env_depth,
+                    1,
                 )?),
                 None => {
                     return Err(Error::new(
@@ -135,10 +175,10 @@ impl<'a> Compiler<'a> {
                 }),
             );
         }
-        if matches!(&entries[0], SExp::Atom(atom) if matches!(atom.as_ref(), [4] | [11])) {
-            if let Some(result) = eval_constant(&entries) {
-                return Ok(QUOTE_SEXP.clone().cons(result));
-            }
+        if matches!(&entries[0], SExp::Atom(atom) if matches!(atom.as_ref(), [4] | [11]))
+            && let Some(result) = eval_constant(&entries)
+        {
+            return Ok(QUOTE_SEXP.clone().cons(result));
         }
         self.create_pair_sexp(entries)
     }

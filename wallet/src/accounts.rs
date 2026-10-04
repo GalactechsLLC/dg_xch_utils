@@ -204,6 +204,7 @@ pub struct WalletSession {
     stored: StoredWallet,
     owned_hashes: HashSet<Bytes32>,
     expected_genesis: Bytes32,
+    verified_chain: Option<crate::sync::VerifiedChain>,
 }
 
 impl WalletSession {
@@ -270,9 +271,75 @@ impl WalletSession {
             stored,
             owned_hashes: HashSet::new(),
             expected_genesis,
+            verified_chain: None,
         };
         session.restore_signer_coins().await;
         Ok(session)
+    }
+
+    pub async fn new_with_mode(
+        secret: SecretKey,
+        client: FullnodeClient,
+        constants: Arc<ConsensusConstants>,
+        expected_genesis: Bytes32,
+        database_path: PathBuf,
+        mode: crate::sync::SyncMode,
+    ) -> Result<Self, Error> {
+        let mut session = Self::new(
+            secret,
+            client,
+            constants.clone(),
+            expected_genesis,
+            database_path.clone(),
+        )
+        .await?;
+        if mode == crate::sync::SyncMode::Untrusted {
+            let fingerprint = hex::encode(hash_256(
+                serde_json::to_vec(constants.as_ref()).map_err(Error::other)?,
+            ));
+            session.verified_chain = Some(
+                crate::sync::VerifiedChain::open(
+                    &database_path.with_extension(format!("validated-{fingerprint}.sqlite")),
+                    *constants,
+                    expected_genesis,
+                )
+                .await?,
+            );
+        }
+        Ok(session)
+    }
+
+    async fn coins_by_hashes(&self, hashes: &[Bytes32]) -> Result<Vec<CoinRecord>, Error> {
+        if let Some(chain) = &self.verified_chain {
+            chain.coins(hashes).await
+        } else {
+            self.client
+                .get_coin_records_by_puzzle_hashes(hashes, Some(true), None, None)
+                .await
+                .map_err(Error::from)
+        }
+    }
+
+    async fn coins_by_hint(&self, hint: &Bytes32) -> Result<Vec<CoinRecord>, Error> {
+        if let Some(chain) = &self.verified_chain {
+            chain.hinted_coins(hint).await
+        } else {
+            self.client
+                .get_coin_records_by_hint(hint, Some(true), None, None)
+                .await
+                .map_err(Error::from)
+        }
+    }
+
+    async fn coin_by_name(&self, id: &Bytes32) -> Result<Option<CoinRecord>, Error> {
+        if let Some(chain) = &self.verified_chain {
+            chain.coin(id).await
+        } else {
+            self.client
+                .get_coin_record_by_name(id)
+                .await
+                .map_err(Error::from)
+        }
     }
 
     pub fn snapshot(&self) -> WalletSnapshot {
@@ -337,6 +404,9 @@ impl WalletSession {
         let peak = before
             .peak
             .ok_or_else(|| Error::other("node has no peak"))?;
+        if let Some(chain) = &mut self.verified_chain {
+            chain.sync(&self.client, &peak).await?;
+        }
         let mut records = HashMap::new();
         let mut assets = HashMap::new();
         let mut parents = HashMap::new();
@@ -357,17 +427,11 @@ impl WalletSession {
                         .await?,
                 );
             }
-            let coins = self
-                .client
-                .get_coin_records_by_puzzle_hashes(&batch, Some(true), None, None)
-                .await?;
+            let coins = self.coins_by_hashes(&batch).await?;
             let mut used = !coins.is_empty();
             hashes.extend(batch.iter().copied());
             for hash in &batch {
-                let mut hinted = self
-                    .client
-                    .get_coin_records_by_hint(hash, Some(true), None, None)
-                    .await?;
+                let mut hinted = self.coins_by_hint(hash).await?;
                 let wrapped: Vec<_> = self
                     .stored
                     .snapshot
@@ -382,11 +446,7 @@ impl WalletSession {
                     })
                     .collect();
                 if !wrapped.is_empty() {
-                    hinted.extend(
-                        self.client
-                            .get_coin_records_by_puzzle_hashes(&wrapped, Some(true), None, None)
-                            .await?,
-                    );
+                    hinted.extend(self.coins_by_hashes(&wrapped).await?);
                 }
                 if hinted.len() > 1000 {
                     return Err(Error::other(
@@ -419,8 +479,7 @@ impl WalletSession {
                             return Err(Error::other("asset discovery parent limit exceeded"));
                         }
                         let parent = self
-                            .client
-                            .get_coin_record_by_name(&parent_id)
+                            .coin_by_name(&parent_id)
                             .await?
                             .ok_or_else(|| Error::other("asset parent is missing"))?;
                         if !parent.spent || parent.spent_block_index != record.confirmed_block_index
@@ -608,10 +667,19 @@ impl WalletSession {
         self.sync().await?;
         let inputs = crate::offers::inputs(text)?;
         let names: Vec<_> = inputs.iter().map(|coin| coin.name()).collect();
-        let records = self
-            .client
-            .get_coin_records_by_names(&names, Some(true), None, None)
-            .await?;
+        let records = if let Some(chain) = &self.verified_chain {
+            let mut records = Vec::new();
+            for name in &names {
+                if let Some(record) = chain.coin(name).await? {
+                    records.push(record);
+                }
+            }
+            records
+        } else {
+            self.client
+                .get_coin_records_by_names(&names, Some(true), None, None)
+                .await?
+        };
         if records.len() != inputs.len()
             || inputs.iter().any(|coin| {
                 !records

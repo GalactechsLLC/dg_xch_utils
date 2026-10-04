@@ -1,9 +1,14 @@
 use crate::plots::PlotKeys;
-use chia_pos2::{Prover, QualityChain, create_v2_plot, solve_proof};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::traits::SizedBytes;
+use dg_xch_plotter::reader::PlotReader;
+use dg_xch_pos::pos2::chainer::{Chain, SearchLimits};
+use dg_xch_pos::pos2::compact::CompactPlot;
+use dg_xch_pos::pos2::params::ProofParams;
+use dg_xch_pos::pos2::plotting::PlotLimits;
 use std::io::Error;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 /// Plots a simulated chain farms against.
 ///
@@ -59,16 +64,20 @@ impl PlotSet {
             let path = dir.join(Self::file_name(k, strength, testnet, plot_id));
             let existed = path.exists();
             if !existed {
-                create_v2_plot(
-                    &path,
-                    k,
-                    strength,
-                    &plot_id.bytes(),
+                let cancelled = AtomicBool::new(false);
+                let params = ProofParams::new(plot_id, k, strength, testnet)?;
+                let native = CompactPlot::build(params, PlotLimits::default(), &cancelled)?;
+                let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
+                dg_xch_plotter::format::write_compact(
+                    temporary.as_file_mut(),
+                    &native,
                     plot_index,
                     0,
                     &memo(&keys),
-                    testnet,
+                    &cancelled,
                 )?;
+                temporary.as_file().sync_all()?;
+                temporary.persist_noclobber(&path).map_err(|e| e.error)?;
             }
             plots.push(Plot {
                 path,
@@ -100,12 +109,19 @@ impl PlotSet {
     pub fn qualities_for_challenge(
         &self,
         challenge: Bytes32,
-    ) -> Result<Vec<(usize, QualityChain)>, Error> {
-        let challenge = challenge.bytes();
+    ) -> Result<Vec<(usize, Chain)>, Error> {
         let mut found = Vec::new();
         for (index, plot) in self.plots.iter().enumerate() {
-            let prover = Prover::new(&plot.path)?;
-            for quality in prover.get_qualities_for_challenge(&challenge)? {
+            let mut prover =
+                PlotReader::open(&plot.path, self.testnet, PlotLimits::default().memory_bytes)?;
+            for quality in prover.qualities(
+                challenge,
+                SearchLimits {
+                    max_hashes: 1_000_000_000,
+                    max_results: 4096,
+                },
+                &AtomicBool::new(false),
+            )? {
                 found.push((index, quality));
             }
         }
@@ -113,16 +129,19 @@ impl PlotSet {
     }
 
     /// Expand a quality chain into a full proof, in the packed form a block carries.
-    #[must_use]
-    pub fn solve(&self, plot_index: usize, quality: &QualityChain) -> Vec<u8> {
-        let plot = &self.plots[plot_index];
-        solve_proof(
-            quality,
-            &plot.plot_id.bytes(),
-            self.k,
-            self.strength,
-            self.testnet,
-        )
+    pub fn solve(
+        &self,
+        plot_index: usize,
+        quality: &Chain,
+        challenge: Bytes32,
+    ) -> Result<Vec<u8>, Error> {
+        let plot = self
+            .plots
+            .get(plot_index)
+            .ok_or_else(|| Error::other("invalid plot index"))?;
+        let limits = PlotLimits::default();
+        let mut reader = PlotReader::open(&plot.path, self.testnet, limits.memory_bytes)?;
+        reader.prove(quality, challenge, limits, &AtomicBool::new(false))
     }
 }
 

@@ -1,22 +1,12 @@
 use crate::common::sign_coin_spends;
+use crate::conditions::{Conditions, announcement_id};
 use crate::memory_wallet::MemoryWallet;
 use crate::{Wallet, WalletStore};
-use chia_protocol::{Bytes32 as SdkHash, Coin as SdkCoin};
-use chia_sdk_driver::{
-    Cat, CatSpend, Did, DidInfo, HashedPtr, Launcher, Layer, Nft, NftMint, Puzzle, SingletonInfo,
-    SpendContext, SpendWithConditions, StandardLayer,
-};
-use chia_sdk_types::{
-    Conditions,
-    conditions::{Memos, TransferNft},
-};
-use clvmr::serde::{node_from_bytes, node_to_bytes};
 use dg_xch_core::blockchain::{
-    coin::Coin, coin_record::CoinRecord, coin_spend::CoinSpend, sized_bytes::Bytes32,
-    spend_bundle::SpendBundle,
+    coin_record::CoinRecord, coin_spend::CoinSpend, sized_bytes::Bytes32, spend_bundle::SpendBundle,
 };
 use dg_xch_core::clvm::program::SerializedProgram;
-use dg_xch_core::traits::SizedBytes;
+use dg_xch_core::clvm::{program::Program, sexp::SExp};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -115,35 +105,14 @@ pub enum AssetAction {
     },
 }
 
-pub(crate) fn sdk_hash(hash: Bytes32) -> SdkHash {
-    hash.bytes().into()
-}
-pub(crate) fn native_hash(hash: SdkHash) -> Bytes32 {
-    hash.to_bytes().into()
-}
-pub(crate) fn sdk_coin(coin: Coin) -> SdkCoin {
-    SdkCoin::new(
-        sdk_hash(coin.parent_coin_info),
-        sdk_hash(coin.puzzle_hash),
-        coin.amount,
-    )
-}
-pub(crate) fn native_coin(coin: SdkCoin) -> Coin {
-    Coin {
-        parent_coin_info: native_hash(coin.parent_coin_info),
-        puzzle_hash: native_hash(coin.puzzle_hash),
-        amount: coin.amount,
-    }
-}
-
 pub(crate) enum ParsedAsset {
-    Cat(Cat),
-    Nft(Nft),
-    Did(Did),
+    Cat(dg_xch_puzzles::cats::CatCoin),
+    Nft(dg_xch_puzzles::nft::NftCoin),
+    Did(dg_xch_puzzles::dids::DidCoin),
     Legacy(Bytes32, Bytes32),
 }
 
-pub(crate) fn validate_tree(ctx: &SpendContext, root: clvmr::NodePtr) -> Result<(), Error> {
+pub(crate) fn validate_tree(root: &dg_xch_core::clvm::sexp::SExp<'_>) -> Result<(), Error> {
     let mut pending = vec![(root, 0u16)];
     let mut nodes = 0usize;
     while let Some((node, depth)) = pending.pop() {
@@ -151,9 +120,9 @@ pub(crate) fn validate_tree(ctx: &SpendContext, root: clvmr::NodePtr) -> Result<
         if nodes > 65_536 || depth > 256 {
             return Err(Error::other("asset puzzle exceeds structural limits"));
         }
-        if let clvmr::SExp::Pair(left, right) = ctx.sexp(node) {
-            pending.push((left, depth + 1));
-            pending.push((right, depth + 1));
+        if let dg_xch_core::clvm::sexp::SExp::Pair(pair) = node {
+            pending.push((pair.first(), depth + 1));
+            pending.push((pair.rest(), depth + 1));
         }
     }
     Ok(())
@@ -179,7 +148,6 @@ pub(crate) fn cat_puzzle_hash(kind: AssetKind, asset_id: Bytes32, owner: Bytes32
 }
 
 pub(crate) fn parse_asset(
-    ctx: &mut SpendContext,
     record: &CoinRecord,
     parent: &CoinSpend,
     owners: &HashSet<Bytes32>,
@@ -192,67 +160,43 @@ pub(crate) fn parse_asset(
     if reveal.len() > MAX_PUZZLE_BYTES || solution.len() > MAX_PUZZLE_BYTES {
         return Err(Error::other("asset parent exceeds puzzle size limit"));
     }
-    let puzzle_ptr = node_from_bytes(ctx, &reveal).map_err(Error::other)?;
-    let solution_ptr = node_from_bytes(ctx, &solution).map_err(Error::other)?;
-    validate_tree(ctx, puzzle_ptr)?;
-    validate_tree(ctx, solution_ptr)?;
-    let puzzle = Puzzle::parse(ctx, puzzle_ptr);
-    if native_hash(puzzle.curried_puzzle_hash().into()) != parent.coin.puzzle_hash {
-        return Err(Error::other("asset parent puzzle hash mismatch"));
-    }
-    let module = native_hash(puzzle.mod_hash().into());
-    if module != dg_xch_puzzles::cats::CAT_1_TREE_HASH
-        && module != dg_xch_puzzles::cats::CAT_2_TREE_HASH
-        && chia_sdk_driver::NftInfo::parse(ctx, puzzle)
-            .map_err(Error::other)?
-            .is_none()
-        && DidInfo::parse(ctx, puzzle).map_err(Error::other)?.is_none()
-    {
-        return Ok(None);
-    }
-    let (additions, _) = parent
-        .compute_additions_with_cost(ASSET_COST_LIMIT)
-        .map_err(Error::other)?;
-    if !additions.contains(&record.coin) {
-        return Err(Error::other("asset is not an output of its parent"));
-    }
-    if let Some(cats) = Cat::parse_children(ctx, sdk_coin(parent.coin), puzzle, solution_ptr)
-        .map_err(Error::other)?
-    {
-        return Ok(cats
-            .into_iter()
-            .find(|cat| {
-                native_coin(cat.coin) == record.coin
-                    && cat.info.hidden_puzzle_hash.is_none()
-                    && owners.contains(&native_hash(cat.info.p2_puzzle_hash))
-            })
-            .map(ParsedAsset::Cat));
+    let native_puzzle = parent.puzzle_reveal.to_program()?;
+    let native_solution = parent.solution.to_program()?;
+    validate_tree(native_puzzle.sexp())?;
+    validate_tree(native_solution.sexp())?;
+    if native_puzzle.uncurry()?.0.tree_hash() == dg_xch_puzzles::cats::CAT_2_TREE_HASH {
+        return dg_xch_puzzles::cats::CatCoin::parse_child(
+            record.coin,
+            parent,
+            owners,
+            ASSET_COST_LIMIT,
+        )
+        .map(|cat| cat.map(ParsedAsset::Cat));
     }
     if let Some(nft) =
-        Nft::parse_child(ctx, sdk_coin(parent.coin), puzzle, solution_ptr).map_err(Error::other)?
+        dg_xch_puzzles::nft::NftCoin::parse_child(record.coin, parent, owners, ASSET_COST_LIMIT)?
     {
-        return Ok((native_coin(nft.coin) == record.coin
-            && owners.contains(&native_hash(nft.info.p2_puzzle_hash)))
-        .then_some(ParsedAsset::Nft(nft)));
+        return Ok(Some(ParsedAsset::Nft(nft)));
     }
-    let program = parent.puzzle_reveal.to_program().map_err(Error::other)?;
-    if let Some(did) = Did::parse_child(
-        ctx,
-        sdk_coin(parent.coin),
-        puzzle,
-        solution_ptr,
-        sdk_coin(record.coin),
-    )
-    .map_err(Error::other)?
+    if let Some(did) =
+        dg_xch_puzzles::dids::DidCoin::parse_child(record.coin, parent, owners, ASSET_COST_LIMIT)?
     {
-        return Ok(
-            (native_hash(did.info.puzzle_hash().into()) == record.coin.puzzle_hash
-                && owners.contains(&native_hash(did.info.p2_puzzle_hash)))
-            .then_some(ParsedAsset::Did(did)),
-        );
+        return Ok(Some(ParsedAsset::Did(did)));
     }
+    if native_puzzle.tree_hash() != parent.coin.puzzle_hash {
+        return Err(Error::other("asset parent puzzle hash mismatch"));
+    }
+    let program = native_puzzle;
     let (module, args) = program.uncurry().map_err(Error::other)?;
     if module.tree_hash() == dg_xch_puzzles::cats::CAT_1_TREE_HASH {
+        if !parent
+            .compute_additions_with_cost(ASSET_COST_LIMIT)?
+            .0
+            .contains(&record.coin)
+        {
+            return Err(Error::other("asset is not an output of its parent"));
+        }
+
         let args = dg_xch_puzzles::cats::CatPuzzleCurriedArgs::try_from(args.sexp())?;
         if args.mod_hash != dg_xch_puzzles::cats::CAT_1_TREE_HASH {
             return Err(Error::other("invalid CAT1 module hash"));
@@ -282,15 +226,14 @@ pub fn discover_asset(
     parent: CoinSpend,
     owners: &HashSet<Bytes32>,
 ) -> Result<Option<AssetCoin>, Error> {
-    let mut ctx = SpendContext::new();
-    let Some(parsed) = parse_asset(&mut ctx, &record, &parent, owners)? else {
+    let Some(parsed) = parse_asset(&record, &parent, owners)? else {
         return Ok(None);
     };
     let (kind, asset_id, owner, metadata, royalty, royalty_hash, did) = match parsed {
         ParsedAsset::Cat(cat) => (
             AssetKind::Cat2,
-            native_hash(cat.info.asset_id),
-            native_hash(cat.info.p2_puzzle_hash),
+            cat.asset_id,
+            cat.inner_puzzle_hash,
             None,
             None,
             None,
@@ -299,37 +242,33 @@ pub fn discover_asset(
         ParsedAsset::Legacy(id, owner) => (AssetKind::Cat1, id, owner, None, None, None, None),
         ParsedAsset::Did(did) => (
             AssetKind::Did(DidType::Cni),
-            native_hash(did.info.launcher_id),
-            native_hash(did.info.p2_puzzle_hash),
-            Some(hex::encode(
-                node_to_bytes(&ctx, did.info.metadata.ptr()).map_err(Error::other)?,
-            )),
+            did.info.launcher_id,
+            did.owner_puzzle_hash,
+            Some(hex::encode(did.info.metadata.serialized()?.as_ref())),
             None,
             None,
             None,
         ),
         ParsedAsset::Nft(nft) => (
             AssetKind::Nft1,
-            native_hash(nft.info.launcher_id),
-            native_hash(nft.info.p2_puzzle_hash),
-            Some(hex::encode(
-                node_to_bytes(&ctx, nft.info.metadata.ptr()).map_err(Error::other)?,
-            )),
+            nft.info.launcher_id,
+            nft.owner_puzzle_hash,
+            Some(hex::encode(nft.info.metadata.serialized()?.as_ref())),
             Some(nft.info.royalty_basis_points),
-            Some(native_hash(nft.info.royalty_puzzle_hash)),
-            nft.info.current_owner.map(native_hash),
+            Some(nft.info.royalty_puzzle_hash),
+            nft.info.current_owner,
         ),
     };
-    let metadata_summary = if let Some(encoded) = &metadata {
-        use clvm_traits::FromClvm;
-        let bytes = hex::decode(encoded).map_err(Error::other)?;
-        let ptr = node_from_bytes(&mut ctx, &bytes).map_err(Error::other)?;
-        chia_puzzle_types::nft::NftMetadata::from_clvm(&*ctx, ptr)
-            .ok()
-            .map(|metadata| format!("{metadata:#?}"))
-    } else {
-        None
-    };
+    let metadata_summary = metadata
+        .as_ref()
+        .map(|encoded| {
+            let bytes = hex::decode(encoded).map_err(Error::other)?;
+            Ok::<_, Error>(format!(
+                "{}",
+                SerializedProgram::from_bytes(&bytes).to_program()?
+            ))
+        })
+        .transpose()?;
     Ok(Some(AssetCoin {
         kind,
         asset_id,
@@ -345,41 +284,16 @@ pub fn discover_asset(
     }))
 }
 
-pub(crate) async fn standard_layer(
-    wallet: &MemoryWallet,
-    ctx: &mut SpendContext,
-    hash: Bytes32,
-) -> Result<StandardLayer, Error> {
-    let serialized = wallet
-        .puzzle_for_puzzle_hash(&hash)
-        .await?
-        .serialized()
-        .map_err(Error::other)?
-        .to_bytes();
-    let ptr = node_from_bytes(ctx, &serialized).map_err(Error::other)?;
-    StandardLayer::parse_puzzle(ctx, Puzzle::parse(ctx, ptr))
-        .map_err(Error::other)?
-        .ok_or_else(|| Error::other("wallet puzzle is not a standard key puzzle"))
-}
-
-fn nft_metadata(ctx: &mut SpendContext, request: &NftLaunch) -> Result<HashedPtr, Error> {
+fn nft_metadata(request: &NftLaunch) -> Result<Program<'static>, Error> {
     request.validate()?;
-    let uri = ctx.alloc(&request.data_uri).map_err(Error::other)?;
-    let uris = ctx
-        .new_pair(uri, clvmr::NodePtr::NIL)
-        .map_err(Error::other)?;
-    let hash = ctx
-        .new_atom(request.data_hash.as_ref())
-        .map_err(Error::other)?;
-    let number = ctx.alloc(&request.edition_number).map_err(Error::other)?;
-    let total = ctx.alloc(&request.edition_total).map_err(Error::other)?;
-    let mut metadata = clvmr::NodePtr::NIL;
-    for (name, value) in [("st", total), ("sn", number), ("h", hash), ("u", uris)] {
-        let key = ctx.new_atom(name.as_bytes()).map_err(Error::other)?;
-        let entry = ctx.new_pair(key, value).map_err(Error::other)?;
-        metadata = ctx.new_pair(entry, metadata).map_err(Error::other)?;
-    }
-    Ok(HashedPtr::from_ptr(ctx, metadata))
+    Ok(Program::to(vec![
+        SExp::from(b"u".to_vec()).cons(SExp::from(vec![SExp::from(
+            request.data_uri.as_bytes().to_vec(),
+        )])),
+        SExp::from(b"h".to_vec()).cons(SExp::from(request.data_hash)),
+        SExp::from(b"sn".to_vec()).cons(SExp::from(request.edition_number)),
+        SExp::from(b"st".to_vec()).cons(SExp::from(request.edition_total)),
+    ]))
 }
 
 pub(crate) async fn build_transaction(
@@ -391,7 +305,7 @@ pub(crate) async fn build_transaction(
     fee: u64,
     change: Bytes32,
 ) -> Result<SpendBundle, Error> {
-    let mut ctx = SpendContext::new();
+    let mut native_spends = Vec::new();
     let cost = match action {
         AssetAction::LaunchCat2 { amount } if *amount > 0 => *amount,
         AssetAction::LaunchNft(_) | AssetAction::LaunchDid(DidType::Cni) => 1,
@@ -421,7 +335,7 @@ pub(crate) async fn build_transaction(
             "not enough spendable XCH for issuance and fee",
         ));
     }
-    let destination = sdk_hash(change);
+    let destination = change;
     let mut conditions = Conditions::new().reserve_fee(fee);
     let mut asset_anchor = None;
     match action {
@@ -432,47 +346,44 @@ pub(crate) async fn build_transaction(
             let parent = funding
                 .first()
                 .ok_or_else(|| Error::other("missing DID funding coin"))?;
-            let layer = standard_layer(wallet, &mut ctx, change).await?;
-            let recovery_hash = SerializedProgram::from_bytes(&[0x80])
-                .to_program()?
-                .tree_hash();
-            let (issue, _) = Launcher::new(sdk_hash(parent.name()), 1)
-                .create_did(
-                    &mut ctx,
-                    Some(sdk_hash(recovery_hash)),
-                    0,
-                    HashedPtr::NIL,
-                    &layer,
-                )
-                .map_err(Error::other)?;
+            let inner = wallet.puzzle_for_puzzle_hash(&change).await?.to_owned();
+            let (issue, spends) = dg_xch_puzzles::dids::launch_did(parent.name(), &inner)?;
             conditions = conditions.extend(issue);
+            native_spends.extend(spends);
         }
         AssetAction::LaunchCat2 { amount } => {
             let parent = funding
                 .first()
                 .ok_or_else(|| Error::other("missing CAT funding coin"))?;
-            let memos = ctx.hint(destination).map_err(Error::other)?;
-            let (issue, _) = Cat::single_issuance(
-                &mut ctx,
-                sdk_hash(parent.name()),
-                None,
+            let spend = dg_xch_puzzles::cats::issue_cat(
+                parent.name(),
                 *amount,
-                Conditions::new().create_coin(destination, *amount, memos),
-            )
-            .map_err(Error::other)?;
-            conditions = conditions.extend(issue);
+                vec![dg_xch_core::clvm::sexp::SExp::from(vec![
+                    51.into(),
+                    change.into(),
+                    (*amount).into(),
+                    dg_xch_core::clvm::sexp::SExp::from(vec![dg_xch_core::clvm::sexp::SExp::from(
+                        change,
+                    )]),
+                ])],
+                ASSET_COST_LIMIT,
+            )?;
+            conditions = conditions.create_coin(spend.coin.puzzle_hash, spend.coin.amount, None);
+            native_spends.push(spend);
         }
         AssetAction::LaunchNft(request) => {
             let parent = funding
                 .first()
                 .ok_or_else(|| Error::other("missing NFT funding coin"))?;
-            let metadata = nft_metadata(&mut ctx, request)?;
-            let mut mint = NftMint::new(metadata, destination, request.royalty_basis_points, None);
-            mint.royalty_puzzle_hash = sdk_hash(request.royalty_puzzle_hash);
-            let (issue, _) = Launcher::new(sdk_hash(parent.name()), 1)
-                .mint_nft(&mut ctx, &mint)
-                .map_err(Error::other)?;
+            let (issue, spends) = dg_xch_puzzles::nft::mint_nft(
+                parent.name(),
+                change,
+                nft_metadata(request)?,
+                request.royalty_puzzle_hash,
+                request.royalty_basis_points,
+            )?;
             conditions = conditions.extend(issue);
+            native_spends.extend(spends);
         }
         AssetAction::Transfer {
             coin_id,
@@ -497,21 +408,18 @@ pub(crate) async fn build_transaction(
                 return Err(Error::other("invalid asset amount"));
             }
             let owners = HashSet::from([asset.owner_puzzle_hash]);
-            let parsed = parse_asset(&mut ctx, &asset.record, &asset.parent_spend, &owners)?
+            let parsed = parse_asset(&asset.record, &asset.parent_spend, &owners)?
                 .ok_or_else(|| Error::other("asset parent could not be verified"))?;
-            let layer = standard_layer(wallet, &mut ctx, asset.owner_puzzle_hash).await?;
             let mut extra = Conditions::new();
             if let Some(parent) = funding.first() {
-                extra = extra.assert_coin_announcement(chia_sdk_types::announcement_id(
-                    sdk_hash(parent.name()),
-                    "dgx-asset-fee",
-                ));
-                extra = extra.create_coin_announcement(b"dgx-asset".to_vec().into());
+                extra = extra
+                    .assert_coin_announcement(announcement_id(parent.name(), b"dgx-asset-fee"));
+                extra = extra.create_coin_announcement(b"dgx-asset".to_vec());
                 asset_anchor = Some(*coin_id);
             }
             match parsed {
                 ParsedAsset::Cat(cat) => {
-                    if native_hash(cat.info.asset_id) != asset.asset_id {
+                    if cat.asset_id != asset.asset_id {
                         return Err(Error::other("CAT asset ID does not match its parent"));
                     }
                     let mut selected = vec![(asset, cat)];
@@ -531,16 +439,12 @@ pub(crate) async fn build_transaction(
                             continue;
                         }
                         let owners = HashSet::from([candidate.owner_puzzle_hash]);
-                        let Some(ParsedAsset::Cat(candidate_cat)) = parse_asset(
-                            &mut ctx,
-                            &candidate.record,
-                            &candidate.parent_spend,
-                            &owners,
-                        )?
+                        let Some(ParsedAsset::Cat(candidate_cat)) =
+                            parse_asset(&candidate.record, &candidate.parent_spend, &owners)?
                         else {
                             return Err(Error::other("CAT parent could not be verified"));
                         };
-                        if candidate_cat.info.asset_id != cat.info.asset_id {
+                        if candidate_cat.asset_id != cat.asset_id {
                             return Err(Error::other("CAT asset ID does not match its parent"));
                         }
                         asset_total = asset_total
@@ -551,105 +455,125 @@ pub(crate) async fn build_transaction(
                     if asset_total < *amount {
                         return Err(Error::other("not enough spendable coins of this CAT"));
                     }
-                    let memos = ctx.hint(sdk_hash(*destination)).map_err(Error::other)?;
-                    extra = extra.create_coin(sdk_hash(*destination), *amount, memos);
+                    let memos = Some(*destination);
+                    extra = extra.create_coin(*destination, *amount, memos);
                     if *amount < asset_total {
-                        let memos = ctx
-                            .hint(sdk_hash(asset.owner_puzzle_hash))
-                            .map_err(Error::other)?;
-                        extra = extra.create_coin(
-                            sdk_hash(asset.owner_puzzle_hash),
-                            asset_total - amount,
-                            memos,
-                        );
+                        let memos = Some(asset.owner_puzzle_hash);
+                        extra =
+                            extra.create_coin(asset.owner_puzzle_hash, asset_total - amount, memos);
                     }
                     let mut spends = Vec::with_capacity(selected.len());
                     for (index, (selected_asset, selected_cat)) in selected.into_iter().enumerate()
                     {
-                        let selected_layer =
-                            standard_layer(wallet, &mut ctx, selected_asset.owner_puzzle_hash)
-                                .await?;
-                        let spend = selected_layer
-                            .spend_with_conditions(
-                                &mut ctx,
-                                if index == 0 {
-                                    extra.clone()
-                                } else {
-                                    Conditions::new()
-                                },
-                            )
-                            .map_err(Error::other)?;
-                        spends.push(CatSpend::new(selected_cat, spend));
+                        let inner_puzzle = wallet
+                            .puzzle_for_puzzle_hash(&selected_asset.owner_puzzle_hash)
+                            .await?
+                            .to_owned();
+                        let conditions = if index == 0 {
+                            extra.clone()
+                        } else {
+                            Conditions::new()
+                        };
+                        let conditions = conditions.program();
+                        spends.push(dg_xch_puzzles::cats::CatSpend {
+                            coin: selected_asset.record.coin,
+                            asset_id: selected_asset.asset_id,
+                            lineage_proof: selected_cat.lineage_proof(),
+                            inner_puzzle,
+                            inner_solution: dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(conditions.sexp().to_owned())?,
+                        });
                     }
-                    Cat::spend_all(&mut ctx, &spends).map_err(Error::other)?;
+                    native_spends
+                        .extend(dg_xch_puzzles::cats::spend_ring(&spends, ASSET_COST_LIMIT)?);
                 }
                 ParsedAsset::Nft(nft) => {
                     if *amount != nft.coin.amount {
                         return Err(Error::other("NFT transfers must move the entire coin"));
                     }
-                    let (did_conditions, _) = nft
-                        .assign_owner(
-                            &mut ctx,
-                            &layer,
-                            sdk_hash(*destination),
-                            TransferNft::new(None, Vec::new(), None),
-                            extra,
-                        )
-                        .map_err(Error::other)?;
-                    if !did_conditions.is_empty() {
-                        return Err(Error::other("unexpected DID approval requirements"));
-                    }
+                    let info = nft.info;
+                    let memos = Some(*destination);
+                    extra = extra
+                        .create_coin(*destination, *amount, memos)
+                        .with(SExp::from(vec![
+                            SExp::from(-10),
+                            SExp::from(0),
+                            SExp::from(0),
+                            SExp::from(0),
+                        ]));
+                    let conditions = extra.program();
+                    let lineage = nft.lineage_proof;
+                    let inner = wallet
+                        .puzzle_for_puzzle_hash(&asset.owner_puzzle_hash)
+                        .await?
+                        .to_owned();
+                    let solution = dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(conditions.sexp().to_owned())?;
+                    native_spends.push(info.spend(
+                        asset.record.coin,
+                        lineage,
+                        &inner,
+                        &solution,
+                    )?);
                 }
                 ParsedAsset::Did(did) => {
                     if *amount != did.coin.amount {
                         return Err(Error::other("DID transfers must move the entire coin"));
                     }
-                    let _ = did
-                        .transfer(&mut ctx, &layer, sdk_hash(*destination), extra)
-                        .map_err(Error::other)?;
+                    let conditions = extra
+                        .create_coin(
+                            did.info.inner_puzzle_hash(*destination),
+                            *amount,
+                            Some(*destination),
+                        )
+                        .program();
+                    let inner = wallet
+                        .puzzle_for_puzzle_hash(&asset.owner_puzzle_hash)
+                        .await?
+                        .to_owned();
+                    let solution = dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(conditions.sexp().to_owned())?;
+                    native_spends.push(did.info.spend(
+                        asset.record.coin,
+                        did.lineage_proof,
+                        &inner,
+                        &solution,
+                    )?);
                 }
                 ParsedAsset::Legacy(_, _) => return Err(Error::other("CAT1 is read-only")),
             }
         }
     }
     if total > needed {
-        conditions = conditions.create_coin(destination, total - needed, Memos::None);
+        conditions = conditions.create_coin(destination, total - needed, None);
     }
     if let Some(asset) = asset_anchor {
         conditions = conditions
-            .create_coin_announcement(b"dgx-asset-fee".to_vec().into())
-            .assert_coin_announcement(chia_sdk_types::announcement_id(
-                sdk_hash(asset),
-                "dgx-asset",
-            ));
+            .create_coin_announcement(b"dgx-asset-fee".to_vec())
+            .assert_coin_announcement(announcement_id(asset, b"dgx-asset"));
     }
     for (index, coin) in funding.iter().enumerate() {
         let next = funding[(index + 1) % funding.len()];
         let bound = Conditions::new()
-            .create_coin_announcement(b"dgx-funding".to_vec().into())
-            .assert_coin_announcement(chia_sdk_types::announcement_id(
-                sdk_hash(next.name()),
-                "dgx-funding",
-            ));
+            .create_coin_announcement(b"dgx-funding".to_vec())
+            .assert_coin_announcement(announcement_id(next.name(), b"dgx-funding"));
         let spend_conditions = if index == 0 {
             bound.extend(conditions.clone())
         } else {
             bound
         };
-        standard_layer(wallet, &mut ctx, coin.puzzle_hash)
+        let puzzle = wallet
+            .puzzle_for_puzzle_hash(&coin.puzzle_hash)
             .await?
-            .spend(&mut ctx, sdk_coin(*coin), spend_conditions)
-            .map_err(Error::other)?;
+            .to_owned();
+        let solution =
+            dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(
+                spend_conditions.program().sexp().to_owned(),
+            )?;
+        native_spends.push(CoinSpend {
+            coin: *coin,
+            puzzle_reveal: puzzle.serialized()?,
+            solution: solution.serialized()?,
+        });
     }
-    let spends = ctx
-        .take()
-        .into_iter()
-        .map(|spend| CoinSpend {
-            coin: native_coin(spend.coin),
-            puzzle_reveal: SerializedProgram::from_bytes(spend.puzzle_reveal.as_ref()),
-            solution: SerializedProgram::from_bytes(spend.solution.as_ref()),
-        })
-        .collect();
+    let spends = native_spends;
     let store = wallet.wallet_store();
     sign_coin_spends(
         spends,
@@ -677,9 +601,10 @@ pub(crate) async fn build_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chia_sdk_test::Simulator;
     use dg_xch_clients::rpc::full_node::FullnodeClient;
+    use dg_xch_core::blockchain::coin::Coin;
     use dg_xch_core::consensus::constants::TESTNET_11;
+    use dg_xch_simulator_lib::coinset::CoinsetSimulator as Simulator;
     use std::sync::Arc;
 
     #[test]
@@ -690,12 +615,11 @@ mod tests {
             parse_asset_hash(&"ab".repeat(32)).unwrap(),
             [0xab; 32].into()
         );
-        let mut ctx = SpendContext::new();
-        let mut nested = clvmr::NodePtr::NIL;
+        let mut nested = dg_xch_core::constants::NULL_SEXP;
         for _ in 0..300 {
-            nested = ctx.new_pair(clvmr::NodePtr::NIL, nested).unwrap();
+            nested = dg_xch_core::constants::NULL_SEXP.cons(nested);
         }
-        assert!(validate_tree(&ctx, nested).is_err());
+        assert!(validate_tree(&nested).is_err());
     }
 
     #[test]
@@ -729,16 +653,17 @@ mod tests {
     #[test]
     fn legacy_cat1_parent_outputs_are_discovered_read_only() {
         use dg_xch_core::clvm::program::Program;
-        let mut ctx = SpendContext::new();
         let owner = Bytes32::from([25; 32]);
         let asset_id = Bytes32::from([26; 32]);
-        let delegated = ctx
-            .delegated_spend(Conditions::new().create_coin(sdk_hash(owner), 100, Memos::None))
-            .unwrap();
-        let inner = SerializedProgram::from_bytes(&node_to_bytes(&ctx, delegated.puzzle).unwrap())
-            .to_program()
-            .unwrap()
-            .to_owned();
+        let inner = Program::new(
+            SExp::from(1).cons(
+                Conditions::new()
+                    .create_coin(owner, 100, None)
+                    .program()
+                    .sexp()
+                    .to_owned(),
+            ),
+        );
         let legacy = dg_xch_puzzles::cats::CAT_1_PROGRAM.curry(&[
             Program::new(dg_xch_puzzles::cats::CAT_1_TREE_HASH.into()),
             Program::new(asset_id.into()),
@@ -754,29 +679,29 @@ mod tests {
             puzzle_hash: legacy.tree_hash(),
             amount: 100,
         };
-        let solution = ctx
-            .serialize(&chia_puzzle_types::cat::CatSolution {
-                inner_puzzle_solution: clvmr::NodePtr::NIL,
-                lineage_proof: Some(chia_puzzle_types::LineageProof {
-                    parent_parent_coin_info: sdk_hash(ancestor.parent_coin_info),
-                    parent_inner_puzzle_hash: sdk_hash(inner.tree_hash()),
-                    parent_amount: 100,
-                }),
-                prev_coin_id: sdk_hash(coin.name()),
-                this_coin_info: sdk_coin(coin),
-                next_coin_proof: chia_puzzle_types::CoinProof {
-                    parent_coin_info: sdk_hash(coin.parent_coin_info),
-                    inner_puzzle_hash: sdk_hash(inner.tree_hash()),
-                    amount: 100,
-                },
-                prev_subtotal: 0,
-                extra_delta: 0,
-            })
-            .unwrap();
+        let solution = Program::to(vec![
+            SExp::from(0),
+            SExp::from(vec![
+                SExp::from(ancestor.parent_coin_info),
+                inner.tree_hash().into(),
+                SExp::from(100),
+            ]),
+            coin.name().into(),
+            SExp::from(coin),
+            SExp::from(vec![
+                SExp::from(coin.parent_coin_info),
+                inner.tree_hash().into(),
+                SExp::from(100),
+            ]),
+            SExp::from(0),
+            SExp::from(0),
+        ])
+        .serialized()
+        .unwrap();
         let parent = CoinSpend {
             coin,
             puzzle_reveal: legacy.serialized().unwrap(),
-            solution: SerializedProgram::from_bytes(solution.as_ref()),
+            solution,
         };
         let additions = parent
             .compute_additions_with_cost(ASSET_COST_LIMIT)
@@ -806,21 +731,7 @@ mod tests {
     }
 
     fn validate(sim: &mut Simulator, bundle: &SpendBundle) {
-        let spends = bundle
-            .coin_spends
-            .iter()
-            .map(|spend| {
-                chia_protocol::CoinSpend::new(
-                    sdk_coin(spend.coin),
-                    spend.puzzle_reveal.to_bytes().into(),
-                    spend.solution.to_bytes().into(),
-                )
-            })
-            .collect();
-        let signature =
-            chia_bls::Signature::from_bytes(&bundle.aggregated_signature.bytes()).unwrap();
-        sim.new_transaction(chia_protocol::SpendBundle::new(spends, signature))
-            .unwrap();
+        sim.new_transaction(bundle.clone()).unwrap();
     }
 
     fn discovered(bundle: &SpendBundle, owner: Bytes32) -> Vec<AssetCoin> {
@@ -850,12 +761,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cat2_launch_and_partial_transfer_pass_reference_consensus() {
+    async fn cat2_launch_and_partial_transfer_pass_native_consensus() {
         let wallet = wallet().await;
         let owner = wallet.get_puzzle_hash(false).await.unwrap();
         let mut simulator = Simulator::new();
         let coins: Vec<_> = [600, 700]
-            .map(|amount| record(native_coin(simulator.new_coin(sdk_hash(owner), amount))))
+            .map(|amount| record(simulator.new_coin(owner, amount)))
             .into();
         let bundle = build_transaction(
             &wallet,
@@ -877,7 +788,7 @@ mod tests {
             cat_puzzle_hash(AssetKind::Cat2, assets[0].asset_id, owner),
             assets[0].record.coin.puzzle_hash
         );
-        let fee_coin = record(native_coin(simulator.new_coin(sdk_hash(owner), 100)));
+        let fee_coin = record(simulator.new_coin(owner, 100));
         let recipient = Bytes32::from([44; 32]);
         let transfer = build_transaction(
             &wallet,
@@ -902,24 +813,8 @@ mod tests {
         stripped
             .coin_spends
             .retain(|spend| spend.coin.name() != fee_coin.coin.name());
-        let spends = stripped
-            .coin_spends
-            .iter()
-            .map(|spend| {
-                chia_protocol::CoinSpend::new(
-                    sdk_coin(spend.coin),
-                    spend.puzzle_reveal.to_bytes().into(),
-                    spend.solution.to_bytes().into(),
-                )
-            })
-            .collect();
-        let error = stripped_simulator
-            .new_transaction(chia_protocol::SpendBundle::new(
-                spends,
-                chia_bls::Signature::from_bytes(&stripped.aggregated_signature.bytes()).unwrap(),
-            ))
-            .unwrap_err();
-        assert!(format!("{error:?}").contains("AssertCoinAnnouncementFailed"));
+        let error = stripped_simulator.new_transaction(stripped).unwrap_err();
+        assert!(format!("{error:?}").contains("AssertAnnounceConsumedFailed"));
     }
 
     #[tokio::test]
@@ -927,7 +822,7 @@ mod tests {
         let wallet = wallet().await;
         let owner = wallet.get_puzzle_hash(false).await.unwrap();
         let mut simulator = Simulator::new();
-        let funding = record(native_coin(simulator.new_coin(sdk_hash(owner), 1000)));
+        let funding = record(simulator.new_coin(owner, 1000));
         let issue = build_transaction(
             &wallet,
             &[funding],
@@ -993,7 +888,7 @@ mod tests {
         let wallet = wallet().await;
         let owner = wallet.get_puzzle_hash(false).await.unwrap();
         let mut simulator = Simulator::new();
-        let funding = record(native_coin(simulator.new_coin(sdk_hash(owner), 100)));
+        let funding = record(simulator.new_coin(owner, 100));
         assert!(
             build_transaction(
                 &wallet,
@@ -1052,7 +947,7 @@ mod tests {
         let wallet = wallet().await;
         let owner = wallet.get_puzzle_hash(false).await.unwrap();
         let mut simulator = Simulator::new();
-        let coin = record(native_coin(simulator.new_coin(sdk_hash(owner), 100)));
+        let coin = record(simulator.new_coin(owner, 100));
         let request = NftLaunch {
             data_uri: "https://example.org/art.png".into(),
             data_hash: [12; 32].into(),
@@ -1126,10 +1021,10 @@ mod tests {
         assert!(received[0].did_owner.is_none());
         let mut invalid = request;
         invalid.royalty_basis_points = 10_001;
-        assert!(nft_metadata(&mut SpendContext::new(), &invalid).is_err());
+        assert!(nft_metadata(&invalid).is_err());
         invalid.royalty_basis_points = 0;
         invalid.data_uri = "file:///etc/passwd".into();
-        assert!(nft_metadata(&mut SpendContext::new(), &invalid).is_err());
+        assert!(nft_metadata(&invalid).is_err());
     }
 
     #[tokio::test]
@@ -1137,7 +1032,7 @@ mod tests {
         let wallet = wallet().await;
         let owner = wallet.get_puzzle_hash(false).await.unwrap();
         let mut simulator = Simulator::new();
-        let coin = record(native_coin(simulator.new_coin(sdk_hash(owner), 2000)));
+        let coin = record(simulator.new_coin(owner, 2000));
         let bundle = build_transaction(
             &wallet,
             &[coin],

@@ -1,10 +1,10 @@
 use blst::min_pk::{PublicKey, Signature};
-use chia_bls::DerivableKey;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use dg_xch_core::clvm::bls_bindings::verify_signature;
 use dg_xch_core::protocols::pool::AuthenticationPayload;
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_core::utils::hash_256;
+use dg_xch_keys::derive_child_pk_unhardened;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use std::io::Error;
 
@@ -61,8 +61,9 @@ pub fn v2_auth_message(
 }
 
 pub fn v2_auth_key(key: Bytes48) -> Result<Bytes48, Error> {
-    let key = chia_bls::PublicKey::from_bytes(&key.bytes()).map_err(Error::other)?;
-    Ok(key.derive_unhardened(12381).to_bytes().into())
+    let key = PublicKey::key_validate(&key.bytes())
+        .map_err(|e| Error::other(format!("invalid authentication public key: {e:?}")))?;
+    Ok(derive_child_pk_unhardened(&key, 12381)?.to_bytes().into())
 }
 
 pub fn verify_v2_login(

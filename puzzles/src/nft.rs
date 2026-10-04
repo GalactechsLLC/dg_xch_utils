@@ -24,3 +24,347 @@ pub fn test_hashes() {
         NFT_STATE_LAYER_TREE_HASH
     );
 }
+
+use crate::programs;
+use dg_xch_core::blockchain::{coin::Coin, coin_spend::CoinSpend, sized_bytes::Bytes32};
+use dg_xch_core::clvm::{program::Program, sexp::SExp};
+use dg_xch_core::traits::SizedBytes;
+use std::io::Error;
+
+#[derive(Clone)]
+pub struct NftInfo {
+    pub launcher_id: Bytes32,
+    pub metadata: Program<'static>,
+    pub metadata_updater: Bytes32,
+    pub current_owner: Option<Bytes32>,
+    pub royalty_puzzle_hash: Bytes32,
+    pub royalty_basis_points: u16,
+}
+
+impl NftInfo {
+    pub fn puzzle(&self, inner: &Program<'_>) -> Program<'static> {
+        let singleton = Program::to((
+            programs::SINGLETON_TOP_LAYER_V1_1_TREE_HASH,
+            (self.launcher_id, programs::SINGLETON_LAUNCHER_TREE_HASH),
+        ));
+        let transfer =
+            programs::NFT_OWNERSHIP_TRANSFER_PROGRAM_ONE_WAY_CLAIM_WITH_ROYALTIES_PROGRAM.curry(&[
+                singleton.clone(),
+                Program::to(self.royalty_puzzle_hash),
+                Program::to(self.royalty_basis_points),
+            ]);
+        let owner = self
+            .current_owner
+            .map_or_else(|| Program::to(0), Program::to);
+        let ownership = programs::NFT_OWNERSHIP_LAYER_PROGRAM.curry(&[
+            Program::to(programs::NFT_OWNERSHIP_LAYER_TREE_HASH),
+            owner,
+            transfer,
+            inner.to_owned(),
+        ]);
+        let state = programs::NFT_STATE_LAYER_PROGRAM.curry(&[
+            Program::to(programs::NFT_STATE_LAYER_TREE_HASH),
+            self.metadata.clone(),
+            Program::to(self.metadata_updater),
+            ownership,
+        ]);
+        programs::SINGLETON_TOP_LAYER_V1_1_PROGRAM
+            .curry(&[singleton, state])
+            .to_owned()
+    }
+
+    pub fn spend(
+        &self,
+        coin: Coin,
+        lineage: Program<'static>,
+        inner: &Program<'_>,
+        solution: &Program<'_>,
+    ) -> Result<CoinSpend, Error> {
+        let puzzle = self.puzzle(inner);
+        if puzzle.tree_hash() != coin.puzzle_hash {
+            return Err(Error::other("NFT puzzle does not match coin"));
+        }
+        let inner = SExp::from(vec![SExp::from(vec![solution.sexp().to_owned()])]);
+        Ok(CoinSpend {
+            coin,
+            puzzle_reveal: puzzle.serialized()?,
+            solution: Program::to(vec![lineage.sexp().to_owned(), coin.amount.into(), inner])
+                .serialized()?,
+        })
+    }
+}
+
+pub fn mint_nft(
+    parent: Bytes32,
+    destination: Bytes32,
+    metadata: Program<'static>,
+    royalty_puzzle_hash: Bytes32,
+    royalty_basis_points: u16,
+) -> Result<(Vec<SExp<'static>>, Vec<CoinSpend>), Error> {
+    if royalty_basis_points > 10_000 {
+        return Err(Error::other("invalid NFT royalty"));
+    }
+    let launcher = Coin {
+        parent_coin_info: parent,
+        puzzle_hash: programs::SINGLETON_LAUNCHER_TREE_HASH,
+        amount: 1,
+    };
+    let info = NftInfo {
+        launcher_id: launcher.name(),
+        metadata,
+        metadata_updater: programs::NFT_METADATA_UPDATER_DEFAULT_TREE_HASH,
+        current_owner: None,
+        royalty_puzzle_hash,
+        royalty_basis_points,
+    };
+    let output = SExp::from(vec![
+        SExp::from(51),
+        destination.into(),
+        SExp::from(1),
+        SExp::from(vec![SExp::from(destination)]),
+    ]);
+    let inner = Program::new(SExp::from(1).cons(SExp::from(vec![output])));
+    let eve = Coin {
+        parent_coin_info: launcher.name(),
+        puzzle_hash: info.puzzle(&inner).tree_hash(),
+        amount: 1,
+    };
+    let solution = Program::to(vec![
+        SExp::from(eve.puzzle_hash),
+        SExp::from(1),
+        SExp::from(0),
+    ]);
+    let mut announcement = launcher.name().bytes().to_vec();
+    announcement.extend_from_slice(solution.tree_hash().as_ref());
+    let conditions = vec![
+        SExp::from(vec![
+            SExp::from(51),
+            launcher.puzzle_hash.into(),
+            SExp::from(1),
+        ]),
+        SExp::from(vec![
+            SExp::from(61),
+            SExp::from(dg_xch_core::utils::hash_256(announcement).to_vec()),
+        ]),
+        SExp::from(vec![SExp::from(62), launcher.name().into()]),
+    ];
+    let spends = vec![
+        CoinSpend {
+            coin: launcher,
+            puzzle_reveal: programs::SINGLETON_LAUNCHER_PROGRAM.serialized()?,
+            solution: solution.serialized()?,
+        },
+        info.spend(
+            eve,
+            Program::to(vec![SExp::from(parent), SExp::from(1)]),
+            &inner,
+            &Program::to(0),
+        )?,
+    ];
+    Ok((conditions, spends))
+}
+
+#[derive(Clone)]
+pub struct NftCoin {
+    pub coin: Coin,
+    pub info: NftInfo,
+    pub owner_puzzle_hash: Bytes32,
+    pub lineage_proof: Program<'static>,
+}
+
+impl NftInfo {
+    pub fn puzzle_hash(&self, owner: Bytes32) -> Bytes32 {
+        use dg_xch_core::curry_and_treehash::{
+            calculate_hash_of_quoted_mod_hash, curry_and_treehash,
+        };
+        let curry = |module: Bytes32, args: &[Bytes32]| {
+            curry_and_treehash(&calculate_hash_of_quoted_mod_hash(&module), args)
+        };
+        let singleton = Program::to((
+            programs::SINGLETON_TOP_LAYER_V1_1_TREE_HASH,
+            (self.launcher_id, programs::SINGLETON_LAUNCHER_TREE_HASH),
+        ));
+        let transfer =
+            programs::NFT_OWNERSHIP_TRANSFER_PROGRAM_ONE_WAY_CLAIM_WITH_ROYALTIES_PROGRAM.curry(&[
+                singleton.clone(),
+                Program::to(self.royalty_puzzle_hash),
+                Program::to(self.royalty_basis_points),
+            ]);
+        let current = self
+            .current_owner
+            .map_or_else(|| Program::to(0), Program::to);
+        let ownership = curry(
+            programs::NFT_OWNERSHIP_LAYER_TREE_HASH,
+            &[
+                Program::to(programs::NFT_OWNERSHIP_LAYER_TREE_HASH).tree_hash(),
+                current.tree_hash(),
+                transfer.tree_hash(),
+                owner,
+            ],
+        );
+        let state = curry(
+            programs::NFT_STATE_LAYER_TREE_HASH,
+            &[
+                Program::to(programs::NFT_STATE_LAYER_TREE_HASH).tree_hash(),
+                self.metadata.tree_hash(),
+                Program::to(self.metadata_updater).tree_hash(),
+                ownership,
+            ],
+        );
+        curry(
+            programs::SINGLETON_TOP_LAYER_V1_1_TREE_HASH,
+            &[singleton.tree_hash(), state],
+        )
+    }
+}
+
+impl NftCoin {
+    pub fn parse_child(
+        coin: Coin,
+        parent: &CoinSpend,
+        owners: &std::collections::HashSet<Bytes32>,
+        max_cost: u64,
+    ) -> Result<Option<Self>, Error> {
+        let puzzle = parent.puzzle_reveal.to_program()?;
+        let (module, args) = puzzle.uncurry()?;
+        if module.tree_hash() != programs::SINGLETON_TOP_LAYER_V1_1_TREE_HASH {
+            return Ok(None);
+        }
+        if !args.sexp().arg_count_is(2) {
+            return Err(Error::other("invalid singleton arguments"));
+        }
+        let singleton_args = args.sexp().ref_list();
+        let singleton = singleton_args[0];
+        let launcher = Bytes32::try_from(singleton.rest()?.first()?)?;
+        let expected = Program::to((
+            programs::SINGLETON_TOP_LAYER_V1_1_TREE_HASH,
+            (launcher, programs::SINGLETON_LAUNCHER_TREE_HASH),
+        ));
+        if singleton != expected.sexp() {
+            return Err(Error::other("invalid NFT singleton structure"));
+        }
+        let inner = Program::new(singleton_args[1].to_owned());
+        let (module, args) = inner.uncurry()?;
+        if module.tree_hash() != programs::NFT_STATE_LAYER_TREE_HASH {
+            return Ok(None);
+        }
+        if !args.sexp().arg_count_is(4) {
+            return Err(Error::other("invalid NFT state arguments"));
+        }
+        let state = args.sexp().ref_list();
+        if Bytes32::try_from(state[0])? != programs::NFT_STATE_LAYER_TREE_HASH {
+            return Err(Error::other("invalid NFT state module hash"));
+        }
+        let metadata = Program::new(state[1].to_owned());
+        let updater = Bytes32::try_from(state[2])?;
+        let ownership = Program::new(state[3].to_owned());
+        let (module, args) = ownership.uncurry()?;
+        if module.tree_hash() != programs::NFT_OWNERSHIP_LAYER_TREE_HASH {
+            return Ok(None);
+        }
+        if !args.sexp().arg_count_is(4) {
+            return Err(Error::other("invalid NFT ownership arguments"));
+        }
+        let fields = args.sexp().ref_list();
+        if Bytes32::try_from(fields[0])? != programs::NFT_OWNERSHIP_LAYER_TREE_HASH {
+            return Err(Error::other("invalid NFT ownership module hash"));
+        }
+        let current_owner = if fields[1].atom()?.as_ref().is_empty() {
+            None
+        } else {
+            Some(Bytes32::try_from(fields[1])?)
+        };
+        let p2 = Program::new(fields[3].to_owned());
+        let transfer = Program::new(fields[2].to_owned());
+        let (module, args) = transfer.uncurry()?;
+        if module.tree_hash()
+            != programs::NFT_OWNERSHIP_TRANSFER_PROGRAM_ONE_WAY_CLAIM_WITH_ROYALTIES_TREE_HASH
+        {
+            return Ok(None);
+        }
+        if !args.sexp().arg_count_is(3) {
+            return Err(Error::other("invalid royalty arguments"));
+        }
+        let fields = args.sexp().ref_list();
+        if fields[0] != singleton {
+            return Err(Error::other("royalty singleton mismatch"));
+        }
+        let points = fields[2]
+            .as_int()?
+            .to_u64()
+            .and_then(|v| u16::try_from(v).ok())
+            .ok_or_else(|| Error::other("invalid royalty amount"))?;
+        let mut info = NftInfo {
+            launcher_id: launcher,
+            metadata,
+            metadata_updater: updater,
+            current_owner,
+            royalty_puzzle_hash: Bytes32::try_from(fields[1])?,
+            royalty_basis_points: points,
+        };
+        if parent.coin.name() != coin.parent_coin_info
+            || puzzle.tree_hash() != parent.coin.puzzle_hash
+        {
+            return Err(Error::other("NFT parent mismatch"));
+        }
+        let (additions, spent_cost) = parent.compute_additions_with_cost(max_cost)?;
+        if !additions.contains(&coin) {
+            return Err(Error::other("NFT is not an output of its parent"));
+        }
+        let solution = parent.solution.to_program()?;
+        let inner_solution = solution
+            .rest()?
+            .rest()?
+            .first()?
+            .first()?
+            .first()?
+            .to_owned();
+        let (cost, conditions) = p2.run(max_cost.saturating_sub(spent_cost), 0, &inner_solution)?;
+        let mut remaining = max_cost.saturating_sub(spent_cost).saturating_sub(cost);
+        let mut destination = None;
+        for condition in conditions.sexp().ref_list() {
+            let fields = condition.ref_list();
+            if fields.first() == Some(&&SExp::from(51))
+                && fields.len() >= 3
+                && fields[2].as_int()?.to_u64().is_some_and(|v| v % 2 == 1)
+            {
+                destination = Some(Bytes32::try_from(fields[1])?);
+            } else if fields.first() == Some(&&SExp::from(-10)) && fields.len() >= 2 {
+                info.current_owner = if fields[1].atom()?.as_ref().is_empty() {
+                    None
+                } else {
+                    Some(Bytes32::try_from(fields[1])?)
+                };
+            } else if fields.first() == Some(&&SExp::from(-24)) && fields.len() == 3 {
+                let updater = Program::new(fields[1].to_owned());
+                if updater.tree_hash() != info.metadata_updater {
+                    return Err(Error::other("NFT metadata updater mismatch"));
+                }
+                let args = Program::to(vec![
+                    info.metadata.sexp().to_owned(),
+                    info.metadata_updater.into(),
+                    fields[2].to_owned(),
+                ]);
+                let (cost, updated) = updater.run(remaining, 0, &args)?;
+                remaining = remaining.saturating_sub(cost);
+                info.metadata = updated.first()?.first()?.to_owned();
+                info.metadata_updater =
+                    Bytes32::try_from(updated.first()?.rest()?.first()?.sexp())?;
+            }
+        }
+        let owner = destination.ok_or_else(|| Error::other("NFT has no child"))?;
+        if !owners.contains(&owner) || info.puzzle_hash(owner) != coin.puzzle_hash {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            coin,
+            info,
+            owner_puzzle_hash: owner,
+            lineage_proof: Program::to(vec![
+                SExp::from(parent.coin.parent_coin_info),
+                inner.tree_hash().into(),
+                parent.coin.amount.into(),
+            ]),
+        }))
+    }
+}

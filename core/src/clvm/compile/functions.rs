@@ -106,9 +106,10 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        if !entries.is_empty() {
-            entries = vec![Self::get_function_tree(&entries)];
+        if entries.is_empty() {
+            return self.create_pair_sexp(vec![CONS_SEXP.clone(), NULL_SEXP, SExp::from(1u8)]);
         }
+        entries = vec![Self::get_function_tree(&entries)];
         entries.push(QUOTE_SEXP.clone());
         let mut rtn = None;
         for arg in entries.into_iter() {
@@ -265,17 +266,6 @@ impl<'a> Compiler<'a> {
             .find(|v| v.name.bytes == token.bytes)
             .cloned()
             .ok_or(Error::new(ErrorKind::InvalidData, "Inline Func not found"))?;
-        if func.argument_pattern.len() == 1
-            && func
-                .function_body
-                .iter()
-                .any(|token| token.bytes == func.argument_names[0].bytes)
-        {
-            return Err(Error::new(
-                ErrorKind::Unsupported,
-                "Classic inline whole-argument references are not supported yet",
-            ));
-        }
         let num_args = func.argument_names.len() - usize::from(func.has_rest_arg);
         if args.len() < num_args || (!func.has_rest_arg && args.len() != num_args) {
             return Err(Error::new(

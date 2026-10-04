@@ -10,21 +10,18 @@ repository.workspace = true
 [dependencies]
 argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
 async-trait = "0.1.89"
+bech32 = "0.9.1"
 blst = { version = "0.3.16", features = ["portable"] }
 chacha20poly1305 = "0.10.1"
-chia-sdk-driver = { version = "=0.36.0", features = ["offer-compression"] }
-chia-bls = "=0.36.1"
-indexmap = "2"
-chia-sdk-types = "=0.36.0"
-chia-protocol = "=0.36.1"
-chia-puzzle-types = "=0.36.1"
-clvm-traits = "=0.36.1"
-clvmr = "=0.16.2"
 dashmap = "6.1.0"
 dg_xch_clients = { path = "../clients" }
 dg_xch_core = { path = "../core", default-features = false, features = ["bls"] }
 dg_xch_keys = { path = "../keys" }
+dg_xch_node = { path = "../node", features = ["hint"] }
 dg_xch_puzzles = { path = "../puzzles" }
+dg_xch_serialize = { path = "../serialize" }
+dg_xch_stores = { path = "../stores", features = ["hint"] }
+flate2 = { version = "1", features = ["zlib-ng-compat"] }
 hex = "0.4.3"
 log = "0.4.29"
 num-traits = "0.2.19"
@@ -40,4 +37,4 @@ zeroize = "1.9.0"
 libc = "0.2"
 
 [dev-dependencies]
-chia-sdk-test = "=0.36.0"
+dg_xch_simulator = { path = "../simulator", default-features = false, features = ["pos2"] }

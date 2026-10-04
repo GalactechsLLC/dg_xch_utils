@@ -398,7 +398,6 @@ fn test_classic_quasiquote() {
         "(mod (X) (qq X X))",
         "(mod (X) (qq (unquote)))",
         "(mod (X) (qq (unquote X X)))",
-        "(mod (X) (qq (qq X)))",
     ] {
         let compiler = Compiler::new(
             Cow::Borrowed(source.as_bytes()),
@@ -548,17 +547,13 @@ fn test_invalid_classic_arguments() {
         "(mod (A (B C) (list A))",
         "(mod (A) (defun (F) (X) X) (F A))",
         "(mod (A) (defun F) (F A))",
-        "(mod (A) (defun-inline F ARGS (list ARGS)) (F A))",
         "(mod () (defconstant DATA (1 . 2 3)) (list DATA))",
     ] {
         let compiler = Compiler::new(Cow::Borrowed(source.as_bytes()), COMPAT_CHIA, 0, &[]);
         assert!(compiler.compile().is_err(), "{source}");
     }
-    for source in [
-        "(mod ((A B)) (list A B))",
-        "(mod () (defconstant DATA (1 2)) (list DATA))",
-        "(mod () (defun F ARGS (list ARGS)) (F 1))",
-    ] {
+    {
+        let source = "(mod () (defun F ARGS (list ARGS)) (F 1))";
         let compiler = Compiler::new(Cow::Borrowed(source.as_bytes()), 0, 0, &[]);
         assert!(compiler.compile().is_err(), "{source}");
     }
@@ -691,10 +686,6 @@ fn test_invalid_classic_macros() {
             "unquote argument",
         ),
         (
-            "(mod () (defmacro F X (qq (qq (unquote X)))) (F))",
-            "Nested classic quasiquotation",
-        ),
-        (
             "(mod () (defmacro F X (unknown X)) (F))",
             "Unsupported classic macro operator",
         ),
@@ -710,11 +701,8 @@ fn test_invalid_classic_macros() {
             "{source}"
         );
     }
-    for (flags, sigil) in [
-        (0, ""),
-        (COMPAT_CHIA, "(include *standard-cl-25*)"),
-        (COMPAT_CHIA, "(include *standard-cl-26*)"),
-    ] {
+    {
+        let (flags, sigil) = (0, "");
         let source = format!("(mod () {sigil} (defmacro F X 1) (F))");
         let compiler = Compiler::new(Cow::Borrowed(source.as_bytes()), flags, 0, &[]);
         assert!(
@@ -1072,7 +1060,7 @@ fn test_modern_reference_bytes() {
     use std::borrow::Cow;
 
     // Outputs from chialisp 0.4.5.
-    for (source, expected) in [
+    let cases = [
         (
             "(mod (X) (include *standard-cl-26*) (defconstant C 10) (+ X C))",
             "0xff10ff02ffff010a80",
@@ -1146,7 +1134,10 @@ fn test_modern_reference_bytes() {
             "(mod (X) (include *standard-cl-26*) (list \"text with spaces; (literal)\" X))",
             "0xff04ffff019b746578742077697468207370616365733b20286c69746572616c29ffff04ff02ff808080",
         ),
-    ] {
+    ];
+    // Compatibility targets clean runs. Prior compilations and their order must
+    // never affect generated symbols or the resulting bytecode.
+    for &(source, expected) in cases.iter().chain(cases.iter().rev()).chain(cases.iter()) {
         let compiler = Compiler::new(Cow::Borrowed(source.as_bytes()), COMPAT_CHIA, 0, &[]);
         let prog = compiler.compile().unwrap();
         assert_eq!(
@@ -1728,7 +1719,7 @@ fn test_invalid_embed_file() {
 
     for (declaration, kind) in [
         ("(embed-file DATA bin missing.bin)", ErrorKind::NotFound),
-        ("(embed-file DATA hex missing.bin)", ErrorKind::Unsupported),
+        ("(embed-file DATA hex missing.bin)", ErrorKind::NotFound),
         ("(embed-file DATA bin)", ErrorKind::InvalidInput),
         (
             "(embed-file DATA bin missing.bin extra)",
@@ -2562,4 +2553,111 @@ fn bls_ops_cost_and_value_match_clvmr() {
     let bad_hex =
         format!("ff3b{}{}ffff0183616264 80", quote_g2(SIG), quote_g1(PK)).replace(' ', "");
     assert!(run(&bad_hex).is_err(), "bad bls_verify must raise");
+}
+
+#[test]
+fn test_compound_constants_and_nested_module_arguments() {
+    use dg_xch_core::clvm::assemble::assemble_text;
+    use dg_xch_core::clvm::compile::Compiler;
+    use std::borrow::Cow;
+    for (body, env, expected) in [
+        (
+            "(mod ((A B) . C) SIGIL (list A B C))",
+            "((7 8) 9 10)",
+            "(7 8 (9 10))",
+        ),
+        (
+            "(mod () SIGIL (defconstant DATA (1 2)) (list DATA))",
+            "()",
+            "((1 2))",
+        ),
+        (
+            "(mod () SIGIL (defconstant DATA (+ 1 2)) DATA)",
+            "()",
+            "(43 1 2)",
+        ),
+    ] {
+        for version in [0, 21, 23, 25, 26] {
+            let sigil = if version == 0 {
+                String::new()
+            } else {
+                format!("(include *standard-cl-{version}*)")
+            };
+            let source = body.replace("SIGIL", &sigil);
+            let compiler = Compiler::new(
+                Cow::Borrowed(source.as_bytes()),
+                if version == 0 { 0 } else { COMPAT_CHIA },
+                0,
+                &[],
+            );
+            let program = compiler.compile().unwrap();
+            let (_, result) = program
+                .run(1_000_000, 0, &assemble_text(env).unwrap())
+                .unwrap();
+            assert_eq!(result, assemble_text(expected).unwrap(), "{source}");
+        }
+    }
+}
+
+#[test]
+fn test_extended_language_reference_bytes() {
+    use dg_xch_core::clvm::compile::Compiler;
+    use std::borrow::Cow;
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/compiler_language.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let source = case["source"].as_str().unwrap();
+        let compiler = Compiler::new(Cow::Borrowed(source.as_bytes()), COMPAT_CHIA, 0, &[]);
+        let program = compiler
+            .compile()
+            .unwrap_or_else(|e| panic!("{source}: {e}"));
+        assert_eq!(
+            hex::encode(program.serialized().unwrap().as_ref()),
+            case["hex"].as_str().unwrap(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn test_embedded_expressions_reference_bytes() {
+    use dg_xch_core::clvm::compile::Compiler;
+    use std::borrow::Cow;
+    let dir = std::env::temp_dir().join(format!("dg-embed-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("value.sexp"), "(1 2 (4 . 5))").unwrap();
+    std::fs::write(dir.join("child.clsp"), "(mod (X) (+ X 1))").unwrap();
+    std::fs::write(dir.join("value.hex"), "ff01ff02ffff040580").unwrap();
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/compiler_embed.json")).unwrap();
+    let includes = [dir.to_str().unwrap()];
+    for case in cases.as_array().unwrap() {
+        let source = case["source"].as_str().unwrap();
+        let compiler = Compiler::new(Cow::Borrowed(source.as_bytes()), COMPAT_CHIA, 0, &includes);
+        let program = compiler.compile().unwrap();
+        assert_eq!(
+            hex::encode(program.serialized().unwrap().as_ref()),
+            case["hex"].as_str().unwrap(),
+            "{source}"
+        );
+    }
+    std::fs::write(
+        dir.join("child.clsp"),
+        "(mod () (compile-file AGAIN child.clsp) AGAIN)",
+    )
+    .unwrap();
+    let compiler = Compiler::new(
+        Cow::Borrowed(b"(mod () (include *standard-cl-26*) (compile-file CHILD child.clsp) CHILD)"),
+        COMPAT_CHIA,
+        0,
+        &includes,
+    );
+    assert!(
+        compiler
+            .compile()
+            .unwrap_err()
+            .to_string()
+            .contains("nesting limit")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }

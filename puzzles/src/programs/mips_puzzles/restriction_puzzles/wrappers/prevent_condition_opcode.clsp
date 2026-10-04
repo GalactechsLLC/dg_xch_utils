@@ -1,0 +1,15 @@
+(mod (CONDITION_OPCODE Conditions)
+  (include utility_macros.clib)
+
+  (defun check_coins (CONDITION_OPCODE conditions)
+    (if conditions
+      (if (= (f (f conditions)) CONDITION_OPCODE)
+        (x)
+        (check_coins CONDITION_OPCODE (r conditions))
+      )
+      1
+    )
+  )
+
+  (assert (check_coins CONDITION_OPCODE Conditions) Conditions)
+)

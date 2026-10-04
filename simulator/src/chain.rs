@@ -785,7 +785,7 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
                 .into_iter()
                 .filter(|(i, _)| *i == plot_index)
             {
-                let proof = self.plots.solve(found, &chain);
+                let proof = self.plots.solve(found, &chain, pos_challenge)?;
                 if proof.is_empty() {
                     continue;
                 }

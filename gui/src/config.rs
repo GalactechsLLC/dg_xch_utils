@@ -29,6 +29,7 @@ pub struct Settings {
     pub version: u32,
     pub theme: Theme,
     pub node_host: String,
+    pub wallet_sync_mode: dg_xch_wallet::sync::SyncMode,
     pub node_port: u16,
     pub network: String,
     pub genesis_header_hash: String,
@@ -56,6 +57,7 @@ impl Default for Settings {
             version: 1,
             theme: Theme::Daylight,
             node_host: "localhost".into(),
+            wallet_sync_mode: dg_xch_wallet::sync::SyncMode::Trusted,
             node_port: 8555,
             network: "mainnet".into(),
             genesis_header_hash: ChiaNetwork::Mainnet

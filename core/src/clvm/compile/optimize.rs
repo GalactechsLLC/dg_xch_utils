@@ -34,7 +34,7 @@ impl Default for ReferenceNames {
 
 impl ReferenceNames {
     pub fn record_body(&mut self, tokens: &[Token<'_>]) -> Result<usize, Error> {
-        let tokens = read_form(&mut tokens.to_vec().into_iter())?;
+        let tokens = read_form(&mut tokens.iter().cloned())?;
         let mut expressions = vec![];
         read_expression(&tokens, 0..tokens.len(), None, &mut expressions)?;
         let mut count = 0;
@@ -114,9 +114,9 @@ fn read_expression(
     if matches!(tokens[range.start + 1].bytes.as_ref(), b"q" | b"quote") {
         return Ok(index);
     }
-    let mut stream = tokens[range.start + 2..range.end - 1].to_vec().into_iter();
+    let mut stream = tokens[range.start + 2..range.end - 1].iter().cloned();
     let mut position = range.start + 2;
-    while !stream.as_slice().is_empty() {
+    while stream.len() != 0 {
         let form = read_form(&mut stream)?;
         let end = position + form.len();
         let child = read_expression(tokens, position..end, Some(index), expressions)?;
@@ -466,11 +466,12 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .filter(|name| {
                     regular.iter().any(|f| &f.name.bytes == *name)
-                        || self
-                            .embedded_files
-                            .read()
-                            .iter()
-                            .any(|(token, _)| &token.bytes == *name)
+                        || (self.compiler_version.load(Ordering::Relaxed) != 21
+                            && self
+                                .embedded_files
+                                .read()
+                                .iter()
+                                .any(|(token, _)| &token.bytes == *name))
                 })
                 .cloned()
                 .collect();

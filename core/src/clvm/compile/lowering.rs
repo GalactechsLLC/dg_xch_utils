@@ -29,9 +29,9 @@ impl<'a> Compiler<'a> {
         if matches!(operator.bytes.as_ref(), b"q" | b"quote") {
             return Ok(tokens);
         }
-        let mut stream = tokens[2..tokens.len() - 1].to_vec().into_iter();
+        let mut stream = tokens[2..tokens.len() - 1].iter().cloned();
         let mut forms = vec![];
-        while !stream.as_slice().is_empty() {
+        while stream.len() != 0 {
             forms.push(read_form(&mut stream)?);
         }
         if operator.bytes.as_ref() == b"lambda" && self.flags & COMPAT_CHIA != 0 {
@@ -60,7 +60,7 @@ impl<'a> Compiler<'a> {
                     .get(2)
                     .is_some_and(|token| token.bytes.as_ref() == b"&")
             {
-                let mut stream = pattern[1..].to_vec().into_iter();
+                let mut stream = pattern[1..].iter().cloned();
                 let capture_form = read_form(&mut stream)?;
                 captures.extend_from_slice(&capture_form[2..capture_form.len() - 1]);
                 pattern.remove(2);
@@ -125,8 +125,8 @@ impl<'a> Compiler<'a> {
                     "Expected let binding list",
                 ));
             }
-            let mut stream = bindings[1..bindings.len() - 1].to_vec().into_iter();
-            while !stream.as_slice().is_empty() {
+            let mut stream = bindings[1..bindings.len() - 1].iter().cloned();
+            while stream.len() != 0 {
                 let binding = read_form(&mut stream)?;
                 if binding
                     .first()
@@ -137,10 +137,10 @@ impl<'a> Compiler<'a> {
                         "Expected let binding pair",
                     ));
                 }
-                let mut pair = binding[1..binding.len() - 1].to_vec().into_iter();
+                let mut pair = binding[1..binding.len() - 1].iter().cloned();
                 forms.push(read_form(&mut pair)?);
                 forms.push(read_form(&mut pair)?);
-                if !pair.as_slice().is_empty() {
+                if pair.len() != 0 {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
                         "Expected let binding pair",
@@ -175,7 +175,7 @@ impl<'a> Compiler<'a> {
         }
         let mut bindings = vec![];
         let mut names = HashSet::new();
-        for pair in forms.chunks_exact(2) {
+        for pair in forms.as_chunks::<2>().0 {
             let mut pattern = pair[0].clone().into_iter();
             let mut args = vec![];
             parse_assign_pattern(&mut pattern, num_bigint::BigInt::from(1u8), &mut args)?;

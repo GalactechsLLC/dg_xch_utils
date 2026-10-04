@@ -84,6 +84,7 @@ pub struct Compiler<'a> {
     pub compiler_version: AtomicU8,
     pub inline_stack: Mutex<Vec<Cow<'a, [u8]>>>,
     inline_scope: Mutex<Vec<(Token<'static>, SExp<'static>)>>,
+    compile_depth: usize,
 }
 impl<'a> Compiler<'a> {
     pub fn new(
@@ -134,10 +135,10 @@ impl<'a> Compiler<'a> {
             ));
         }
         if !self.macros.read().is_empty() {
-            if self.compiler_version.load(Ordering::Relaxed) >= 25 {
+            if self.flags & COMPAT_CHIA == 0 {
                 return Err(Error::new(
                     ErrorKind::Unsupported,
-                    "Macros require classic Chia compatibility or CL21/CL23",
+                    "Macros require classic Chia compatibility or a Chia sigil",
                 ));
             }
             let body = classic::expand(self, self.body.lock().clone())
@@ -160,26 +161,6 @@ impl<'a> Compiler<'a> {
                         )
                     })?;
             }
-        }
-        if self.compiler_version.load(Ordering::Relaxed) >= 25
-            && !self.argument_pattern.read().is_empty()
-        {
-            return Err(Error::new(
-                ErrorKind::Unsupported,
-                "Nested module arguments are only supported in classic compatibility",
-            ));
-        }
-        if self.compiler_version.load(Ordering::Relaxed) != 0
-            && self
-                .constants
-                .read()
-                .iter()
-                .any(|constant| constant.value.len() != 1)
-        {
-            return Err(Error::new(
-                ErrorKind::Unsupported,
-                "Compound constants are only supported in classic compatibility",
-            ));
         }
         if self.compiler_version.load(Ordering::Relaxed) >= 21 {
             let mut functions = self.functions.read().clone();
@@ -267,20 +248,25 @@ impl<'a> Compiler<'a> {
         Ok(program.to_owned())
     }
     fn process(&'a self) -> Result<Program<'a>, Error> {
+        let empty_environment = self.functions.read().is_empty()
+            && self.table_names.read().is_empty()
+            && !(self.compiler_version.load(Ordering::Relaxed) == 21
+                && (!self.argument_pattern.read().is_empty()
+                    || self
+                        .body
+                        .lock()
+                        .get(1)
+                        .is_some_and(|token| token.bytes.as_ref() == b"a")));
         let body: Vec<Token<'a>> = self.body.lock().clone();
         let mut argument_names = self.argument_names.read().clone();
         let mut args = argument_names
             .iter()
             .cloned()
-            .map(|v| self.get_arg(v))
+            .map(|v| self.get_arg(v, empty_environment))
             .collect::<Result<Vec<_>, _>>()?;
         if !self.argument_pattern.read().is_empty() {
             let mut bindings = vec![];
-            let root = if self.functions.read().is_empty() && self.table_names.read().is_empty() {
-                1u8
-            } else {
-                3u8
-            };
+            let root = if empty_environment { 1u8 } else { 3u8 };
             parse_assign_pattern(
                 &mut self.argument_pattern.read().clone().into_iter(),
                 num_bigint::BigInt::from(root),
@@ -297,25 +283,31 @@ impl<'a> Compiler<'a> {
             index: 0,
             t_type: TokenType::Expression,
         });
-        args.push(
-            if self.functions.read().is_empty() && self.table_names.read().is_empty() {
-                self.create_pair_sexp(vec![CONS_SEXP.clone(), NULL_SEXP, SExp::from(1u8)])?
-            } else {
-                SExp::from(1u8)
-            },
-        );
+        args.push(if empty_environment {
+            self.create_pair_sexp(vec![CONS_SEXP.clone(), NULL_SEXP, SExp::from(1u8)])?
+        } else {
+            SExp::from(1u8)
+        });
         let body = self.process_expression(&mut body.into_iter(), &argument_names, &args, 0)?;
-        Ok(Program::new(
-            if self.functions.read().is_empty() && self.table_names.read().is_empty() {
-                body
+        let body = if empty_environment && self.compiler_version.load(Ordering::Relaxed) >= 21 {
+            let folded = self.optimize_expression(body.clone())?;
+            if matches!(&folded, SExp::Pair(pair) if pair.first() == &QUOTE_SEXP) {
+                folded
             } else {
-                self.create_pair_sexp(vec![
-                    APPLY_SEXP.clone(),
-                    QUOTE_SEXP.clone().cons(body),
-                    self.get_program_args_sexp()?,
-                ])?
-            },
-        ))
+                body
+            }
+        } else {
+            body
+        };
+        Ok(Program::new(if empty_environment {
+            body
+        } else {
+            self.create_pair_sexp(vec![
+                APPLY_SEXP.clone(),
+                QUOTE_SEXP.clone().cons(body),
+                self.get_program_args_sexp()?,
+            ])?
+        }))
     }
 
     fn byte_atom(&self, bytes: Vec<u8>) -> SExp<'static> {
@@ -335,23 +327,22 @@ impl<'a> Compiler<'a> {
             }
             if entries.len() == 2
                 && matches!(&entries[0], SExp::Atom(atom) if matches!(atom.as_ref(), [5] | [6]))
+                && let SExp::Pair(pair) = &entries[1]
             {
-                if let SExp::Pair(pair) = &entries[1] {
-                    let first = entries[0] == SExp::from(5u8);
-                    if pair.first() == &CONS_SEXP && pair.rest().arg_count_is(2) {
-                        let values = pair.rest().ref_list();
-                        return Ok(values[usize::from(!first)].to_owned());
-                    }
-                    if pair.first() == &QUOTE_SEXP {
-                        if let SExp::Pair(value) = pair.rest() {
-                            let value = if first { value.first() } else { value.rest() };
-                            return Ok(if *value == NULL_SEXP {
-                                NULL_SEXP
-                            } else {
-                                QUOTE_SEXP.clone().cons(value.to_owned())
-                            });
-                        }
-                    }
+                let first = entries[0] == SExp::from(5u8);
+                if pair.first() == &CONS_SEXP && pair.rest().arg_count_is(2) {
+                    let values = pair.rest().ref_list();
+                    return Ok(values[usize::from(!first)].to_owned());
+                }
+                if pair.first() == &QUOTE_SEXP
+                    && let SExp::Pair(value) = pair.rest()
+                {
+                    let value = if first { value.first() } else { value.rest() };
+                    return Ok(if *value == NULL_SEXP {
+                        NULL_SEXP
+                    } else {
+                        QUOTE_SEXP.clone().cons(value.to_owned())
+                    });
                 }
             }
             if (entries.len() == 3 && entries[0] == CONS_SEXP)
@@ -387,14 +378,13 @@ impl<'a> Compiler<'a> {
         }
         if self.compiler_version.load(Ordering::Relaxed) == 0
             && matches!(entries.first(), Some(SExp::Atom(atom)) if matches!(atom.as_ref(), [17] | [23]))
+            && let Some(value) = eval_constant(&entries)
         {
-            if let Some(value) = eval_constant(&entries) {
-                return Ok(if value == NULL_SEXP {
-                    NULL_SEXP
-                } else {
-                    QUOTE_SEXP.clone().cons(value)
-                });
-            }
+            return Ok(if value == NULL_SEXP {
+                NULL_SEXP
+            } else {
+                QUOTE_SEXP.clone().cons(value)
+            });
         }
         entries.push(NULL_SEXP.clone());
         concat_args(entries)
@@ -516,9 +506,65 @@ impl<'a> Compiler<'a> {
         if operator.t_type != TokenType::Expression {
             return Err(Error::new(ErrorKind::InvalidData, "Expected Operator"));
         }
+        if self.compiler_version.load(Ordering::Relaxed) == 0 {
+            let function = self
+                .inline_functions
+                .read()
+                .iter()
+                .find(|function| {
+                    function.name.bytes == operator.bytes && function.argument_pattern.len() == 1
+                })
+                .cloned();
+            if let Some(function) = function {
+                if self.inline_stack.lock().contains(&operator.bytes) {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Recursive inline function",
+                    ));
+                }
+                let mut arguments = vec![Token {
+                    bytes: Cow::Borrowed(b"("),
+                    t_type: TokenType::StartCons,
+                    ..operator.clone()
+                }];
+                let mut nesting = 0usize;
+                for token in token_stream.by_ref() {
+                    let end = token.t_type == TokenType::EndCons && nesting == 0;
+                    match token.t_type {
+                        TokenType::StartCons => nesting += 1,
+                        TokenType::EndCons if !end => nesting -= 1,
+                        _ => {}
+                    }
+                    arguments.push(token);
+                    if end {
+                        break;
+                    }
+                }
+                let body: Vec<_> = function
+                    .function_body
+                    .into_iter()
+                    .flat_map(|token| {
+                        if token.bytes == function.argument_names[0].bytes {
+                            arguments.clone()
+                        } else {
+                            vec![token]
+                        }
+                    })
+                    .collect();
+                self.inline_stack.lock().push(operator.bytes.clone());
+                let result = self.process_expression(
+                    &mut body.into_iter(),
+                    function_args,
+                    mapped_args,
+                    env_depth,
+                );
+                self.inline_stack.lock().pop();
+                return result;
+            }
+        }
         if operator.bytes.as_ref() == b"qq" && self.compiler_version.load(Ordering::Relaxed) == 0 {
             let value =
-                self.process_quasiquote(token_stream, function_args, mapped_args, env_depth)?;
+                self.process_quasiquote(token_stream, function_args, mapped_args, env_depth, 1)?;
             if token_stream
                 .next()
                 .is_none_or(|token| token.t_type != TokenType::EndCons)
@@ -530,8 +576,11 @@ impl<'a> Compiler<'a> {
             }
             return Ok(value);
         }
-        if matches!(operator.bytes.as_ref(), b"q" | b"quote") {
-            let is_list = operator.bytes.as_ref() == b"q"
+        if matches!(operator.bytes.as_ref(), b"q" | b"quote")
+            || (self.compiler_version.load(Ordering::Relaxed) == 0
+                && parse_value(operator.bytes.as_ref())? == QUOTE_SEXP)
+        {
+            let is_list = operator.bytes.as_ref() != b"quote"
                 && token_stream
                     .as_slice()
                     .first()
@@ -544,7 +593,7 @@ impl<'a> Compiler<'a> {
                 }];
                 tokens.extend(take(token_stream));
                 *token_stream = tokens.into_iter();
-            } else if operator.bytes.as_ref() == b"q" {
+            } else if operator.bytes.as_ref() != b"quote" {
                 token_stream.next();
             }
             let value = self.process_quoted(token_stream, true)?;
@@ -612,14 +661,12 @@ impl<'a> Compiler<'a> {
                 }))
         {
             // Inline environments explicitly contain the argument list after the globals.
-            if let SExp::Pair(pair) = &args[0] {
-                if pair.first() == &CONS_SEXP {
-                    if let SExp::Pair(values) = pair.rest() {
-                        if let SExp::Pair(tail) = values.rest() {
-                            return Ok(tail.first().to_owned());
-                        }
-                    }
-                }
+            if let SExp::Pair(pair) = &args[0]
+                && pair.first() == &CONS_SEXP
+                && let SExp::Pair(values) = pair.rest()
+                && let SExp::Pair(tail) = values.rest()
+            {
+                return Ok(tail.first().to_owned());
             }
         }
         if self.compiler_version.load(Ordering::Relaxed) == 23
@@ -648,6 +695,19 @@ impl<'a> Compiler<'a> {
                         arg,
                         result,
                     ])?;
+                    if self.compiler_version.load(Ordering::Relaxed) == 21
+                        && self.functions.read().is_empty()
+                        && self.table_names.read().is_empty()
+                    {
+                        let entries = result
+                            .ref_list()
+                            .into_iter()
+                            .map(SExp::to_owned)
+                            .collect::<Vec<_>>();
+                        if let Some(value) = eval_constant(&entries) {
+                            result = QUOTE_SEXP.clone().cons(value);
+                        }
+                    }
                 }
                 Ok(result)
             }
@@ -765,8 +825,33 @@ impl<'a> Compiler<'a> {
                         return self.create_pair_sexp(args);
                     }
                 }
+                if self.compiler_version.load(Ordering::Relaxed) == 0
+                    && function_args
+                        .iter()
+                        .any(|name| name.bytes == operator.bytes)
+                {
+                    let program =
+                        self.process_atom(operator, function_args, mapped_args, env_depth)?;
+                    let mut values = NULL_SEXP;
+                    for value in args.into_iter().rev() {
+                        values = self.create_pair_sexp(vec![CONS_SEXP.clone(), value, values])?;
+                    }
+                    let environment = self.create_pair_sexp(vec![
+                        CONS_SEXP.clone(),
+                        self.get_path(&(num_bigint::BigInt::from(2u8) << env_depth)),
+                        values,
+                    ])?;
+                    return self.create_pair_sexp(vec![APPLY_SEXP.clone(), program, environment]);
+                }
                 let operator = match B_KEYWORD_TO_SEXP.get(operator.bytes.as_ref()) {
                     Some(value) => value.clone(),
+                    None if self.compiler_version.load(Ordering::Relaxed) == 0
+                        && (crate::clvm::assemble::handle_int(&operator.bytes).is_some()
+                            || operator.bytes.starts_with(b"0x")
+                            || operator.bytes.starts_with(b"#")) =>
+                    {
+                        parse_value(&operator.bytes)?
+                    }
                     None => self.process_atom(operator, function_args, mapped_args, env_depth)?,
                 };
                 args.insert(0, operator);
@@ -877,19 +962,18 @@ impl<'a> Compiler<'a> {
                 &mapped_args,
                 env_depth + values.len(),
             )?;
-            if self.compiler_version.load(Ordering::Relaxed) >= 21 {
-                if let SExp::Atom(atom) = &value {
-                    let path =
-                        num_bigint::BigInt::from_bytes_be(num_bigint::Sign::Plus, atom.as_ref());
-                    if path.sign() == num_bigint::Sign::Plus {
-                        for (name, binding_path) in pattern {
-                            let offset = (binding_path >> 1usize) - 1u8;
-                            let binding_path = &path + (offset << (path.bits() - 1));
-                            function_args.insert(0, name);
-                            mapped_args.insert(0, SExp::from(&binding_path));
-                        }
-                        continue;
+            if self.compiler_version.load(Ordering::Relaxed) >= 21
+                && let SExp::Atom(atom) = &value
+            {
+                let path = num_bigint::BigInt::from_bytes_be(num_bigint::Sign::Plus, atom.as_ref());
+                if path.sign() == num_bigint::Sign::Plus {
+                    for (name, binding_path) in pattern {
+                        let offset = (binding_path >> 1usize) - 1u8;
+                        let binding_path = &path + (offset << (path.bits() - 1));
+                        function_args.insert(0, name);
+                        mapped_args.insert(0, SExp::from(&binding_path));
                     }
+                    continue;
                 }
             }
             values.push(value);
@@ -945,12 +1029,11 @@ impl<'a> Compiler<'a> {
             // CL25's name lookup truncates paths to 64 bits. CL26 fixed this.
             if self.compiler_version.load(Ordering::Relaxed) == 25
                 && self.inline_stack.lock().is_empty()
+                && let SExp::Atom(atom) = &value
             {
-                if let SExp::Atom(atom) = &value {
-                    return Ok(SExp::from(
-                        &(atom.as_int() & num_bigint::BigInt::from(u64::MAX)),
-                    ));
-                }
+                return Ok(SExp::from(
+                    &(atom.as_int() & num_bigint::BigInt::from(u64::MAX)),
+                ));
             }
             Ok(value)
         } else if self
@@ -1016,10 +1099,10 @@ impl<'a> Compiler<'a> {
             }
         } else {
             let mut value = parse_value(token.bytes.as_ref())?;
-            if crate::clvm::assemble::handle_int(token.bytes.as_ref()).is_none() {
-                if let SExp::Atom(atom) = value {
-                    value = self.byte_atom(atom.as_ref().to_vec());
-                }
+            if crate::clvm::assemble::handle_int(token.bytes.as_ref()).is_none()
+                && let SExp::Atom(atom) = value
+            {
+                value = self.byte_atom(atom.as_ref().to_vec());
             }
             if value == NULL_SEXP
                 && (self.compiler_version.load(Ordering::Relaxed) == 0
@@ -1058,12 +1141,17 @@ impl<'a> Compiler<'a> {
                 .find(|v| v.name.bytes == token.bytes)
                 .ok_or(Error::new(ErrorKind::InvalidData, "Argument not found"))
                 .map(|v| {
-                    let mut value = parse_value(v.value[0].bytes.as_ref())?;
-                    if crate::clvm::assemble::handle_int(v.value[0].bytes.as_ref()).is_none() {
-                        if let SExp::Atom(atom) = value {
+                    let value = if v.value.len() == 1 {
+                        let mut value = parse_value(v.value[0].bytes.as_ref())?;
+                        if crate::clvm::assemble::handle_int(v.value[0].bytes.as_ref()).is_none()
+                            && let SExp::Atom(atom) = value
+                        {
                             value = self.byte_atom(atom.as_ref().to_vec());
                         }
-                    }
+                        value
+                    } else {
+                        self.process_quoted(&mut v.value.clone().into_iter(), false)?
+                    };
                     Ok(QUOTE_SEXP.clone().cons(value))
                 })?
         } else {
@@ -1072,7 +1160,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn get_arg(&'a self, token: Token<'a>) -> Result<SExp<'a>, Error> {
+    fn get_arg(&'a self, token: Token<'a>, empty_environment: bool) -> Result<SExp<'a>, Error> {
         let (index, _) = self
             .argument_names
             .read()
@@ -1080,8 +1168,7 @@ impl<'a> Compiler<'a> {
             .enumerate()
             .find(|v| v.1.bytes == token.bytes)
             .ok_or(Error::new(ErrorKind::InvalidData, "Argument not found"))?;
-        let arg_pointer = if self.functions.read().is_empty() && self.table_names.read().is_empty()
-        {
+        let arg_pointer = if empty_environment {
             get_arg_pointer(index)?
         } else {
             get_arg_pointer(index + 1)?

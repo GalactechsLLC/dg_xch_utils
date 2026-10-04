@@ -1787,6 +1787,22 @@ impl Desktop {
         section(ui, "Node connection", |ui| {
             field(ui, "Node hostname", &mut self.settings_draft.node_host);
             ui.horizontal(|ui| {
+                ui.label("Wallet synchronization");
+                ui.selectable_value(
+                    &mut self.settings_draft.wallet_sync_mode,
+                    dg_xch_wallet::sync::SyncMode::Trusted,
+                    "Trusted node",
+                );
+                ui.selectable_value(
+                    &mut self.settings_draft.wallet_sync_mode,
+                    dg_xch_wallet::sync::SyncMode::Untrusted,
+                    "Validate locally",
+                );
+            });
+            if self.settings_draft.wallet_sync_mode == dg_xch_wallet::sync::SyncMode::Untrusted {
+                ui.weak("Validates the full chain from genesis before enabling payments. Requires full-chain storage and initial synchronization.");
+            }
+            ui.horizontal(|ui| {
                 ui.label("RPC port");
                 ui.add(egui::DragValue::new(&mut self.settings_draft.node_port).range(1..=65535));
             });
