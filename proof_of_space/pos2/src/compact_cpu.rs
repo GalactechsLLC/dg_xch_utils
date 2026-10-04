@@ -66,7 +66,7 @@ impl Context<'_, '_> {
     fn charge(&self, amount: u64) -> Result<(), Error> {
         check_cancelled(self.cancelled)?;
         self.remaining
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                 remaining.checked_sub(amount)
             })
             .map(|_| ())
