@@ -13,7 +13,7 @@ async fn registration_runs_even_when_outbound_target_is_already_met() {
     assert!(
         common::wait_until(
             || async { queries.load(std::sync::atomic::Ordering::Relaxed) > 0 },
-            std::time::Duration::from_secs(15),
+            common::network::NETWORK_TIMEOUT,
         )
         .await
     );
@@ -28,18 +28,27 @@ use dg_xch_p2p::Supervisor;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-// RED against the one-shot boot seed: the introducer is unreachable when the supervisor starts
-// (the DNS-not-ready analog), then comes up on the same address. A one-shot seed never looks
-// again; the retry session must find it and fill the book.
+// Fail the first TLS connection, then serve an introducer on the same address.
+// Observe the initial attempt so slow RSA key generation cannot skip the failure phase.
 #[tokio::test]
 async fn boot_time_introducer_failure_recovers_when_the_introducer_appears() {
-    let port = free_port(); // nothing listens here yet — the boot-time seed will fail
+    common::install_crypto();
+    let unavailable = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("reserve introducer endpoint");
+    let port = unavailable.local_addr().expect("introducer address").port();
     let settings = fast_settings();
     let mut sup = Supervisor::new(settings);
     sup.start_introducer("127.0.0.1", port);
 
-    // The boot attempt fails (connection refused); the book stays empty.
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // Reject an observed connection instead of guessing when the first dial starts.
+    let (first_attempt, _) =
+        tokio::time::timeout(common::network::NETWORK_TIMEOUT, unavailable.accept())
+            .await
+            .expect("boot-time dial starts")
+            .expect("accept boot-time dial");
+    drop(first_attempt);
+    drop(unavailable);
     assert!(
         sup.book.lock().await.is_empty(),
         "no introducer yet — the book must still be empty"
@@ -56,7 +65,7 @@ async fn boot_time_introducer_failure_recovers_when_the_introducer_appears() {
     assert!(
         wait_until(
             || async { book.lock().await.len() == 2 },
-            Duration::from_secs(15)
+            common::network::NETWORK_TIMEOUT
         )
         .await,
         "the introducer session must retry past the boot failure and seed the book \
@@ -124,7 +133,7 @@ async fn introducer_refreshes_while_all_pooled_candidates_are_cooling() {
     sup.book
         .lock()
         .await
-        .cooldown(&cooling, Duration::from_secs(30));
+        .cooldown(&cooling, common::network::NETWORK_TIMEOUT * 2);
 
     sup.start_introducer("127.0.0.1", intro_port);
     let book = sup.book.clone();
@@ -134,7 +143,7 @@ async fn introducer_refreshes_while_all_pooled_candidates_are_cooling() {
                 let book = book.clone();
                 async move { book.lock().await.len() == 2 }
             },
-            Duration::from_secs(15),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "a non-empty book with no ready candidates must not suppress introducer refresh"

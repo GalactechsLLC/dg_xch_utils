@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+#[path = "../../../tests/support/network.rs"]
+pub mod network;
+
 pub mod ancestry;
 pub mod fault;
 pub mod lineage;
@@ -193,7 +196,7 @@ pub async fn spawn_node_a(
     tokio::spawn(async move {
         let _ = server.run(run_c).await;
     });
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    network::wait_for_listener(port).await;
     (port, run)
 }
 

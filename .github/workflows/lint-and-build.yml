@@ -3,6 +3,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Bound concurrent debug RSA key generation on shared runners.
+  RUST_TEST_THREADS: 2
 
 jobs:
   lint:

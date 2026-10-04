@@ -118,7 +118,7 @@ async fn client_link_pulls_announced_signage_point() {
     tokio::spawn(async move {
         let _ = server.run(server_run_c).await;
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(peer_listen.port()).await;
 
     // ---- the node under test dials OUT with its production outbound handler stack ----
     let node = Arc::new(
@@ -143,7 +143,8 @@ async fn client_link_pulls_announced_signage_point() {
 
     // ---- the peer announces a signage point on the link it accepted ----
     let mut inbound = None;
-    for _ in 0..50 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         if let Some(p) = peer_map.read().await.values().next().cloned() {
             inbound = Some(p);
             break;
@@ -174,7 +175,8 @@ async fn client_link_pulls_announced_signage_point() {
 
     // ---- the CLIENT socket must emit the pull (`new_signage_point_or_end_of_sub_slot`) ----
     let mut pulled = None;
-    for _ in 0..50 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if let Some(req) = pulls.lock().expect("pulls lock").first().cloned() {
             pulled = Some(req);

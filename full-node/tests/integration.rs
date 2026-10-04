@@ -133,7 +133,7 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
         .build();
     let server_handle = server.handle();
     let server_task = tokio::spawn(async move { server.run().await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(client_addr.port()).await;
 
     let health = public_get(client_addr, "/health").await;
     assert!(health.starts_with("HTTP/1.1 200"), "health is public");

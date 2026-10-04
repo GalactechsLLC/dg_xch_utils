@@ -101,7 +101,7 @@ async fn rig(synced: bool) -> (Arc<FullNode>, dg_xch_core::blockchain::coin::Coi
     node.synced.store(synced, Ordering::Relaxed);
     let (server, serve_run, _inbound_peers) = node.build_peer_server().expect("peer server");
     tokio::spawn(async move { server.run(serve_run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
 
     let api: Arc<dyn FullNodeApi> = Arc::new(SubmitterApi);
     let handlers = Arc::new(RwLock::new(full_node_handlers_client(

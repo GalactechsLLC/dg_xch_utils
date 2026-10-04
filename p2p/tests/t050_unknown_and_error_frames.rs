@@ -15,7 +15,6 @@ use dg_xch_core::protocols::{ChiaMessage, ProtocolMessageTypes};
 use dg_xch_serialize::ChiaProtocolVersion;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -89,6 +88,26 @@ async fn error_frame_is_tolerated_and_the_connection_keeps_serving() {
 #[tokio::test]
 async fn unknown_message_type_disconnects_and_bans() {
     let server = spawn_full_node(blind_api()).await;
+    // Prepare the reconnect identity before the 10-second protocol ban starts.
+    // Debug RSA key generation can otherwise consume the entire ban on CI.
+    use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
+    use dg_xch_core::ssl::{
+        generate_ca_signed_cert_data, load_certs_from_bytes, load_private_key_from_bytes,
+    };
+    let (cert, key) = generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes())
+        .expect("reconnect certificate");
+    let tls = Arc::new(
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(
+                dg_xch_core::protocols::shared::NoCertificateVerification,
+            ))
+            .with_client_auth_cert(
+                load_certs_from_bytes(&cert).expect("reconnect cert"),
+                load_private_key_from_bytes(&key).expect("reconnect key"),
+            )
+            .expect("reconnect TLS config"),
+    );
     let client = connect(server.port).await;
 
     // Hand-framed message: type 254 (unassigned), no id, empty length-prefixed body — the wire
@@ -109,7 +128,7 @@ async fn unknown_message_type_disconnects_and_bans() {
             let peers = server.peers.clone();
             async move { peers.read().await.is_empty() }
         },
-        Duration::from_secs(10),
+        common::network::NETWORK_TIMEOUT,
     )
     .await;
     assert!(
@@ -123,26 +142,32 @@ async fn unknown_message_type_disconnects_and_bans() {
         "the host gets the short internal-protocol-error ban"
     );
 
-    // And the ban is enforced at the accept path: an immediate reconnect is refused.
-    let reconnect = dg_xch_clients::websocket::full_node::FullnodeClient::new(
-        Arc::new(dg_xch_clients::websocket::WsClientConfig {
-            host: "127.0.0.1".to_string(),
-            port: server.port,
-            server_port: 0,
-            network_id: "mainnet".to_string(),
-            ssl_info: None,
-            software_version: None,
-            protocol_version: ChiaProtocolVersion::default(),
-            additional_headers: None,
-            rate_limited: false,
-        }),
-        Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        None,
-        5,
-    )
-    .await;
+    // Exercise the TLS/WebSocket accept path with the already prepared identity.
+    let reconnect = || {
+        tokio_tungstenite::connect_async_tls_with_config(
+            format!("wss://127.0.0.1:{}/ws", server.port),
+            None,
+            false,
+            Some(tokio_tungstenite::Connector::Rustls(tls.clone())),
+        )
+    };
+    let refused = tokio::time::timeout(common::network::NETWORK_TIMEOUT, reconnect())
+        .await
+        .expect("banned reconnect must finish, not time out");
     assert!(
-        reconnect.is_err(),
+        refused.is_err(),
         "a banned host's reconnect must be refused within the ban window"
     );
+
+    // The same identity succeeds once the ban is cleared: rejection was due to
+    // the ban, not an invalid TLS setup.
+    server.bans.clear();
+    let (mut admitted, _) = tokio::time::timeout(common::network::NETWORK_TIMEOUT, reconnect())
+        .await
+        .expect("unbanned reconnect finishes")
+        .expect("the prepared identity is accepted after the ban lifts");
+    admitted.close(None).await.expect("close reconnect");
+    server
+        .run
+        .store(false, std::sync::atomic::Ordering::Relaxed);
 }

@@ -1,3 +1,6 @@
+#[path = "../../tests/support/network.rs"]
+mod network;
+
 use async_trait::async_trait;
 use dg_full_node::{Backend, Config, FullNode, outbound_on_connect};
 use dg_xch_core::blockchain::full_block::FullBlock;
@@ -111,7 +114,7 @@ async fn spawn_greeting_peer() -> (u16, Arc<AtomicBool>) {
     tokio::spawn(async move {
         let _ = server.run(run_c).await;
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    network::wait_for_listener(port).await;
     (port, run)
 }
 
@@ -188,7 +191,7 @@ async fn claimed_peak_recovers_after_a_peer_drop_and_redial() {
     // Dialing the peer completes the handshake; the peer greets NewPeak(H); the node's outbound
     // NewPeak handler records the per-connection claim -> claimed_peak == H.
     let (client1, handlers1, run1) = dial_as_outbound_slot(&node, peer_port, &settings).await;
-    let baseline = wait_claimed(&node, PEAK_H, Duration::from_secs(5)).await;
+    let baseline = wait_claimed(&node, PEAK_H, network::NETWORK_TIMEOUT).await;
     assert_eq!(client1.peer_peak.height(), Some(PEAK_H));
     let first_connection_peak = client1.peer_peak.clone();
     assert_eq!(
@@ -202,7 +205,7 @@ async fn claimed_peak_recovers_after_a_peer_drop_and_redial() {
     run1.store(false, Ordering::Relaxed);
     drop(client1);
     drop(handlers1);
-    let collapsed = wait_claimed(&node, 0, Duration::from_secs(5)).await;
+    let collapsed = wait_claimed(&node, 0, network::NETWORK_TIMEOUT).await;
     assert_eq!(
         collapsed, 0,
         "drop retracts the only claim; claimed_peak rolls back to 0 (the ClaimGuard Drop)"
@@ -220,14 +223,14 @@ async fn claimed_peak_recovers_after_a_peer_drop_and_redial() {
     });
     outbound_on_connect(&node, &peer2).await;
 
-    let recovered = wait_claimed(&node, PEAK_H, Duration::from_secs(5)).await;
+    let recovered = wait_claimed(&node, PEAK_H, network::NETWORK_TIMEOUT).await;
     assert_eq!(peer2.client.peer_peak.height(), Some(PEAK_H));
     assert!(!Arc::ptr_eq(
         &first_connection_peak,
         &peer2.client.peer_peak
     ));
     let source =
-        dg_xch_node::sync::source::OutboundPeerSource::new(peer2.clone(), Duration::from_secs(5));
+        dg_xch_node::sync::source::OutboundPeerSource::new(peer2.clone(), network::NETWORK_TIMEOUT);
     assert_eq!(
         dg_xch_node::sync::source::BlockRangeSource::advertised_height(&source),
         Some(PEAK_H)
