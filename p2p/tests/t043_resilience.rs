@@ -53,7 +53,7 @@ async fn mass_drop_reconnects_all_slots() {
     let reg = sup.registry.clone();
     let connected = wait_until(
         || async { reg.outbound_count().await == 4 },
-        Duration::from_secs(40),
+        common::network::NETWORK_TIMEOUT,
     )
     .await;
     println!("[MEASURED] slots connected: {}", reg.outbound_count().await);
@@ -100,7 +100,7 @@ async fn silent_half_open_peer_is_torn_down_within_the_deadline() {
     assert!(
         wait_until(
             || async { reg.outbound_count().await == 1 },
-            Duration::from_secs(30)
+            common::network::NETWORK_TIMEOUT
         )
         .await,
         "manual peer connects to the silent node"

@@ -42,7 +42,7 @@ async fn flooding_a_frequency_capped_type_closes_and_evicts_the_peer() {
     assert!(
         wait_until(
             || async { server.peers.read().await.len() == 1 },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "server registers the inbound peer after the handshake"
@@ -60,7 +60,7 @@ async fn flooding_a_frequency_capped_type_closes_and_evicts_the_peer() {
     assert!(
         wait_until(
             || async { server.peers.read().await.is_empty() },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "the 6th request_proof_of_weight must close + evict the peer (chia bans it)"
@@ -79,7 +79,7 @@ async fn a_single_oversized_message_closes_and_evicts_the_peer() {
     assert!(
         wait_until(
             || async { server.peers.read().await.len() == 1 },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "server registers the inbound peer"
@@ -91,7 +91,7 @@ async fn a_single_oversized_message_closes_and_evicts_the_peer() {
     assert!(
         wait_until(
             || async { server.peers.read().await.is_empty() },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "an oversized request_block must close + evict the peer"
@@ -112,7 +112,7 @@ async fn a_compliant_peer_stays_connected() {
     assert!(
         wait_until(
             || async { server.peers.read().await.len() == 1 },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "server registers the inbound peer"
@@ -232,7 +232,7 @@ async fn oversized_reply_from_a_peer_closes_our_client() {
     assert!(
         wait_until(
             || async { client.client.is_closed() },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "an oversized reply must close our client's connection"

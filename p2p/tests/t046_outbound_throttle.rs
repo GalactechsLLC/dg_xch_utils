@@ -21,7 +21,7 @@ async fn outbound_throttle_does_not_delay_under_budget_requests() {
     assert!(
         wait_until(
             || async { server.peers.read().await.len() == 1 },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "server registers the inbound peer after the handshake"
@@ -72,7 +72,7 @@ async fn non_rate_limited_client_send_path_is_unthrottled() {
     assert!(
         wait_until(
             || async { server.peers.read().await.len() == 1 },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "server registers the inbound peer"

@@ -76,14 +76,15 @@ impl<'a> Cat<'a> {
         }
     }
     pub fn curried_tree_hash(&self) -> Result<Bytes32, Error> {
-        Ok(match self {
-            Cat::V1(args, _) => CAT_1_PROGRAM
-                .curry(&[Program::new(args.into())])
-                .tree_hash(),
-            Cat::V2(args, _) => CAT_2_PROGRAM
-                .curry(&[Program::new(args.into())])
-                .tree_hash(),
-        })
+        let args = self.curried_args();
+        Ok(self
+            .puzzle_reveal()
+            .curry(&[
+                Program::new(args.mod_hash.into()),
+                Program::new(args.tail_program_hash.into()),
+                args.inner_puzzle.to_owned(),
+            ])
+            .tree_hash())
     }
     pub fn curried_args(&'a self) -> &'a CatPuzzleCurriedArgs<'a> {
         match self {
@@ -104,7 +105,18 @@ impl<'a> Cat<'a> {
         }
     }
     pub fn run(&'a self, solution: CatSolution<'a>) -> Result<Program<'static>, Error> {
-        let args = Program::to(&[SExp::from(self.curried_args()), SExp::from(solution)]);
+        let curried_args = self.curried_args();
+        let args = Program::new(
+            SExp::from(curried_args.mod_hash).cons(
+                SExp::from(curried_args.tail_program_hash).cons(
+                    curried_args
+                        .inner_puzzle
+                        .sexp()
+                        .to_owned()
+                        .cons(solution.into()),
+                ),
+            ),
+        );
         let (_cost, results) = self.puzzle_reveal().run(INFINITE_COST, 0, &args)?;
         Ok(results.to_owned())
     }
@@ -192,5 +204,300 @@ impl TryFrom<&SExp<'_>> for NextCoinProof {
                 .to_u64()
                 .ok_or(Error::new(ErrorKind::InvalidData, "Invalid prev_subtotal"))?,
         })
+    }
+}
+
+#[test]
+fn test_cat_currying_and_run() {
+    for (module, mod_hash, expected_hash) in [
+        (
+            &CAT_1_PROGRAM,
+            CAT_1_TREE_HASH,
+            "9e18a400acfd3b2662be43e4bbf288aa837a5486981e8913a1b31f87ca4e5cf9",
+        ),
+        (
+            &CAT_2_PROGRAM,
+            CAT_2_TREE_HASH,
+            "9c05187421ca70664cb10a27e355b930a42f063aad534e5a42b0fb6adea8e375",
+        ),
+    ] {
+        let args = CatPuzzleCurriedArgs {
+            mod_hash,
+            tail_program_hash: [15; 32].into(),
+            inner_puzzle: Program::to(1),
+        };
+        let puzzle = module.curry(&[
+            Program::new(args.mod_hash.into()),
+            Program::new(args.tail_program_hash.into()),
+            args.inner_puzzle.clone(),
+        ]);
+        let parent = Coin {
+            parent_coin_info: [27; 32].into(),
+            puzzle_hash: puzzle.tree_hash(),
+            amount: 100,
+        };
+        let coin = Coin {
+            parent_coin_info: parent.name(),
+            ..parent
+        };
+        let inner_puzzle_hash = args.inner_puzzle.tree_hash();
+        let solution = SExp::from(CatSolution {
+            inner_puzzle_solution: Program::to(&[SExp::from(vec![
+                SExp::from(51),
+                inner_puzzle_hash.into(),
+                SExp::from(100u64),
+            ])]),
+            lineage_proof: LineageProof {
+                parent_parent_id: parent.parent_coin_info,
+                parent_inner_puzzle_hash: inner_puzzle_hash,
+                parent_amount: parent.amount,
+            },
+            prev_coin_id: coin.name(),
+            this_coin_info: coin,
+            next_coin_proof: NextCoinProof {
+                parent_coin_info: coin.parent_coin_info,
+                inner_puzzle_hash,
+                amount: coin.amount,
+            },
+            prev_subtotal: 0,
+            extra_delta: Program::to(0),
+        });
+        let cat = if mod_hash == CAT_1_TREE_HASH {
+            Cat::new_v1(args, CatSolution::try_from(&solution).unwrap())
+        } else {
+            Cat::new(args, CatSolution::try_from(&solution).unwrap())
+        };
+        assert_eq!(
+            cat.curried_tree_hash().unwrap(),
+            Bytes32::const_hex(expected_hash)
+        );
+        let (_, expected) = puzzle
+            .run(INFINITE_COST, 0, &Program::new(solution.clone()))
+            .unwrap();
+        assert_eq!(
+            cat.run(CatSolution::try_from(&solution).unwrap()).unwrap(),
+            expected
+        );
+    }
+}
+
+pub struct CatSpend {
+    pub coin: Coin,
+    pub asset_id: Bytes32,
+    pub lineage_proof: Program<'static>,
+    pub inner_puzzle: Program<'static>,
+    pub inner_solution: Program<'static>,
+}
+
+pub fn puzzle_for_cat(asset_id: Bytes32, inner_puzzle: &Program<'_>) -> Program<'static> {
+    CAT_2_PROGRAM
+        .curry(&[
+            Program::to(CAT_2_TREE_HASH),
+            Program::to(asset_id),
+            inner_puzzle.to_owned(),
+        ])
+        .to_owned()
+}
+
+/// Build the announcement ring that binds all inputs of one CAT asset together.
+pub fn spend_ring(
+    spends: &[CatSpend],
+    max_cost: u64,
+) -> Result<Vec<dg_xch_core::blockchain::coin_spend::CoinSpend>, Error> {
+    use dg_xch_core::blockchain::coin_spend::CoinSpend;
+    use num_bigint::BigInt;
+    use num_traits::Zero;
+    use std::collections::HashSet;
+    let Some(first) = spends.first() else {
+        return Err(Error::other("empty CAT ring"));
+    };
+    let mut ids = HashSet::new();
+    let mut subtotals = Vec::with_capacity(spends.len());
+    let mut subtotal = BigInt::zero();
+    let mut remaining = max_cost;
+    for spend in spends {
+        if spend.asset_id != first.asset_id || !ids.insert(spend.coin.name()) {
+            return Err(Error::other(
+                "CAT ring has mixed assets or duplicate inputs",
+            ));
+        }
+        if puzzle_for_cat(spend.asset_id, &spend.inner_puzzle).tree_hash() != spend.coin.puzzle_hash
+        {
+            return Err(Error::other("CAT inner puzzle does not match coin"));
+        }
+        subtotals.push(subtotal.clone());
+        let (cost, conditions) = spend
+            .inner_puzzle
+            .run(remaining, 0, &spend.inner_solution)?;
+        remaining = remaining
+            .checked_sub(cost)
+            .ok_or_else(|| Error::other("CAT cost exceeded"))?;
+        subtotal += spend.coin.amount;
+        for condition in conditions.sexp().ref_list() {
+            let fields = condition.ref_list();
+            if fields
+                .first()
+                .is_some_and(|code| code.as_int().is_ok_and(|n| n.to_u64() == Some(51)))
+            {
+                let amount = BigInt::from_signed_bytes_be(
+                    fields
+                        .get(2)
+                        .ok_or_else(|| Error::other("invalid CAT output"))?
+                        .atom()?
+                        .as_ref(),
+                );
+                if amount == BigInt::from(-113) {
+                    continue;
+                }
+                if amount < BigInt::zero() {
+                    return Err(Error::other("negative CAT output"));
+                }
+                subtotal -= amount;
+            }
+        }
+    }
+    if !subtotal.is_zero() {
+        return Err(Error::other("CAT ring does not conserve value"));
+    }
+    let minimum = subtotals.iter().min().cloned().unwrap_or_default();
+    let mut result = Vec::with_capacity(spends.len());
+    for (index, spend) in spends.iter().enumerate() {
+        let previous = &spends[(index + spends.len() - 1) % spends.len()];
+        let next = &spends[(index + 1) % spends.len()];
+        let solution = Program::to(vec![
+            spend.inner_solution.sexp().to_owned(),
+            spend.lineage_proof.sexp().to_owned(),
+            previous.coin.name().into(),
+            SExp::from(spend.coin),
+            SExp::from(NextCoinProof {
+                parent_coin_info: next.coin.parent_coin_info,
+                inner_puzzle_hash: next.inner_puzzle.tree_hash(),
+                amount: next.coin.amount,
+            }),
+            SExp::from(&(&subtotals[index] - &minimum)),
+            SExp::from(0),
+        ]);
+        result.push(CoinSpend {
+            coin: spend.coin,
+            puzzle_reveal: puzzle_for_cat(spend.asset_id, &spend.inner_puzzle).serialized()?,
+            solution: solution.serialized()?,
+        });
+    }
+    Ok(result)
+}
+
+pub fn issue_cat(
+    parent: Bytes32,
+    amount: u64,
+    conditions: Vec<SExp<'static>>,
+    max_cost: u64,
+) -> Result<dg_xch_core::blockchain::coin_spend::CoinSpend, Error> {
+    if amount == 0 {
+        return Err(Error::other("CAT supply must be positive"));
+    }
+    let tail = crate::programs::GENESIS_BY_COIN_ID_PROGRAM.curry(&[Program::to(parent)]);
+    let mut conditions = conditions;
+    conditions.push(SExp::from(vec![
+        SExp::from(51),
+        SExp::from(0),
+        SExp::from(-113),
+        tail.sexp().to_owned(),
+        SExp::from(0),
+    ]));
+    let inner_puzzle = Program::new(SExp::from(1).cons(SExp::from(conditions)));
+    let asset_id = tail.tree_hash();
+    let coin = Coin {
+        parent_coin_info: parent,
+        puzzle_hash: puzzle_for_cat(asset_id, &inner_puzzle).tree_hash(),
+        amount,
+    };
+    spend_ring(
+        &[CatSpend {
+            coin,
+            asset_id,
+            lineage_proof: Program::to(0),
+            inner_puzzle,
+            inner_solution: Program::to(0),
+        }],
+        max_cost,
+    )?
+    .pop()
+    .ok_or_else(|| Error::other("missing CAT issuance spend"))
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CatCoin {
+    pub coin: Coin,
+    pub asset_id: Bytes32,
+    pub inner_puzzle_hash: Bytes32,
+    pub parent_parent_id: Bytes32,
+    pub parent_inner_puzzle_hash: Bytes32,
+    pub parent_amount: u64,
+}
+
+impl CatCoin {
+    pub fn parse_child(
+        coin: Coin,
+        parent: &dg_xch_core::blockchain::coin_spend::CoinSpend,
+        owners: &std::collections::HashSet<Bytes32>,
+        max_cost: u64,
+    ) -> Result<Option<Self>, Error> {
+        if parent.coin.name() != coin.parent_coin_info {
+            return Err(Error::other("CAT parent does not match coin"));
+        }
+        let puzzle = parent.puzzle_reveal.to_program()?;
+        if puzzle.tree_hash() != parent.coin.puzzle_hash {
+            return Err(Error::other("CAT parent puzzle hash mismatch"));
+        }
+        let (module, arguments) = puzzle.uncurry()?;
+        if module.tree_hash() != CAT_2_TREE_HASH {
+            return Ok(None);
+        }
+        if !arguments.sexp().arg_count_is(3) {
+            return Err(Error::other("invalid CAT curried arguments"));
+        }
+        let args = CatPuzzleCurriedArgs::try_from(arguments.sexp())?;
+        if args.mod_hash != CAT_2_TREE_HASH {
+            return Err(Error::other("invalid CAT module hash"));
+        }
+        if !parent
+            .compute_additions_with_cost(max_cost)?
+            .0
+            .contains(&coin)
+        {
+            return Err(Error::other("CAT is not an output of its parent"));
+        }
+        use dg_xch_core::curry_and_treehash::{
+            calculate_hash_of_quoted_mod_hash, curry_and_treehash, shatree_atom,
+        };
+        for owner in owners {
+            let expected = curry_and_treehash(
+                &calculate_hash_of_quoted_mod_hash(&CAT_2_TREE_HASH),
+                &[
+                    shatree_atom(CAT_2_TREE_HASH.as_ref()),
+                    shatree_atom(args.tail_program_hash.as_ref()),
+                    *owner,
+                ],
+            );
+            if expected == coin.puzzle_hash {
+                return Ok(Some(Self {
+                    coin,
+                    asset_id: args.tail_program_hash,
+                    inner_puzzle_hash: *owner,
+                    parent_parent_id: parent.coin.parent_coin_info,
+                    parent_inner_puzzle_hash: args.inner_puzzle.tree_hash(),
+                    parent_amount: parent.coin.amount,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn lineage_proof(&self) -> Program<'static> {
+        Program::to(vec![
+            SExp::from(self.parent_parent_id),
+            self.parent_inner_puzzle_hash.into(),
+            self.parent_amount.into(),
+        ])
     }
 }

@@ -58,7 +58,9 @@ fn farming_produces_a_proof_the_validator_accepts() {
             .qualities_for_challenge(Bytes32::from(challenge))
             .expect("qualities");
         for (plot_index, quality) in hits {
-            let proof = set.solve(plot_index, &quality);
+            let proof = set
+                .solve(plot_index, &quality, Bytes32::from(challenge))
+                .expect("solve");
             if proof.is_empty() {
                 continue;
             }
@@ -73,7 +75,7 @@ fn farming_produces_a_proof_the_validator_accepts() {
             let fragments = validator
                 .validate_full_proof(&xs, Bytes32::from(challenge))
                 .expect("a farmed proof must validate");
-            assert_eq!(fragments, quality.chain_links);
+            assert_eq!(fragments, quality.fragments);
             checked += 1;
             if checked >= 2 {
                 let _ = std::fs::remove_dir_all(&dir);
@@ -132,7 +134,7 @@ fn a_farmed_proof_passes_the_consensus_verifier() {
                 .into_iter()
                 .filter(|(i, _)| *i == index)
             {
-                let proof = set.solve(index, &chain);
+                let proof = set.solve(index, &chain, pos_challenge).expect("solve");
                 if proof.is_empty() {
                     continue;
                 }
@@ -148,7 +150,7 @@ fn a_farmed_proof_passes_the_consensus_verifier() {
                 );
                 let quality = verify_and_get_quality_string(&pos, &constants, original, sp, 0)
                     .expect("a farmed proof must clear the consensus gate");
-                assert_eq!(quality, quality_hash(&chain.chain_links, STRENGTH));
+                assert_eq!(quality, quality_hash(&chain.fragments, STRENGTH));
                 verified += 1;
                 if verified >= 2 {
                     break 'search;

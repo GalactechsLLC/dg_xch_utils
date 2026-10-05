@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+#[path = "../../../tests/support/network.rs"]
+pub mod network;
+
 #[path = "../../../node/tests/common/ancestry.rs"]
 pub mod ancestry;
 
@@ -79,7 +82,7 @@ pub async fn spawn_portfu_rpc(
     tokio::spawn(async move {
         let _ = server.run().await;
     });
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    network::wait_for_listener(bind.port()).await;
     handle
 }
 
@@ -245,7 +248,7 @@ pub async fn spawn_serving_node(api: Arc<MapApi>) -> (u16, Arc<AtomicBool>) {
     tokio::spawn(async move {
         let _ = server.run(run_c).await;
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    network::wait_for_listener(port).await;
     (port, run)
 }
 

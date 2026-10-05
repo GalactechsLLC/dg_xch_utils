@@ -79,34 +79,17 @@ mod tests {
     use dg_xch_core::clvm::program::SerializedProgram;
     use dg_xch_core::consensus::constants::{ConsensusConstants, TESTNET_11};
     use dg_xch_core::pool::PoolState;
-    use dg_xch_core::traits::SizedBytes;
     use std::sync::Arc;
 
-    fn submit(simulator: &mut chia_sdk_test::Simulator, bundle: &SpendBundle) {
-        let spends = bundle
-            .coin_spends
-            .iter()
-            .map(|spend| {
-                chia_protocol::CoinSpend::new(
-                    chia_protocol::Coin::new(
-                        chia_protocol::Bytes32::new(spend.coin.parent_coin_info.bytes()),
-                        chia_protocol::Bytes32::new(spend.coin.puzzle_hash.bytes()),
-                        spend.coin.amount,
-                    ),
-                    spend.puzzle_reveal.to_bytes().into(),
-                    spend.solution.to_bytes().into(),
-                )
-            })
-            .collect();
-        let signature =
-            chia_bls::Signature::from_bytes(&bundle.aggregated_signature.bytes()).unwrap();
-        simulator
-            .new_transaction(chia_protocol::SpendBundle::new(spends, signature))
-            .unwrap();
+    fn submit(
+        simulator: &mut dg_xch_simulator_lib::coinset::CoinsetSimulator,
+        bundle: &SpendBundle,
+    ) {
+        simulator.new_transaction(bundle.clone()).unwrap();
     }
 
     #[tokio::test]
-    async fn v1_and_v2_launches_pass_reference_consensus() {
+    async fn v1_and_v2_launches_pass_native_consensus() {
         let client = FullnodeClient::new_simulator("127.0.0.1", 1, 1).unwrap();
         let constants = Arc::new(ConsensusConstants {
             simulated: true,
@@ -117,10 +100,10 @@ mod tests {
         let owner = wallet.get_puzzle_hash(false).await.unwrap();
         let public = wallet.public_key(0).await.unwrap();
         for version in [1, 2] {
-            let mut simulator = chia_sdk_test::Simulator::new();
-            let funding = simulator.new_coin(chia_protocol::Bytes32::new(owner.bytes()), 10_000);
+            let mut simulator = dg_xch_simulator_lib::coinset::CoinsetSimulator::new();
+            let funding = simulator.new_coin(owner, 10_000);
             let origin = Coin {
-                parent_coin_info: funding.parent_coin_info.to_bytes().into(),
+                parent_coin_info: funding.parent_coin_info,
                 puzzle_hash: owner,
                 amount: funding.amount,
             };
@@ -167,11 +150,7 @@ mod tests {
                 dg_xch_core::consensus::block_rewards::calculate_pool_reward(1),
                 constants.genesis_challenge,
             );
-            simulator.insert_coin(chia_protocol::Coin::new(
-                chia_protocol::Bytes32::new(reward.parent_coin_info.bytes()),
-                chia_protocol::Bytes32::new(reward.puzzle_hash.bytes()),
-                reward.amount,
-            ));
+            simulator.insert_coin(reward);
             let claims = if version == 1 {
                 let state = PoolState {
                     version: 1,

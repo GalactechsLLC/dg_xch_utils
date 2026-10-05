@@ -13,6 +13,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Bound concurrent debug RSA key generation on shared runners.
+  RUST_TEST_THREADS: 2
+  # Reserve network integration and CPU plotting workloads for main PRs or manual runs.
+  RUN_EXTENDED_TESTS: ${{ (github.event_name == 'pull_request' && github.base_ref == 'main') || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   test:
@@ -27,7 +31,13 @@ jobs:
         run: git submodule update --init --recursive
       - uses: ./.github/actions/setup-native-deps
       - name: Run workspace tests
-        run: cargo test --workspace --locked
+        run: |
+          cargo test --workspace --exclude dg_xch_p2p --locked
+          cargo test -p dg_xch_p2p --lib --locked
+          cargo test -p dg_xch_p2p --doc --locked
+      - name: Run P2P integration tests
+        if: env.RUN_EXTENDED_TESTS == 'true'
+        run: cargo test -p dg_xch_p2p --tests --locked
       - name: Run wallet service-tier tests
         run: cargo test -p dg_full_node --features hint --test puzzle_state --locked
       - name: Test authenticated diagnostics and transport
@@ -40,14 +50,19 @@ jobs:
           cargo test -p dg_xch_pos2 -p dg_xch_plotter --features vulkan --locked
           cargo test -p dg_xch_wallet -p dg_xch_farmer -p dg_xch_timelord -p dg_xch_introducer --locked
           cargo test -p dg_xch_farmer --features vulkan --locked
-      - name: Test chain initialization and native bootstrap on CPU
+      - name: Test chain initialization
         env:
           RAYON_NUM_THREADS: 2
         run: |
           cargo test -p dg_xch_dev_tools --bin dg_xch_stack_init --locked
           cargo test -p dg_xch_cli --test setup_cli --test regular_worker --locked
-          cargo test -p dg_full_node --release --lib native_pos2_genesis_and_successor_through_farmer_timelord_handlers --locked -- --ignored --test-threads=1
+      - name: Test native bootstrap on CPU
+        if: env.RUN_EXTENDED_TESTS == 'true'
+        env:
+          RAYON_NUM_THREADS: 2
+        run: cargo test -p dg_full_node --release --lib native_pos2_genesis_and_successor_through_farmer_timelord_handlers --locked -- --ignored --test-threads=1
       - name: Test compact RAM plotting and fragment recovery on CPU
+        if: env.RUN_EXTENDED_TESTS == 'true'
         env:
           RAYON_NUM_THREADS: 2
         run: cargo test -p dg_xch_plotter --release --test compact --locked -- --include-ignored

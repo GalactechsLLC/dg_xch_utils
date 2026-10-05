@@ -52,12 +52,12 @@ fn mips(
 ) -> Result<Program<'static>, Error> {
     let mut inner = member;
     if !restrictions.is_empty() {
-        inner = program(&chia_puzzles::RESTRICTIONS)?
+        inner = program(crate::programs::RESTRICTIONS_SRC)?
             .curry(&[list(Vec::new()), list(restrictions), inner])
             .to_owned();
     }
     if top {
-        inner = program(&chia_puzzles::DELEGATED_PUZZLE_FEEDER)?
+        inner = program(crate::programs::DELEGATED_PUZZLE_FEEDER_SRC)?
             .curry(&[inner])
             .to_owned();
     }
@@ -70,17 +70,14 @@ fn mips(
 
 pub fn singleton_struct(launcher: Bytes32) -> Program<'static> {
     Program::to((
-        Bytes32::from(chia_puzzles::SINGLETON_TOP_LAYER_V1_1_HASH),
-        (
-            launcher,
-            Bytes32::from(chia_puzzles::SINGLETON_LAUNCHER_HASH),
-        ),
+        crate::programs::SINGLETON_TOP_LAYER_V1_1_TREE_HASH,
+        (launcher, crate::programs::SINGLETON_LAUNCHER_TREE_HASH),
     ))
 }
 
 pub fn reward_puzzle(launcher: Bytes32) -> Result<Program<'static>, Error> {
     mips(
-        program(&chia_puzzles::SINGLETON_MEMBER)?
+        program(crate::programs::SINGLETON_MEMBER_SRC)?
             .curry(&[singleton_struct(launcher)])
             .to_owned(),
         Vec::new(),
@@ -111,7 +108,7 @@ impl PlotNft {
         let (module, arguments) = parent_puzzle.uncurry()?;
         let arguments = arguments.as_list();
         if parent_puzzle.tree_hash() != parent.coin.puzzle_hash
-            || module.tree_hash() != Bytes32::from(chia_puzzles::SINGLETON_TOP_LAYER_V1_1_HASH)
+            || module.tree_hash() != crate::programs::SINGLETON_TOP_LAYER_V1_1_TREE_HASH
             || arguments.len() != 2
             || arguments.first().map(Program::tree_hash)
                 != Some(singleton_struct(self.launcher_id).tree_hash())
@@ -185,7 +182,7 @@ impl PlotNft {
             embedded(include_str!("pool_v2/claim_pool_rewards_dpuz.clsp.hex"))?
                 .curry(&[
                     Program::to(genesis[..16].to_vec()),
-                    Bytes32::from(chia_puzzles::SINGLETON_TOP_LAYER_V1_1_HASH).into(),
+                    crate::programs::SINGLETON_TOP_LAYER_V1_1_TREE_HASH.into(),
                     singleton_struct(self.launcher_id).tree_hash().into(),
                     reward_puzzle(self.launcher_id)?.tree_hash().into(),
                     self.forward_puzzle()?.tree_hash().into(),
@@ -195,7 +192,7 @@ impl PlotNft {
     }
 
     fn user_member(&self) -> Result<Program<'static>, Error> {
-        program(&chia_puzzles::BLS_WITH_TAPROOT_MEMBER)
+        program(crate::programs::BLS_WITH_TAPROOT_MEMBER_SRC)
             .map(|puzzle| puzzle.curry(&[self.synthetic_public_key.into()]).to_owned())
     }
 
@@ -218,9 +215,9 @@ impl PlotNft {
             .to_owned()
         };
         let banned = embedded(include_str!("pool_v2/send_message_banned.clsp.hex"))?;
-        Ok(program(&chia_puzzles::ENFORCE_DPUZ_WRAPPERS)?
+        Ok(program(crate::programs::ENFORCE_DPUZ_WRAPPERS_SRC)?
             .curry(&[
-                quoted(&program(&chia_puzzles::ADD_DPUZ_WRAPPER)?)
+                quoted(&program(crate::programs::ADD_DPUZ_WRAPPER_SRC)?)
                     .tree_hash()
                     .into(),
                 list(vec![
@@ -237,7 +234,7 @@ impl PlotNft {
 
     fn pool_branch(&self) -> Result<Program<'static>, Error> {
         mips(
-            program(&chia_puzzles::FIXED_PUZZLE_MEMBER)?
+            program(crate::programs::FIXED_PUZZLE_MEMBER_SRC)?
                 .curry(&[self.claim_puzzle()?.tree_hash().into()])
                 .to_owned(),
             Vec::new(),
@@ -256,7 +253,7 @@ impl PlotNft {
         let right = self.pool_branch()?.tree_hash();
         let root = Program::to((left, right)).tree_hash();
         mips(
-            program(&chia_puzzles::ONE_OF_N)?
+            program(crate::programs::ONE_OF_N_SRC)?
                 .curry(&[root.into()])
                 .to_owned(),
             Vec::new(),
@@ -265,7 +262,7 @@ impl PlotNft {
     }
 
     pub fn puzzle(&self) -> Result<Program<'static>, Error> {
-        Ok(program(&chia_puzzles::SINGLETON_TOP_LAYER_V1_1)?
+        Ok(program(crate::programs::SINGLETON_TOP_LAYER_V1_1_SRC)?
             .curry(&[singleton_struct(self.launcher_id), self.inner_puzzle()?])
             .to_owned())
     }
@@ -295,7 +292,7 @@ impl PlotNft {
                     Program::to(0u8),
                 ]),
             ]);
-            let member = program(&chia_puzzles::FIXED_PUZZLE_MEMBER)?
+            let member = program(crate::programs::FIXED_PUZZLE_MEMBER_SRC)?
                 .curry(&[self.claim_puzzle()?.tree_hash().into()])
                 .tree_hash();
             let pool = memo(vec![
@@ -343,7 +340,7 @@ impl PlotNft {
         }
         let launcher = Coin {
             parent_coin_info: origin.name(),
-            puzzle_hash: chia_puzzles::SINGLETON_LAUNCHER_HASH.into(),
+            puzzle_hash: crate::programs::SINGLETON_LAUNCHER_TREE_HASH,
             amount: 1,
         };
         let definition = Self {
@@ -363,7 +360,7 @@ impl PlotNft {
             ]),
             list(vec![Program::to(60u8), Program::to(0u8)]),
         ]));
-        let revision = program(&chia_puzzles::SINGLETON_TOP_LAYER_V1_1)?
+        let revision = program(crate::programs::SINGLETON_TOP_LAYER_V1_1_SRC)?
             .curry(&[singleton_struct(launcher.name()), inner])
             .to_owned();
         let revision_coin = Coin {
@@ -402,7 +399,8 @@ impl PlotNft {
             spends: vec![
                 CoinSpend {
                     coin: launcher,
-                    puzzle_reveal: program(&chia_puzzles::SINGLETON_LAUNCHER)?.serialized()?,
+                    puzzle_reveal: program(crate::programs::SINGLETON_LAUNCHER_SRC)?
+                        .serialized()?,
                     solution: launcher_solution.serialized()?,
                 },
                 CoinSpend {

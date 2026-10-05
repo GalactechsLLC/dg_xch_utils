@@ -88,7 +88,7 @@ async fn remote_timelord_handshake_is_refused() {
             let peers = server.peers.clone();
             async move { peers.read().await.is_empty() }
         },
-        Duration::from_secs(10),
+        common::network::NETWORK_TIMEOUT,
     )
     .await;
     assert!(
@@ -148,7 +148,7 @@ async fn vdf_frame_from_a_full_node_peer_disconnects_and_bans() {
             let peers = server.peers.clone();
             async move { peers.read().await.is_empty() }
         },
-        Duration::from_secs(10),
+        common::network::NETWORK_TIMEOUT,
     )
     .await;
     assert!(

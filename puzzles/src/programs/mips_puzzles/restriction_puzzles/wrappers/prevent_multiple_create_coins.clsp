@@ -1,0 +1,19 @@
+(mod (Conditions)
+  (include utility_macros.clib)
+  (include condition_codes.clib)
+
+  (defun check_coins (conditions count)
+    (if conditions
+      (check_coins
+        (r conditions)
+        (if (= (f (f conditions)) CREATE_COIN)
+          (+ count 1)
+          count
+        )
+      )
+      count
+    )
+  )
+
+  (assert (= (check_coins Conditions 0) 1) Conditions)
+)

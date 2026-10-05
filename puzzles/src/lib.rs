@@ -31,3 +31,5 @@ fn test_version() {
 }
 pub mod pool_launch;
 pub mod pool_v2;
+
+pub mod programs;

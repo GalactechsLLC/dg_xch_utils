@@ -1,0 +1,134 @@
+[
+  {
+    "source": "(mod ((A B) . C) (include *standard-cl-21*) (list A B C))",
+    "hex": "ff02ffff01ff04ff09ffff04ff15ffff04ff07ffff0180808080ffff04ff80ff018080"
+  },
+  {
+    "source": "(mod () (include *standard-cl-21*) (defconstant DATA (1 2)) (list DATA))",
+    "hex": "ff01ffff01ff028080"
+  },
+  {
+    "source": "(mod () (include *standard-cl-21*) (defconstant DATA (+ 1 2)) DATA)",
+    "hex": "ff01ff2bff01ff0280"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-21*) X)",
+    "hex": "02"
+  },
+  {
+    "source": "(mod ((A B) . C) (include *standard-cl-23*) (list A B C))",
+    "hex": "ff04ff04ffff04ff0affff04ff03ff80808080"
+  },
+  {
+    "source": "(mod () (include *standard-cl-23*) (defconstant DATA (1 2)) (list DATA))",
+    "hex": "ff01ffff01ff028080"
+  },
+  {
+    "source": "(mod () (include *standard-cl-23*) (defconstant DATA (+ 1 2)) DATA)",
+    "hex": "ff01ff2bff01ff0280"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-23*) X)",
+    "hex": "02"
+  },
+  {
+    "source": "(mod ((A B) . C) (include *standard-cl-25*) (list A B C))",
+    "hex": "ff04ff04ffff04ff0affff04ff03ff80808080"
+  },
+  {
+    "source": "(mod () (include *standard-cl-25*) (defconstant DATA (1 2)) (list DATA))",
+    "hex": "ff01ffff01ff028080"
+  },
+  {
+    "source": "(mod () (include *standard-cl-25*) (defconstant DATA (+ 1 2)) DATA)",
+    "hex": "ff01ff2bff01ff0280"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-25*) X)",
+    "hex": "02"
+  },
+  {
+    "source": "(mod ((A B) . C) (include *standard-cl-26*) (list A B C))",
+    "hex": "ff04ff04ffff04ff0affff04ff03ff80808080"
+  },
+  {
+    "source": "(mod () (include *standard-cl-26*) (defconstant DATA (1 2)) (list DATA))",
+    "hex": "ff01ffff01ff028080"
+  },
+  {
+    "source": "(mod () (include *standard-cl-26*) (defconstant DATA (+ 1 2)) DATA)",
+    "hex": "ff01ff2bff01ff0280"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) X)",
+    "hex": "02"
+  },
+  {
+    "source": "(mod () (qq (qq (unquote 5))))",
+    "hex": "ff01ff827171ffff87756e71756f7465ff058080"
+  },
+  {
+    "source": "(mod (X) (qq (qq (unquote X))))",
+    "hex": "ff01ff827171ffff87756e71756f7465ff588080"
+  },
+  {
+    "source": "(mod (X) (qq (qq (unquote (unquote X)))))",
+    "hex": "ff01ff827171ffff87756e71756f7465ff028080"
+  },
+  {
+    "source": "(mod () (defmacro F X (qq (qq (unquote X)))) (F))",
+    "hex": "ff0158"
+  },
+  {
+    "source": "(mod () (defun-inline F X X) (F 1 2))",
+    "hex": "ff01ff0280"
+  },
+  {
+    "source": "(mod () (defun-inline F X X) (F))",
+    "hex": "80"
+  },
+  {
+    "source": "(mod () (defun-inline F X X) (F 1))",
+    "hex": "80"
+  },
+  {
+    "source": "(mod (A) (defun-inline F ARGS (list ARGS)) (F A))",
+    "hex": "ff04ffff02ff02ffff04ff02ff808080ff8080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-21*) (defmacro F (Y) (qq (+ (unquote Y) 1))) (F X))",
+    "hex": "ff10ff02ffff010180"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-23*) (defmacro F (Y) (qq (+ (unquote Y) 1))) (F X))",
+    "hex": "ff10ff02ffff010180"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-25*) (defmacro F (Y) (qq (+ (unquote Y) 1))) (F X))",
+    "hex": "ff10ff02ffff010180"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defmacro F (Y) (qq (+ (unquote Y) 1))) (F X))",
+    "hex": "ff10ff02ffff010180"
+  },
+  {
+    "source": "(mod ()  (defmacro INC (X) (qq (+ (unquote X) 1))) (defmacro K () (INC 2)) (K))",
+    "hex": "ff0103"
+  },
+  {
+    "source": "(mod () (include *standard-cl-21*) (defmacro INC (X) (qq (+ (unquote X) 1))) (defmacro K () (INC 2)) (K))",
+    "hex": "ff0103"
+  },
+  {
+    "source": "(mod () (include *standard-cl-23*) (defmacro INC (X) (qq (+ (unquote X) 1))) (defmacro K () (INC 2)) (K))",
+    "hex": "ff0103"
+  },
+  {
+    "source": "(mod () (include *standard-cl-25*) (defmacro INC (X) (qq (+ (unquote X) 1))) (defmacro K () (INC 2)) (K))",
+    "hex": "ff0103"
+  },
+  {
+    "source": "(mod () (include *standard-cl-26*) (defmacro INC (X) (qq (+ (unquote X) 1))) (defmacro K () (INC 2)) (K))",
+    "hex": "ff0103"
+  }
+]

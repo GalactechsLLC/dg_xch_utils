@@ -8,6 +8,7 @@
         clippy::unimplemented
     )
 )]
+mod conditions;
 use crate::common::{DerivationRecord, sign_coin_spends};
 use async_trait::async_trait;
 use blst::min_pk::SecretKey;
@@ -59,6 +60,7 @@ pub mod offers;
 pub mod plotnft_utils;
 pub mod pooling;
 pub mod storage;
+pub mod sync;
 
 #[derive(Default)]
 pub struct SecretKeyStore {

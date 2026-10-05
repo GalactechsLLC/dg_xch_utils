@@ -152,7 +152,7 @@ async fn rig(synced: bool) -> (Arc<FullNode>, WsClient, mpsc::Receiver<Arc<ChiaM
     node.synced.store(synced, Ordering::Relaxed);
     let (server, run, _peers) = node.build_peer_server().expect("peer server");
     tokio::spawn(async move { server.run(run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
     let (handlers, rx) = push_capture_handlers();
     let client = dial_wallet(listen.port(), handlers).await;
     (node, client, rx)
@@ -490,7 +490,7 @@ async fn peak_advance_broadcasts_new_peak_wallet_to_wallet_peers() {
     common::ancestry::seed_mainnet_parent(&node.store).await;
     let (server, run, _peers) = node.build_peer_server().expect("peer server");
     tokio::spawn(async move { server.run(run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
 
     // A wallet-type peer and a full-node-type peer, both connected inbound.
     let (wallet_handlers, mut wallet_push) = push_capture_handlers();
@@ -516,7 +516,7 @@ async fn peak_advance_broadcasts_new_peak_wallet_to_wallet_peers() {
         .await
         .expect("sync");
 
-    let msg = tokio::time::timeout(Duration::from_secs(5), wallet_push.recv())
+    let msg = tokio::time::timeout(common::network::NETWORK_TIMEOUT, wallet_push.recv())
         .await
         .expect("NewPeakWallet broadcast on peak advance")
         .expect("push channel open");
@@ -702,7 +702,7 @@ async fn sage_sync_sequence_end_to_end() {
         )
         .await
         .expect("push");
-    let update = tokio::time::timeout(Duration::from_secs(5), push.recv())
+    let update = tokio::time::timeout(common::network::NETWORK_TIMEOUT, push.recv())
         .await
         .expect("CoinStateUpdate for the subscribed puzzle hash")
         .expect("open");

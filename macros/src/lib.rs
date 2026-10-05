@@ -67,7 +67,7 @@ fn create_to_bytes(data: &Data) -> (TokenStream2, TokenStream2) {
                     let assign = fields.named.iter().map(|f| {
                         let name = &f.ident;
                         quote_spanned! {f.span()=>
-                            #name: #name,
+                            #name,
                         }
                     });
                     (

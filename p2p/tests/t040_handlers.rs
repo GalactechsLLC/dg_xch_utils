@@ -16,7 +16,6 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 use tokio::sync::RwLock;
 
 fn client_config(port: u16) -> Arc<WsClientConfig> {
@@ -604,7 +603,7 @@ async fn unsolicited_block_replies_close_the_peer() {
         assert!(
             wait_until(
                 || async { server.peers.read().await.len() == 1 },
-                Duration::from_secs(5),
+                common::network::NETWORK_TIMEOUT,
             )
             .await,
             "server must register the inbound peer after the handshake"
@@ -625,7 +624,7 @@ async fn unsolicited_block_replies_close_the_peer() {
         assert!(
             wait_until(
                 || async { server.peers.read().await.is_empty() },
-                Duration::from_secs(5),
+                common::network::NETWORK_TIMEOUT,
             )
             .await,
             "an unsolicited {msg_type:?} must close the peer (chia bans it)"

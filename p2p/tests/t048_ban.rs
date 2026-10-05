@@ -4,7 +4,6 @@ use common::{connect, contiguous_api, spawn_full_node_rate_limited, try_connect,
 use dg_xch_core::blockchain::unsized_bytes::UnsizedBytes;
 use dg_xch_core::protocols::{ChiaMessage, ProtocolMessageTypes};
 use std::net::{IpAddr, Ipv4Addr};
-use std::time::Duration;
 
 const LOOPBACK: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -35,7 +34,7 @@ async fn trip_rate_limit(server: &common::RunningServer) {
     assert!(
         wait_until(
             || async { server.peers.read().await.len() == 1 },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "server registers the inbound peer"
@@ -50,7 +49,7 @@ async fn trip_rate_limit(server: &common::RunningServer) {
     assert!(
         wait_until(
             || async { server.peers.read().await.is_empty() },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "the flooding peer is closed + evicted"
@@ -68,7 +67,7 @@ async fn banned_host_cannot_reconnect_within_the_window() {
     assert!(
         wait_until(
             || async { server.bans.is_banned(&LOOPBACK) },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "the violating host is entered into the timed ban list"
@@ -96,7 +95,7 @@ async fn host_reconnects_after_the_ban_is_lifted() {
     assert!(
         wait_until(
             || async { server.bans.is_banned(&LOOPBACK) },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "host banned"
@@ -130,7 +129,7 @@ async fn unsolicited_block_reply_bans_the_sender() {
     assert!(
         wait_until(
             || async { server.peers.read().await.len() == 1 },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "peer registers"
@@ -143,7 +142,7 @@ async fn unsolicited_block_reply_bans_the_sender() {
     assert!(
         wait_until(
             || async { server.peers.read().await.is_empty() && server.bans.is_banned(&LOOPBACK) },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "the unsolicited-reply sender is closed + evicted + banned"
@@ -169,7 +168,7 @@ async fn ban_keys_on_remote_host() {
     assert!(
         wait_until(
             || async { server.bans.is_banned(&LOOPBACK) },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await,
         "the ban is keyed on the peer's remote host (127.0.0.1), the ban key chia uses"

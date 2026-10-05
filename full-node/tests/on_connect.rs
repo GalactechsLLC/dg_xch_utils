@@ -151,16 +151,16 @@ async fn rig(synced: bool) -> (Arc<FullNode>, WsClient, mpsc::Receiver<Arc<ChiaM
     node.synced.store(synced, Ordering::Relaxed);
     let (server, run, _peers) = node.build_peer_server().expect("peer server");
     tokio::spawn(async move { server.run(run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
     let (handlers, rx) = capture_handlers();
     let client = dial_full_node(listen.port(), handlers).await;
     (node, client, rx)
 }
 
 async fn recv_within(rx: &mut mpsc::Receiver<Arc<ChiaMessage>>, what: &str) -> Arc<ChiaMessage> {
-    tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    tokio::time::timeout(common::network::NETWORK_TIMEOUT, rx.recv())
         .await
-        .unwrap_or_else(|_| panic!("{what} must arrive within 5s of the handshake"))
+        .unwrap_or_else(|_| panic!("{what} must arrive after the handshake"))
         .expect("capture channel open")
 }
 
@@ -266,7 +266,7 @@ async fn spawn_recording_peer() -> (
     tokio::spawn(async move {
         let _ = server.run(run_c).await;
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(port).await;
     (port, run, new_peaks, mempool_filters)
 }
 
@@ -351,7 +351,7 @@ async fn outbound_dial_greets_the_peer_and_requests_its_mempool() {
     assert!(
         wait_until(
             || async { !new_peaks.read().await.is_empty() },
-            Duration::from_secs(5)
+            common::network::NETWORK_TIMEOUT
         )
         .await,
         "the dialed peer must receive our NewPeak greeting"
@@ -364,7 +364,7 @@ async fn outbound_dial_greets_the_peer_and_requests_its_mempool() {
     assert!(
         wait_until(
             || async { !mempool_filters.read().await.is_empty() },
-            Duration::from_secs(5)
+            common::network::NETWORK_TIMEOUT
         )
         .await,
         "the dialed peer must receive our RequestMempoolTransactions (mempool sync on connect)"
@@ -413,7 +413,7 @@ async fn unsynced_outbound_dial_sends_no_mempool_request() {
     assert!(
         wait_until(
             || async { !new_peaks.read().await.is_empty() },
-            Duration::from_secs(5)
+            common::network::NETWORK_TIMEOUT
         )
         .await,
         "the NewPeak greeting is unconditional"

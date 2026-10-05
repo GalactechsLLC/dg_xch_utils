@@ -95,7 +95,7 @@ async fn announced_transaction_is_pulled_validated_and_admitted() {
     let (server, serve_run, _inbound_peers) = node.build_peer_server().expect("peer server");
     let listener_run = serve_run.clone();
     tokio::spawn(async move { server.run(listener_run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
 
     // ---- the announcing peer dials in on the production client handler stack ----
     let bundle = common::easy_bundle(&coin, 1);
@@ -140,14 +140,18 @@ async fn announced_transaction_is_pulled_validated_and_admitted() {
 
     // ---- the bundle must land in the node's mempool, validated server-side ----
     let mut admitted = false;
-    for _ in 0..50 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if node.mempool.lock().await.get(&name).is_some() {
             admitted = true;
             break;
         }
     }
-    assert!(admitted, "announced bundle was not admitted within 5s");
+    assert!(
+        admitted,
+        "announced bundle was not admitted before the network deadline"
+    );
     assert_eq!(node.mempool.lock().await.len(), 1);
 
     run.store(false, Ordering::Relaxed);
@@ -170,7 +174,7 @@ async fn gossip_is_ignored_while_syncing() {
     let (server, serve_run, _inbound_peers) = node.build_peer_server().expect("peer server");
     let listener_run = serve_run.clone();
     tokio::spawn(async move { server.run(listener_run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
 
     let bundle = common::easy_bundle(&coin, 1);
     let name = bundle.name().expect("bundle name");
@@ -262,7 +266,7 @@ async fn stand_up_rig() -> Rig {
     let (server, serve_run, inbound_peers) = node.build_peer_server().expect("peer server");
     let listener_run = serve_run.clone();
     tokio::spawn(async move { server.run(listener_run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
 
     // A blind announcer: no served bundle, no request hook — these tests drive raw messages.
     let api: Arc<dyn FullNodeApi> = Arc::new(AnnouncerApi {
@@ -284,7 +288,8 @@ async fn stand_up_rig() -> Rig {
     .await
     .expect("dial node");
     // Let the inbound side register the peer.
-    for _ in 0..30 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         if inbound_peers.read().await.len() == 1 {
             break;
         }
@@ -369,7 +374,8 @@ async fn already_seen_tx_with_mismatched_cost_bans_the_peer() {
     )
     .await;
     let mut admitted_cost = None;
-    for _ in 0..50 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if let Some(item) = rig.node.mempool.lock().await.get(&name) {
             admitted_cost = Some(item.cost);
@@ -493,7 +499,7 @@ async fn stand_up_capturing_rig() -> CapturingRig {
     let (server, serve_run, inbound_peers) = node.build_peer_server().expect("peer server");
     let listener_run = serve_run.clone();
     tokio::spawn(async move { server.run(listener_run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
 
     let pulls = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let new_txs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -517,7 +523,8 @@ async fn stand_up_capturing_rig() -> CapturingRig {
     )
     .await
     .expect("dial node");
-    for _ in 0..30 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         if inbound_peers.read().await.len() == 1 {
             break;
         }
@@ -656,7 +663,8 @@ async fn full_pool_low_fee_announcement_is_not_pulled() {
     )
     .await;
     let mut pulled = false;
-    for _ in 0..40 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         if rig.pulls.lock().await.contains(&bundle_id) {
             pulled = true;
             break;
@@ -698,7 +706,8 @@ async fn announce_drain_reaches_inbound_peers_and_excludes_origin() {
     });
     rig.node.drain_tx_announcements(&registry).await;
     let mut got_x = false;
-    for _ in 0..40 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         if rig
             .new_txs
             .lock()
@@ -798,7 +807,8 @@ async fn request_mempool_transactions_honors_bip158_filter() {
     )
     .await;
     let mut announced = false;
-    for _ in 0..40 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         if rig
             .new_txs
             .lock()

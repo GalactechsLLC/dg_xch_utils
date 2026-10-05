@@ -417,7 +417,7 @@ async fn spawn_tls_server_mode(
     tokio::spawn(async move {
         let _ = server.run().await;
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(port).await;
     (port, run, mempool, rpc)
 }
 
@@ -540,10 +540,17 @@ async fn tls_raw_client_with_valid_cert_succeeds() {
 // Issue one POST /healthz over TLS with the given client config; true means the handshake failed or
 // the RPC route returned a non-200 response.
 async fn raw_request_fails(port: u16, cfg: Arc<rustls::ClientConfig>) -> bool {
+    tokio::time::timeout(
+        common::network::NETWORK_TIMEOUT,
+        raw_request_is_rejected(port, cfg),
+    )
+    .await
+    .expect("RPC TLS exchange must finish; a timeout is not an authentication rejection")
+}
+
+async fn raw_request_is_rejected(port: u16, cfg: Arc<rustls::ClientConfig>) -> bool {
     let connector = tokio_rustls::TlsConnector::from(cfg);
-    let Ok(tcp) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
-        return true;
-    };
+    let tcp = common::network::connect_ready(([127, 0, 0, 1], port).into()).await;
     let server_name = rustls::pki_types::ServerName::try_from("localhost").expect("name");
     let Ok(mut tls) = connector.connect(server_name, tcp).await else {
         return true;

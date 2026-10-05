@@ -3,6 +3,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Bound concurrent debug RSA key generation on shared runners.
+  RUST_TEST_THREADS: 2
 
 jobs:
   lint:
@@ -69,12 +71,41 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            toolchain: stable
+            shell: bash
+          - os: macos-latest
+            toolchain: stable
+            shell: bash
+          # Wallet consensus validation requires GMP, which rejects Windows MSVC.
+          - os: windows-latest
+            toolchain: stable-x86_64-pc-windows-gnu
+            shell: msys2 {0}
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Install Windows GNU build tools
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          update: true
+          install: >-
+            diffutils
+            m4
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-pkgconf
       - uses: ./.github/actions/setup-native-deps
       - name: Build unified native desktop
         run: cargo build -p dg_xch_cli --no-default-features --features desktop,vulkan --locked
@@ -95,11 +126,4 @@ jobs:
         run: python3 -c 'import subprocess; subprocess.run(["target/debug/dgx", "gui", "--smoke-test"], check=True, timeout=60)'
       - name: Render every page on Windows
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $app = Start-Process -FilePath target/debug/dgx.exe -ArgumentList 'gui','--smoke-test' -PassThru
-          if (-not $app.WaitForExit(60000)) {
-            Stop-Process -Id $app.Id -Force
-            throw 'Native desktop smoke test timed out'
-          }
-          if ($app.ExitCode -ne 0) { throw "Native desktop exited with $($app.ExitCode)" }
+        run: timeout 60s target/debug/dgx.exe gui --smoke-test

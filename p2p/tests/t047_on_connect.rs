@@ -147,9 +147,9 @@ async fn dial_as(port: u16, node_type: NodeType, handlers: HandlerMap) -> WsClie
 }
 
 async fn recv_within(rx: &mut mpsc::Receiver<Arc<ChiaMessage>>, what: &str) -> Arc<ChiaMessage> {
-    tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    tokio::time::timeout(common::network::NETWORK_TIMEOUT, rx.recv())
         .await
-        .unwrap_or_else(|_| panic!("{what} must arrive within 5s of the handshake"))
+        .unwrap_or_else(|_| panic!("{what} must arrive after the handshake"))
         .expect("capture channel open")
 }
 

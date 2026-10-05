@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+
+#[path = "../../../tests/support/network.rs"]
+pub mod network;
 use async_trait::async_trait;
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_clients::websocket::WsClientConfig;
@@ -202,7 +205,7 @@ pub async fn wait_for_reconnections(
 pub fn fast_settings() -> dg_xch_p2p::P2pSettings {
     dg_xch_p2p::P2pSettings {
         target_outbound: 2,
-        connect_timeout: std::time::Duration::from_secs(5),
+        connect_timeout: std::time::Duration::from_secs(15),
         retry_timeout: std::time::Duration::from_millis(80),
         ..dg_xch_p2p::P2pSettings::default()
     }
@@ -384,8 +387,7 @@ async fn spawn_with_handlers(
     let handle = tokio::spawn(async move {
         let _ = server.run(run_c).await;
     });
-    // give the listener a moment to bind
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    network::wait_for_listener(port).await;
     RunningServer {
         port,
         run,

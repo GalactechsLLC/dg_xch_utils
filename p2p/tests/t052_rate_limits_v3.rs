@@ -129,7 +129,7 @@ async fn responder_mirrors_v3_and_activates_after_configure_exchange() {
             let peer = peer.clone();
             async move { peer.v3.is_active() }
         },
-        Duration::from_secs(5),
+        common::network::NETWORK_TIMEOUT,
     )
     .await;
     assert!(active, "the configure exchange completes v3 activation");
@@ -164,7 +164,7 @@ async fn configure_bounding_our_unlimited_type_is_refused() {
             let peers = server.peers.clone();
             async move { peers.read().await.is_empty() }
         },
-        Duration::from_secs(10),
+        common::network::NETWORK_TIMEOUT,
     )
     .await;
     assert!(
@@ -197,7 +197,7 @@ async fn configure_without_negotiation_is_refused() {
             let peers = server.peers.clone();
             async move { peers.read().await.is_empty() }
         },
-        Duration::from_secs(10),
+        common::network::NETWORK_TIMEOUT,
     )
     .await;
     assert!(
@@ -234,7 +234,7 @@ async fn third_concurrent_request_over_the_window_disconnects_and_bans() {
                 let peer = peer.clone();
                 async move { peer.v3.is_active() }
             },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await
     );
@@ -285,7 +285,7 @@ async fn third_concurrent_request_over_the_window_disconnects_and_bans() {
             let peers = server.peers.clone();
             async move { peers.read().await.is_empty() }
         },
-        Duration::from_secs(10),
+        common::network::NETWORK_TIMEOUT,
     )
     .await;
     assert!(
@@ -326,7 +326,7 @@ async fn localhost_peer_bypasses_window_enforcement() {
                 let peer = peer.clone();
                 async move { peer.v3.is_active() }
             },
-            Duration::from_secs(5),
+            common::network::NETWORK_TIMEOUT,
         )
         .await
     );

@@ -1,5 +1,6 @@
 #[cfg(feature = "pos2")]
 pub mod chain;
+pub mod coinset;
 pub mod config;
 pub mod error;
 #[cfg(feature = "pos2")]

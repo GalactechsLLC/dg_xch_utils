@@ -1,3 +1,6 @@
+#[path = "../../tests/support/network.rs"]
+mod network;
+
 use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs_from_bytes, load_private_key_from_bytes,
@@ -8,9 +11,7 @@ use rustls::pki_types::ServerName;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsConnector;
 
@@ -71,19 +72,9 @@ async fn ws_upgrade_via_tls(port: u16, server_ca: &[u8], client_ca: (&[u8], &[u8
     let connector = TlsConnector::from(Arc::new(client_config));
     // The accept loop may not be listening the instant the spawn returns — retry the TCP connect
     // briefly (bounded).
-    let mut tcp = None;
-    for _ in 0..50 {
-        match TcpStream::connect(("127.0.0.1", port)).await {
-            Ok(s) => {
-                tcp = Some(s);
-                break;
-            }
-            Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
-        }
-    }
-    let tcp = tcp.expect("server not listening");
+    let tcp = network::connect_ready(([127, 0, 0, 1], port).into()).await;
     let name = ServerName::try_from("chia.net").expect("server name");
-    let mut tls = tokio::time::timeout(Duration::from_secs(10), connector.connect(name, tcp))
+    let mut tls = tokio::time::timeout(network::NETWORK_TIMEOUT, connector.connect(name, tcp))
         .await
         .expect("tls timeout")
         .expect("tls handshake");
@@ -101,7 +92,7 @@ async fn ws_upgrade_via_tls(port: u16, server_ca: &[u8], client_ca: (&[u8], &[u8
     // Read the response head. A regression aborts the connection with NO bytes (this read then
     // errors or returns 0) — the exact ServerDisconnectedError shape the incident showed.
     let mut buf = vec![0u8; 4096];
-    let n = tokio::time::timeout(Duration::from_secs(10), tls.read(&mut buf))
+    let n = tokio::time::timeout(network::NETWORK_TIMEOUT, tls.read(&mut buf))
         .await
         .expect("read timeout")
         .expect("read upgrade response (server aborted the connection: no HTTP response)");
@@ -151,15 +142,7 @@ async fn exhausted_peer_capacity_refuses_websocket_upgrade() {
 async fn idle_tcp_peer_does_not_block_other_tls_handshakes() {
     install_test_provider();
     let (port, run) = spawn_server();
-    let mut idle = None;
-    for _ in 0..50 {
-        if let Ok(stream) = TcpStream::connect(("127.0.0.1", port)).await {
-            idle = Some(stream);
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let idle = idle.expect("server listening");
+    let idle = network::connect_ready(([127, 0, 0, 1], port).into()).await;
     let status = ws_upgrade_via_tls(
         port,
         CHIA_CA_CRT.as_bytes(),

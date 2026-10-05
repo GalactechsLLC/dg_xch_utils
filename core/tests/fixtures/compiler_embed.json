@@ -1,0 +1,50 @@
+[
+  {
+    "source": "(mod (X) (include *standard-cl-21*) (embed-file DATA hex value.hex) (list X DATA))",
+    "hex": "ff04ff02ffff01ffff01ff02ffff0405808080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-21*) (embed-file DATA sexp value.sexp) (list X DATA))",
+    "hex": "ff04ff02ffff01ffff01ff02ffff0405808080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-23*) (embed-file DATA hex value.hex) (list X DATA))",
+    "hex": "ff02ffff01ff04ff05ffff04ff02ff808080ffff04ffff01ff01ff02ffff040580ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-23*) (embed-file DATA sexp value.sexp) (list X DATA))",
+    "hex": "ff02ffff01ff04ff05ffff04ff02ff808080ffff04ffff01ff01ff02ffff040580ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-25*) (embed-file DATA hex value.hex) (list X DATA))",
+    "hex": "ff02ffff01ff04ff05ffff04ff02ff808080ffff04ffff01ff01ff02ffff040580ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-25*) (embed-file DATA sexp value.sexp) (list X DATA))",
+    "hex": "ff02ffff01ff04ff05ffff04ff02ff808080ffff04ffff01ff01ff02ffff040580ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (embed-file DATA hex value.hex) (list X DATA))",
+    "hex": "ff02ffff01ff04ff05ffff04ff02ff808080ffff04ffff01ff01ff02ffff040580ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (embed-file DATA sexp value.sexp) (list X DATA))",
+    "hex": "ff02ffff01ff04ff05ffff04ff02ff808080ffff04ffff01ff01ff02ffff040580ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-21*) (compile-file CHILD child.clsp) (a CHILD (list X)))",
+    "hex": "ff02ffff01ff02ffff01ff10ff02ffff010180ffff04ff05ffff01808080ffff04ff80ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-23*) (compile-file CHILD child.clsp) (a CHILD (list X)))",
+    "hex": "ff02ffff01ff02ff02ffff04ff05ff808080ffff04ffff01ff10ff02ffff010180ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-25*) (compile-file CHILD child.clsp) (a CHILD (list X)))",
+    "hex": "ff02ffff01ff02ff02ffff04ff05ff808080ffff04ffff01ff10ff02ffff010180ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (compile-file CHILD child.clsp) (a CHILD (list X)))",
+    "hex": "ff02ffff01ff02ff02ffff04ff05ff808080ffff04ffff01ff10ff02ffff010180ff018080"
+  }
+]

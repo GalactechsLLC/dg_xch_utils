@@ -68,7 +68,7 @@ pub fn farm_genesis(
             .into_iter()
             .filter(|(i, _)| *i == plot_index)
         {
-            let proof_bytes = plots.solve(found_index, &chain);
+            let proof_bytes = plots.solve(found_index, &chain, pos_challenge)?;
             if proof_bytes.is_empty() {
                 continue;
             }

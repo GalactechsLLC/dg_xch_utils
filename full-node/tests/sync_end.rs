@@ -117,7 +117,7 @@ async fn spawn_recording_peer() -> (u16, Arc<AtomicBool>, Arc<RwLock<Vec<NewPeak
     tokio::spawn(async move {
         let _ = server.run(run_c).await;
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(port).await;
     (port, run, new_peaks)
 }
 
@@ -199,13 +199,13 @@ async fn finish_sync_transition_fires_mempool_and_peer_and_wallet_sends() {
     node.synced.store(true, Ordering::Relaxed);
     let (server, run, inbound_peers) = node.build_peer_server().expect("peer server");
     tokio::spawn(async move { server.run(run).await });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    common::network::wait_for_listener(listen.port()).await;
 
     // A wallet peer dials in (lands in the node's inbound map); drain its on-connect NewPeakWallet
     // greeting so the transition's push is the one we assert on.
     let (wallet_handlers, mut wallet_rx) = wallet_capture();
     let _wallet = dial_wallet(listen.port(), wallet_handlers).await;
-    let greeting = tokio::time::timeout(Duration::from_secs(5), wallet_rx.recv())
+    let greeting = tokio::time::timeout(common::network::NETWORK_TIMEOUT, wallet_rx.recv())
         .await
         .expect("on-connect wallet greeting arrives")
         .expect("channel open");
@@ -248,7 +248,7 @@ async fn finish_sync_transition_fires_mempool_and_peer_and_wallet_sends() {
     );
 
     // The wallet peer received a SECOND NewPeakWallet (the transition's, not the greeting).
-    let msg = tokio::time::timeout(Duration::from_secs(5), wallet_rx.recv())
+    let msg = tokio::time::timeout(common::network::NETWORK_TIMEOUT, wallet_rx.recv())
         .await
         .expect("the transition pushes NewPeakWallet to the wallet peer")
         .expect("channel open");
@@ -267,7 +267,8 @@ async fn finish_sync_transition_fires_mempool_and_peer_and_wallet_sends() {
 
     // The outbound full-node peer received NewPeak of the landed tip.
     let mut got = None;
-    for _ in 0..50 {
+    let deadline = tokio::time::Instant::now() + common::network::NETWORK_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         if let Some(p) = new_peaks.read().await.first().cloned() {
             got = Some(p);
             break;
