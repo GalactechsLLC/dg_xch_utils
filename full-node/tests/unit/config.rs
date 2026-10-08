@@ -209,3 +209,31 @@ fn p2p_settings_are_validated_and_preserved() {
         .is_err()
     );
 }
+
+#[test]
+fn rocksdb_urls_and_chain_identity_use_a_directory() {
+    assert_eq!(
+        Backend::parse("rocksdb:///data/chain"),
+        Backend::Rocksdb("/data/chain".into())
+    );
+    assert_eq!(
+        Backend::parse("rocksdb:chain"),
+        Backend::Rocksdb("chain".into())
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rocks");
+    let mut config = cfg(&[]).unwrap();
+    config.network_id = "dgx".into();
+    config.backend = Backend::Rocksdb(path.clone());
+    config.bind_chain_identity().unwrap();
+    assert!(path.join("chain-identity").exists());
+    config.bind_chain_identity().unwrap();
+    config.network_id = "mainnet".into();
+    assert!(config.bind_chain_identity().is_err());
+    config.network_id = "dgx".into();
+    let occupied = directory.path().join("occupied");
+    std::fs::create_dir(&occupied).unwrap();
+    std::fs::write(occupied.join("CURRENT"), b"existing data").unwrap();
+    config.backend = Backend::Rocksdb(occupied);
+    assert!(config.bind_chain_identity().is_err());
+}

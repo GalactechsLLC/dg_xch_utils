@@ -55,6 +55,38 @@ fn free_addr() -> SocketAddr {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
+    server_scenario(FullNode::boot, ActiveNode::Sqlite).await;
+}
+
+#[cfg(feature = "rocksdb")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rocksdb_server_boots_syncs_serves_and_answers_rpc_and_wallet() {
+    server_scenario(
+        |mut config: Config| async move {
+            let Backend::Sqlite(path) = &config.backend else {
+                unreachable!()
+            };
+            let directory = path.with_extension("rocksdb");
+            config.backend = Backend::Rocksdb(directory.clone());
+            config.bind_chain_identity()?;
+            let store = Arc::new(
+                dg_xch_stores::RocksDbStore::open(&directory)
+                    .await
+                    .map_err(std::io::Error::other)?,
+            );
+            FullNode::boot_with_store(config, store)
+        },
+        ActiveNode::Rocksdb,
+    )
+    .await;
+}
+
+async fn server_scenario<S, F, Fut>(boot: F, activate: fn(BackendHandle<S>) -> ActiveNode)
+where
+    S: dg_xch_stores::BlockStore + dg_xch_stores::CoinStore + Send + Sync + 'static,
+    F: FnOnce(Config) -> Fut,
+    Fut: std::future::Future<Output = Result<FullNode<S>, std::io::Error>>,
+{
     // ---- a loopback peer serving real mainnet block 5000000 ----
     let block = common::full_block();
     let peer_api = Arc::new(common::MapApi {
@@ -66,7 +98,7 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     let port = free_addr().port();
     let listen = SocketAddr::from(([0, 0, 0, 0], port));
     let client_addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let node = Arc::new(FullNode::boot(config(listen, listen)).await.expect("boot"));
+    let node = Arc::new(boot(config(listen, listen)).await.expect("boot"));
     common::ancestry::seed_mainnet_parent(&node.store).await;
 
     // A wallet subscribes to a puzzle hash present in block 5000000's additions, before the sync.
@@ -118,7 +150,7 @@ async fn server_boots_syncs_serves_and_answers_rpc_and_wallet() {
     let services = Arc::new(node.start_services().await.expect("services"));
     let inbound_peers = services.inbound_peers.clone();
     let sources = Arc::new(node.metrics_sources(&services));
-    let active = Arc::new(ActiveNode::Sqlite(BackendHandle {
+    let active = Arc::new(activate(BackendHandle {
         node: node.clone(),
         sources,
     }));

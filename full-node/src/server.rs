@@ -25,6 +25,8 @@ pub struct BackendHandle<S> {
 /// enum and every portfu construct dispatches through it.
 pub enum ActiveNode {
     Sqlite(BackendHandle<SqliteStore>),
+    #[cfg(feature = "rocksdb")]
+    Rocksdb(BackendHandle<dg_xch_stores::RocksDbStore>),
     #[cfg(feature = "postgres")]
     Postgres(BackendHandle<dg_xch_stores::PostgresStore>),
     #[cfg(feature = "mmap")]
@@ -35,6 +37,8 @@ macro_rules! with_backend {
     ($self:expr, $h:ident => $body:expr) => {
         match $self {
             ActiveNode::Sqlite($h) => $body,
+            #[cfg(feature = "rocksdb")]
+            ActiveNode::Rocksdb($h) => $body,
             #[cfg(feature = "postgres")]
             ActiveNode::Postgres($h) => $body,
             #[cfg(feature = "mmap")]
@@ -48,6 +52,8 @@ impl ActiveNode {
     pub fn backend_name(&self) -> &'static str {
         match self {
             ActiveNode::Sqlite(_) => "sqlite",
+            #[cfg(feature = "rocksdb")]
+            ActiveNode::Rocksdb(_) => "rocksdb",
             #[cfg(feature = "postgres")]
             ActiveNode::Postgres(_) => "postgres",
             #[cfg(feature = "mmap")]
@@ -208,6 +214,7 @@ pub async fn run(
             path,
             config.performance.sqlite_writer_cache_mb.unwrap_or(256)
         ),
+        Backend::Rocksdb(path) => log::info!("storage backend=rocksdb path={path:?}"),
         Backend::Mmap(path) => log::info!("storage backend=mmap path={path:?}"),
         Backend::Postgres(_) => log::info!("storage backend=postgres"),
     }
@@ -285,6 +292,25 @@ pub async fn run(
                 format!(
                     "postgres:// --db ({url}) requires a binary built with --features postgres"
                 ),
+            )
+            .into());
+        }
+        #[cfg(feature = "rocksdb")]
+        Backend::Rocksdb(directory) => {
+            let store = Arc::new(
+                dg_xch_stores::RocksDbStore::open(&directory)
+                    .await
+                    .map_err(|error| {
+                        std::io::Error::other(format!("open rocksdb store: {error}"))
+                    })?,
+            );
+            activate!(Rocksdb, Arc::new(FullNode::boot_with_store(config, store)?))
+        }
+        #[cfg(not(feature = "rocksdb"))]
+        Backend::Rocksdb(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "rocksdb:// --db requires a binary built with --features rocksdb",
             )
             .into());
         }

@@ -69,6 +69,7 @@ coin-index = ["full-node", "dg_full_node/coin-index"]
 hint = ["coin-index", "dg_full_node/hint"]
 postgres = ["full-node", "dg_full_node/postgres"]
 mmap = ["full-node", "dg_full_node/mmap"]
+rocksdb = ["full-node", "dg_full_node/rocksdb"]
 profiling = ["full-node", "dg_full_node/profiling", "tikv-jemallocator/profiling"]
 [dev-dependencies]
 tempfile = "3"

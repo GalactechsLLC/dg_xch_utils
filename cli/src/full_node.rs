@@ -40,7 +40,7 @@ pub struct FullNodeArgs {
     /// External WAN address advertised for peer gossip behind NAT.
     #[arg(env = "DGX_FULL_NODE_ADVERTISE", long)]
     advertise: Option<String>,
-    /// Storage URL: `sqlite://<path>`, `postgres://...`, or `mmap://<directory>`.
+    /// Storage URL: `sqlite://<path>`, `postgres://...`, `rocksdb://<directory>`, or `mmap://<directory>`.
     #[arg(env = "DGX_FULL_NODE_DB", long)]
     db: Option<String>,
     /// Network id selecting consensus constants.

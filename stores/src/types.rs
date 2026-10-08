@@ -216,6 +216,8 @@ impl Drop for SqliteBatch {
 }
 
 pub(crate) enum BatchInner {
+    #[cfg(feature = "rocksdb")]
+    Rocksdb(std::sync::Arc<crate::rocksdb::RocksBatch>),
     Sqlite(SqliteBatch),
     #[cfg(feature = "postgres")]
     Postgres(sqlx::Transaction<'static, sqlx::Postgres>),

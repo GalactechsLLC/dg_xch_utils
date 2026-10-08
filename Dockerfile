@@ -1,5 +1,5 @@
 FROM rust:1.98-bookworm AS build-base
-RUN apt-get update && apt-get install -y --no-install-recommends cmake m4 pkg-config \
+RUN apt-get update && apt-get install -y --no-install-recommends cmake m4 pkg-config clang libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY . .
