@@ -45,7 +45,13 @@ WORKDIR /build/plotter/cuda
 RUN test "$(rustup show active-toolchain | cut -d ' ' -f 1)" = "${RUST_TOOLCHAIN}-x86_64-unknown-linux-gnu" \
     && cargo oxide build --arch "${CUDA_ARCH}" -- --locked --release
 
-FROM ${STACK_IMAGE}
+FROM ${STACK_IMAGE} AS cuda-runtime
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     NVIDIA_REQUIRE_CUDA=cuda>=13.0
 COPY --from=cuda-builder /build/plotter/cuda/target/release/dg_xch_plotter_cuda /usr/local/bin/dg_xch_plotter_cuda
+
+FROM cuda-runtime AS plotter-cuda
+ENTRYPOINT ["/usr/local/bin/dg_xch_plotter_cuda"]
+
+FROM cuda-runtime AS farmer-nvidia
+ENTRYPOINT ["/usr/local/bin/dgx", "farmer"]

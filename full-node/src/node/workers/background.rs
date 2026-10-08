@@ -71,7 +71,7 @@ pub(in crate::node) async fn weight_proof_worker<S: BlockStore + Send + Sync + '
             match server.get_proof_of_weight(req.tip).await {
                 Ok(wp) => respond_weight_proof(&req, &wp, &net).await,
                 Err(e) if e.is_refusal() => {
-                    info!("refusing weight proof request tip={} error={}", req.tip, e);
+                    debug!("refusing weight proof request tip={} error={}", req.tip, e);
                 }
                 Err(e) => warn!("weight proof build failed tip={} error={}", req.tip, e),
             }
@@ -213,7 +213,7 @@ pub(in crate::node) async fn uncompact_scanner<S: BlockStore + Send + Sync + 'st
         // timelord filter runs inside solicit_uncompact_from_timelords.
         let peers: Vec<Arc<SocketPeer>> = inbound_peers.read().await.values().cloned().collect();
         let sent = solicit_uncompact_from_timelords(&reqs, &peers, &net).await;
-        info!(
+        debug!(
             "uncompact scan: bulky VDF proofs solicited from bluebox timelords bottom={} top={} solicited={} sent={} ledger={}",
             bottom,
             top,

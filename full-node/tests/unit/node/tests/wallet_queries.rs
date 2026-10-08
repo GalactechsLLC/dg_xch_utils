@@ -120,6 +120,9 @@ fn api_trust(
         claim_guard: None,
         new_peak_signal: Arc::new(Notify::new()),
         known_peers: Arc::new(RwLock::new(Vec::new())),
+        peer_addresses: Arc::new(Mutex::new(dg_xch_p2p::AddressBook::new(
+            &dg_xch_p2p::P2pSettings::default(),
+        ))),
         tx_requested: Arc::new(Mutex::new(HashMap::new())),
         slot_state: Arc::new(Mutex::new(SlotState::new(MAINNET))),
         sp_inbox: Arc::new(Mutex::new(Vec::new())),

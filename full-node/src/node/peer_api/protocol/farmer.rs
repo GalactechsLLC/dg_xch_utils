@@ -8,7 +8,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
     ) -> Option<RequestSignedValues> {
         // S1 — a declare arrived AT ALL (distinguishes never-received from received-then-dropped).
         self.producer.declare_received();
-        info!(
+        debug!(
             "declare_proof_of_space received event={} peer={} sp_index={} challenge={} cc_sp={}",
             "producer.declare.received",
             peer,
@@ -19,10 +19,9 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         // `full_node_api.declare_proof_of_space` — declare validation is tip-context; a
         // syncing node has no consistent slot state to check against, so it drops the message.
         if !self.production_ready().await {
-            // Promoted trace!->info! for bring-up: at default level the operator must
-            // see this wall.
+            // Tip-context drops are routine while syncing; retain details at debug level.
             self.producer.validated("not_synced");
-            info!(
+            debug!(
                 "declare dropped: node not synced (tip-context validation impossible) event={} peer={}",
                 "producer.declare.not_synced", peer
             );
@@ -73,7 +72,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
                     declare: declare.clone(),
                     quality_string,
                 });
-                info!(
+                debug!(
                     "accepted proof of space, held as candidate event={} peer={} qs={}",
                     "producer.declare.accepted", peer, quality_string
                 );
@@ -92,7 +91,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             other => {
                 let result = other.result_label();
                 self.producer.validated(result);
-                info!(
+                debug!(
                     "declare rejected at validate_declared_proof event={} peer={} result={} sp_index={} challenge={}",
                     "producer.declare.rejected",
                     peer,
@@ -194,7 +193,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
                 farmed.pop_front();
             }
         }
-        info!(
+        debug!(
             "farmed unfinished block: signatures spliced, propagating event={} height={} qs={} partial={:?}",
             "producer.signed.spliced", height, signed.quality_string, partial
         );

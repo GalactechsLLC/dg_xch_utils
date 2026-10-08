@@ -34,7 +34,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             // that no longer resolves here vanished with no trace. Now categorical.
             let Some(sp) = slot.get_signage_point(&declare.challenge_chain_sp) else {
                 self.producer.candidate_dropped("sp_not_found_in_slotstate");
-                info!(
+                debug!(
                     "candidate: accepted SP no longer resolvable in slot state; dropping event={} reason={} cc_sp={}",
                     "producer.build.dropped",
                     "sp_not_found_in_slotstate",
@@ -52,7 +52,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
                     Some(v) => v.challenge,
                     None => {
                         self.producer.candidate_dropped("sp_cc_vdf_missing");
-                        info!(
+                        debug!(
                             "candidate: index>0 SP has no challenge-chain VDF (malformed); dropping event={} reason={}",
                             "producer.build.dropped", "sp_cc_vdf_missing"
                         );
@@ -68,7 +68,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             } else {
                 let Some((eos, _, start)) = slot.get_sub_slot(&cc_challenge_hash) else {
                     self.producer.candidate_dropped("pos_sub_slot_not_found");
-                    info!(
+                    debug!(
                         "candidate: pos sub-slot absent in slot state; dropping event={} reason={} cc_challenge_hash={}",
                         "producer.build.dropped", "pos_sub_slot_not_found", cc_challenge_hash
                     );
@@ -404,7 +404,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             .await
             .insert(quality_string, height, candidate);
         self.producer.candidate_built();
-        info!(
+        debug!(
             "assembled candidate unfinished block; requesting farmer signatures event={} height={} sp_index={} qs={} partial={:?} tx_generator={}",
             "producer.build.assembled",
             height,

@@ -327,7 +327,7 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
                         sp.challenge_chain_vdf.output.hash(),
                         sp.reward_chain_vdf.output.hash(),
                     ) {
-                        info!(
+                        debug!(
                             "finished signage point index={} cc={} rc={}",
                             sp.index_from_challenge, cc, rc
                         );
@@ -359,9 +359,9 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
                     )
                     .is_some()
                 {
-                    // The "finished sub slot" INFO line, keyed by the challenge-chain hash.
+                    // Keep routine sub-slot details at debug level.
                     if let Ok(cc) = eos.end_of_slot_bundle.challenge_chain.hash() {
-                        info!("finished sub slot cc={}", cc);
+                        debug!("finished sub slot cc={}", cc);
                     }
                     if let Some(a) = announce_for_eos(&eos.end_of_slot_bundle) {
                         announces.push(a);

@@ -213,8 +213,15 @@ where
             Some((hash, _)) => self.chain_is_current(&hash).await,
             None => false,
         };
-        self.synced.store(synced, Ordering::Relaxed);
+        let was_synced = self.synced.swap(synced, Ordering::Relaxed);
         let local = peak.map_or(0, |(_, height)| height);
+        if synced != was_synced {
+            if synced {
+                info!("node synced height={local}");
+            } else {
+                info!("node resuming sync height={local}");
+            }
+        }
         let tip_lag = self
             .claimed_peak
             .load(Ordering::Relaxed)

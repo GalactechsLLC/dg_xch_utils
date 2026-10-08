@@ -18,7 +18,7 @@ use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::consensus::fast_forward::{fast_forward_singleton, supports_fast_forward};
 use dg_xch_core::consensus::producer::BlockTransactions;
 use dg_xch_stores::{CoinStore, StoreError};
-use log::{info, warn};
+use log::{debug, warn};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -1667,7 +1667,7 @@ impl Mempool {
         for item in self.items_by_fee() {
             // The wall-clock budget for the whole selection.
             if start.elapsed() >= timeout {
-                info!("block assembly: timeout reached, stopping selection");
+                debug!("block assembly: timeout reached, stopping selection");
                 break;
             }
             // The fee sum must stay a representable coin amount.
@@ -1695,7 +1695,7 @@ impl Mempool {
                 }
             } else if skipped_items >= PRIORITY_TX_THRESHOLD {
                 if has_special {
-                    info!(
+                    debug!(
                         "block assembly: skipping dedup/FF item past priority threshold item={}",
                         item.name
                     );
@@ -1721,11 +1721,11 @@ impl Mempool {
                     Ok(processed) => processed,
                     Err(ProcessError::SkipDedup(why)) => {
                         // Not counted against the skip budget.
-                        info!("block assembly: dedup skip item={} why={}", item.name, why);
+                        debug!("block assembly: dedup skip item={} why={}", item.name, why);
                         continue;
                     }
                     Err(ProcessError::Failed(why)) => {
-                        info!(
+                        debug!(
                             "block assembly: item failed dedup/FF processing item={} why={}",
                             item.name, why
                         );
@@ -1865,7 +1865,7 @@ impl Mempool {
             );
             return None;
         }
-        info!(
+        debug!(
             "block assembly: {} spends, {} additions, cost {}, fees {}",
             coin_spends.len(),
             additions.len(),

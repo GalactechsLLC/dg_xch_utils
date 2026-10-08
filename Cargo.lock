@@ -1203,6 +1203,7 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "serde_json",
+ "serde_norway",
  "tempfile",
  "tikv-jemallocator",
  "tokio",

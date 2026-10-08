@@ -6,8 +6,8 @@ where
 {
     /// Record the peer a gossiped transaction arrived FROM — its dispatch peer id AND its remote
     /// host — so the `NewTransaction` re-broadcast excludes it (`broadcast_added_tx`'s
-    /// `current_peer`). The host is what excludes an OUTBOUND origin, whose
-    /// dispatch id is our own shared client-cert hash. Bounded: entries
+    /// `current_peer`). The captured remote host also matches outbound registry endpoints.
+    /// Bounded: entries
     /// older than 60s are pruned on insert and the map is capped — an unconsumed entry (failed
     /// admission) cannot accumulate.
     pub async fn note_tx_origin(&self, txid: Bytes32, peer: Bytes32, host: Option<IpAddr>) {

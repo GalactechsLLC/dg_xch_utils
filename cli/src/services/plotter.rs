@@ -19,11 +19,11 @@ struct Cli {
 
 #[derive(clap::Args)]
 struct Resources {
-    #[arg(long, default_value_t = 512)]
+    #[arg(env = "DGX_PLOTTER_MEMORY_MIB", long, default_value_t = 512)]
     memory_mib: u64,
-    #[arg(long, default_value_t = 4_194_304)]
+    #[arg(env = "DGX_PLOTTER_MAX_ENTRIES", long, default_value_t = 4_194_304)]
     max_entries: usize,
-    #[arg(long, default_value_t = 1_000_000_000)]
+    #[arg(env = "DGX_PLOTTER_MAX_WORK", long, default_value_t = 1_000_000_000)]
     max_work: u64,
 }
 
@@ -35,9 +35,9 @@ enum Backend {
 
 #[derive(clap::Args)]
 struct Engine {
-    #[arg(long, value_enum, default_value = "cpu")]
+    #[arg(env = "DGX_PLOTTER_BACKEND", long, value_enum, default_value = "cpu")]
     backend: Backend,
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_PLOTTER_DEVICE", long, default_value_t = 0)]
     device: usize,
 }
 
@@ -167,9 +167,9 @@ enum Command {
     )]
     ProvePlot {
         path: PathBuf,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_CHALLENGE", long)]
         challenge: String,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_TESTNET", long)]
         testnet: bool,
         #[command(flatten)]
         resources: Resources,
@@ -177,29 +177,30 @@ enum Command {
         engine: Engine,
     },
     Create {
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_OUTPUT", long)]
         output: PathBuf,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_FARMER_KEY", long)]
         farmer_key: String,
         #[arg(
+            env = "DGX_PLOTTER_POOL_KEY",
             long,
             required_unless_present = "contract",
             conflicts_with = "contract"
         )]
         pool_key: Option<String>,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_CONTRACT", long)]
         contract: Option<String>,
-        #[arg(long, default_value_t = 28)]
+        #[arg(env = "DGX_PLOTTER_K", long, default_value_t = 28)]
         k: u8,
-        #[arg(long, default_value_t = 2)]
+        #[arg(env = "DGX_PLOTTER_STRENGTH", long, default_value_t = 2)]
         strength: u8,
-        #[arg(long, default_value_t = 0)]
+        #[arg(env = "DGX_PLOTTER_INDEX", long, default_value_t = 0)]
         index: u16,
-        #[arg(long, default_value_t = 0)]
+        #[arg(env = "DGX_PLOTTER_META_GROUP", long, default_value_t = 0)]
         meta_group: u8,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_TESTNET", long)]
         testnet: bool,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_EXPERIMENTAL_SIZE", long)]
         experimental_size: bool,
         #[command(flatten)]
         resources: Resources,
@@ -213,15 +214,15 @@ enum Command {
         about = "Build native tables in memory, search a challenge and prove using retained witnesses"
     )]
     SelfTest {
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_PLOT_ID", long)]
         plot_id: String,
-        #[arg(long, default_value_t = 18)]
+        #[arg(env = "DGX_PLOTTER_K", long, default_value_t = 18)]
         k: u8,
-        #[arg(long, default_value_t = 2)]
+        #[arg(env = "DGX_PLOTTER_STRENGTH", long, default_value_t = 2)]
         strength: u8,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_CHALLENGE", long)]
         challenge: String,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_TESTNET", long)]
         testnet: bool,
         #[command(flatten)]
         resources: Resources,
@@ -230,17 +231,17 @@ enum Command {
     },
     #[command(about = "Verify proof validity natively; does not check block eligibility")]
     Verify {
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_PLOT_ID", long)]
         plot_id: String,
-        #[arg(long, default_value_t = 28)]
+        #[arg(env = "DGX_PLOTTER_K", long, default_value_t = 28)]
         k: u8,
-        #[arg(long, default_value_t = 2)]
+        #[arg(env = "DGX_PLOTTER_STRENGTH", long, default_value_t = 2)]
         strength: u8,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_CHALLENGE", long)]
         challenge: String,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_PROOF", long)]
         proof: String,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_TESTNET", long)]
         testnet: bool,
     },
 }

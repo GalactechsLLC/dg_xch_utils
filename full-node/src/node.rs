@@ -168,13 +168,9 @@ fn validation_batch() -> u32 {
         std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get),
     )
 }
-// Fast-sync trigger: a claimed peak this many blocks ahead of a near-empty local store means tip-follow
-// (FETCH_BATCH/request) would never converge — drive the weight-proof bulk sync instead. `local < GAP`
-// gates the RECENT-CHAIN JUMP to a fresh/near-empty store (a mid-chain node long-syncs the gap through
-// the batch pipeline instead — see `wants_long_sync`). The value doubles as the weight-proof anchor
-// floor: WEIGHT_PROOF_RECENT_BLOCKS (1000, core/src/consensus/constants.rs) — a tip below it
-// cannot be WP-anchored; from-zero batch sync covers that band.
-const FAST_SYNC_GAP: u32 = 1000;
+// Weight proofs require a recent chain of at least WEIGHT_PROOF_RECENT_BLOCKS headers.
+// Below this floor the ordinary batch pipeline validates the chain from genesis.
+const WEIGHT_PROOF_MIN_HEIGHT: u32 = 1000;
 // `sync_blocks_behind_threshold` (300): a peer's claimed tip more than this many blocks ahead of
 // the local peak enters the WP-anchored long-sync band, regardless of local height.
 const SYNC_BLOCKS_BEHIND_THRESHOLD: u32 = 300;
@@ -182,7 +178,7 @@ const SYNC_BLOCKS_BEHIND_THRESHOLD: u32 = 300;
 // node follows block-by-block off the NewPeak event (the normal case of receiving the next
 // block) rather than batch-syncing, so
 // the confirmed peak tracks the tip within 0-1. The tip_follower owns this band; batched catch-up
-// and bulk_sync own the wider bands.
+// and the batch pipeline own the wider bands.
 const SHORT_SYNC_BLOCKS_BEHIND_THRESHOLD: u32 = 20;
 // Falling-edge hysteresis for the secondary-index shed (`update_synced`): shed only when the node
 // is more than this many blocks behind the claimed network tip. The shed pays for itself only if
@@ -246,6 +242,7 @@ pub struct FullNode<S = SqliteStore> {
     // this flag the producer waits on a peak that only the producer's own fill can create.
     sync_from_anchor: Arc<RwLock<Option<u32>>>,
     known_peers: Arc<RwLock<Vec<TimestampedPeerInfo>>>,
+    peer_addresses: Arc<Mutex<dg_xch_p2p::AddressBook>>,
     // The INBOUND peer sessions map, owned by the FullNode so the confirm path can reach wallet-type
     // peers directly: `notify_new_peak` broadcasts `NewPeakWallet` to every peer that handshook as
     // NodeType::Wallet (`full_node.update_wallets`). spawn_peer_server
@@ -266,9 +263,8 @@ pub struct FullNode<S = SqliteStore> {
     // txid -> (origin identity, when recorded): the peer a gossiped bundle arrived FROM, so the
     // NewTransaction re-broadcast can exclude it. The identity carries BOTH the dispatch peer
     // id AND the remote host:
-    // an inbound link's peer id is the peer's true cert hash (exact), but every outbound DIAL shares
-    // OUR client cert hash (clients websocket peer_id = hash of our own cert), so an outbound origin
-    // is only distinguishable by its remote host. Entries are consumed by
+    // dispatch uses the remote certificate hash in both directions; the outbound registry
+    // also carries the dialed host for origin matching. Entries are consumed by
     // the announce drain; unconsumed ones (failed admissions) age out. Bounded — see `note_tx_origin`.
     tx_origin: Arc<Mutex<HashMap<Bytes32, (TxOrigin, Instant)>>>,
     // Slot state + its driver-drained queues (received gossip in, relay announces out).
@@ -363,12 +359,18 @@ fn database_near_tip(local: u32, claimed: u32, has_peak: bool, was_near_tip: boo
             }
 }
 
-fn wants_fast_sync(local: u32, claimed: u32) -> bool {
-    local < FAST_SYNC_GAP && claimed.saturating_sub(local) > FAST_SYNC_GAP
+fn wants_long_sync(local: u32, claimed: u32) -> bool {
+    claimed >= WEIGHT_PROOF_MIN_HEIGHT
+        && claimed.saturating_sub(local) > SYNC_BLOCKS_BEHIND_THRESHOLD
 }
 
-fn wants_long_sync(local: u32, claimed: u32) -> bool {
-    claimed >= FAST_SYNC_GAP && claimed.saturating_sub(local) > SYNC_BLOCKS_BEHIND_THRESHOLD
+// An empty store must build block and coin state from genesis. A confirmed peak,
+// including genesis at height zero, resumes from that chain's fork point; candidate
+// headers alone never authorize a recent-chain jump.
+fn needs_long_sync_anchor(config: &Config, peak: Option<u32>, claimed: u32) -> bool {
+    !config.genesis_sync
+        && config.sync_from == 0
+        && peak.is_some_and(|local| wants_long_sync(local, claimed))
 }
 
 // The action the mid-chain long-sync band takes once the WP fork point is resolved against the

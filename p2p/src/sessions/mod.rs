@@ -29,26 +29,42 @@ pub type OnConnectHook = Arc<
         + Sync,
 >;
 
-async fn keepalive_ok(peer: &OutboundPeer, settings: &P2pSettings, id: u16) -> bool {
+async fn keepalive_ok(
+    peer: &OutboundPeer,
+    settings: &P2pSettings,
+    book: &Arc<Mutex<AddressBook>>,
+) -> bool {
     let version = ChiaProtocolVersion::default();
     let Ok(msg) = ChiaMessage::new(
         ProtocolMessageTypes::RequestPeers,
         version,
         &RequestPeers {},
-        Some(id),
+        None,
     ) else {
         return false;
     };
-    oneshot::<RespondPeers>(
+    let response = oneshot::<RespondPeers>(
         peer.client.connection.clone(),
         msg,
         Some(ProtocolMessageTypes::RespondPeers),
         version,
-        Some(id),
+        None,
         Some(settings.pong_deadline.as_millis() as u64),
     )
-    .await
-    .is_ok()
+    .await;
+    match response {
+        Ok(response) => {
+            let accepted = book.lock().await.insert_many(&response.peer_list);
+            log::debug!(
+                "peer discovery endpoint={}:{} received={} accepted={accepted}",
+                peer.endpoint.0,
+                peer.endpoint.1,
+                response.peer_list.len()
+            );
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 // Hold a live channel until it closes or a stop is requested. is_closed is checked every
@@ -62,32 +78,53 @@ enum HoldExit {
     Shutdown,
 }
 
-async fn hold(peer: &OutboundPeer, run: &Arc<AtomicBool>, settings: &P2pSettings) -> HoldExit {
+async fn hold(
+    peer: &OutboundPeer,
+    run: &Arc<AtomicBool>,
+    settings: &P2pSettings,
+    book: &Arc<Mutex<AddressBook>>,
+) -> HoldExit {
     let mut hb = tokio::time::interval(settings.heartbeat);
-    hb.tick().await; // consume the immediate first tick
-    let mut watch = tokio::time::interval(WATCH);
-    let mut probe_id: u16 = 0;
+    // The immediate tick bootstraps peer discovery on connection; later heartbeats refresh it.
+    hb.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let stopped = async {
+        loop {
+            if !run.load(Ordering::Relaxed) {
+                return HoldExit::Shutdown;
+            }
+            if !peer.run.load(Ordering::Relaxed) {
+                return HoldExit::LocalStop;
+            }
+            if peer.is_closed() {
+                return HoldExit::RemoteClosed;
+            }
+            sleep(WATCH).await;
+        }
+    };
+    tokio::pin!(stopped);
     loop {
-        if !run.load(Ordering::Relaxed) {
-            return HoldExit::Shutdown;
-        }
-        if !peer.run.load(Ordering::Relaxed) {
-            return HoldExit::LocalStop;
-        }
-        if peer.is_closed() {
-            return HoldExit::RemoteClosed;
-        }
         tokio::select! {
+            exit = &mut stopped => return exit,
             _ = hb.tick() => {
-                probe_id = probe_id.wrapping_add(1);
-                if !keepalive_ok(peer, settings, probe_id).await {
-                    peer.stop();
-                    return HoldExit::KeepaliveFailed;
+                // Stop promptly even if the peer never answers discovery. Cancelling the
+                // guarded request also frees its correlation id and any V3 reservation.
+                tokio::select! {
+                    exit = &mut stopped => return exit,
+                    ok = keepalive_ok(peer, settings, book) => {
+                        if !ok {
+                            peer.stop();
+                            return HoldExit::KeepaliveFailed;
+                        }
+                    }
                 }
             }
-            _ = watch.tick() => {}
         }
     }
+}
+
+struct SessionHooks {
+    handlers: Option<HandlerFactory>,
+    on_connect: Option<OnConnectHook>,
 }
 
 // session_outbound slot: take a random address, dial, hold, and on ANY stop reclaim the
@@ -151,7 +188,7 @@ async fn outbound_slot(
                 if let Some(hook) = &on_connect {
                     hook(peer.clone()).await;
                 }
-                let exit = hold(&peer, &run, &settings).await;
+                let exit = hold(&peer, &run, &settings, &book).await;
                 peer.stop();
                 registry.release_outbound(&endpoint).await;
                 let lifetime = connected_at.elapsed();
@@ -159,7 +196,7 @@ async fn outbound_slot(
                     book.lock().await.reclaim(&addr, false);
                 } else if exit == HoldExit::RemoteClosed && lifetime >= HEALTHY_SESSION_MIN {
                     book.lock().await.reclaim(&addr, false);
-                    log::info!(
+                    log::debug!(
                         "outbound peer disconnected endpoint={}:{} stage=established reason={exit:?} lifetime_ms={} action=reclaim",
                         addr.host,
                         addr.port,
@@ -167,7 +204,7 @@ async fn outbound_slot(
                     );
                 } else {
                     let retry = book.lock().await.cooldown(&addr, settings.retry_timeout);
-                    log::info!(
+                    log::debug!(
                         "outbound peer disconnected endpoint={}:{} stage=established reason={exit:?} lifetime_ms={} action=cooldown failures={} retry_ms={}",
                         addr.host,
                         addr.port,
@@ -181,7 +218,7 @@ async fn outbound_slot(
                 registry.release_outbound(&endpoint).await;
                 let retry = book.lock().await.cooldown(&addr, settings.retry_timeout);
                 if error.to_string().starts_with("Chia handshake failed") {
-                    log::info!(
+                    log::debug!(
                         "outbound dial failed endpoint={}:{} stage=handshake elapsed_ms={} failures={} retry_ms={} error={}",
                         addr.host,
                         addr.port,
@@ -214,12 +251,12 @@ async fn outbound_slot(
 // session_manual: a configured peer that reconnects forever on every drop, never aged out.
 async fn manual_slot(
     endpoint: Endpoint,
+    book: Arc<Mutex<AddressBook>>,
     registry: Arc<PeerRegistry>,
     settings: P2pSettings,
     run: Arc<AtomicBool>,
     identity: DialIdentity,
-    handlers: Option<HandlerFactory>,
-    on_connect: Option<OnConnectHook>,
+    hooks: SessionHooks,
 ) {
     let mut attempt = 0u32;
     while run.load(Ordering::Relaxed) {
@@ -228,7 +265,7 @@ async fn manual_slot(
         match dial_with_identity(
             &endpoint.0,
             endpoint.1,
-            dial_handlers(handlers.as_ref()),
+            dial_handlers(hooks.handlers.as_ref()),
             peer_run.clone(),
             &settings,
             &identity,
@@ -250,10 +287,10 @@ async fn manual_slot(
                 });
                 registry.register_outbound(peer.clone()).await;
                 // On-connect greetings, exactly as the outbound slot (a manual peer is a full node).
-                if let Some(hook) = &on_connect {
+                if let Some(hook) = &hooks.on_connect {
                     hook(peer.clone()).await;
                 }
-                let exit = hold(&peer, &run, &settings).await;
+                let exit = hold(&peer, &run, &settings, &book).await;
                 peer.stop();
                 registry.release_outbound(&endpoint).await;
                 let lifetime = connected_at.elapsed();
@@ -263,7 +300,7 @@ async fn manual_slot(
                     attempt = attempt.saturating_add(1);
                 }
                 if exit != HoldExit::Shutdown {
-                    log::info!(
+                    log::debug!(
                         "manual peer disconnected endpoint={}:{} stage=established reason={exit:?} lifetime_ms={} retry_attempt={attempt}",
                         endpoint.0,
                         endpoint.1,
@@ -274,7 +311,7 @@ async fn manual_slot(
             Err(error) => {
                 attempt = attempt.saturating_add(1);
                 if error.to_string().starts_with("Chia handshake failed") {
-                    log::info!(
+                    log::debug!(
                         "manual peer dial failed endpoint={}:{} stage=handshake elapsed_ms={} retry_attempt={attempt} error={error}",
                         endpoint.0,
                         endpoint.1,
@@ -508,12 +545,15 @@ impl Supervisor {
     pub fn start_manual(&mut self, host: &str, port: u16) {
         self.tasks.spawn(manual_slot(
             (host.to_string(), port),
+            self.book.clone(),
             self.registry.clone(),
             self.settings,
             self.run.clone(),
             self.identity.clone(),
-            self.handlers.clone(),
-            self.on_connect.clone(),
+            SessionHooks {
+                handlers: self.handlers.clone(),
+                on_connect: self.on_connect.clone(),
+            },
         ));
     }
 

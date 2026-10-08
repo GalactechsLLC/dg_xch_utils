@@ -39,10 +39,7 @@ pub(in crate::node) async fn follow_fill_claimed<
     if node.config.sync_from > 0 && !has_peak && !node.sync_from_anchored().await {
         return None; // the driver's anchor_at establishes the mid-chain span first
     }
-    if !node.config.genesis_sync && node.config.sync_from == 0 && wants_long_sync(local, claimed) {
-        if wants_fast_sync(local, claimed) {
-            return None; // the driver's from-zero weight-proof fast-sync owns the band
-        }
+    if needs_long_sync_anchor(&node.config, peak.map(|(_, h)| h), claimed) {
         // Mid-chain deep gap: fill only once the driver has anchored the landing (weight proof
         // validated + fork point resolved); an unanchored fill would batch-download toward an
         // unproven heavy claim.

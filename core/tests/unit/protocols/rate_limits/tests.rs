@@ -192,3 +192,97 @@ fn incoming_counters_advance_even_on_violation() {
             .is_some()
     );
 }
+
+#[test]
+fn outgoing_requests_do_not_double_burst_across_a_local_window_boundary() {
+    let limiter = RateLimiter::new(false);
+    let caps = v2_caps();
+    let at = limiter.start + Duration::from_secs(59);
+    for _ in 0..500 {
+        assert!(
+            limiter
+                .process_and_check_at(ProtocolMessageTypes::RequestBlocks, 9, &caps, at)
+                .is_none()
+        );
+    }
+    // A fixed window would reset here and permit another 500 requests only one second later.
+    assert!(
+        limiter
+            .process_and_check_at(
+                ProtocolMessageTypes::RequestBlocks,
+                9,
+                &caps,
+                limiter.start + Duration::from_secs(60)
+            )
+            .is_some()
+    );
+    assert!(
+        limiter
+            .process_and_check_at(
+                ProtocolMessageTypes::RequestBlocks,
+                9,
+                &caps,
+                at + Duration::from_secs(60)
+            )
+            .is_none()
+    );
+}
+
+#[test]
+fn outgoing_expiry_releases_type_size_and_aggregate_budgets() {
+    let limiter = RateLimiter::new(false);
+    let caps = v2_caps();
+    let at = limiter.start;
+    for kind in [
+        ProtocolMessageTypes::NewPeak,
+        ProtocolMessageTypes::NewSignagePointOrEndOfSubSlot,
+        ProtocolMessageTypes::RequestSignagePointOrEndOfSubSlot,
+        ProtocolMessageTypes::NewUnfinishedBlock,
+        ProtocolMessageTypes::RequestUnfinishedBlock,
+    ] {
+        for _ in 0..200 {
+            assert!(limiter.process_and_check_at(kind, 10, &caps, at).is_none());
+        }
+    }
+    assert!(
+        limiter
+            .process_and_check_at(ProtocolMessageTypes::RespondUnfinishedBlock, 10, &caps, at)
+            .is_some()
+    );
+    assert!(
+        limiter
+            .process_and_check_at(
+                ProtocolMessageTypes::RespondUnfinishedBlock,
+                10,
+                &caps,
+                at + Duration::from_secs(60)
+            )
+            .is_none()
+    );
+    assert!(
+        limiter
+            .process_and_check_at(
+                ProtocolMessageTypes::NewPeak,
+                10,
+                &caps,
+                at + Duration::from_secs(60)
+            )
+            .is_none()
+    );
+    let state = limiter.inner.lock().unwrap();
+    assert_eq!(state.non_tx_count, 2);
+    assert_eq!(state.non_tx_size, 20);
+}
+
+#[test]
+fn unlimited_outgoing_replies_do_not_accumulate_rolling_history() {
+    let limiter = RateLimiter::new(false);
+    for _ in 0..2000 {
+        assert!(
+            limiter
+                .process_and_check(ProtocolMessageTypes::RespondBlocks, 10, &v2_caps())
+                .is_none()
+        );
+    }
+    assert!(limiter.inner.lock().unwrap().outgoing.is_empty());
+}

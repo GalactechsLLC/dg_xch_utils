@@ -30,6 +30,14 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> FullNodeApi for StoreApi
         StoreApi::gossip_peers(self).await
     }
 
+    async fn on_respond_peers(&self, peers: Vec<TimestampedPeerInfo>) {
+        let accepted = self.peer_addresses.lock().await.insert_many(&peers);
+        log::debug!(
+            "peer discovery received={} accepted={accepted}",
+            peers.len()
+        );
+    }
+
     async fn on_new_peak(&self, peer: Bytes32, peak: NewPeak) {
         StoreApi::on_new_peak(self, peer, peak).await
     }

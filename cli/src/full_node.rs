@@ -6,141 +6,247 @@ use std::io::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FullNodeArgs {
-    #[arg(long, default_value = "0.0.0.0:8444")]
+    /// YAML or JSON node configuration; alternatively set DGX_FULL_NODE_CONFIG to its contents.
+    #[arg(long = "config")]
+    #[serde(skip)]
+    config_file: Option<std::path::PathBuf>,
+    #[arg(skip)]
+    #[serde(skip)]
+    cli_overrides: std::collections::HashSet<String>,
+    #[arg(skip)]
+    #[serde(skip)]
+    document_loaded: bool,
+    #[arg(env = "DGX_FULL_NODE_LISTEN", long, default_value = "0.0.0.0:8444")]
     listen: String,
     /// Deprecated: Portfu serves peers and RPC on `--listen`; if supplied this must match it.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_RPC", long)]
     rpc: Option<String>,
-    #[arg(long = "rpc-tls", default_value = "private-ca")]
+    #[arg(
+        env = "DGX_FULL_NODE_RPC_TLS",
+        long = "rpc-tls",
+        default_value = "private-ca"
+    )]
     rpc_tls: String,
     /// Directory containing the private RPC CA when `--rpc-tls private-ca` is used.
-    #[arg(long = "ssl-dir")]
+    #[arg(env = "DGX_FULL_NODE_SSL_DIR", long = "ssl-dir")]
     ssl_dir: Option<String>,
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_INTRODUCER", long)]
     introducer: Option<String>,
-    #[arg(long = "peer")]
+    #[arg(env = "DGX_FULL_NODE_PEER", value_delimiter = ',', long = "peer")]
     peer: Vec<String>,
     /// External WAN address advertised for peer gossip behind NAT.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_ADVERTISE", long)]
     advertise: Option<String>,
     /// Storage URL: `sqlite://<path>`, `postgres://...`, or `mmap://<directory>`.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_DB", long)]
     db: Option<String>,
     /// Network id selecting consensus constants.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_NETWORK", long)]
     network: Option<String>,
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_CHAIN_CONFIG", long)]
     chain_config: Option<std::path::PathBuf>,
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_PRINT_CHAIN_INFO", long)]
     print_chain_info: bool,
     /// Directory used to capture sync data for offline replay and profiling.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_CAPTURE_DIR", long)]
     capture_dir: Option<String>,
-    /// Validate historical blocks from genesis instead of using weight-proof fast sync.
-    #[arg(long, default_value_t = false)]
+    /// Skip weight-proof fork anchoring during catch-up; empty databases always start at genesis.
+    #[arg(env = "DGX_FULL_NODE_GENESIS_SYNC", long, default_value_t = false)]
     genesis_sync: bool,
     /// Anchor validation at this height; zero disables the explicit anchor.
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_FULL_NODE_SYNC_FROM", long, default_value_t = 0)]
     sync_from: u32,
-    #[arg(long, default_value_t = false)]
+    #[arg(env = "DGX_FULL_NODE_UNCOMPACT", long, default_value_t = false)]
     uncompact: bool,
     /// Resident memory budget in MiB for sync-window block prefetching.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_PREFETCH_MEMORY_MB", long)]
     prefetch_memory_mb: Option<u64>,
     /// Maximum aggregate outstanding block-range requests.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_PREFETCH_MAX_INFLIGHT", long)]
     prefetch_max_inflight: Option<usize>,
     #[arg(
+        env = "DGX_FULL_NODE_COMPUTE_WORKERS",
         long,
         help = "Shared bulk CPU workers; defaults to available logical CPUs minus two"
     )]
     compute_workers: Option<usize>,
     #[arg(
+        env = "DGX_FULL_NODE_VALIDATION_WINDOW_BLOCKS",
         long,
         help = "Maximum blocks per bulk validation window; default is CPU-derived"
     )]
     validation_window_blocks: Option<u32>,
     #[arg(
+        env = "DGX_FULL_NODE_VALIDATION_WINDOW_MB",
         long,
         default_value_t = 128,
         help = "Estimated resident MiB per validation window; admits one oversized block"
     )]
     validation_window_mb: u64,
     #[arg(
+        env = "DGX_FULL_NODE_CONFIRM_TRANSACTION_BLOCKS",
         long,
         help = "Maximum staged blocks per bulk confirmation transaction; defaults to whole window"
     )]
     confirm_transaction_blocks: Option<usize>,
     #[arg(
+        env = "DGX_FULL_NODE_CONFIRM_TRANSACTION_COIN_CHANGES",
         long,
         help = "Maximum coin additions, spends and hints per bulk confirmation part; one oversized block is admitted"
     )]
     confirm_transaction_coin_changes: Option<usize>,
     #[arg(
+        env = "DGX_FULL_NODE_CONFIRM_TRANSACTION_COIN_MB",
         long,
         help = "Maximum estimated coin payload MiB per bulk confirmation part; not an RSS or WAL limit"
     )]
     confirm_transaction_coin_mb: Option<u64>,
     #[arg(
+        env = "DGX_FULL_NODE_SQLITE_WRITER_CACHE_MB",
         long,
         help = "SQLite bulk writer cache budget in MiB; default 256, near-tip remains 64"
     )]
     sqlite_writer_cache_mb: Option<u64>,
     #[arg(
+        env = "DGX_FULL_NODE_COALESCE_COIN_WRITES",
         long,
         default_value_t = false,
         help = "Coalesce coin writes within each bulk confirmation transaction"
     )]
     coalesce_coin_writes: bool,
     /// Outbound connections to maintain.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_TARGET_OUTBOUND", long)]
     target_outbound: Option<usize>,
     /// Total inbound and outbound peers to accept.
-    #[arg(long)]
+    #[arg(env = "DGX_FULL_NODE_TARGET_PEER_COUNT", long)]
     target_peer_count: Option<usize>,
-    #[arg(long, default_value_t = 1_000)]
+    #[arg(
+        env = "DGX_FULL_NODE_HOST_POOL_CAPACITY",
+        long,
+        default_value_t = 1_000
+    )]
     host_pool_capacity: usize,
-    #[arg(long, default_value_t = 5)]
+    #[arg(env = "DGX_FULL_NODE_ADDRESS_LOWER", long, default_value_t = 5)]
     address_lower: usize,
-    #[arg(long, default_value_t = 10)]
+    #[arg(env = "DGX_FULL_NODE_ADDRESS_UPPER", long, default_value_t = 10)]
     address_upper: usize,
-    #[arg(long, default_value_t = 30)]
+    #[arg(env = "DGX_FULL_NODE_CONNECT_TIMEOUT_SECS", long, default_value_t = 30)]
     connect_timeout_secs: u64,
-    #[arg(long, default_value_t = 15)]
+    #[arg(
+        env = "DGX_FULL_NODE_HANDSHAKE_TIMEOUT_SECS",
+        long,
+        default_value_t = 15
+    )]
     handshake_timeout_secs: u64,
-    #[arg(long, default_value_t = 1)]
+    #[arg(env = "DGX_FULL_NODE_RETRY_TIMEOUT_SECS", long, default_value_t = 1)]
     retry_timeout_secs: u64,
-    #[arg(long, default_value_t = 120)]
+    #[arg(env = "DGX_FULL_NODE_HEARTBEAT_SECS", long, default_value_t = 120)]
     heartbeat_secs: u64,
-    #[arg(long, default_value_t = 30)]
+    #[arg(env = "DGX_FULL_NODE_PONG_DEADLINE_SECS", long, default_value_t = 30)]
     pong_deadline_secs: u64,
-    #[arg(long, default_value_t = 6_000)]
+    #[arg(
+        env = "DGX_FULL_NODE_RECENT_PEER_THRESHOLD_SECS",
+        long,
+        default_value_t = 6_000
+    )]
     recent_peer_threshold_secs: u64,
     /// Lower bound for randomized reconnect backoff, from 0 through 1.
-    #[arg(long, default_value_t = 0.5)]
+    #[arg(env = "DGX_FULL_NODE_JITTER_FLOOR", long, default_value_t = 0.5)]
     jitter_floor: f64,
-    #[arg(long = "trusted-peer")]
+    #[arg(
+        env = "DGX_FULL_NODE_TRUSTED_PEER",
+        value_delimiter = ',',
+        long = "trusted-peer"
+    )]
     trusted_peer: Vec<String>,
     /// Trusted IPv4 or IPv6 CIDR, repeatable.
-    #[arg(long = "trusted-cidr")]
+    #[arg(
+        env = "DGX_FULL_NODE_TRUSTED_CIDR",
+        value_delimiter = ',',
+        long = "trusted-cidr"
+    )]
     trusted_cidr: Vec<String>,
-    #[arg(long = "debug-endpoints", default_value_t = false)]
+    #[arg(
+        env = "DGX_FULL_NODE_DEBUG_ENDPOINTS",
+        long = "debug-endpoints",
+        default_value_t = false
+    )]
     debug_endpoints: bool,
 }
 
 impl FullNodeArgs {
+    pub(crate) fn record_overrides(&mut self, matches: &clap::ArgMatches) {
+        self.cli_overrides = matches
+            .ids()
+            .filter(|id| {
+                matches.value_source(id.as_str()) == Some(clap::parser::ValueSource::CommandLine)
+            })
+            .map(|id| id.as_str().to_owned())
+            .collect();
+    }
+
+    pub(crate) fn load_document(&mut self) -> Result<(), Error> {
+        if self.config_file.is_none() && std::env::var_os("DGX_FULL_NODE_CONFIG").is_none() {
+            return Ok(());
+        }
+        let document: serde_json::Value = crate::services::config::load(
+            "FULL_NODE",
+            self.config_file.as_deref(),
+            crate::services::config::Format::Yaml,
+            1024 * 1024,
+        )?;
+        self.apply_document(document)
+    }
+
+    fn apply_document(&mut self, document: serde_json::Value) -> Result<(), Error> {
+        let document = document
+            .as_object()
+            .ok_or_else(|| Error::other("full-node configuration must be a YAML or JSON object"))?;
+        let mut settings = serde_json::to_value(&*self).map_err(Error::other)?;
+        let values = settings
+            .as_object_mut()
+            .ok_or_else(|| Error::other("invalid full-node settings"))?;
+        for (key, value) in document {
+            if !values.contains_key(key) {
+                return Err(Error::other(format!(
+                    "unknown full-node configuration field: {key}"
+                )));
+            }
+            if !self.cli_overrides.contains(key) {
+                values.insert(key.clone(), value.clone());
+            }
+        }
+        let mut resolved: Self = serde_json::from_value(settings)
+            .map_err(|_| Error::other("invalid full-node configuration field type or value"))?;
+        resolved.config_file = self.config_file.clone();
+        resolved.cli_overrides = self.cli_overrides.clone();
+        resolved.document_loaded = true;
+        *self = resolved;
+        Ok(())
+    }
+
     pub(crate) fn apply_profile(&mut self, root: &std::path::Path) -> Result<(), Error> {
         if self.print_chain_info {
             return Ok(());
         }
-        let profile = dg_xch_servers::app_config::AppConfig::load(root)?;
-        self.ssl_dir
-            .get_or_insert_with(|| root.join("ssl").display().to_string());
-        self.db.get_or_insert_with(|| {
-            format!("sqlite://{}", profile.data_dir.join("chain.db").display())
-        });
+        if self.document_loaded && !root.join("dgx.json").try_exists()? {
+            self.db
+                .get_or_insert_with(|| "sqlite:///data/chain.db".to_owned());
+            self.ssl_dir
+                .get_or_insert_with(|| root.join("ssl").display().to_string());
+        }
+        // Explicit storage and TLS paths allow deployments with mounted secrets and no app profile.
+        if root.join("dgx.json").try_exists()? || self.db.is_none() || self.ssl_dir.is_none() {
+            let profile = dg_xch_servers::app_config::AppConfig::load(root)?;
+            self.ssl_dir
+                .get_or_insert_with(|| root.join("ssl").display().to_string());
+            self.db.get_or_insert_with(|| {
+                format!("sqlite://{}", profile.data_dir.join("chain.db").display())
+            });
+        }
         if self.introducer.is_none()
             && self.peer.is_empty()
             && self.chain_config.is_none()
@@ -304,6 +410,28 @@ mod network_tests {
         assert_eq!(args.db.as_deref(), Some("sqlite://explicit.db"));
         assert_eq!(args.ssl_dir.as_deref(), Some("explicit-ssl"));
         assert!(args.introducer.is_none());
+    }
+
+    #[test]
+    fn explicit_storage_and_tls_do_not_require_a_profile_and_keep_peer_discovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let cli = Cli::try_parse_from([
+            "dgx",
+            "full-node",
+            "--db",
+            "sqlite:///data/chain.db",
+            "--ssl-dir",
+            "/secrets/ssl",
+        ])
+        .unwrap();
+        let RootCommands::FullNode(mut args) = cli.action else {
+            panic!("wrong command")
+        };
+        args.apply_profile(directory.path()).unwrap();
+        assert_eq!(args.db.as_deref(), Some("sqlite:///data/chain.db"));
+        assert_eq!(args.ssl_dir.as_deref(), Some("/secrets/ssl"));
+        assert_eq!(args.introducer.as_deref(), Some("introducer.chia.net:8444"));
+        assert!(!directory.path().join("dgx.json").exists());
     }
 
     fn config(arguments: &[&str]) -> Result<Config, Error> {

@@ -7,9 +7,9 @@
 // later. The ONE exception is `respond_peers`: when it is over budget it is dropped WITHOUT
 // re-queue, because its own cap is so low that re-queuing would spin. `Unlimited` response
 // types (RespondBlocks, RespondBlock, RejectBlocks, …) carry no frequency budget, so our own
-// solicited fetch and serve traffic is NEVER deferred — only the frequency-capped gossip types
+// serving replies are NEVER deferred — frequency-capped requests and gossip types
 // (compact-VDF re-gossip, transaction announces, NewPeak, …) can be paced. That is the
-// self-safety property that keeps a strict peer from banning US for a legitimate re-gossip
+// self-safety property that keeps a strict peer from banning US for a legitimate sync or re-gossip
 // burst while never throttling our sync into failure.
 //
 // There is no single per-connection send loop draining an outgoing queue; sends are driven
@@ -19,7 +19,7 @@
 // same lock and break the self-safety guarantee. `admit` sleeps `retry_delay` between
 // re-checks. It is BOUNDED: after `max_attempts` deferrals the message is shed with a
 // `Drop(BackpressureCap)`. Because the limiter window is 60s, `max_attempts * retry_delay`
-// spans a full window, so a message that is merely ahead of budget is always admitted once
+// spans a full window, so a message that is merely ahead of budget is admitted once
 // the window rolls; only sustained over-budget flooding is shed.
 
 use crate::protocols::ProtocolMessageTypes;
@@ -82,7 +82,7 @@ pub struct OutboundLimiter {
 }
 
 impl OutboundLimiter {
-    /// Defaults: a 60-second outbound window at 100% of the published numbers, 1s re-queue
+    /// Defaults: a rolling 60-second outbound window at 100% of the published numbers, 1s re-queue
     /// cadence, bounded at [`MAX_ATTEMPTS`].
     #[must_use]
     pub fn new() -> Self {

@@ -496,48 +496,50 @@ impl PlotOutput {
 #[command(about = "Experimental native Rust CUDA PoS2 plotter; no CPU fallback")]
 struct Arguments {
     #[arg(
+        env = "DGX_PLOTTER_OUTPUT",
         long,
         required_unless_present_any = ["prove_plot", "probe_device"],
         conflicts_with = "prove_plot"
     )]
     output: Option<PathBuf>,
-    #[arg(long, required_unless_present_any = ["prove_plot", "probe_device"])]
+    #[arg(env = "DGX_PLOTTER_FARMER_KEY", long, required_unless_present_any = ["prove_plot", "probe_device"])]
     farmer_key: Option<String>,
-    #[arg(long, conflicts_with_all = ["output", "prove_plot", "farmer_key", "pool_key", "contract", "challenge"])]
+    #[arg(env = "DGX_PLOTTER_PROBE_DEVICE", long, conflicts_with_all = ["output", "prove_plot", "farmer_key", "pool_key", "contract", "challenge"])]
     probe_device: bool,
-    #[arg(long, requires = "challenge")]
+    #[arg(env = "DGX_PLOTTER_PROVE_PLOT", long, requires = "challenge")]
     prove_plot: Option<PathBuf>,
-    #[arg(long, requires = "prove_plot")]
+    #[arg(env = "DGX_PLOTTER_CHALLENGE", long, requires = "prove_plot")]
     challenge: Option<String>,
-    #[arg(long, requires = "prove_plot")]
+    #[arg(env = "DGX_PLOTTER_QUALITY", long, requires = "prove_plot")]
     quality: Option<String>,
     #[arg(
+        env = "DGX_PLOTTER_POOL_KEY",
         long,
         required_unless_present_any = ["contract", "prove_plot", "probe_device"],
         conflicts_with = "contract"
     )]
     pool_key: Option<String>,
-    #[arg(long)]
+    #[arg(env = "DGX_PLOTTER_CONTRACT", long)]
     contract: Option<String>,
-    #[arg(long, default_value_t = 18)]
+    #[arg(env = "DGX_PLOTTER_K", long, default_value_t = 18)]
     k: u8,
-    #[arg(long, default_value_t = 2)]
+    #[arg(env = "DGX_PLOTTER_STRENGTH", long, default_value_t = 2)]
     strength: u8,
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_PLOTTER_INDEX", long, default_value_t = 0)]
     index: u16,
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_PLOTTER_META_GROUP", long, default_value_t = 0)]
     meta_group: u8,
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_PLOTTER_DEVICE", long, default_value_t = 0)]
     device: usize,
-    #[arg(long)]
+    #[arg(env = "DGX_PLOTTER_TESTNET", long)]
     testnet: bool,
-    #[arg(long)]
+    #[arg(env = "DGX_PLOTTER_FULL_GPU_TABLES", long)]
     full_gpu_tables: bool,
-    #[arg(long, default_value_t = 512)]
+    #[arg(env = "DGX_PLOTTER_MEMORY_MIB", long, default_value_t = 512)]
     memory_mib: u64,
-    #[arg(long, default_value_t = 4_194_304)]
+    #[arg(env = "DGX_PLOTTER_MAX_ENTRIES", long, default_value_t = 4_194_304)]
     max_entries: usize,
-    #[arg(long, default_value_t = 1_000_000_000)]
+    #[arg(env = "DGX_PLOTTER_MAX_WORK", long, default_value_t = 1_000_000_000)]
     max_work: u64,
 }
 

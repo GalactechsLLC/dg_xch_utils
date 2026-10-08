@@ -122,7 +122,7 @@ where
             .await
             .map_err(|e| Error::other(e.to_string()))?
         else {
-            // No confirmed peak: the from-zero fast-sync arm owns the band, never this anchor.
+            // No confirmed peak: the batch pipeline must first confirm genesis.
             return Ok(false);
         };
         let fork = wp_fork_point(

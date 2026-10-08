@@ -41,7 +41,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
-use tokio_tungstenite::{Connector, connect_async_tls_with_config};
+use tokio_tungstenite::{Connector, MaybeTlsStream, connect_async_tls_with_config};
 
 fn large_message_ws_config() -> WebSocketConfig {
     WebSocketConfig::default()
@@ -91,10 +91,6 @@ pub struct WsClient {
     pub connection: Arc<RwLock<WebsocketConnection>>,
     pub client_config: Arc<WsClientConfig>,
     pub handshake: Option<Handshake>,
-    /// Per-connection OUTBOUND self-throttle for messages WE send to this dialed peer.
-    /// `Some` on full-node dials (`WsClientConfig::rate_limited`), `None`
-    /// otherwise; see [`WsClient::send`].
-    outbound_limiter: Option<Arc<OutboundLimiter>>,
     handle: JoinHandle<()>,
     run: Arc<AtomicBool>,
 }
@@ -222,10 +218,6 @@ impl WsClient {
                 )
             })?,
         );
-        let certificate = certs.first().ok_or_else(|| {
-            Error::new(ErrorKind::InvalidData, "client certificate file is empty")
-        })?;
-        let peer_id = Arc::new(Bytes32::new(hash_256(certificate.as_ref())));
         let (stream, _) = timeout(
             Duration::from_secs(timeout_secs),
             connect_async_tls_with_config(
@@ -244,6 +236,16 @@ impl WsClient {
         .await
         .map_err(|_| Error::other("Timeout Connecting Client"))?
         .map_err(|e| Error::other(format!("Error Connecting Client: {e:?}")))?;
+        // Identify the remote node by its TLS leaf certificate, just as inbound peers
+        // are identified. Our own client certificate cannot identify a dialed peer.
+        let certificate = match stream.get_ref() {
+            MaybeTlsStream::Rustls(tls) => {
+                tls.get_ref().1.peer_certificates().and_then(|c| c.first())
+            }
+            _ => None,
+        }
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "peer TLS certificate is missing"))?;
+        let peer_id = Arc::new(Bytes32::new(hash_256(certificate.as_ref())));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let limiter = if client_config.rate_limited {
             Some(Arc::new(RateLimiter::new(true)))
@@ -255,7 +257,7 @@ impl WsClient {
         } else {
             None
         };
-        let (ws_con, mut stream) = WebsocketConnection::new(
+        let (mut ws_con, mut stream) = WebsocketConnection::new(
             WebsocketMsgStream::Tls(Box::new(stream)),
             message_handlers,
             peer_id.clone(),
@@ -268,8 +270,9 @@ impl WsClient {
         );
         let v3 = ws_con.v3();
         let peer_peak = Arc::new(dg_xch_core::protocols::peer_peak::PeerPeak::default());
-        let connection = Arc::new(RwLock::new(ws_con));
         let peer_capabilities = Arc::new(RwLock::new(Vec::new()));
+        ws_con.set_outbound_policy(outbound_limiter.clone(), peer_capabilities.clone());
+        let connection = Arc::new(RwLock::new(ws_con));
         peers.write().await.insert(
             *peer_id.as_ref(),
             Arc::new(SocketPeer {
@@ -291,7 +294,6 @@ impl WsClient {
             connection,
             client_config,
             handshake: None,
-            outbound_limiter,
             handle: tokio::spawn(async move { stream.run(handle_run).await }),
             run,
         };
@@ -331,23 +333,12 @@ impl WsClient {
     /// (exempt over budget, or the bounded attempt cap) is logged and swallowed. With no limiter
     /// this writes directly.
     pub async fn send(&self, msg: ChiaMessage) -> Result<(), Error> {
-        if let Some(limiter) = &self.outbound_limiter {
-            let caps = self
-                .handshake
-                .as_ref()
-                .map(|hs| hs.capabilities.clone())
-                .unwrap_or_default();
-            let size = msg.data.as_slice().len();
-            match limiter.admit(msg.msg_type, size, &caps).await {
-                ThrottleOutcome::Admit => {}
-                ThrottleOutcome::Drop(reason) => {
-                    debug!(
-                        "Self-rate-limiting outbound {:?} to dialed peer: {reason:?}",
-                        msg.msg_type
-                    );
-                    return Ok(());
-                }
-            }
+        if let ThrottleOutcome::Drop(reason) = admit_outbound(&self.connection, &msg).await {
+            debug!(
+                "Self-rate-limiting outbound {:?} to dialed peer: {reason:?}",
+                msg.msg_type
+            );
+            return Ok(());
         }
         self.connection.write().await.send(msg.into()).await
     }
@@ -458,6 +449,37 @@ impl MessageHandler for OneShotHandler {
     }
 }
 
+async fn admit_outbound(
+    connection: &Arc<RwLock<WebsocketConnection>>,
+    msg: &ChiaMessage,
+) -> ThrottleOutcome {
+    let policy = connection.read().await.outbound_policy();
+    let Some(policy) = policy else {
+        return ThrottleOutcome::Admit;
+    };
+    let caps = policy.capabilities.read().await.clone();
+    policy
+        .limiter
+        .admit(msg.msg_type, msg.data.as_slice().len(), &caps)
+        .await
+}
+
+async fn throttle_request(
+    connection: &Arc<RwLock<WebsocketConnection>>,
+    msg: &ChiaMessage,
+) -> Result<(), Error> {
+    match admit_outbound(connection, msg).await {
+        ThrottleOutcome::Admit => Ok(()),
+        ThrottleOutcome::Drop(reason) => Err(Error::new(
+            ErrorKind::WouldBlock,
+            format!(
+                "outbound {:?} request was not sent: {reason:?}",
+                msg.msg_type
+            ),
+        )),
+    }
+}
+
 async fn acquire_v3_out_window(
     connection: &Arc<RwLock<WebsocketConnection>>,
     msg: &ChiaMessage,
@@ -508,6 +530,7 @@ pub async fn oneshot_message(
     let id = request.id();
     msg.id = Some(id);
     acquire_v3_out_window(&connection, &msg, id).await?;
+    throttle_request(&connection, &msg).await?;
     let frame = tokio_tungstenite::tungstenite::Message::Binary(
         msg.to_bytes(ChiaProtocolVersion::default())?.into(),
     );
@@ -566,6 +589,7 @@ pub async fn oneshot<R: ChiaSerialize>(
         let id = request.id();
         msg.id = Some(id);
         acquire_v3_out_window(&connection, &msg, id).await?;
+        throttle_request(&connection, &msg).await?;
         let frame =
             tokio_tungstenite::tungstenite::Message::Binary(msg.to_bytes(protocol_version)?.into());
         if let Err(e) = connection.write().await.send(frame).await {
@@ -609,6 +633,7 @@ pub async fn oneshot<R: ChiaSerialize>(
         handle: handle.clone(),
     });
     let _subscription = connection.read().await.subscribe_guarded(chia_handle).await;
+    throttle_request(&connection, &msg).await?;
     let frame =
         tokio_tungstenite::tungstenite::Message::Binary(msg.to_bytes(protocol_version)?.into());
     connection.write().await.send(frame).await.map_err(|e| {

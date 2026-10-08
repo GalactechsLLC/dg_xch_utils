@@ -4,7 +4,7 @@ use crate::wallet_commands::{
 };
 use crate::wallets::plotnft_utils::{get_plotnft_by_launcher_id, scrounge_for_plotnfts};
 use blst::min_pk::SecretKey;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use cli::{Cli, RootCommands, WalletAction, prompt_for_mnemonic};
 use dg_logger::DruidGardenLogger;
 use dg_xch_clients::ClientSSLConfig;
@@ -29,7 +29,7 @@ use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use hex::{decode, encode};
 use log::{Level, error, info};
 use std::env;
-use std::io::{Cursor, Error, ErrorKind};
+use std::io::{Cursor, Error, ErrorKind, IsTerminal};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -84,15 +84,34 @@ fn selected_constants(
         .map_err(|error| Error::new(ErrorKind::InvalidInput, error))
 }
 
+/// Parse CLI options while retaining explicit full-node flags for configuration precedence.
+pub fn parse_cli() -> Result<Cli, Error> {
+    let matches = Cli::command().get_matches();
+    #[allow(unused_mut)]
+    let mut cli =
+        Cli::from_arg_matches(&matches).map_err(|error| Error::other(error.to_string()))?;
+    #[cfg(feature = "full-node")]
+    if let RootCommands::FullNode(args) = &mut cli.action
+        && let Some((_, subcommand)) = matches.subcommand()
+    {
+        args.record_overrides(subcommand);
+    }
+    Ok(cli)
+}
+
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::cast_sign_loss)]
 pub async fn run_cli() -> Result<(), Error> {
-    run_cli_with(Cli::parse()).await
+    run_cli_with(parse_cli()?).await
 }
 
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::cast_sign_loss)]
 pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
+    #[cfg(feature = "full-node")]
+    if let RootCommands::FullNode(args) = &mut cli.action {
+        args.load_document()?;
+    }
     apply_network(&mut cli)?;
     let config_root = dg_xch_servers::app_config::config_dir(cli.config_dir.as_deref())?;
     if cli.network.is_some()
@@ -132,21 +151,14 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
             ));
         }
         RootCommands::Farmer(args) => {
-            dg_xch_servers::app_config::AppConfig::load(&config_root)?;
             return services::farmer::run(&args.arguments).await;
         }
         RootCommands::Plotter(args) => {
-            dg_xch_servers::app_config::AppConfig::load(&config_root)?;
             return services::plotter::run(&args.arguments);
         }
         RootCommands::Timelord(args) => {
-            let worker = args
-                .arguments
-                .first()
-                .is_some_and(|argument| argument == "worker" || argument == "regular-worker");
-            if !worker {
-                dg_xch_servers::app_config::AppConfig::load(&config_root)?;
-            }
+            #[cfg(not(feature = "timelord"))]
+            let _ = args;
             #[cfg(feature = "timelord")]
             return services::timelord::run(&args.arguments).await;
             #[cfg(not(feature = "timelord"))]
@@ -155,11 +167,9 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
             ));
         }
         RootCommands::Introducer(args) => {
-            dg_xch_servers::app_config::AppConfig::load(&config_root)?;
             return services::introducer::run(&args.arguments).await;
         }
         RootCommands::Pool(args) => {
-            dg_xch_servers::app_config::AppConfig::load(&config_root)?;
             return services::pool::run(&args.arguments).await;
         }
         RootCommands::Simulator(args) => {
@@ -176,7 +186,7 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
         .and_then(|value| value.parse::<Level>().ok())
         .unwrap_or(Level::Info);
     let _logger = DruidGardenLogger::build()
-        .use_colors(true)
+        .use_colors(std::io::stdout().is_terminal())
         .current_level(level)
         .init()
         .map_err(|e| Error::other(format!("{e:?}")))?;
@@ -962,6 +972,7 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
 #[cfg(test)]
 mod network_tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn inherited_network_must_agree_with_an_explicit_subcommand_network() {

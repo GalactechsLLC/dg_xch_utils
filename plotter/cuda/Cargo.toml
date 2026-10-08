@@ -13,7 +13,7 @@ cuda-core = "=0.3.1"
 dg_xch_plotter = { path = ".." }
 dg_xch_pos2 = { path = "../../proof_of_space/pos2", features = ["resident"] }
 bytemuck = "1.25"
-clap = { version = "4.5.60", features = ["derive"] }
+clap = { version = "4.5.60", features = ["derive", "env"] }
 hex = "0.4.3"
 
 [dev-dependencies]

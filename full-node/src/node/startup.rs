@@ -115,6 +115,7 @@ where
             synced.clone(),
             tx_announce.clone(),
         ));
+        let peer_addresses = Arc::new(Mutex::new(dg_xch_p2p::AddressBook::new(&config.p2p)));
         let node = Self {
             config,
             store,
@@ -136,6 +137,7 @@ where
             long_sync_anchor: Arc::new(RwLock::new(None)),
             sync_from_anchor: Arc::new(RwLock::new(None)),
             known_peers: Arc::new(RwLock::new(Vec::new())),
+            peer_addresses,
             inbound_peers: Arc::new(RwLock::new(HashMap::new())),
             tx_announce,
             tx_requested,
@@ -175,6 +177,40 @@ where
         };
 
         Ok(node)
+    }
+
+    pub(crate) async fn log_startup_state(&self) -> Result<(), Error> {
+        let prefetch = sync::prefetch_config(
+            self.config.p2p.target_outbound,
+            self.config.prefetch_memory_mb,
+            self.config.prefetch_max_inflight,
+        );
+        info!(
+            "resource configuration compute_workers={} prefetch_memory_mb={} prefetch_max_inflight={} validation_window_mb={}",
+            dg_xch_core::compute::worker_count(),
+            prefetch.byte_budget / (1024 * 1024),
+            prefetch.max_inflight,
+            self.config.performance.validation_window_mb,
+        );
+        let peak = self.store.get_peak().await.map_err(Error::other)?;
+        let (mode, next_height) = match peak {
+            Some((_, height)) => ("resume", height.saturating_add(1)),
+            None if self.config.sync_from > 0 => ("checkpoint", self.config.sync_from),
+            None => ("genesis", 0),
+        };
+        let height = peak.map_or_else(|| "none".to_string(), |(_, height)| height.to_string());
+        info!(
+            "initial chain state peak={} next_height={} sync={} fork_anchoring={} outbound_peers=0",
+            height,
+            next_height,
+            mode,
+            if self.config.genesis_sync {
+                "disabled"
+            } else {
+                "enabled"
+            },
+        );
+        Ok(())
     }
 
     pub async fn run_tx_validator(self: Arc<Self>) {
@@ -242,6 +278,20 @@ where
                     .map_or(self.config.listen.port(), |address| address.port()),
             },
         );
+        supervisor.book = self.peer_addresses.clone();
+        if let Some(address) = self.config.advertise {
+            supervisor
+                .book
+                .lock()
+                .await
+                .add_self(&address.ip().to_string(), address.port());
+        }
+        if !self.config.listen.ip().is_unspecified() {
+            supervisor.book.lock().await.add_self(
+                &self.config.listen.ip().to_string(),
+                self.config.listen.port(),
+            );
+        }
         supervisor.set_handlers(self.outbound_handler_factory());
         {
             let hook_node = self.clone();
