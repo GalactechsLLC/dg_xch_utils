@@ -524,7 +524,33 @@ impl<'a> Compiler<'a> {
                 "Expected declaration name",
             ));
         }
+        if matches!(
+            operator.bytes.as_ref(),
+            b"defmacro"
+                | b"defmac"
+                | b"defconstant"
+                | b"defun"
+                | b"defun-inline"
+                | b"embed-file"
+                | b"compile-file"
+        ) {
+            let mut tokens = vec![Token {
+                bytes: Cow::Borrowed(b"("),
+                t_type: TokenType::StartCons,
+                ..operator.clone()
+            }];
+            tokens.push(operator.clone());
+            tokens.extend(conditions_queue.as_slice().iter().cloned());
+            self.declarations.write().push(tokens);
+        }
         match operator.bytes.as_ref() {
+            b"defconst" => {
+                let constant = parse_constant(&mut conditions_queue)?;
+                self.declaration_order
+                    .write()
+                    .push(constant.name.bytes.clone());
+                self.defconsts.write().push(constant);
+            }
             b"defmacro" => {
                 let name = conditions_queue
                     .next()

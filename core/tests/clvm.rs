@@ -2620,6 +2620,31 @@ fn test_extended_language_reference_bytes() {
 }
 
 #[test]
+fn test_defconst_and_com_reference_bytes() {
+    // Reference bytes for the cl-21 to cl-26 sigils, generated with chialisp 0.4.5 on x86_64
+    use dg_xch_core::clvm::compile::Compiler;
+    use std::borrow::Cow;
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/compiler_defconst_com.json")).unwrap();
+    let mut failures = vec![];
+    for case in cases.as_array().unwrap() {
+        let source = case["source"].as_str().unwrap();
+        let expected = case["hex"].as_str().unwrap();
+        let compiler = Compiler::new(Cow::Borrowed(source.as_bytes()), COMPAT_CHIA, 0, &[]);
+        match compiler.compile() {
+            Ok(program) => {
+                let got = hex::encode(program.serialized().unwrap().as_ref());
+                if got != expected {
+                    failures.push(format!("{source}\n  got      {got}\n  expected {expected}"));
+                }
+            }
+            Err(e) => failures.push(format!("{source}\n  error: {e}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn test_embedded_expressions_reference_bytes() {
     use dg_xch_core::clvm::compile::Compiler;
     use std::borrow::Cow;

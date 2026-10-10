@@ -1,0 +1,42 @@
+[
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defconst C 10) (+ X C))",
+    "hex": "ff10ff02ffff010a80"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defconst C (sha256 \"a\")) (c C X))",
+    "hex": "ff04ffff01a0ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bbff0280"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defconst A 3) (defconst B (* A 2)) (+ X B))",
+    "hex": "ff10ff02ffff010680"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defun dbl (N) (* N 2)) (defconst D (dbl 21)) (c D X))",
+    "hex": "ff04ffff012aff0280"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defconst L (1 2 3)) (defun f (Y) (c Y L)) (f X))",
+    "hex": "ff02ffff01ff02ff06ffff04ff02ffff04ff05ff80808080ffff04ffff01ffff02ff0380ff04ff05ff0480ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (a (i X (com (+ X 1)) (com 0)) @))",
+    "hex": "ff02ffff03ff02ffff01ff10ff02ffff010180ffff01ff018080ff0180"
+  },
+  {
+    "source": "(mod (X Y) (include *standard-cl-26*) (defun g (A B) (a (i (> A B) (com A) (com B)) @)) (g X Y))",
+    "hex": "ff02ffff01ff02ff02ffff04ff02ffff04ff05ffff04ff0bff8080808080ffff04ffff01ff02ffff03ffff15ff05ff0b80ffff0105ffff010b80ff0180ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defconst K (sha256 1 2)) (a (i X (com K) (com (c K X))) @))",
+    "hex": "ff02ffff01ff02ffff03ff05ffff0102ffff01ff04ff02ff058080ff0180ffff04ffff01a0a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222ff018080"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-23*) (defconst C (sha256 \"a\")) (c C X))",
+    "hex": "ff04ffff01a0ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bbff0280"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-25*) (defconst A 3) (defconst B (* A 2)) (+ X B))",
+    "hex": "ff10ff02ffff010680"
+  }
+]
