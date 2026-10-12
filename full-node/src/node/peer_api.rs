@@ -20,6 +20,7 @@ pub(super) struct StoreApi<S> {
     pub(super) new_peak_signal: Arc<Notify>,
     // Live outbound peers as TimestampedPeerInfo — the RequestPeers gossip answer, refreshed by the driver.
     pub(super) known_peers: Arc<RwLock<Vec<TimestampedPeerInfo>>>,
+    pub(super) peer_addresses: Arc<Mutex<dg_xch_p2p::AddressBook>>,
     pub(super) tx_requested: Arc<Mutex<HashMap<Bytes32, PendingTx>>>,
     // The slot state machine — handlers read it to answer/filter SP gossip; only the
     // driver writes it (validation needs the record ancestry + next-SSI context).
@@ -49,7 +50,7 @@ pub(super) struct StoreApi<S> {
     pub(super) tx_announce: Arc<Mutex<Vec<NewTransaction>>>,
     // txid -> (origin identity, when recorded): the peer a gossiped bundle arrived FROM, recorded at
     // receipt (`on_respond_transaction`) with its remote host so the announce drain can exclude an
-    // OUTBOUND origin — whose dispatch id is our shared client-cert hash.
+    // outbound origin using the registry's dialed endpoint.
     // The SAME Arc the FullNode holds, so the drain sees receipt-time records. Bounded — record_tx_origin.
     pub(super) tx_origin: Arc<Mutex<HashMap<Bytes32, (TxOrigin, Instant)>>>,
     // RequestProofOfWeight requests awaiting the weight-proof worker (built off the read path).

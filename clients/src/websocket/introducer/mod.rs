@@ -10,7 +10,7 @@ use dg_xch_core::protocols::{
     ProtocolMessageTypes,
 };
 use dg_xch_serialize::ChiaSerialize;
-use log::{debug, error, info};
+use log::{debug, error};
 use rustls::crypto::ring::default_provider;
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Error, ErrorKind};
@@ -166,7 +166,7 @@ impl MessageHandler for RespondPeersHandler {
                         &mut cursor,
                         *peer.protocol_version.read().await,
                     )?;
-                    info!("Got Response for Peers Request: {peer_list:?}");
+                    debug!("Got Response for Peers Request: {peer_list:?}");
                     self.state
                         .write()
                         .await

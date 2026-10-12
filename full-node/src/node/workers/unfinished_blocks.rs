@@ -48,7 +48,7 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
                 // whose prev is not in the chain cannot validate). This is the expected
                 // steady-state outcome while syncing (the bulk of this counter).
                 node.producer.candidate_dropped("ub_prev_unknown");
-                info!(
+                debug!(
                     "unfinished block parked: parent block not in store (we are behind) event={} reason={} partial={} prev={}",
                     "producer.ub.dropped", "ub_prev_unknown", partial_hash, prev_hash
                 );
@@ -206,7 +206,7 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
                     continue;
                 }
                 // The "added unfinished block" INFO line.
-                info!(
+                debug!(
                     "added unfinished block event={} partial={}",
                     "producer.ub.added", partial_hash
                 );
@@ -577,7 +577,7 @@ pub(in crate::node) async fn process_ip_inbox<S: BlockStore + CoinStore + Send +
             Ok(None) => {
                 // Validated but did not become the peak (a competing/heavier chain already leads, or we
                 // already hold it); no NewPeak in that case.
-                info!(
+                debug!(
                     "infusion point: assembled block confirmed but did not advance the peak height={} partial={}",
                     height, partial
                 );

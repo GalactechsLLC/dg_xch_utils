@@ -484,7 +484,7 @@ async fn handle_connection(
     } else {
         None
     };
-    let (websocket, mut stream) = WebsocketConnection::new(
+    let (mut websocket, mut stream) = WebsocketConnection::new(
         websocket,
         message_handlers,
         peer_id.clone(),
@@ -495,11 +495,13 @@ async fn handle_connection(
     // Hold our own handle so the teardown below can prove the map still points at THIS
     // connection (and not a peer that reconnected in the meantime) before removing it.
     let v3 = websocket.v3();
+    let capabilities = Arc::new(RwLock::new(Vec::new()));
+    websocket.set_outbound_policy(outbound_limiter.clone(), capabilities.clone());
     let socket_peer = Arc::new(SocketPeer {
         peer_peak: Arc::new(dg_xch_core::protocols::peer_peak::PeerPeak::default()),
         node_type: Arc::new(RwLock::new(NodeType::Unknown)),
         protocol_version: Arc::new(RwLock::new(ChiaProtocolVersion::default())),
-        capabilities: Arc::new(RwLock::new(Vec::new())),
+        capabilities,
         websocket: Arc::new(RwLock::new(websocket)),
         // The peer's REMOTE host is the ban key, and the server's shared registry is injected so
         // a rate-limit/consensus close on this connection enters this host into the list the

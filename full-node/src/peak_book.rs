@@ -63,9 +63,9 @@ impl PeakBook {
     }
 
     /// Mint the claim key + RAII retraction for one OUTBOUND connection. The outbound dispatch path
-    /// hands every connection our own cert hash as the peer id (the dial's `peer_id` is derived
-    /// from the client cert), so per-connection identity must be minted here instead; the guard's
-    /// `Drop` is the disconnect retraction, fired when the connection's handler map goes.
+    /// can reach the same remote certificate through multiple service endpoints, so claims
+    /// use a distinct connection key. Dropping the guard retracts the claim when the
+    /// connection's handler map goes.
     #[must_use]
     pub fn outbound_guard(self: &Arc<Self>) -> ClaimGuard {
         let n = self.next_outbound_key.fetch_add(1, Ordering::Relaxed);

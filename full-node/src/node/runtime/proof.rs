@@ -21,7 +21,7 @@ where
             return Ok(None);
         }
         if let Some(v) = self.validated_tip.read().await.clone() {
-            info!("reusing validated weight proof cached_tip={}", v.tip);
+            debug!("reusing validated weight proof cached_tip={}", v.tip);
             return Ok(Some(v));
         }
         // Race the weight-proof request across EVERY live peer and take the first that answers. A single

@@ -22,7 +22,7 @@ where
             .await
             .map_err(|e| Error::other(e.to_string()))?
         else {
-            return Ok(true); // Empty store: fast-sync owns the from-zero path.
+            return Ok(true); // Empty store: the batch pipeline starts at genesis.
         };
         {
             let mut chaser = self.chaser.lock().await;

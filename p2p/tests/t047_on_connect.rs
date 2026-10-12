@@ -86,6 +86,23 @@ struct PushCapture {
     tx: mpsc::Sender<Arc<ChiaMessage>>,
 }
 
+struct PeerIdentityCapture {
+    tx: mpsc::Sender<Bytes32>,
+}
+
+#[async_trait]
+impl MessageHandler for PeerIdentityCapture {
+    async fn handle(
+        &self,
+        _msg: Arc<ChiaMessage>,
+        peer_id: Arc<Bytes32>,
+        _peers: PeerMap,
+    ) -> Result<(), std::io::Error> {
+        let _ = self.tx.send(*peer_id).await;
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl MessageHandler for PushCapture {
     async fn handle(
@@ -155,6 +172,51 @@ async fn recv_within(rx: &mut mpsc::Receiver<Arc<ChiaMessage>>, what: &str) -> A
 
 async fn spawn_greeting_node(api: GreetingApi) -> RunningServer {
     spawn_full_node(Arc::new(api)).await
+}
+
+#[tokio::test]
+async fn outbound_identity_is_the_remote_certificate_not_the_client_certificate() {
+    let server = spawn_greeting_node(GreetingApi {
+        inner: empty_api(),
+        peak: Some(canned_peak()),
+        timelord: None,
+        genesis: None,
+        filter: None,
+    })
+    .await;
+    let (tx, mut rx) = mpsc::channel(2);
+    let handlers = Arc::new(RwLock::new(HashMap::from([(
+        Uuid::new_v4(),
+        Arc::new(ChiaMessageHandler::new(
+            Arc::new(ChiaMessageFilter {
+                msg_type: Some(ProtocolMessageTypes::NewPeak),
+                id: None,
+                custom_fn: None,
+            }),
+            Arc::new(PeerIdentityCapture { tx }),
+        )),
+    )])));
+    // Each dial generates a different client certificate, but both reach the same server.
+    let _first = dial_as(server.port, NodeType::FullNode, handlers.clone()).await;
+    let _second = dial_as(server.port, NodeType::FullNode, handlers).await;
+    let first = tokio::time::timeout(common::network::NETWORK_TIMEOUT, rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let second = tokio::time::timeout(common::network::NETWORK_TIMEOUT, rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        first, second,
+        "the remote node's certificate identity is stable"
+    );
+    let inbound = server.peers.read().await;
+    assert_eq!(inbound.len(), 2);
+    assert!(
+        !inbound.contains_key(&first),
+        "remote identity must not be either client certificate"
+    );
 }
 
 #[tokio::test]

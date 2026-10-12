@@ -30,6 +30,7 @@ where
             claim_guard: None,
             new_peak_signal: self.new_peak_signal.clone(),
             known_peers: self.known_peers.clone(),
+            peer_addresses: self.peer_addresses.clone(),
             tx_requested: self.tx_requested.clone(),
             slot_state: self.slot_state.clone(),
             sp_inbox: self.sp_inbox.clone(),

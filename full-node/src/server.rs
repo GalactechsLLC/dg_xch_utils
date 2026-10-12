@@ -196,6 +196,45 @@ pub async fn run(
     config: Config,
     logger: Arc<DruidGardenLogger>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    log::info!(
+        "full node starting version={} network={} listen={}",
+        env!("CARGO_PKG_VERSION"),
+        config.network_id,
+        config.listen
+    );
+    match &config.backend {
+        Backend::Sqlite(path) => log::info!(
+            "storage backend=sqlite path={:?} sqlite_bulk_cache_mb={}",
+            path,
+            config.performance.sqlite_writer_cache_mb.unwrap_or(256)
+        ),
+        Backend::Mmap(path) => log::info!("storage backend=mmap path={path:?}"),
+        Backend::Postgres(_) => log::info!("storage backend=postgres"),
+    }
+    let introducer = config.introducer.as_ref().map_or_else(
+        || "disabled".to_string(),
+        |(host, port)| format!("{host}:{port}"),
+    );
+    let manual_peers: Vec<_> = config
+        .manual_peers
+        .iter()
+        .map(|(host, port)| format!("{host}:{port}"))
+        .collect();
+    log::info!(
+        "peer configuration introducer={} manual_peers={:?} trusted_peers={} trusted_cidrs={} outbound_target={} total_peer_limit={}",
+        introducer,
+        manual_peers,
+        config.trusted_peers.len(),
+        config.trusted_cidrs.len(),
+        config.p2p.target_outbound,
+        config.p2p.target_peer_count
+    );
+    match &config.rpc_tls {
+        crate::config::RpcTlsMode::PrivateCa { ssl_dir } => {
+            log::info!("RPC security tls=private-ca ssl_dir={ssl_dir:?}")
+        }
+        crate::config::RpcTlsMode::Local => log::info!("RPC security access=local"),
+    }
     config.bind_chain_identity()?;
     let server_bind = config.listen;
     if config.rpc != server_bind {
@@ -214,6 +253,7 @@ pub async fn run(
     macro_rules! activate {
         ($variant:ident, $node:expr) => {{
             let node = $node;
+            node.log_startup_state().await?;
             node.attach_rpc_live(node_id);
             let services = node.start_services().await?;
             let sources = Arc::new(node.metrics_sources(&services));
@@ -273,8 +313,9 @@ pub async fn run(
     let host = server_bind.ip().to_string();
     let port = server_bind.port();
     log::info!(
-        "portfu server hosting Chia peers/RPC/metrics/health/sockets/tasks backend={} bind={host}:{port}",
-        active.backend_name()
+        "node services starting backend={} listen={host}:{port} node_id={} endpoints=peers,rpc,metrics,health",
+        active.backend_name(),
+        node_id
     );
     let active = Arc::new(active);
     let services = Arc::new(services);

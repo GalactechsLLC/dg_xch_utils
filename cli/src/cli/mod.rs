@@ -47,12 +47,17 @@ pub enum RootCommands {
     #[command(about = "Open the native desktop")]
     Gui(crate::setup::ServiceArgs),
     #[command(about = "Run the integrated farmer and harvester")]
+    #[command(disable_help_flag = true)]
     Farmer(crate::setup::ServiceArgs),
     #[command(about = "Run the plotter independently of node sync")]
+    #[command(disable_help_flag = true)]
     Plotter(crate::setup::ServiceArgs),
+    #[command(disable_help_flag = true)]
     Timelord(crate::setup::ServiceArgs),
+    #[command(disable_help_flag = true)]
     Introducer(crate::setup::ServiceArgs),
     #[command(about = "Run the reference pool (pooling v2 requires explicit experimental opt-in)")]
+    #[command(disable_help_flag = true)]
     Pool(crate::setup::ServiceArgs),
     Simulator(crate::setup::ServiceArgs),
     #[command(about = "Initialize or inspect a chain without creating blocks")]

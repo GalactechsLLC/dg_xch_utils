@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about, after_help = super::config::ENV_HELP)]
 struct Args {
     #[arg(long)]
-    config: PathBuf,
+    config: Option<PathBuf>,
 }
 
 pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
@@ -25,7 +25,13 @@ pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
     let args = Args::parse_from(
         std::iter::once(std::ffi::OsString::from("dgx farmer")).chain(arguments.iter().cloned()),
     );
-    let mut service = FarmerService::start(Config::try_from(args.config.as_path())?).await?;
+    let mut service = FarmerService::start(super::config::load::<Config>(
+        "FARMER",
+        args.config.as_deref(),
+        super::config::Format::Yaml,
+        1024 * 1024,
+    )?)
+    .await?;
     let shutdown = dg_xch_servers::transport::shutdown_signal();
     tokio::pin!(shutdown);
     let mut health = tokio::time::interval(Duration::from_secs(1));

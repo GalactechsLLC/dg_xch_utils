@@ -17,7 +17,7 @@ use dg_xch_core::utils::hash_256;
 use dg_xch_pos::verify_and_get_quality_string;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use dg_xch_vdf::{default_classgroup_element, validate_vdf_info_serial};
-use log::info;
+use log::{debug, info};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -89,7 +89,7 @@ where
     let t = Instant::now();
     let (summaries, total_weight, sub_epoch_weight_list) =
         validate_sub_epoch_summaries(wp, constants)?;
-    info!(
+    debug!(
         "weight-proof phase complete phase={} sub_epochs={} summaries={} elapsed_ms={}",
         "2:sub_epoch_summaries",
         wp.sub_epochs.len(),
@@ -101,7 +101,7 @@ where
     progress("phase 1: validating sub-epoch sampling");
     let t = Instant::now();
     validate_sub_epoch_sampling(wp, &summaries, &sub_epoch_weight_list, constants)?;
-    info!(
+    debug!(
         "weight-proof phase complete phase={} elapsed_ms={}",
         "1:sampling",
         elapsed_ms(t)
@@ -111,7 +111,7 @@ where
     progress("phase 3: validating summaries weight");
     let t = Instant::now();
     validate_summaries_weight(wp, &summaries, total_weight, constants)?;
-    info!(
+    debug!(
         "weight-proof phase complete phase={} elapsed_ms={}",
         "3:summaries_weight",
         elapsed_ms(t)
@@ -121,7 +121,7 @@ where
     progress("phase 4: validating sampled segments");
     let t = Instant::now();
     validate_sub_epoch_segments(wp, &summaries, constants)?;
-    info!(
+    debug!(
         "weight-proof phase complete phase={} segments={} elapsed_ms={}",
         "4:sampled_segments",
         wp.sub_epoch_segments.len(),
@@ -132,7 +132,7 @@ where
     progress("phase 5: validating recent blocks");
     let t = Instant::now();
     validate_recent_blocks(wp, &summaries, constants)?;
-    info!(
+    debug!(
         "weight-proof phase complete phase={} recent={} elapsed_ms={}",
         "5:recent_blocks",
         wp.recent_chain_data.len(),
@@ -143,7 +143,7 @@ where
     progress("phase 6: validating total weight");
     let t = Instant::now();
     validate_total_weight(wp, &summaries, constants)?;
-    info!(
+    debug!(
         "weight-proof phase complete phase={} elapsed_ms={}",
         "6:total_weight",
         elapsed_ms(t)
@@ -1420,7 +1420,7 @@ fn validate_sub_epoch_segments(
                 }
             })
     })?;
-    info!(
+    debug!(
         "weight-proof phase 4: sampled segments verified in parallel sampled_sub_epochs={} vdfs={} threads={}",
         tasks.len(),
         vdf_count.load(Ordering::Relaxed),

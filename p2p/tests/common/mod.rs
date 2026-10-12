@@ -214,7 +214,8 @@ pub fn fast_settings() -> dg_xch_p2p::P2pSettings {
 pub fn empty_api() -> Arc<MemApi> {
     Arc::new(MemApi {
         blocks: HashMap::new(),
-        gossip: vec![peer("1.1.1.1", 8444, 42), peer("2.2.2.2", 8444, 42)],
+        // Session tests stay on loopback now that received gossip is actually dialed.
+        gossip: Vec::new(),
         respond_peers_seen: Arc::new(RwLock::new(Vec::new())),
     })
 }

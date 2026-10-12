@@ -80,9 +80,8 @@ pub struct Config {
     // (`weight_proof_<tip_height>.bin`) and every downloaded block range (`blocks_<start>_<end>.bin`).
     // Lets the whole fast-sync pipeline be validated + profiled offline with no live peer.
     pub capture_dir: Option<PathBuf>,
-    // `--genesis-sync`: validate the historical chain block by block from height 0. Disables the
-    // weight-proof fast sync entirely — the long-sync acceptance path and the discovery
-    // harness for old-regime divergences.
+    // Legacy --genesis-sync diagnostic: skip weight-proof fork anchoring during catch-up.
+    // Ordinary empty stores already validate from genesis without this flag.
     pub genesis_sync: bool,
     // `--sync-from <height>`: anchor mid-chain and validate forward from there. 0 = off.
     // Composes the weight-proof summaries (whole-chain epoch schedule) with a headers-first pass

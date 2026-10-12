@@ -5,7 +5,7 @@ use super::*;
 mod tests;
 
 // The confirmed head the queue should rebase to = engine peak + 1, or the follow base when no peak yet.
-pub(super) async fn follow_head<S: BlockStore + CoinStore + Send + Sync + 'static>(
+pub(in crate::node) async fn follow_head<S: BlockStore + CoinStore + Send + Sync + 'static>(
     node: &Arc<FullNode<S>>,
 ) -> u32 {
     match node.store.get_peak().await.ok().flatten() {
@@ -125,7 +125,7 @@ async fn fetch_seed_refs<S: BlockStore + CoinStore + Send + Sync + 'static>(
                         continue;
                     }
                 }
-                info!(
+                debug!(
                     "fetched out-of-span generator ref for the consumer height={}",
                     h
                 );
@@ -196,11 +196,12 @@ pub(super) async fn handle_recovery<S: BlockStore + CoinStore + Send + Sync + 's
                             "fork deeper than the backtrack cap; driving long sync base={} floor={}",
                             base, floor
                         );
-                        match node.bulk_sync(registry).await {
-                            Ok(Some((_, h))) => {
-                                info!("long sync landed after deep fork height={}", h)
-                            }
-                            Ok(None) => {}
+                        // Re-resolve the fork against confirmed state; never replace a full
+                        // chain with an unrelated recent-chain checkpoint during recovery.
+                        *node.long_sync_anchor.write().await = None;
+                        match node.ensure_long_sync_anchor(registry).await {
+                            Ok(true) => info!("long-sync fork anchor established after deep fork"),
+                            Ok(false) => {}
                             Err(e) => {
                                 warn!("deep-fork long sync failed, retry next window error={}", e)
                             }

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about, after_help = super::config::ENV_HELP)]
 struct Args {
     #[command(subcommand)]
     command: Command,
@@ -15,13 +15,15 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(after_help = super::config::ENV_HELP)]
     Run {
         #[arg(long)]
-        config: PathBuf,
+        config: Option<PathBuf>,
     },
+    #[command(after_help = super::config::ENV_HELP)]
     Compact {
         #[arg(long)]
-        config: PathBuf,
+        config: Option<PathBuf>,
     },
     Prove {
         #[arg(long)]
@@ -53,13 +55,21 @@ pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
     .command
     {
         Command::Run { config } => {
-            let config = serde_json::from_slice(&read_limited(std::fs::File::open(config)?)?)
-                .map_err(Error::other)?;
+            let config = super::config::load(
+                "TIMELORD",
+                config.as_deref(),
+                super::config::Format::Json,
+                WORKER_MESSAGE_LIMIT as usize,
+            )?;
             dg_xch_timelord::regular::serve(config).await
         }
         Command::Compact { config } => {
-            let config = serde_json::from_slice(&read_limited(std::fs::File::open(config)?)?)
-                .map_err(Error::other)?;
+            let config = super::config::load(
+                "TIMELORD",
+                config.as_deref(),
+                super::config::Format::Json,
+                WORKER_MESSAGE_LIMIT as usize,
+            )?;
             dg_xch_timelord::service::serve(config).await
         }
         Command::Prove {

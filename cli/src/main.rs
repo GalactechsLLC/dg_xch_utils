@@ -4,9 +4,8 @@
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() -> Result<(), std::io::Error> {
-    use clap::Parser;
-    use dg_xch_cli_lib::cli::{Cli, RootCommands};
-    let cli = Cli::parse();
+    use dg_xch_cli_lib::cli::RootCommands;
+    let cli = dg_xch_cli_lib::parse_cli()?;
     if let RootCommands::Gui(args) = &cli.action {
         if cli.network.is_some() {
             return Err(std::io::Error::other(

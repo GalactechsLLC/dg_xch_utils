@@ -194,27 +194,6 @@ async fn reorg_rollback_states_reach_subscribed_wallets() {
 }
 
 #[test]
-fn fast_sync_triggers_only_from_near_empty_store_far_behind() {
-    assert!(wants_fast_sync(0, 9_000_000), "empty store, tip far ahead");
-    assert!(
-        wants_fast_sync(500, 9_000_000),
-        "near-empty store, tip far ahead"
-    );
-    assert!(
-        !wants_fast_sync(0, 10),
-        "gap smaller than a follow-worthy delta"
-    );
-    assert!(
-        !wants_fast_sync(9_000_000, 9_050_000),
-        "local already synced: tip-follow owns it"
-    );
-    assert!(
-        !wants_fast_sync(1500, 9_000_000),
-        "local past the fresh-store gate"
-    );
-}
-
-#[test]
 fn deep_mid_chain_gap_selects_the_wp_anchored_long_sync_band() {
     // A node at 2M offline for ~a month (gap ≈ 50k blocks): long sync (gap > 300).
     assert!(
@@ -232,8 +211,8 @@ fn deep_mid_chain_gap_selects_the_wp_anchored_long_sync_band() {
         !wants_long_sync(0, 900),
         "a tip below the weight-proof floor is never long-synced"
     );
-    assert!(wants_long_sync(0, 9_000_000) && wants_fast_sync(0, 9_000_000));
-    assert!(wants_long_sync(1500, 9_000_000) && !wants_fast_sync(1500, 9_000_000));
+    assert!(wants_long_sync(0, 9_000_000));
+    assert!(wants_long_sync(1500, 9_000_000));
 }
 
 // The gap-closes-mid-sync exit ladder: while the gap stays past the threshold
@@ -472,6 +451,9 @@ async fn peak_test_api(
         claim_guard,
         new_peak_signal: Arc::new(Notify::new()),
         known_peers: Arc::new(RwLock::new(Vec::new())),
+        peer_addresses: Arc::new(Mutex::new(dg_xch_p2p::AddressBook::new(
+            &dg_xch_p2p::P2pSettings::default(),
+        ))),
         tx_requested: Arc::new(Mutex::new(HashMap::new())),
         slot_state: Arc::new(Mutex::new(SlotState::new(MAINNET))),
         sp_inbox: Arc::new(Mutex::new(Vec::new())),
@@ -983,8 +965,8 @@ async fn follow_fill_clamps_the_frontier_to_the_servable_outbound_tip() {
         backend: Backend::Sqlite(db),
         network_id: "mainnet".to_string(),
         capture_dir: None,
-        // genesis-sync so the FOLLOW band owns the fill (no weight-proof long-sync detour).
-        genesis_sync: true,
+        // An empty store starts at genesis without a configuration override.
+        genesis_sync: false,
         sync_from: 0,
         uncompact: false,
         prefetch_memory_mb: None,
@@ -1032,6 +1014,95 @@ async fn follow_fill_clamps_the_frontier_to_the_servable_outbound_tip() {
         Some(9_208_311),
         "the producer clamps the fetch frontier to the servable outbound tip, not the over-claim",
     );
+}
+
+#[tokio::test]
+async fn automatic_sync_uses_confirmed_state_instead_of_candidate_headers() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_template_directory, template) = super::super::hardening::node().await;
+    let mut config = template.config.clone();
+    drop(template);
+    config.backend = Backend::Sqlite(directory.path().join("chain.sqlite"));
+    config.sync_from = 0;
+    assert!(!config.genesis_sync, "no Helm or CLI workaround");
+    for network in ["mainnet", "testnet11"] {
+        config.network_id = network.to_owned();
+        config.backend = Backend::Sqlite(directory.path().join(format!("{network}.sqlite")));
+        let node = Arc::new(FullNode::boot(config.clone()).await.unwrap());
+        let outbound = node.peak_book.outbound_guard();
+        let claim = || PeakClaim {
+            header_hash: Bytes32::const_new([0xAA; 32]),
+            height: 9_000_000,
+            weight: u128::MAX,
+        };
+        node.peak_book.record(outbound.key(), false, claim());
+        assert_eq!(super::super::sync::test_follow_head(&node).await, 0);
+        assert_eq!(follow_fill_claimed(&node).await, Some(9_000_000));
+        assert!(!needs_long_sync_anchor(&node.config, None, 9_000_000));
+
+        // Failed checkpoint attempts can leave high candidate headers but no confirmed peak.
+        let records: Vec<BlockRecord> =
+            serde_json::from_str(include_str!("../../fixtures/block_records.json")).unwrap();
+        let candidate = records[0].clone();
+        node.store
+            .add_block_records(std::slice::from_ref(&candidate))
+            .await
+            .unwrap();
+        assert_eq!(node.store.get_peak().await.unwrap(), None);
+        assert_eq!(super::super::sync::test_follow_head(&node).await, 0);
+        assert_eq!(follow_fill_claimed(&node).await, Some(9_000_000));
+
+        let hash_at = |height: u32| {
+            let mut bytes = [0; 32];
+            bytes[28..].copy_from_slice(&height.to_be_bytes());
+            Bytes32::from(bytes)
+        };
+        // Persist a linked record history to exercise routing and restart behavior.
+        // Consensus validation itself is covered by the engine's integration tests.
+        let history: Vec<_> = (0..=1500)
+            .map(|height| {
+                let mut record = candidate.clone();
+                record.header_hash = hash_at(height);
+                record.height = height;
+                record.prev_hash = if height == 0 {
+                    node.constants.genesis_challenge
+                } else {
+                    hash_at(height - 1)
+                };
+                record
+            })
+            .collect();
+        node.store.add_block_records(&history).await.unwrap();
+        for height in [0, 1, 500, 1500] {
+            node.store.set_peak(&hash_at(height)).await.unwrap();
+            assert_eq!(
+                super::super::sync::test_follow_head(&node).await,
+                height + 1
+            );
+            assert!(needs_long_sync_anchor(
+                &node.config,
+                Some(height),
+                9_000_000
+            ));
+            assert_eq!(
+                follow_fill_claimed(&node).await,
+                None,
+                "prove the fork before resuming"
+            );
+            *node.long_sync_anchor.write().await = Some(Bytes32::const_new([0xAA; 32]));
+            assert_eq!(follow_fill_claimed(&node).await, Some(9_000_000));
+            *node.long_sync_anchor.write().await = None;
+        }
+
+        drop(node);
+        let resumed = Arc::new(FullNode::boot(config.clone()).await.unwrap());
+        let outbound = resumed.peak_book.outbound_guard();
+        resumed.peak_book.record(outbound.key(), false, claim());
+        assert_eq!(super::super::sync::test_follow_head(&resumed).await, 1501);
+        assert_eq!(follow_fill_claimed(&resumed).await, None);
+        *resumed.long_sync_anchor.write().await = Some(Bytes32::const_new([0xAA; 32]));
+        assert_eq!(follow_fill_claimed(&resumed).await, Some(9_000_000));
+    }
 }
 
 // Red-first (`--sync-from` wedge): the anchor stages ancestry but sets no peak — the first
@@ -1216,6 +1287,9 @@ async fn signed_values_splices_farmer_sigs_and_queues_for_broadcast() {
         claim_guard: None,
         new_peak_signal: Arc::new(Notify::new()),
         known_peers: Arc::new(RwLock::new(Vec::new())),
+        peer_addresses: Arc::new(Mutex::new(dg_xch_p2p::AddressBook::new(
+            &dg_xch_p2p::P2pSettings::default(),
+        ))),
         tx_requested: Arc::new(Mutex::new(HashMap::new())),
         slot_state: Arc::new(Mutex::new(SlotState::new(MAINNET))),
         sp_inbox: Arc::new(Mutex::new(Vec::new())),
@@ -1568,6 +1642,9 @@ async fn infusion_return_handlers_queue_only_when_synced() {
         claim_guard: None,
         new_peak_signal: Arc::new(Notify::new()),
         known_peers: Arc::new(RwLock::new(Vec::new())),
+        peer_addresses: Arc::new(Mutex::new(dg_xch_p2p::AddressBook::new(
+            &dg_xch_p2p::P2pSettings::default(),
+        ))),
         tx_requested: Arc::new(Mutex::new(HashMap::new())),
         slot_state: Arc::new(Mutex::new(SlotState::new(MAINNET))),
         sp_inbox: sp_inbox.clone(),
@@ -2548,3 +2625,29 @@ fn full_node_sp_and_eos_announces_carry_chia_fields() {
 // wire data, exactly what a light wallet pulls during trusted sync.
 #[cfg(feature = "coin-index")]
 mod wallet_queries;
+
+#[tokio::test]
+async fn received_peer_gossip_reaches_the_bounded_dial_book() {
+    let (claimed, book) = test_book();
+    let api = peak_test_api(&claimed, &book, None).await;
+    let settings = P2pSettings {
+        host_pool_capacity: 2,
+        ..P2pSettings::default()
+    };
+    *api.peer_addresses.lock().await = dg_xch_p2p::AddressBook::new(&settings);
+    api.peer_addresses.lock().await.add_self("192.0.2.1", 8444);
+    let addresses = [1, 2, 2, 3, 4].map(|n| TimestampedPeerInfo {
+        host: format!("192.0.2.{n}"),
+        port: 8444,
+        timestamp: 1,
+    });
+    FullNodeApi::on_respond_peers(&api, addresses.to_vec()).await;
+    let mut addresses = api.peer_addresses.lock().await;
+    assert_eq!(addresses.len(), 2);
+    let first = addresses.take().unwrap();
+    let second = addresses.take().unwrap();
+    assert_ne!(first.host, second.host);
+    assert_ne!(first.host, "192.0.2.1");
+    assert_ne!(second.host, "192.0.2.1");
+    assert!(addresses.take().is_none());
+}
