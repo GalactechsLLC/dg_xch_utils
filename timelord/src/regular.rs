@@ -68,14 +68,22 @@ async fn send_output(socket: &mut Socket, output: Output) -> Result<(), Error> {
     send(socket, message).await
 }
 
-async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), Error> {
+async fn session(
+    config: &Config,
+    tls: Arc<rustls::ClientConfig>,
+    metrics: Arc<crate::monitoring::State>,
+) -> Result<(), Error> {
     let chain = config.chain.resolve().map_err(Error::other)?;
     let mut scheduler = Scheduler::new(
         chain.constants,
         chain.allows_bootstrap,
         config.max_iterations_per_second,
     )?;
+    metrics
+        .attempts
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut socket = connect(config, tls).await?;
+    let _connection = metrics.connect();
     let backend: Arc<dyn VdfBackend> = Arc::new(CpuBackend {
         timeout: Duration::from_secs(config.job_timeout_seconds),
         memory_bytes: config.worker_memory_bytes,
@@ -114,7 +122,12 @@ async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), 
             && let Some(plan) = next
         {
             active = Some(plan.clone());
-            workers.spawn(execute(backend.clone(), plan));
+            let backend = backend.clone();
+            let job = metrics.job();
+            workers.spawn(async move {
+                let _job = job;
+                execute(backend, plan).await
+            });
         }
         if ready
             .as_ref()
@@ -123,6 +136,9 @@ async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), 
         {
             if let Some(output) = scheduler.finish(plan, result)? {
                 send_output(&mut socket, output).await?;
+                metrics
+                    .outputs
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             active = None;
             continue;
@@ -141,9 +157,9 @@ async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), 
             }
             Some(completed) = workers.join_next(), if !workers.is_empty() => {
                 match completed {
-                    Ok(Ok((plan, result))) if plan.generation == scheduler.generation() => ready = Some((plan, result)),
+                    Ok(Ok((plan, result))) if plan.generation == scheduler.generation() => { metrics.completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed); ready = Some((plan, result)); },
                     Ok(Ok(_)) => {},
-                    Ok(Err(error)) => return Err(error),
+                    Ok(Err(error)) => { metrics.failed.fetch_add(1,std::sync::atomic::Ordering::Relaxed); return Err(error); },
                     Err(error) if error.is_cancelled() => {},
                     Err(error) => return Err(Error::other(error)),
                 }
@@ -180,10 +196,22 @@ pub async fn serve(config: Config) -> Result<(), Error> {
     config.validate()?;
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let tls = config.tls.client()?;
+    let metrics = Arc::new(crate::monitoring::State::default());
+    let snapshot = metrics.snapshot("regular");
+    let listen = if config.disable_metrics {
+        None
+    } else {
+        Some(
+            config
+                .metrics_listen
+                .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], 8582))),
+        )
+    };
+    dg_xch_servers::observability::run_with(async {
     loop {
         tokio::select! {
             result = shutdown_signal() => return result,
-            result = session(&config, tls.clone()) => {
+            result = session(&config, tls.clone(), metrics.clone()) => {
                 if let Err(error) = result { eprintln!("Regular timelord disconnected: {error}"); }
             }
         }
@@ -192,4 +220,5 @@ pub async fn serve(config: Config) -> Result<(), Error> {
             _ = tokio::time::sleep(Duration::from_secs(config.reconnect_seconds)) => {},
         }
     }
+    }, listen, snapshot).await
 }

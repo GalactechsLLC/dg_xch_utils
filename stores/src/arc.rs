@@ -14,6 +14,23 @@ use std::sync::Arc;
 // wrapper — the single-writer/WAL-reader concurrency lives inside the backend, unchanged.
 #[async_trait]
 impl<T: CoinStore + Send + Sync> CoinStore for Arc<T> {
+    #[cfg(feature = "coin-index")]
+    async fn coin_page(
+        &self,
+        request: &dg_xch_core::protocols::explorer::CoinPageRequest,
+        height: u32,
+    ) -> Result<Vec<CoinRecord>, StoreError> {
+        (**self).coin_page(request, height).await
+    }
+    #[cfg(feature = "coin-index")]
+    async fn coin_summary(
+        &self,
+        ph: &Bytes32,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinSummary, StoreError> {
+        (**self).coin_summary(ph, height).await
+    }
+
     async fn prepare_coin_window(
         &self,
         changes: Vec<crate::types::OwnedCoinChanges>,

@@ -38,6 +38,7 @@ pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
     let mut diagnostics = tokio::time::interval(Duration::from_secs(30));
     let result = loop {
         tokio::select! {
+            biased;
             result = &mut shutdown => break result,
             _ = health.tick() => {
                 if let Some(failure) = service.failure() {

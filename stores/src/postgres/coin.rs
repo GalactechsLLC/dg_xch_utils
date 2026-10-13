@@ -96,6 +96,103 @@ async fn rollback_to_on(
 
 #[async_trait]
 impl CoinStore for PostgresStore {
+    #[cfg(feature = "coin-index")]
+    async fn coin_page(
+        &self,
+        request: &dg_xch_core::protocols::explorer::CoinPageRequest,
+        height: u32,
+    ) -> Result<Vec<CoinRecord>, StoreError> {
+        request
+            .validate()
+            .map_err(|error| StoreError::Corrupt(error.into()))?;
+        let mut q = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, timestamp FROM coin_record WHERE ",
+        );
+        let (column, ids) = if request.parent_ids.is_empty() {
+            ("puzzle_hash", &request.puzzle_hashes)
+        } else {
+            ("coin_parent", &request.parent_ids)
+        };
+        q.push(column).push(" IN (");
+        {
+            let mut hashes = q.separated(",");
+            for hash in ids {
+                hashes.push_bind(*hash);
+            }
+        }
+        q.push(") AND confirmed_index <= ")
+            .push_bind(i64::from(height));
+        if let Some(spent) = request.spent {
+            if spent {
+                q.push(" AND spent_index > 0 AND spent_index <= ")
+                    .push_bind(i64::from(height));
+            } else {
+                q.push(" AND (spent_index = 0 OR spent_index > ")
+                    .push_bind(i64::from(height))
+                    .push(")");
+            }
+        }
+        q.push(" ORDER BY confirmed_index DESC, coin_name DESC LIMIT ")
+            .push_bind(i64::from(request.limit))
+            .push(" OFFSET ")
+            .push_bind(i64::from(request.offset));
+        let rows = q.build().fetch_all(&self.pool).await?;
+        rows.iter()
+            .map(|row| {
+                let mut record = row_to_coin_record(row)?;
+                if record.spent_block_index > height {
+                    record.spent_block_index = 0;
+                    record.spent = false;
+                }
+                Ok(record)
+            })
+            .collect()
+    }
+    #[cfg(feature = "coin-index")]
+    async fn coin_summary(
+        &self,
+        ph: &Bytes32,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinSummary, StoreError> {
+        let started = std::time::Instant::now();
+        let mut total = crate::explorer::Summary::default();
+        let mut cursor: Option<Bytes32> = None;
+        // A stable read transaction prevents mixing state across keyset batches.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SET LOCAL statement_timeout='5s'")
+            .execute(&mut *tx)
+            .await?;
+        loop {
+            crate::explorer::work_deadline(started)?;
+            let mut q = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                "SELECT coin_name, confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, timestamp FROM coin_record WHERE puzzle_hash=",
+            );
+            q.push_bind(*ph)
+                .push(" AND confirmed_index <= ")
+                .push_bind(i64::from(height));
+            if let Some(cursor) = cursor {
+                q.push(" AND coin_name > ").push_bind(cursor);
+            }
+            q.push(" ORDER BY coin_name LIMIT 1000");
+            let rows = q.build().fetch_all(&mut *tx).await?;
+            for row in &rows {
+                total.add(&row_to_coin_record(row)?, height)?;
+            }
+            if let Some(row) = rows.last() {
+                cursor = Some(sqlx::Row::try_get(row, "coin_name")?);
+            }
+            if rows.len() < 1000 {
+                break;
+            }
+        }
+        crate::explorer::work_deadline(started)?;
+        tx.commit().await?;
+        Ok(total.finish())
+    }
+
     async fn get_coin_record(&self, coin_name: &Bytes32) -> Result<Option<CoinRecord>, StoreError> {
         let row = sqlx::query(SELECT_COIN)
             .bind(*coin_name)

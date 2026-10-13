@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#3f8c61"><title>Peer ecosystem · Druid Garden</title><link rel="icon" href="/logo.jpg"><link rel="stylesheet" href="/site.css"><link rel="stylesheet" href="/style.css"><script src="/theme.js" defer></script><script src="/app.js" defer></script></head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="https://druid.garden/">Druid Garden</a><nav class="utilities" aria-label="Dashboard"><button id="theme" type="button" aria-label="Toggle color theme" aria-pressed="false">☀ / ☾</button></nav></header>
+<main id="main">
+<section class="hero decorated"><div><span class="eyebrow">CHIA NETWORK OBSERVATORY</span><h1>Peer ecosystem</h1><p>Live observations from this crawler’s view of the network.</p></div></section>
+<div class="status"><span id="status" role="status">Loading observations…</span><span id="updated"></span></div>
+<p class="notice">An endpoint is an IP and port. An identity is a SHA-256 fingerprint of its TLS certificate. Recent means a successful Chia handshake within <span id="window">24 hours</span>; it does not guarantee a node is currently online or synced. Versions and heights are peer-reported. These observations are a sample, not a count of every Chia node.</p>
+<section class="cards stats-grid" aria-label="Crawler statistics">
+<article class="stat"><span>Known endpoints</span><strong id="known">—</strong><small id="capacity">Retained discoveries</small></article>
+<article class="stat"><span>Recently connected</span><strong id="recent">—</strong><small id="families">IPv4 / IPv6</small></article>
+<article class="stat"><span>Recent identities</span><strong id="identities">—</strong><small>Distinct TLS certificates</small></article>
+<article class="stat"><span>Peer response time</span><strong id="latency">—</strong><small>Mean latest application round trip</small></article>
+</section>
+<section class="panel"><h2>Probe coverage</h2><div id="coverage" class="activity"></div><p id="probe-budget" class="muted"></p><p id="failure-phases" class="muted"></p><p class="muted">Discovery can add hundreds of endpoints from a single response. Coverage shows how many have actually been attempted. Probes close after querying; recent connections are successful handshakes, not sockets kept open.</p></section>
+<section class="panels"><article class="panel"><h2>Observed network over time</h2><p class="muted">Up to 24 hours of minute samples, preserved across restarts.</p><canvas id="history" role="img" aria-label="History of known endpoints, recent endpoints and recent identities"></canvas><div class="legend"><span class="known">Known endpoints</span><span class="recent">Recently connected</span><span class="identity">Recent identities</span></div><p id="history-caption" class="muted"></p></article><article class="panel"><h2>Software versions</h2><p class="muted">Recently connected endpoints · reported versions</p><div id="versions"></div></article></section>
+<section class="panel"><div class="section-head"><div><h2>Node observations</h2><p class="muted">Inspect a node for timestamps, certificate identity and capabilities. Unknown sort values appear last; peer RTT is an application round trip, not ICMP ping.</p></div><label>Find endpoint, identity, version or error<input id="search" type="search" placeholder="Search observations" maxlength="128"></label></div>
+<div class="list-controls">
+<label>Sort by<select id="sort"><option value="endpoint">Endpoint</option><option value="last_connected" selected>Last connected</option><option value="version">Version</option><option value="ping">Ping / peer RTT</option><option value="first_seen">First seen</option><option value="last_attempt">Last attempted</option><option value="next_attempt">Next attempt</option><option value="failures">Consecutive failures</option></select></label>
+<label>Order<select id="order"><option value="asc">Ascending</option><option value="desc" selected>Descending</option></select></label>
+<label>Result<select id="result-filter"><option value="all">All peers</option><option value="unattempted">Not attempted</option><option value="failed">Latest probe failed</option><option value="connected">Ever connected</option></select></label>
+<label>Address family<select id="family-filter"><option value="all">IPv4 and IPv6</option><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option></select></label>
+<div class="reload-controls"><button id="auto-reload" type="button" aria-pressed="true">Auto reload: on</button><button id="reload" type="button">Reload now</button></div>
+</div>
+<div class="table-scroll" role="region" aria-label="Node observations table" tabindex="0"><table><thead><tr><th>Endpoint</th><th>Version</th><th>First seen</th><th>Last connection</th><th>Peer RTT</th><th>Latest result / error</th><th>Details</th></tr></thead><tbody id="peers"></tbody></table></div><div class="pagination"><span id="count">Loading…</span><div><button id="previous" type="button">← Previous</button><button id="next" type="button">Next →</button></div></div>
+</section>
+<section class="panel"><h2>Crawler activity</h2><div id="activity" class="activity"></div><p class="muted">A successful connection means the peer completed a handshake for this network. A peer response is counted separately. Failures include connections, handshakes and peer requests. Prometheus version labels contain the top 32 values and an aggregate remainder; individual IPs and certificate IDs are available through the paginated API.</p><p class="muted">Read-only data: <a href="/api/stats">/api/stats</a> · <a href="/api/peers?limit=50">/api/peers</a> · <a href="/api/history">/api/history</a> · <a href="/health">/health</a></p></section>
+</main><footer><a class="brand" href="https://druid.garden/">Druid Garden</a><span>dg_xch_crawler · continuous, bounded peer discovery · refreshes every 15 seconds</span></footer>
+</body></html>

@@ -470,7 +470,7 @@ fn initialize(root: &Path) -> Result<(), Error> {
     let introducer = root.join("introducer");
     {
         let tls = service_identity(&introducer, &roots)?;
-        let config = serde_json::json!({ "listen": "0.0.0.0:8445", "chain": chain, "tls": tls, "peer_server_name": "localhost", "allow_private_addresses": true, "max_connections": 32, "max_peers": 128, "peer_ttl_seconds": 3600 });
+        let config = serde_json::json!({ "listen": "0.0.0.0:8445", "chain": chain, "tls": tls, "peer_server_name": "localhost", "allow_private_addresses": true, "max_connections": 32, "peer_ttl_seconds": 3600 });
         ensure_service(&introducer, &config)?;
     }
     let timelord = root.join("timelord");

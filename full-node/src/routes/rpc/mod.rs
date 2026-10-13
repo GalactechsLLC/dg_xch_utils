@@ -84,7 +84,13 @@ mod get_block_spends;
 mod get_block_spends_with_conditions;
 mod get_blockchain_state;
 mod get_blocks;
+#[cfg(feature = "coin-index")]
+mod get_coin_page;
 mod get_coin_record_by_name;
+#[cfg(feature = "coin-index")]
+mod get_coin_summary;
+#[cfg(feature = "coin-index")]
+static EXPLORER_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 #[cfg(feature = "hint")]
 mod get_coin_records_by_hint;
 #[cfg(feature = "hint")]
@@ -240,6 +246,10 @@ pub fn route_names() -> Vec<&'static str> {
         get_recent_signage_point_or_eos::PATH,
         get_coin_records_by_names::PATH,
         get_coin_record_by_name::PATH,
+        #[cfg(feature = "coin-index")]
+        get_coin_page::PATH,
+        #[cfg(feature = "coin-index")]
+        get_coin_summary::PATH,
         #[cfg(feature = "coin-index")]
         get_coin_records_by_parent_ids::PATH,
         #[cfg(feature = "coin-index")]

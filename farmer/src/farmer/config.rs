@@ -10,6 +10,10 @@ use std::fs;
 use std::io::Error;
 use std::path::{Path, PathBuf};
 
+fn default_metrics_config() -> Option<MetricsConfig> {
+    Some(MetricsConfig::default())
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -254,6 +258,7 @@ where
     pub pool_ca_certificates: Vec<PathBuf>,
     pub payout_address: String,
     pub harvester_configs: HarvesterConfig<C>,
+    #[serde(default = "default_metrics_config")]
     pub metrics: Option<MetricsConfig>,
 }
 impl<C: Clone + Serialize> Config<C> {

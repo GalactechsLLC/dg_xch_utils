@@ -23,7 +23,8 @@ hyper = {version="1.7.0", features=["full"]}
 hyper-tungstenite = "0.19.0"
 hyper-util = {version="0.1.17", features=["full"]}
 log = "0.4.29"
-prometheus = {version="0.14.0", features=["protobuf"], optional = true}
+prometheus = {version="0.14.0", features=["protobuf"]}
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false }
 rustls = {version = "0.23.45" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
@@ -33,6 +34,10 @@ tokio-rustls = { version = "0.26.4" }
 tokio-tungstenite = {version = "0.28.0", features = ["rustls", "rustls-tls-webpki-roots"] }
 uuid = {version="1.21.0", features=["v4"]}
 
+hex = { version = "0.4.3", optional = true }
+sqlx = { version = "=0.8.6", optional = true, default-features = false, features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "postgres", "json", "uuid"] }
+
 [features]
-metrics = ["dep:prometheus", "dg_xch_core/metrics", "dg_xch_clients/metrics"]
+metrics = [ "dg_xch_core/metrics", "dg_xch_clients/metrics"]
+discovery-postgres = ["dep:sqlx", "dep:hex"]
 default = []

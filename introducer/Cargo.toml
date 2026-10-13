@@ -10,8 +10,10 @@ repository.workspace = true
 [dependencies]
 dg_xch_core = { path = "../core", default-features = false }
 dg_xch_serialize = { path = "../serialize" }
-dg_xch_servers = { path = "../servers" }
+dg_xch_servers = { path = "../servers", features = ["discovery-postgres"] }
 futures-util = "0.3.32"
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false }
+prometheus = "0.14.0"
 rustls = "0.23.45"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"

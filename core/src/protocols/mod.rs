@@ -1,5 +1,6 @@
 pub mod ban;
 pub mod error;
+pub mod explorer;
 pub mod farmer;
 pub mod full_node;
 pub mod harvester;
@@ -1380,7 +1381,13 @@ impl ReadStream {
                                                 }
                                             }
                                             if !matched{
-                                                error!("No Matches for Message: {msg_arc:?}");
+                                                error!(
+                                                    "No Matches for Message: msg_type={:?} id={:?} payload_bytes={} peer_id={}",
+                                                    msg_arc.msg_type,
+                                                    msg_arc.id,
+                                                    msg_arc.data.as_slice().len(),
+                                                    self.peer_id,
+                                                );
                                             }
                                             debug!("Processed Message: {:?}", msg_arc.msg_type);
                                         }

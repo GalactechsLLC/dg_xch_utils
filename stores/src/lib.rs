@@ -1,5 +1,7 @@
 mod arc;
 pub mod error;
+#[cfg(feature = "coin-index")]
+mod explorer;
 #[cfg(feature = "mmap")]
 pub mod mmap;
 #[cfg(feature = "postgres")]

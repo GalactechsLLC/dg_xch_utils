@@ -635,3 +635,53 @@ async fn tls_local_mode_requires_client_cert_on_loopback() {
     );
     run.shutdown();
 }
+
+#[cfg(feature = "coin-index")]
+#[tokio::test]
+async fn explorer_private_queries_pin_checkpoints_and_enforce_bounds() {
+    let (port, handle, _, node) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
+    let (hash, height) = node.store.get_peak().await.unwrap().unwrap();
+    let records = node.store.get_coins_added_at_height(height).await.unwrap();
+    let ph = records[0].coin.puzzle_hash;
+    let (_, summary) = call(
+        port,
+        "/get_coin_summary",
+        json!({"puzzle_hash":ph,"peak_hash":hash}),
+    )
+    .await;
+    assert_eq!(summary["success"], true);
+    assert_eq!(summary["height"], height);
+    assert!(summary["summary"]["balance"].is_string());
+    let (_, page) = call(
+        port,
+        "/get_coin_records_page",
+        json!({"puzzle_hashes":[ph],"peak_hash":hash,"offset":0,"limit":1,"spent":null}),
+    )
+    .await;
+    assert_eq!(page["success"], true);
+    assert_eq!(page["coin_records"].as_array().unwrap().len(), 1);
+    let (_, bad) = call(
+        port,
+        "/get_coin_records_page",
+        json!({"puzzle_hashes":[ph],"peak_hash":hash,"offset":0,"limit":501}),
+    )
+    .await;
+    assert_eq!(bad["success"], false);
+    let (_, fork) = call(
+        port,
+        "/get_coin_summary",
+        json!({"puzzle_hash":ph,"peak_hash":Bytes32::default()}),
+    )
+    .await;
+    assert_eq!(fork["success"], false);
+    node.synced
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    let (_, syncing) = call(
+        port,
+        "/get_coin_summary",
+        json!({"puzzle_hash":ph,"peak_hash":hash}),
+    )
+    .await;
+    assert_eq!(syncing["success"], false);
+    handle.shutdown();
+}

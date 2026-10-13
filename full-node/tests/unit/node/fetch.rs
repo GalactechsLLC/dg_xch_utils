@@ -6,6 +6,11 @@ async fn retries_are_paced_bounded_and_cancelled_by_rebase() {
     let queue = Arc::new(BlockQueue::new(100, 1024, metrics));
     for (failures, millis) in [(1, 250), (2, 500), (3, 1000), (4, 2000), (u32::MAX, 2000)] {
         assert_eq!(fetch_retry_delay(failures), Duration::from_millis(millis));
+        assert_eq!(fetch_retry_after_failure(failures, true), Duration::ZERO);
+        assert_eq!(
+            fetch_retry_after_failure(failures, false),
+            Duration::from_millis(millis)
+        );
     }
     let started = tokio::time::Instant::now();
     wait_fetch_retry(&queue, queue.current_gen(), fetch_retry_delay(1)).await;

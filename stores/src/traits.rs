@@ -14,6 +14,31 @@ use dg_xch_core::protocols::wallet::CoinStateFilters;
 /// streamed range delete/update returning a count, never a materialized changed-coin set.
 #[async_trait]
 pub trait CoinStore {
+    /// Service-tier bounded history. Backends without query indexes fail explicitly.
+    #[cfg(feature = "coin-index")]
+    async fn coin_page(
+        &self,
+        _request: &dg_xch_core::protocols::explorer::CoinPageRequest,
+        _height: u32,
+    ) -> Result<Vec<CoinRecord>, StoreError> {
+        Err(StoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Backend does not support indexed explorer queries",
+        )))
+    }
+    /// Exact aggregates; never return a truncated balance when a work limit is reached.
+    #[cfg(feature = "coin-index")]
+    async fn coin_summary(
+        &self,
+        _ph: &Bytes32,
+        _height: u32,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinSummary, StoreError> {
+        Err(StoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Backend does not support indexed explorer queries",
+        )))
+    }
+
     async fn prepare_coin_window(
         &self,
         changes: Vec<crate::types::OwnedCoinChanges>,

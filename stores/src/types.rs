@@ -34,6 +34,12 @@ impl OwnedCoinChanges {
 
 pub enum PreparedCoinWindow {
     Native(Vec<OwnedCoinChanges>),
+    #[cfg(feature = "rocksdb")]
+    Rocksdb {
+        additions: Vec<(Bytes32, dg_xch_core::blockchain::coin_record::CoinRecord)>,
+        removals: Vec<(Bytes32, u32)>,
+        hints: Vec<(Bytes32, Bytes32)>,
+    },
     Sqlite {
         additions: Vec<(Bytes32, dg_xch_core::blockchain::coin_record::CoinRecord)>,
         removals: Vec<(Bytes32, u32)>,

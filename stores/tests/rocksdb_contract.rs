@@ -130,6 +130,82 @@ trait StorePair: BlockStore + CoinStore + Send + Sync {}
 impl<T: BlockStore + CoinStore + Send + Sync> StorePair for T {}
 
 #[tokio::test]
+#[ignore = "manual coin-window throughput measurement"]
+async fn coin_window_throughput() {
+    use dg_xch_stores::types::OwnedCoinChanges;
+    let template = fixtures::load_adds_rems(5_000_000).0[0];
+    let mut changes = Vec::new();
+    let mut previous = Vec::new();
+    for height in 1..=8u32 {
+        let additions: Vec<_> = (0..4_000u32)
+            .map(|i| {
+                let mut record = template;
+                let mut parent = [0u8; 32];
+                parent[..4].copy_from_slice(&height.to_be_bytes());
+                parent[4..8].copy_from_slice(&i.to_be_bytes());
+                record.coin.parent_coin_info = Bytes32::from(parent);
+                record
+            })
+            .collect();
+        let removals = previous;
+        previous = additions
+            .iter()
+            .take(2_000)
+            .map(|c| c.coin.name())
+            .collect();
+        changes.push(OwnedCoinChanges {
+            height,
+            timestamp: u64::from(height) * 10,
+            additions,
+            removals,
+            hints: Vec::new(),
+        });
+    }
+    for deferred in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RocksDbStore::open(&dir.path().join("rocks")).await.unwrap();
+        if deferred {
+            store.shed_service_indexes().await.unwrap();
+        }
+        let started = std::time::Instant::now();
+        let prepared = store.prepare_coin_window(changes.clone()).await.unwrap();
+        let preparation = started.elapsed();
+        let mut batch = store.begin().await.unwrap();
+        let started = std::time::Instant::now();
+        store
+            .apply_prepared_coin_window_in(&mut batch, prepared)
+            .await
+            .unwrap();
+        let staging = started.elapsed();
+        let started = std::time::Instant::now();
+        store.commit(batch).await.unwrap();
+        let commit = started.elapsed();
+        let names: Vec<_> = changes
+            .iter()
+            .flat_map(|c| c.additions.iter().map(|r| r.coin.name()))
+            .collect();
+        assert_eq!(store.get_coin_records(&names).await.unwrap().len(), 32_000);
+        println!(
+            "deferred={deferred} preparation_ms={} staging_ms={} commit_ms={} total_ms={}",
+            preparation.as_millis(),
+            staging.as_millis(),
+            commit.as_millis(),
+            (preparation + staging + commit).as_millis()
+        );
+        let id = changes[0].additions[0].coin.name();
+        assert_eq!(
+            store
+                .get_coin_record(&id)
+                .await
+                .unwrap()
+                .unwrap()
+                .spent_block_index,
+            2
+        );
+    }
+}
+
+#[tokio::test]
 async fn dropped_and_failed_batches_never_publish_and_wrong_instance_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let store = RocksDbStore::open(&dir.path().join("one")).await.unwrap();
@@ -431,4 +507,185 @@ async fn schema_and_feature_mismatches_fail_closed() {
         .unwrap();
     }
     assert!(RocksDbStore::open(&path).await.is_err());
+}
+
+#[cfg(feature = "coin-index")]
+#[tokio::test]
+async fn deferred_wallet_indexes_preserve_reorgs_and_rebuild_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rocks");
+    let store = RocksDbStore::open(&path).await.unwrap();
+    let (coins, _) = fixtures::load_adds_rems(5_000_000);
+    let ph = coins[0].coin.puzzle_hash;
+    let parent = coins[0].coin.parent_coin_info;
+    let id = coins[0].coin.name();
+    store.apply_block(2, 20, &coins[..1], &[]).await.unwrap();
+    store.shed_service_indexes().await.unwrap();
+    store.shed_service_indexes().await.unwrap();
+    assert!(store.get_unspent_by_puzzle_hash(&ph).await.is_err());
+    assert!(store.get_coins_by_parent(&parent).await.is_err());
+    store.apply_block(3, 30, &coins[1..2], &[id]).await.unwrap();
+    assert_eq!(store.get_coins_added_at_height(2).await.unwrap().len(), 1);
+    assert_eq!(store.get_coins_removed_at_height(3).await.unwrap().len(), 1);
+    #[cfg(feature = "hint")]
+    {
+        store.apply_hints(&[(ph, id)]).await.unwrap();
+        assert_eq!(store.get_coins_for_hint(&ph, 10).await.unwrap(), vec![id]);
+    }
+    assert_eq!(store.rollback_to(2).await.unwrap(), 2);
+    drop(store);
+    let store = RocksDbStore::open(&path).await.unwrap();
+    assert!(store.get_unspent_by_puzzle_hash(&ph).await.is_err());
+    store.build_indexes().await.unwrap();
+    store.build_indexes().await.unwrap();
+    assert_eq!(
+        store.get_unspent_by_puzzle_hash(&ph).await.unwrap().len(),
+        1
+    );
+    assert_eq!(store.get_coins_by_parent(&parent).await.unwrap().len(), 1);
+    assert!(!store.get_coin_record(&id).await.unwrap().unwrap().spent);
+    #[cfg(feature = "hint")]
+    assert_eq!(store.get_coins_for_hint(&ph, 10).await.unwrap(), vec![id]);
+    store.apply_block(4, 40, &[], &[id]).await.unwrap();
+    assert!(
+        store
+            .get_unspent_by_puzzle_hash(&ph)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    drop(store);
+    let store = RocksDbStore::open(&path).await.unwrap();
+    assert_eq!(store.get_coins_by_parent(&parent).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn prepared_coin_changes_use_the_current_batch_after_rollback() {
+    use dg_xch_stores::types::OwnedCoinChanges;
+    let dir = tempfile::tempdir().unwrap();
+    let store = RocksDbStore::open(&dir.path().join("rocks")).await.unwrap();
+    let (coins, _) = fixtures::load_adds_rems(5_000_000);
+    let old = coins[0].coin.name();
+    let ephemeral = coins[1].coin.name();
+    store.apply_block(10, 100, &coins[..1], &[]).await.unwrap();
+    let prepared = store
+        .prepare_coin_window(vec![
+            OwnedCoinChanges {
+                height: 11,
+                timestamp: 110,
+                additions: coins[1..2].to_vec(),
+                removals: vec![old, ephemeral],
+                hints: Vec::new(),
+            },
+            OwnedCoinChanges {
+                height: 12,
+                timestamp: 120,
+                additions: coins[1..2].to_vec(),
+                removals: Vec::new(),
+                hints: Vec::new(),
+            },
+            OwnedCoinChanges {
+                height: 13,
+                timestamp: 130,
+                additions: Vec::new(),
+                removals: vec![ephemeral, ephemeral],
+                hints: Vec::new(),
+            },
+        ])
+        .await
+        .unwrap();
+    let mut batch = store.begin().await.unwrap();
+    store.rollback_to_in(&mut batch, 9).await.unwrap();
+    store
+        .apply_prepared_coin_window_in(&mut batch, prepared)
+        .await
+        .unwrap();
+    store.commit(batch).await.unwrap();
+    assert!(store.get_coin_record(&old).await.unwrap().is_none());
+    let record = store.get_coin_record(&ephemeral).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            record.confirmed_block_index,
+            record.spent_block_index,
+            record.timestamp
+        ),
+        (12, 13, 120)
+    );
+    #[cfg(feature = "coin-index")]
+    {
+        assert!(
+            store
+                .get_coins_added_at_height(11)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .get_coins_removed_at_height(11)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(store.get_coins_added_at_height(12).await.unwrap().len(), 1);
+        assert_eq!(
+            store.get_coins_removed_at_height(13).await.unwrap().len(),
+            1
+        );
+    }
+}
+
+#[cfg(feature = "coin-index")]
+#[tokio::test]
+async fn failed_index_build_never_publishes_readiness_and_can_be_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rocks");
+    let store = RocksDbStore::open(&path).await.unwrap();
+    store.shed_service_indexes().await.unwrap();
+    drop(store);
+    let mut corrupt_key = vec![b'c'];
+    corrupt_key.extend_from_slice(&[1; 32]);
+    {
+        let raw = rocksdb::DB::open_default(&path).unwrap();
+        raw.put(&corrupt_key, b"invalid record").unwrap();
+    }
+    let store = RocksDbStore::open(&path).await.unwrap();
+    assert!(store.build_indexes().await.is_err());
+    assert!(
+        store
+            .get_unspent_by_puzzle_hash(&Bytes32::from([0; 32]))
+            .await
+            .is_err()
+    );
+    let telemetry = store.telemetry().unwrap();
+    assert_eq!(
+        telemetry
+            .schema_active
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+    assert_eq!(
+        telemetry
+            .schema_errors
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    drop(store);
+    {
+        let raw = rocksdb::DB::open_default(&path).unwrap();
+        assert_eq!(
+            raw.get(b"!service_indexes").unwrap().as_deref(),
+            Some(b"0".as_slice())
+        );
+        raw.delete(&corrupt_key).unwrap();
+    }
+    let store = RocksDbStore::open(&path).await.unwrap();
+    store.build_indexes().await.unwrap();
+    assert!(
+        store
+            .get_unspent_by_puzzle_hash(&Bytes32::from([0; 32]))
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

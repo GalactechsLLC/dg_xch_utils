@@ -1,0 +1,30 @@
+[package]
+name = "dg_xch_crawler"
+description = "Polite Chia peer crawler with a Portfu dashboard and Prometheus metrics"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false, features = ["endpoint"] }
+dg_xch_core = { path = "../core", version = "3.0.0", default-features = false }
+dg_xch_servers = { path = "../servers", version = "3.0.0", features = ["discovery-postgres"] }
+dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
+futures-util = "0.3.32"
+hex = "0.4.3"
+sha2 = "0.10.9"
+prometheus = "0.14.0"
+rustls = "0.23.45"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "fs"] }
+tokio-rustls = "0.26.4"
+tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
+
+uuid = { version = "1.21.0", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

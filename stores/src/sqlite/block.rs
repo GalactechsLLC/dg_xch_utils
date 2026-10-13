@@ -824,6 +824,9 @@ impl BlockStore for SqliteStore {
         // ensure_reorg_indexes restores them before rollback queries if needed.
         let statements = [
             "DROP INDEX IF EXISTS coin_record_puzzle_hash",
+            "DROP INDEX IF EXISTS coin_record_history_page",
+            "DROP INDEX IF EXISTS coin_record_parent_page",
+            "DROP INDEX IF EXISTS coin_record_summary_cursor",
             "DROP INDEX IF EXISTS coin_record_coin_parent",
             "DROP INDEX IF EXISTS coin_record_unspent_by_ph",
             "DROP INDEX IF EXISTS coin_record_spent_index",

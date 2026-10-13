@@ -11,22 +11,71 @@ fn coin(view: &View<'_>, id: &Bytes32) -> Result<Option<CoinRecord>, StoreError>
         .transpose()
 }
 
-fn coin_indexes(record: &CoinRecord) -> Vec<Vec<u8>> {
-    let id = record.coin.name();
+fn service_indexes(view: &View<'_>) -> Result<bool, StoreError> {
+    #[cfg(feature = "coin-index")]
+    return match view.get(SERVICE_INDEXES)?.as_deref() {
+        None | Some(b"1") => Ok(true),
+        Some(b"0") => Ok(false),
+        _ => Err(StoreError::Corrupt(
+            "invalid rocksdb service index state".into(),
+        )),
+    };
+    #[cfg(not(feature = "coin-index"))]
+    {
+        let _ = view;
+        Ok(false)
+    }
+}
+
+fn coin_indexes(id: &Bytes32, record: &CoinRecord, services: bool) -> Vec<Vec<u8>> {
     let mut keys = vec![index(
         CONFIRMED,
         record.confirmed_block_index.to_be_bytes(),
-        &id,
+        id,
     )];
     if record.spent_block_index > 0 {
-        keys.push(index(SPENT, record.spent_block_index.to_be_bytes(), &id));
+        keys.push(index(SPENT, record.spent_block_index.to_be_bytes(), id));
     }
     #[cfg(feature = "coin-index")]
-    {
-        keys.push(index(PUZZLE, record.coin.puzzle_hash, &id));
-        keys.push(index(PARENT, record.coin.parent_coin_info, &id));
+    if services {
+        keys.push(index(PUZZLE, record.coin.puzzle_hash, id));
+        keys.push(index(PARENT, record.coin.parent_coin_info, id));
     }
+    #[cfg(not(feature = "coin-index"))]
+    let _ = services;
     keys
+}
+
+type CoinWrites = Vec<(Vec<u8>, Option<Vec<u8>>)>;
+
+fn coin_writes(
+    id: &Bytes32,
+    old: Option<&CoinRecord>,
+    value: Option<&CoinRecord>,
+    services: bool,
+) -> Result<CoinWrites, StoreError> {
+    let old_keys = old
+        .map(|r| coin_indexes(id, r, services))
+        .unwrap_or_default();
+    let new_keys = value
+        .map(|r| coin_indexes(id, r, services))
+        .unwrap_or_default();
+    let mut writes = Vec::with_capacity(old_keys.len() + new_keys.len() + 1);
+    for k in &old_keys {
+        if !new_keys.contains(k) {
+            writes.push((k.clone(), None));
+        }
+    }
+    for k in new_keys {
+        if !old_keys.contains(&k) {
+            writes.push((k, Some(Vec::new())));
+        }
+    }
+    writes.push((
+        key(COIN, id),
+        value.map(|r| r.to_bytes(VERSION)).transpose()?,
+    ));
+    Ok(writes)
 }
 
 fn write_coin(
@@ -34,20 +83,139 @@ fn write_coin(
     id: &Bytes32,
     value: Option<CoinRecord>,
 ) -> Result<(), StoreError> {
-    if let Some(old) = coin(view, id)? {
-        for k in coin_indexes(&old) {
-            view.delete(k);
+    let old = coin(view, id)?;
+    let services = service_indexes(view)?;
+    view.pending
+        .extend(coin_writes(id, old.as_ref(), value.as_ref(), services)?);
+    Ok(())
+}
+
+fn prepare_changes(
+    changes: &[crate::types::OwnedCoinChanges],
+    workers: &rayon::ThreadPool,
+) -> crate::types::PreparedCoinWindow {
+    use rayon::prelude::*;
+    let hashed: Vec<Vec<_>> = workers.install(|| {
+        changes
+            .par_iter()
+            .map(|change| {
+                let chunks: Vec<Vec<_>> = change
+                    .additions
+                    .par_chunks(512)
+                    .map(|records| {
+                        dg_xch_core::compute::measure(
+                            dg_xch_core::compute::Phase::CoinPrepare,
+                            || {
+                                records
+                                    .iter()
+                                    .map(|record| {
+                                        (
+                                            record.coin.name(),
+                                            CoinRecord {
+                                                confirmed_block_index: change.height,
+                                                spent_block_index: 0,
+                                                spent: false,
+                                                timestamp: change.timestamp,
+                                                ..*record
+                                            },
+                                        )
+                                    })
+                                    .collect()
+                            },
+                        )
+                    })
+                    .collect();
+                chunks.into_iter().flatten().collect()
+            })
+            .collect()
+    });
+    let mut additions = HashMap::new();
+    let mut removals = HashMap::new();
+    for (change, records) in changes.iter().zip(hashed) {
+        for (id, record) in records {
+            removals.remove(&id);
+            additions.insert(id, record);
         }
-    }
-    match value {
-        Some(record) => {
-            for k in coin_indexes(&record) {
-                view.put(k, Vec::new());
+        for id in &change.removals {
+            if let Some(record) = additions.get_mut(id) {
+                record.spent_block_index = change.height;
+                record.spent = change.height != 0;
+            } else {
+                removals.insert(*id, change.height);
             }
-            view.put(key(COIN, id), record.to_bytes(VERSION)?);
         }
-        None => view.delete(key(COIN, id)),
     }
+    let hints = if cfg!(feature = "hint") {
+        let mut pairs: Vec<_> = changes
+            .iter()
+            .flat_map(|c| c.hints.iter().copied())
+            .collect();
+        pairs.sort_unstable_by_key(|(hint, id)| (hint.bytes(), id.bytes()));
+        pairs.dedup();
+        pairs
+    } else {
+        Vec::new()
+    };
+    crate::types::PreparedCoinWindow::Rocksdb {
+        additions: additions.into_iter().collect(),
+        removals: removals.into_iter().collect(),
+        hints,
+    }
+}
+
+fn apply_prepared(
+    view: &mut View<'_>,
+    prepared: crate::types::PreparedCoinWindow,
+    workers: &rayon::ThreadPool,
+) -> Result<(), StoreError> {
+    use rayon::prelude::*;
+    let crate::types::PreparedCoinWindow::Rocksdb {
+        additions,
+        removals,
+        hints: pairs,
+    } = prepared
+    else {
+        return Err(StoreError::Batch(
+            "coins prepared by another backend".into(),
+        ));
+    };
+    let services = service_indexes(view)?;
+    // Every id occurs once. Read the current batch overlay here, never a pre-writer snapshot.
+    let writes: Result<Vec<Vec<_>>, StoreError> = workers.install(|| {
+        additions
+            .par_chunks(512)
+            .map(|chunk| {
+                dg_xch_core::compute::measure(dg_xch_core::compute::Phase::CoinPrepare, || {
+                    let mut writes = Vec::new();
+                    let keys: Vec<_> = chunk.iter().map(|(id, _)| key(COIN, id)).collect();
+                    for ((id, value), bytes) in chunk.iter().zip(view.get_many(&keys)?) {
+                        let old = bytes.as_deref().map(decode::<CoinRecord>).transpose()?;
+                        writes.extend(coin_writes(id, old.as_ref(), Some(value), services)?);
+                    }
+                    Ok(writes)
+                })
+            })
+            .chain(removals.par_chunks(512).map(|chunk| {
+                dg_xch_core::compute::measure(dg_xch_core::compute::Phase::CoinPrepare, || {
+                    let mut writes = Vec::new();
+                    let keys: Vec<_> = chunk.iter().map(|(id, _)| key(COIN, id)).collect();
+                    for ((id, height), bytes) in chunk.iter().zip(view.get_many(&keys)?) {
+                        let Some(old) = bytes.as_deref().map(decode::<CoinRecord>).transpose()?
+                        else {
+                            continue;
+                        };
+                        let mut value = old;
+                        value.spent_block_index = *height;
+                        value.spent = *height != 0;
+                        writes.extend(coin_writes(id, Some(&old), Some(&value), services)?);
+                    }
+                    Ok(writes)
+                })
+            }))
+            .collect()
+    });
+    view.pending.extend(writes?.into_iter().flatten());
+    hints(view, &pairs);
     Ok(())
 }
 
@@ -69,10 +237,13 @@ fn apply(
         write_coin(view, &value.coin.name(), Some(value))?;
     }
     for id in removals {
-        if let Some(mut value) = coin(view, id)? {
+        if let Some(old) = coin(view, id)? {
+            let mut value = old;
             value.spent_block_index = h;
             value.spent = h != 0;
-            write_coin(view, id, Some(value))?;
+            let services = service_indexes(view)?;
+            view.pending
+                .extend(coin_writes(id, Some(&old), Some(&value), services)?);
         }
     }
     Ok(())
@@ -125,6 +296,12 @@ fn indexed_coins(
     prefix: &[u8],
     mut visit: impl FnMut(CoinRecord) -> Result<bool, StoreError>,
 ) -> Result<(), StoreError> {
+    #[cfg(feature = "coin-index")]
+    if matches!(prefix.first(), Some(&PUZZLE) | Some(&PARENT)) && !service_indexes(view)? {
+        return Err(StoreError::Batch(
+            "rocksdb wallet indexes are deferred during catch-up; retry after index build".into(),
+        ));
+    }
     view.scan(prefix, |k, _| {
         if k.len() != prefix.len() + 32 {
             return Err(StoreError::Corrupt("invalid rocksdb coin index".into()));
@@ -138,6 +315,84 @@ fn indexed_coins(
 
 #[async_trait]
 impl CoinStore for RocksDbStore {
+    #[cfg(feature = "coin-index")]
+    async fn coin_page(
+        &self,
+        request: &dg_xch_core::protocols::explorer::CoinPageRequest,
+        height: u32,
+    ) -> Result<Vec<CoinRecord>, StoreError> {
+        request
+            .validate()
+            .map_err(|e| StoreError::Corrupt(e.into()))?;
+        let request = request.clone();
+        self.read("coin_page", move |view| {
+            let started = std::time::Instant::now();
+            let mut page = std::collections::BTreeMap::new();
+            let capacity = (request.offset + request.limit) as usize;
+            let (prefix, ids) = if request.parent_ids.is_empty() {
+                (PUZZLE, &request.puzzle_hashes)
+            } else {
+                (PARENT, &request.parent_ids)
+            };
+            let hashes: std::collections::HashSet<_> = ids.iter().copied().collect();
+            for ph in hashes {
+                indexed_coins(view, &key(prefix, ph), |mut coin| {
+                    crate::explorer::work_deadline(started)?;
+                    if coin.confirmed_block_index > height {
+                        return Ok(true);
+                    }
+                    if coin.spent_block_index > height {
+                        coin.spent_block_index = 0;
+                        coin.spent = false;
+                    }
+                    if request
+                        .spent
+                        .is_some_and(|spent| spent != (coin.spent_block_index != 0))
+                    {
+                        return Ok(true);
+                    }
+                    page.insert(
+                        (
+                            coin.confirmed_block_index,
+                            Vec::<u8>::from(coin.coin.name()),
+                        ),
+                        coin,
+                    );
+                    if page.len() > capacity {
+                        page.pop_first();
+                    }
+                    Ok(true)
+                })?;
+            }
+            Ok(page
+                .into_values()
+                .rev()
+                .skip(request.offset as usize)
+                .take(request.limit as usize)
+                .collect())
+        })
+        .await
+    }
+    #[cfg(feature = "coin-index")]
+    async fn coin_summary(
+        &self,
+        ph: &Bytes32,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinSummary, StoreError> {
+        let ph = *ph;
+        self.read("coin_summary", move |view| {
+            let started = std::time::Instant::now();
+            let mut total = crate::explorer::Summary::default();
+            indexed_coins(view, &key(PUZZLE, ph), |coin| {
+                crate::explorer::work_deadline(started)?;
+                total.add(&coin, height)?;
+                Ok(true)
+            })?;
+            Ok(total.finish())
+        })
+        .await
+    }
+
     async fn get_coin_record(&self, name: &Bytes32) -> Result<Option<CoinRecord>, StoreError> {
         let name = *name;
         self.read("coin", move |view| coin(view, &name)).await
@@ -146,12 +401,13 @@ impl CoinStore for RocksDbStore {
         let names = names.to_vec();
         self.read("coins", move |view| {
             let mut result = Vec::with_capacity(names.len());
-            for id in &names {
-                if let Some(record) = coin(view, id)? {
-                    result.push(record);
+            for chunk in names.chunks(512) {
+                let keys: Vec<_> = chunk.iter().map(|id| key(COIN, id)).collect();
+                for bytes in view.get_many(&keys)?.into_iter().flatten() {
+                    result.push(decode::<CoinRecord>(&bytes)?);
                 }
             }
-            log::info!(
+            log::debug!(
                 "rocksdb coins requested={} found={}",
                 names.len(),
                 result.len()
@@ -183,7 +439,7 @@ impl CoinStore for RocksDbStore {
         let additions = additions.to_vec();
         let removals = removals.to_vec();
         self.mutate(batch, "coin_deltas", move |view| {
-            log::info!(
+            log::debug!(
                 "rocksdb coin_deltas height={h} additions={} removals={}",
                 additions.len(),
                 removals.len()
@@ -192,12 +448,57 @@ impl CoinStore for RocksDbStore {
         })
         .await
     }
+    async fn prepare_coin_window(
+        &self,
+        changes: Vec<crate::types::OwnedCoinChanges>,
+    ) -> Result<crate::types::PreparedCoinWindow, StoreError> {
+        let workers = self.coin_workers.clone();
+        let telemetry = self.telemetry.clone();
+        tokio::task::spawn_blocking(move || {
+            let _timer = telemetry.coin_prepare.start();
+            let input = changes
+                .iter()
+                .map(|c| c.additions.len() + c.removals.len() + c.hints.len())
+                .sum::<usize>();
+            let prepared = prepare_changes(&changes, &workers);
+            if let crate::types::PreparedCoinWindow::Rocksdb {
+                additions,
+                removals,
+                hints,
+            } = &prepared
+            {
+                telemetry
+                    .coin_prepare_input_rows
+                    .fetch_add(input as u64, Ordering::Relaxed);
+                telemetry.coin_prepare_output_rows.fetch_add(
+                    (additions.len() + removals.len() + hints.len()) as u64,
+                    Ordering::Relaxed,
+                );
+            }
+            Ok(prepared)
+        })
+        .await
+        .map_err(|e| StoreError::Batch(format!("rocksdb coin preparation: {e}")))?
+    }
+
+    async fn apply_prepared_coin_window_in(
+        &self,
+        batch: &mut BatchHandle,
+        prepared: crate::types::PreparedCoinWindow,
+    ) -> Result<(), StoreError> {
+        let workers = self.coin_workers.clone();
+        self.mutate(batch, "coin_window", move |view| {
+            apply_prepared(view, prepared, &workers)
+        })
+        .await
+    }
+
     async fn apply_coin_window_in(
         &self,
         batch: &mut BatchHandle,
         changes: &[crate::types::CoinChanges<'_>],
     ) -> Result<(), StoreError> {
-        let changes: Vec<_> = changes
+        let changes = changes
             .iter()
             .map(|c| crate::types::OwnedCoinChanges {
                 height: c.height,
@@ -207,18 +508,8 @@ impl CoinStore for RocksDbStore {
                 hints: c.hints.to_vec(),
             })
             .collect();
-        self.mutate(batch, "coin_window", move |view| {
-            let mut additions = 0;
-            let mut removals = 0;
-            let mut hint_count = 0;
-            for c in &changes {
-                apply(view, c.height, c.timestamp, &c.additions, &c.removals)?;
-                hints(view, &c.hints);
-                additions += c.additions.len(); removals += c.removals.len(); hint_count += c.hints.len();
-            }
-            log::info!("rocksdb coin_window blocks={} additions={additions} removals={removals} hints={hint_count}", changes.len());
-            Ok(())
-        }).await
+        let prepared = self.prepare_coin_window(changes).await?;
+        self.apply_prepared_coin_window_in(batch, prepared).await
     }
     async fn rollback_to(&self, fork: u32) -> Result<u64, StoreError> {
         let mut batch = self.begin().await?;
@@ -424,7 +715,7 @@ impl CoinStore for RocksDbStore {
                 .map(|cs| (cs.coin.name(), cs))
                 .collect();
             let result = crate::traits::page_coin_states(merged, max_items);
-            log::info!(
+            log::debug!(
                 "rocksdb paged_coin_states scanned={scanned} returned={} next_height={:?}",
                 result.0.len(),
                 result.1

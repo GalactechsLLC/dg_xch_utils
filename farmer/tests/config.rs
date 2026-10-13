@@ -93,3 +93,15 @@ fn legacy_configuration_is_saved_privately() {
         );
     }
 }
+
+#[test]
+fn metrics_default_on_missing_configuration_and_explicit_disable_is_preserved() {
+    let config = Config::<()>::default();
+    let mut json = serde_json::to_value(config).unwrap();
+    json.as_object_mut().unwrap().remove("metrics");
+    let config: Config<()> = serde_json::from_value(json.clone()).unwrap();
+    assert!(config.metrics.unwrap().enabled);
+    json["metrics"] = serde_json::Value::Null;
+    let config: Config<()> = serde_json::from_value(json).unwrap();
+    assert!(config.metrics.is_none());
+}
