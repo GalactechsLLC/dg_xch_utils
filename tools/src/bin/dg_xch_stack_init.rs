@@ -322,6 +322,7 @@ fn create_farmer(
         fullnode_ws_port: 8444,
         fullnode_rpc_host: "localhost".to_owned(),
         fullnode_rpc_port: 8444,
+        signage_point_timeout_seconds: Config::<()>::default().signage_point_timeout_seconds,
         farmer_info: vec![FarmingInfo {
             farmer_secret_key: Bytes32::from(farmer.to_bytes()),
             pool_secret_key: Some(Bytes32::from(pool.to_bytes())),

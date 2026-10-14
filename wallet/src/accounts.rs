@@ -450,12 +450,12 @@ impl WalletSession {
                 previous = Some(id);
                 remember_discovered_coin(observed, *record, height)?;
             }
-            if let Some(cursor) = page.next_cursor {
-                if page.coin_records.len() != request.limit as usize || previous != Some(cursor) {
-                    return Err(Error::other(
-                        "wallet coin page returned an invalid next cursor",
-                    ));
-                }
+            if let Some(cursor) = page.next_cursor
+                && (page.coin_records.len() != request.limit as usize || previous != Some(cursor))
+            {
+                return Err(Error::other(
+                    "wallet coin page returned an invalid next cursor",
+                ));
             }
             result.extend(page.coin_records);
             match page.next_cursor {

@@ -34,7 +34,7 @@ pub fn codec(hello: &Handshake) -> Result<ChiaProtocolVersion, Error> {
     // The crawler's wire subset is identical in CNI 0.0.32 through current releases.
     // Keep a newer peer's announced version intact; use our supported wire subset.
     let version = match patch {
-        Some(32 | 33 | 34) => ChiaProtocolVersion::Chia0_0_34,
+        Some(32..=34) => ChiaProtocolVersion::Chia0_0_34,
         Some(35) => ChiaProtocolVersion::Chia0_0_35,
         Some(36..) => VERSION,
         _ => {
