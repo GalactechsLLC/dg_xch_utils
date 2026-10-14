@@ -5,6 +5,8 @@ pub mod mmap;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 mod record_compat;
+#[cfg(feature = "rocksdb")]
+pub mod rocksdb;
 pub mod sqlite;
 pub mod telemetry;
 pub mod traits;
@@ -15,6 +17,8 @@ pub use error::StoreError;
 pub use mmap::MmapStore;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresStore;
+#[cfg(feature = "rocksdb")]
+pub use rocksdb::RocksDbStore;
 pub use sqlite::SqliteStore;
 pub use telemetry::{DURATION_BUCKETS_SECS, HistogramSnapshot, StoreTelemetry};
 pub use traits::{BlockStore, CoinStore};

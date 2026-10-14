@@ -639,9 +639,9 @@ pub trait BlockStore {
     /// Returns [`StoreError::Backend`] if the commit fails.
     async fn commit(&self, batch: BatchHandle) -> Result<(), StoreError>;
 
-    /// Whether SQLite uses per-block commits and WAL reclamation near tip instead of
-    /// per-window commits and reusable WAL allocation during catch-up. Defaults to false;
-    /// PostgreSQL and mmap ignore this setting.
+    /// Whether the engine uses per-block commits near tip instead of per-window commits
+    /// during catch-up. SQLite also changes its cache and WAL reclamation policy;
+    /// RocksDB v1 changes commit granularity only. Defaults to false.
     fn near_tip(&self) -> bool {
         false
     }

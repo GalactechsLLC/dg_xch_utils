@@ -18,6 +18,7 @@ log = "0.4.28"
 sqlx = { version = "=0.8.6", features = ["macros", "runtime-tokio", "tls-rustls-aws-lc-rs", "sqlite"] }
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "macros"] }
 memmap2 = { version = "0.9", optional = true }
+rocksdb = { version = "0.25", optional = true, default-features = false, features = ["bindgen-runtime"] }
 zstd = "0.13.2"
 libsqlite3-sys = "0.30.1"
 
@@ -36,3 +37,4 @@ hint = ["coin-index"]
 postgres = ["sqlx/postgres", "dg_xch_core/postgres"]
 # The embedded libbitcoin-style backend (the Pi profile): mmap logs + slot-table indexes.
 mmap = ["dep:memmap2"]
+rocksdb = ["dep:rocksdb"]

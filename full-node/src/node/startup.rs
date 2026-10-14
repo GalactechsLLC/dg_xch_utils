@@ -2,12 +2,11 @@
 
 use super::*;
 
-/// Open the configured storage backend. Only the embedded SQLite backend is built today.
+/// Open the SQLite backend for `FullNode::boot`.
+/// Other backends use the server dispatch and `FullNode::boot_with_store`.
 ///
 /// # Errors
-/// Returns [`ErrorKind::Unsupported`] for a `postgres://` URL (the industrial backend is a
-/// `dg_xch_stores` concern not yet landed), or an I/O error if the SQLite database cannot be
-/// opened or migrated.
+/// Returns an unsupported-backend error or an I/O error when open/migration fails.
 pub async fn open_backend(backend: &Backend) -> Result<Arc<SqliteStore>, Error> {
     match backend {
         Backend::Sqlite(path) => {
@@ -16,12 +15,19 @@ pub async fn open_backend(backend: &Backend) -> Result<Arc<SqliteStore>, Error> 
                 .map_err(|e| Error::other(format!("open sqlite {}: {e}", path.display())))?;
             Ok(Arc::new(store))
         }
-        // The Postgres and mmap backends are constructed in main's dispatch (FullNode::boot_with_store);
+        // Other backends are constructed in server dispatch (FullNode::boot_with_store);
         // this SQLite-typed helper only serves FullNode::boot's embedded path.
         Backend::Postgres(url) => Err(Error::new(
             ErrorKind::Unsupported,
             format!(
                 "postgres backend ({url}) boots via FullNode::boot_with_store, not open_backend"
+            ),
+        )),
+        Backend::Rocksdb(dir) => Err(Error::new(
+            ErrorKind::Unsupported,
+            format!(
+                "rocksdb backend ({}) boots via FullNode::boot_with_store, not open_backend",
+                dir.display()
             ),
         )),
         Backend::Mmap(dir) => Err(Error::new(

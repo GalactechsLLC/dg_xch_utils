@@ -127,3 +127,29 @@ jobs:
       - name: Render every page on Windows
         if: runner.os == 'Windows'
         run: timeout 60s target/debug/dgx.exe gui --smoke-test
+
+  rocksdb:
+    name: RocksDB full node
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout submodules
+        run: git submodule update --init --recursive
+      - uses: ./.github/actions/setup-native-deps
+      - name: Install RocksDB binding dependencies
+        run: sudo apt-get install --yes clang libclang-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Check full-node CLI
+        run: cargo check --locked -p dg_xch_cli --no-default-features --features rocksdb,hint
+      - name: Lint RocksDB storage
+        run: cargo clippy --locked -p dg_xch_stores --all-targets --features rocksdb,hint -- -D warnings
+      - name: Test validator storage
+        run: cargo test --locked -p dg_xch_stores --features rocksdb
+      - name: Test wallet service storage
+        run: cargo test --locked -p dg_xch_stores --features rocksdb,hint
+      - name: Test full-node sync, RPC, and wallet delivery
+        run: cargo test --locked -p dg_full_node --features rocksdb,hint --test integration

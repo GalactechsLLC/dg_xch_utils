@@ -72,3 +72,5 @@ coin-index = ["dg_xch_stores/coin-index"]
 hint = ["coin-index", "dg_xch_stores/hint", "dg_xch_node/hint"]
 postgres = ["coin-index", "hint", "dg_xch_stores/postgres"]
 mmap = ["dg_xch_stores/mmap"]
+
+rocksdb = ["dg_xch_stores/rocksdb"]
