@@ -1,5 +1,6 @@
 pub(crate) mod config;
 pub mod farmer;
+mod farmer_setup;
 pub mod introducer;
 pub mod plotter;
 pub mod pool;

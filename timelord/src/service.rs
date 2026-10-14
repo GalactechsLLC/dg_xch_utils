@@ -113,11 +113,29 @@ pub(crate) async fn connect(
     let response = tokio::time::timeout(Duration::from_secs(10), socket.next())
         .await
         .map_err(|_| Error::new(ErrorKind::TimedOut, "timelord handshake timed out"))?;
-    let Some(Ok(Message::Binary(bytes))) = response else {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "full node did not return a handshake",
-        ));
+    let bytes = match response {
+        Some(Ok(Message::Binary(bytes))) => bytes,
+        Some(Ok(Message::Close(frame))) => {
+            return Err(Error::new(
+                ErrorKind::ConnectionAborted,
+                format!(
+                    "full node closed connection before handshake ({frame:?}); verify the node trusts the timelord's network"
+                ),
+            ));
+        }
+        Some(Err(error)) => return Err(Error::other(error)),
+        None => {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "full node disconnected before handshake",
+            ));
+        }
+        Some(Ok(_)) => {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "full node returned a non-binary frame before handshake",
+            ));
+        }
     };
     let message: ChiaMessage = decode_exact(&bytes)?;
     let greeting: Handshake = decode_exact(message.data.as_slice())?;

@@ -6,7 +6,9 @@ use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::blockchain::unfinished_block::UnfinishedBlock;
 use dg_xch_core::protocols::ban::BanCause;
-use dg_xch_core::protocols::farmer::{DeclareProofOfSpace, RequestSignedValues, SignedValues};
+use dg_xch_core::protocols::farmer::{
+    DeclareProofOfSpace, NewSignagePoint, RequestSignedValues, SignedValues,
+};
 use dg_xch_core::protocols::full_node::{
     NewCompactVDF, NewPeak, NewSignagePointOrEndOfSubSlot, NewTransaction, NewUnfinishedBlock,
     NewUnfinishedBlock2, RejectBlock, RejectBlocks, RequestBlock, RequestBlocks, RequestCompactVDF,
@@ -435,6 +437,9 @@ pub trait FullNodeApi: Send + Sync {
     // cannot support the difficulty/challenge walks) sends nothing. Boxed: NewPeakTimelord
     // carries a full RewardChainBlock and would bloat every blind-api vtable copy otherwise.
     async fn timelord_peak(&self) -> Option<Box<NewPeakTimelord>> {
+        None
+    }
+    async fn farmer_signage_point(&self) -> Option<NewSignagePoint> {
         None
     }
     async fn timelord_genesis(&self) -> Option<NewGenesisTimelord> {
@@ -929,6 +934,20 @@ impl FullNodeHandler {
                                 peer_id,
                                 ProtocolMessageTypes::NewPeakWallet,
                                 &peak,
+                                None,
+                                negotiated,
+                            )
+                            .await?;
+                        }
+                    }
+                    NodeType::Farmer => {
+                        if let Some(sp) = self.api.farmer_signage_point().await {
+                            send(
+                                &self.counters,
+                                peers,
+                                peer_id,
+                                ProtocolMessageTypes::NewSignagePoint,
+                                &sp,
                                 None,
                                 negotiated,
                             )

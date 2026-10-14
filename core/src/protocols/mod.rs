@@ -15,6 +15,7 @@ pub mod shared;
 pub mod simulator;
 pub mod timelord;
 pub mod wallet;
+pub mod wallet_sync;
 
 use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::unsized_bytes::UnsizedBytes;
@@ -1396,6 +1397,9 @@ impl ReadStream {
                                         }
                                     }
                                 }
+                                // Tungstenite handles Ping replies at the transport layer.
+                                // Heartbeats are control frames, not Chia protocol messages.
+                                Message::Ping(_) | Message::Pong(_) => {},
                                 Message::Close(e) => {
                                     debug!(
                                         "websocket close connection={} peer_id={} frame={e:?}",

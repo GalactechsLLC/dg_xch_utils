@@ -21,6 +21,18 @@ pub struct CrawlerArgs {
     /// Repeat to supply bootstrap nodes (IP or hostname with port).
     #[arg(long)]
     seed: Vec<String>,
+    /// Enable IPv6 seed addresses and probes (true by default); use false for IPv4 only.
+    #[arg(long, action = clap::ArgAction::Set)]
+    enable_ipv6: Option<bool>,
+    /// Expected network port (8444 for mainnet, 58444 for testnet11).
+    #[arg(long)]
+    peer_port: Option<u16>,
+    /// Minimum full-node peak height for a positive reliability observation.
+    #[arg(long)]
+    minimum_height: Option<u32>,
+    /// Separate NewPeak wait deadline in milliseconds (default: 60000).
+    #[arg(long)]
+    peak_wait_ms: Option<u64>,
     #[arg(long)]
     concurrency: Option<usize>,
     /// Minimum spacing between all outbound connection attempts.
@@ -29,7 +41,10 @@ pub struct CrawlerArgs {
     /// Successful peers are revisited after this delay (plus jitter).
     #[arg(long)]
     revisit_seconds: Option<u64>,
-    /// Deadline for the entire peer probe, including handshake and discovery.
+    /// TCP connection deadline in seconds, capped by the connection timeout.
+    #[arg(long)]
+    tcp_connect_timeout_seconds: Option<u64>,
+    /// Deadline for TCP, TLS, WebSocket, and Chia handshake; discovery and NewPeak have separate deadlines.
     #[arg(long)]
     timeout_seconds: Option<u64>,
     /// Recent means a successful Chia handshake within this window.
@@ -72,6 +87,18 @@ impl CrawlerArgs {
         if !self.seed.is_empty() {
             config.seed = self.seed.clone();
         }
+        if let Some(value) = self.enable_ipv6 {
+            config.enable_ipv6 = value;
+        }
+        if let Some(value) = self.peer_port {
+            config.peer_port = Some(value);
+        }
+        if let Some(value) = self.minimum_height {
+            config.minimum_height = Some(value);
+        }
+        if let Some(value) = self.peak_wait_ms {
+            config.peak_wait_ms = value;
+        }
         if let Some(value) = self.concurrency {
             config.concurrency = value;
         }
@@ -80,6 +107,9 @@ impl CrawlerArgs {
         }
         if let Some(value) = self.revisit_seconds {
             config.revisit_seconds = value;
+        }
+        if let Some(value) = self.tcp_connect_timeout_seconds {
+            config.tcp_connect_timeout_seconds = value;
         }
         if let Some(value) = self.timeout_seconds {
             config.timeout_seconds = value;

@@ -15,9 +15,29 @@ pub fn render(s: &Summary) -> Result<String, Error> {
     .map_err(Error::other)?;
     for (name, help, value) in [
         (
+            "reliable_full_nodes",
+            "Full nodes with qualifying peaks and sufficient historical reliability",
+            s.reliable as i64,
+        ),
+        (
+            "ignored_endpoints",
+            "Endpoints temporarily ignored based on reliability",
+            s.ignored as i64,
+        ),
+        (
+            "banned_endpoints",
+            "Endpoints suspended based on long-term reliability",
+            s.banned as i64,
+        ),
+        (
             "attempted_endpoints",
             "Retained endpoints attempted by the crawler",
             s.attempted as i64,
+        ),
+        (
+            "attempted_connected_endpoints",
+            "Attempted retained endpoints with at least one observed connection",
+            s.attempted_connected as i64,
         ),
         (
             "never_attempted_endpoints",
@@ -40,9 +60,24 @@ pub fn render(s: &Summary) -> Result<String, Error> {
             s.configured_concurrency as i64,
         ),
         (
+            "peak_wait_milliseconds",
+            "Separate NewPeak observation deadline after peer discovery",
+            s.peak_wait_ms as i64,
+        ),
+        (
+            "tcp_connect_timeout_seconds",
+            "Configured TCP connection deadline; also bounded by the connection deadline",
+            s.tcp_connect_timeout_seconds as i64,
+        ),
+        (
             "interval_milliseconds",
             "Minimum spacing between crawl attempts",
             s.interval_ms as i64,
+        ),
+        (
+            "ipv6_enabled",
+            "One if outbound IPv6 probing is enabled for this crawler network",
+            i64::from(s.enable_ipv6),
         ),
         (
             "ipv6_known_endpoints",
@@ -58,6 +93,21 @@ pub fn render(s: &Summary) -> Result<String, Error> {
             "known_endpoints",
             "Retained gossiped or seeded IP and port endpoints, not a global node census",
             s.known as i64,
+        ),
+        (
+            "total_nodes_5_days",
+            "Distinct IPs with an accepted advertised gossip timestamp within five days; reachability is not required",
+            s.total_nodes_5_days as i64,
+        ),
+        (
+            "ipv4_nodes_5_days",
+            "Distinct IPv4 addresses with an accepted advertised gossip timestamp within five days",
+            s.ipv4_nodes_5_days as i64,
+        ),
+        (
+            "ipv6_nodes_5_days",
+            "Distinct IPv6 addresses with an accepted advertised gossip timestamp within five days, including when IPv6 probing is disabled",
+            s.ipv6_nodes_5_days as i64,
         ),
         (
             "ever_connected_endpoints",
@@ -76,7 +126,7 @@ pub fn render(s: &Summary) -> Result<String, Error> {
         ),
         (
             "due_endpoints",
-            "Endpoints due for probing, including those under an IP cooldown",
+            "Eligible endpoints due for probing, before global concurrency and rate limits",
             s.due as i64,
         ),
         (
@@ -119,6 +169,7 @@ pub fn render(s: &Summary) -> Result<String, Error> {
         "websocket",
         "handshake",
         "peer_request",
+        "verification",
     ] {
         failures
             .with_label_values(&[phase])
@@ -151,7 +202,7 @@ pub fn render(s: &Summary) -> Result<String, Error> {
         ),
         (
             "gossip_received_total",
-            "Endpoints in accepted peer responses including duplicates",
+            "Cumulative entries in accepted peer responses, including duplicates and rejected addresses",
             t.gossip_received,
         ),
         (

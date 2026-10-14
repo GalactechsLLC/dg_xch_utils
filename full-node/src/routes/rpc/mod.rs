@@ -89,7 +89,6 @@ mod get_coin_page;
 mod get_coin_record_by_name;
 #[cfg(feature = "coin-index")]
 mod get_coin_summary;
-#[cfg(feature = "coin-index")]
 static EXPLORER_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 #[cfg(feature = "hint")]
 mod get_coin_records_by_hint;
@@ -112,8 +111,10 @@ mod get_node_details;
 mod get_puzzle_and_solution;
 mod get_recent_signage_point_or_eos;
 mod get_routes;
+mod get_rpc_capabilities;
 mod get_unfinished_block_headers;
 mod get_version;
+mod get_wallet_coin_records;
 mod healthz;
 mod push_tx;
 mod set_auto_farming;
@@ -244,6 +245,8 @@ pub fn route_names() -> Vec<&'static str> {
         get_unfinished_block_headers::PATH,
         get_network_space::PATH,
         get_recent_signage_point_or_eos::PATH,
+        get_rpc_capabilities::PATH,
+        get_wallet_coin_records::PATH,
         get_coin_records_by_names::PATH,
         get_coin_record_by_name::PATH,
         #[cfg(feature = "coin-index")]

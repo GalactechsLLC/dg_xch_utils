@@ -40,6 +40,32 @@ pub struct FullnodeClient {
 }
 
 impl FullnodeClient {
+    /// Discover versioned optional RPC contracts; only HTTP 404/405 mean discovery is unsupported.
+    pub async fn get_rpc_capabilities(
+        &self,
+    ) -> Result<Option<dg_xch_core::protocols::wallet_sync::RpcCapabilities>, ChiaRpcError> {
+        crate::rpc::post_optional(
+            &self.client,
+            &(self.url_function)(&self.host, self.port, "get_rpc_capabilities"),
+            &serde_json::Map::new(),
+            &self.additional_headers,
+        )
+        .await
+    }
+
+    /// Read one ordered page of puzzle-hash and hinted coins at the requested chain checkpoint.
+    pub async fn get_wallet_coin_records(
+        &self,
+        request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, ChiaRpcError> {
+        request.validate().map_err(|error| ChiaRpcError {
+            success: false,
+            error: Some(error),
+        })?;
+        self.explorer_query("get_wallet_coin_records", request)
+            .await
+    }
+
     /// Read a bounded, checkpoint-pinned explorer page from a service-tier node.
     pub async fn get_coin_records_page(
         &self,

@@ -1444,6 +1444,7 @@ dependencies = [
  "dg_xch_keys",
  "dg_xch_plotter",
  "dg_xch_pos2",
+ "dg_xch_puzzles",
  "dg_xch_servers",
  "dg_xch_wallet",
  "eframe",
@@ -1787,6 +1788,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "rayon",
  "rug",
  "sha2",
 ]

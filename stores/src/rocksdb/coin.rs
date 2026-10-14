@@ -315,6 +315,10 @@ fn indexed_coins(
 
 #[async_trait]
 impl CoinStore for RocksDbStore {
+    fn supports_explorer_queries(&self) -> bool {
+        cfg!(feature = "coin-index")
+    }
+
     #[cfg(feature = "coin-index")]
     async fn coin_page(
         &self,

@@ -56,6 +56,7 @@ impl Role {
 pub struct Observation {
     pub handshake: Option<Handshake>,
     pub node_id: Option<String>,
+    pub tls_version: Option<String>,
     pub connect_ms: Option<f64>,
     pub peer_request_ms: Option<f64>,
     pub peers: Vec<TimestampedPeerInfo>,
@@ -70,6 +71,7 @@ pub struct Peer {
     pub last_seen: u64,
     pub first_gossiped: Option<u64>,
     pub last_gossiped: Option<u64>,
+    pub last_gossiped_by: Option<String>,
     pub reported_gossip_timestamp: Option<u64>,
     pub first_source: String,
     pub first_success: Option<u64>,
@@ -77,11 +79,13 @@ pub struct Peer {
     pub last_attempt: Option<u64>,
     pub next_attempt: u64,
     pub attempts: u64,
+    pub inflight: bool,
     pub successes: u64,
     pub consecutive_failures: u32,
     pub node_id: Option<String>,
     pub software_version: Option<String>,
     pub protocol_version: Option<String>,
+    pub tls_version: Option<String>,
     pub node_type: Option<u8>,
     pub advertised_port: Option<u16>,
     pub capabilities: Vec<(u16, String)>,
@@ -93,6 +97,8 @@ pub struct Peer {
     pub last_error: Option<String>,
     pub last_error_phase: Option<Phase>,
     pub last_error_at: Option<u64>,
+    pub reliable: bool,
+    pub reliability: super::Reliability,
     pub verified_at: Option<u64>,
     pub verified_until: Option<u64>,
 }
@@ -112,17 +118,136 @@ pub struct Totals {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Point {
     pub timestamp: u64,
+    pub sampled_at: u64,
     pub known: usize,
     pub recent: usize,
     pub identities: usize,
+    pub total_nodes_5_days: Option<usize>,
+    pub ipv4_nodes_5_days: Option<usize>,
+    pub ipv6_nodes_5_days: Option<usize>,
+    pub completed_probes: usize,
+    pub handshakes: usize,
+    pub peer_responses: usize,
+    pub failures: usize,
+    pub average_connect_ms: Option<f64>,
+    pub average_peer_request_ms: Option<f64>,
 }
+
+#[derive(Deserialize)]
+pub struct VersionQuery {
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+#[derive(Serialize)]
+pub struct VersionEntry {
+    pub version: String,
+    pub count: usize,
+}
+#[derive(Serialize)]
+pub struct VersionPage {
+    pub timestamp: u64,
+    pub versions: Vec<VersionEntry>,
+    pub total_versions: usize,
+    pub total_endpoints: usize,
+    pub next_offset: Option<usize>,
+}
+#[derive(Serialize)]
+pub struct FailureGroup {
+    pub phase: Phase,
+    pub reason: &'static str,
+    pub error: String,
+    pub error_variants: usize,
+    pub count: usize,
+    pub ipv4: usize,
+    pub ipv6: usize,
+}
+#[derive(Serialize)]
+pub struct Diagnostics {
+    pub timestamp: u64,
+    pub latest_failures: usize,
+    pub groups: Vec<FailureGroup>,
+    pub other_failures: usize,
+}
+// Ordered rules shared by probe logs, SQL aggregation, and peer-list filters.
+const FAILURE_RULES: &[(&str, Option<Phase>, &[&str])] = &[
+    ("timeout", None, &["timed out", "timeout"]),
+    ("refused", Some(Phase::TcpConnect), &["refused"]),
+    (
+        "routing",
+        Some(Phase::TcpConnect),
+        &["unreachable", "no route"],
+    ),
+    (
+        "permission",
+        Some(Phase::TcpConnect),
+        &["permission denied", "operation not permitted"],
+    ),
+    (
+        "local_address",
+        Some(Phase::TcpConnect),
+        &["cannot assign requested address", "address not available"],
+    ),
+    ("connection", Some(Phase::TcpConnect), &[]),
+    (
+        "handshake",
+        None,
+        &["wrong network", "unsupported node type"],
+    ),
+    ("closed", None, &["closed", "reset"]),
+];
+/// Classify recorded messages conservatively; retain the original error as evidence.
+pub fn failure_reason(phase: Phase, error: &str) -> &'static str {
+    let error = error.to_ascii_lowercase();
+    FAILURE_RULES
+        .iter()
+        .find(|(_, expected, patterns)| {
+            expected.is_none_or(|expected| expected == phase)
+                && (patterns.is_empty() || patterns.iter().any(|pattern| error.contains(pattern)))
+        })
+        .map_or("protocol", |(reason, _, _)| reason)
+}
+/// Column names are fixed internal identifiers; user filter values are bound separately.
+pub(super) fn failure_reason_sql(phase: &str, error: &str) -> String {
+    let mut sql = String::from("CASE");
+    for (reason, expected, patterns) in FAILURE_RULES {
+        let mut conditions = Vec::new();
+        if let Some(expected) = expected {
+            conditions.push(format!("{phase}='{}'", expected.as_str()));
+        }
+        if !patterns.is_empty() {
+            conditions.push(format!(
+                "({})",
+                patterns
+                    .iter()
+                    .map(|pattern| format!("lower({error}) LIKE '%{pattern}%' "))
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            ));
+        }
+        sql.push_str(&format!(
+            " WHEN {} THEN '{reason}'",
+            conditions.join(" AND ")
+        ));
+    }
+    sql.push_str(" ELSE 'protocol' END");
+    sql
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Summary {
     pub timestamp: u64,
     pub network: String,
     pub known: usize,
+    pub total_nodes_5_days: usize,
+    pub ipv4_nodes_5_days: usize,
+    pub ipv6_nodes_5_days: usize,
     pub ever_connected: usize,
     pub recent: usize,
+    pub reliable: usize,
+    pub ignored: usize,
+    pub banned: usize,
     pub recent_window_seconds: u64,
     pub unique_recent_identities: usize,
     pub due: usize,
@@ -139,6 +264,7 @@ pub struct Summary {
     pub storage_error: Option<String>,
     pub seed_error: Option<String>,
     pub attempted: usize,
+    pub attempted_connected: usize,
     pub never_attempted: usize,
     pub failed_latest: usize,
     pub pending_retry: usize,
@@ -146,12 +272,24 @@ pub struct Summary {
     pub ipv4_known: usize,
     pub ipv6_known: usize,
     pub ipv6_attempted: usize,
+    pub enable_ipv6: bool,
     pub configured_concurrency: usize,
     pub interval_ms: u64,
     pub timeout_seconds: u64,
+    pub tcp_connect_timeout_seconds: u64,
+    pub peak_wait_ms: u64,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct CrawlerPolicy {
+    pub enable_ipv6: bool,
+    pub port: u16,
+    pub minimum_height: u32,
+    pub peak_wait_ms: u64,
+    pub tcp_connect_timeout_seconds: u64,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Policy {
+    pub crawler: Option<CrawlerPolicy>,
     pub concurrency: usize,
     pub interval_ms: u64,
     pub timeout_seconds: u64,
@@ -214,6 +352,14 @@ pub struct Page {
     pub limit: usize,
     #[serde(default)]
     pub search: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub recent_seconds: Option<u64>,
+    #[serde(default)]
+    pub failure_phase: Option<Phase>,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
     #[serde(default)]
     pub sort: Sort,
     #[serde(default)]

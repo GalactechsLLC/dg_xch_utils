@@ -40,7 +40,36 @@ pub async fn stylesheet() -> Result<Response, PortfuError> {
 pub async fn stats(app: State<App>) -> Result<Response, PortfuError> {
     json(&app.0.summary().await.map_err(PortfuError::Io)?)
 }
-use dg_xch_servers::discovery::Page;
+use dg_xch_servers::discovery::{Page, VersionPage, VersionQuery};
+#[derive(serde::Serialize)]
+struct VersionResponse {
+    #[serde(flatten)]
+    page: VersionPage,
+    recent_window_seconds: u64,
+}
+pub async fn versions(
+    app: State<App>,
+    query: Query<VersionQuery>,
+) -> Result<Response, PortfuError> {
+    match app
+        .0
+        .store
+        .version_page(app.0.config.recent_seconds, &query.0)
+        .await
+    {
+        Ok(page) => json(&VersionResponse {
+            page,
+            recent_window_seconds: app.0.config.recent_seconds,
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => Ok(
+            Response::from_status_and_message(StatusCode::BAD_REQUEST, "invalid version page"),
+        ),
+        Err(error) => Err(PortfuError::Io(error)),
+    }
+}
+pub async fn diagnostics(app: State<App>) -> Result<Response, PortfuError> {
+    json(&app.0.store.diagnostics().await.map_err(PortfuError::Io)?)
+}
 pub async fn peers(app: State<App>, page: Query<Page>) -> Result<Response, PortfuError> {
     match app.0.store.page(&page.0).await {
         Ok(data) => json(&data),
@@ -136,6 +165,15 @@ impl portfu::prelude::ServiceTrait for Router {
                     }
                 }
                 "/api/history" => history(State(self.0.clone())).await,
+                "/api/diagnostics" => diagnostics(State(self.0.clone())).await,
+                "/api/versions" => match <Query<VersionQuery> as FromRequest<
+                    portfu::prelude::Request,
+                >>::try_from(request)
+                .await
+                {
+                    Ok(query) => versions(State(self.0.clone()), query).await,
+                    Err(error) => Err(error),
+                },
                 "/metrics" => metrics(State(self.0.clone())).await,
                 "/health" => health(State(self.0.clone())).await,
                 "/ready" => ready(State(self.0.clone())).await,

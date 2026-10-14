@@ -279,3 +279,47 @@ fn launch_parameters_require_at_least_one_valid_plot_strength() {
         assert!(definition.constants().is_err());
     }
 }
+
+#[test]
+fn pos2_test_preserves_every_testnet11_rule_except_chain_identity_and_activation() {
+    let definition = ChainDefinition::dg_pos2_test();
+    let mut constants = definition.constants().unwrap();
+    let baseline = crate::consensus::constants::TESTNET_11;
+    assert_eq!(constants.hard_fork2_height, 0);
+    assert_eq!(constants.bech32_prefix, "txch");
+    assert!(constants.is_testnet);
+    assert_ne!(constants.genesis_challenge, baseline.genesis_challenge);
+    assert_ne!(
+        constants.agg_sig_me_additional_data,
+        baseline.agg_sig_me_additional_data
+    );
+    constants.hard_fork2_height = baseline.hard_fork2_height;
+    constants.genesis_challenge = baseline.genesis_challenge;
+    constants.agg_sig_me_additional_data = baseline.agg_sig_me_additional_data;
+    assert_eq!(constants, baseline);
+    let selected = ChainSelection::from_config("dg_pos2_test", None).unwrap();
+    assert_eq!(selected, ChainSelection::Custom(definition.clone()));
+    assert!(selected.resolve().unwrap().allows_bootstrap);
+    assert_eq!(
+        serde_json::from_slice::<ChainDefinition>(&serde_json::to_vec(&definition).unwrap())
+            .unwrap(),
+        definition
+    );
+}
+
+#[test]
+fn inherited_chain_rejects_ambiguous_launch_rules() {
+    let mut definition = ChainDefinition::dg_pos2_test();
+    definition.consensus = Some(LaunchConsensus::default());
+    assert!(definition.constants().is_err());
+    let mut definition = ChainDefinition::default();
+    definition.pos2_activation_height = Some(0);
+    assert!(definition.constants().is_err());
+}
+
+#[test]
+fn published_pos2_test_definition_matches_preset() {
+    let definition: ChainDefinition =
+        serde_json::from_str(include_str!("../../../../config/chains/dg_pos2_test.json")).unwrap();
+    assert_eq!(definition, ChainDefinition::dg_pos2_test());
+}

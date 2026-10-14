@@ -284,6 +284,7 @@ pub async fn serve(config: Config) -> Result<(), Error> {
         .configure(
             Role::Introducer,
             Policy {
+                crawler: None,
                 concurrency: config.probe_concurrency,
                 interval_ms: config.probe_interval_ms,
                 timeout_seconds: 3,
@@ -572,6 +573,7 @@ mod tests {
             .configure(
                 Role::Introducer,
                 Policy {
+                    crawler: None,
                     concurrency: 1,
                     interval_ms: 500,
                     timeout_seconds: 3,

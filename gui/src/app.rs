@@ -116,6 +116,10 @@ pub struct Desktop {
     farmer_key: String,
     pool_binding: String,
     portable: bool,
+    plot_count: u16,
+    payout_wallet: Option<String>,
+    payout_index: u32,
+    payout_pending: bool,
     plot_k: u8,
     plot_strength: u8,
     plot_index: u16,
@@ -183,6 +187,10 @@ impl Desktop {
             farmer_key: String::new(),
             pool_binding: String::new(),
             portable: true,
+            plot_count: 1,
+            payout_wallet: None,
+            payout_index: 0,
+            payout_pending: false,
             plot_k: 28,
             plot_strength: 2,
             plot_index: 0,
@@ -846,7 +854,7 @@ impl Desktop {
         if !self.settings.farmer_config.is_empty() {
             ui.label(format!("Configuration: {}", self.settings.farmer_config));
         }
-        ui.weak("A configuration file is optional for account farming. For an existing setup, select a farmer YAML file in Settings and protect its keys.");
+
         self.pool_settings(ui, state);
         ui.separator();
         ui.heading("Plot inventory");
@@ -1494,83 +1502,37 @@ impl Desktop {
     }
 
     fn plots(&mut self, ui: &mut Ui, state: &State) {
-        heading(
-            ui,
-            "Plots",
-            "Create plots while your node continues to synchronize.",
-        );
-        notice(
-            ui,
-            "Before you plot",
-            "You can plot during node sync. Leave enough memory for the node. PoS2 farming depends on network activation; small test plots are not mainnet plots.",
-        );
+        heading(ui, "Plots", "Create and queue plots.");
+        ui.weak("Leave memory for the node. PoS2 farming requires network activation; small plots are for testing.");
         if ui.available_width() >= 850.0 {
             ui.columns(2, |columns| {
                 self.plotting_account(&mut columns[0], state);
+                self.plot_performance(&mut columns[0]);
                 self.plot_file(&mut columns[1]);
+                self.plot_advanced(&mut columns[1]);
             });
         } else {
             self.plotting_account(ui, state);
             self.plot_file(ui);
+            self.plot_performance(ui);
+            self.plot_advanced(ui);
         }
-        section(ui, "Size & performance", |ui| {
-            ui.weak("PoS2 in-memory plotting supports even sizes k18–k32. Larger sizes need more memory.");
-            metric_grid(ui, "plot_parameters").show(ui, |ui| {
-                ui.label("Plot size").on_hover_text("Only even k sizes are supported. Small sizes are for development, not mainnet farming.");
-                egui::ComboBox::from_id_salt("plot_size").width(180.0).selected_text(format!("k{}", self.plot_k)).show_ui(ui, |ui| {
-                    for size in (18..=32).step_by(2) {
-                        ui.selectable_value(&mut self.plot_k, size, format!("k{size}"));
-                    }
-                });
-                ui.end_row();
-                ui.label("Strength").on_hover_text("Controls the proof-of-space work parameter. Valid values depend on plot size.");
-                let maximum = self.plot_k
-                    - if self.plot_k < 28 {
-                        2
-                    } else {
-                        self.plot_k - 26
-                    }
-                    - 1;
-                self.plot_strength = self.plot_strength.clamp(2, maximum);
-                ui.add_sized([180.0, 36.0], egui::DragValue::new(&mut self.plot_strength).range(2..=maximum));
-                ui.end_row();
-                ui.label("Compute device");
-                egui::ComboBox::from_id_salt("plot_compute").width(180.0).selected_text(if self.plot_gpu { "GPU (Settings backend)" } else { "CPU" }).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.plot_gpu, false, "CPU");
-                    ui.selectable_value(&mut self.plot_gpu, true, "GPU (Settings backend)");
-                });
-                ui.end_row();
-                ui.label("Memory budget (MiB)").on_hover_text("A maximum, not a reservation. Leave memory for the node and other applications.");
-                ui.add_sized([180.0, 36.0], egui::DragValue::new(&mut self.plot_memory_mib).range(128..=524288));
-                ui.end_row();
-            });
-        });
-        section(ui, "Advanced plot parameters", |ui| {
-            ui.weak("Keep these defaults unless your network or plotting setup requires a change.");
-            metric_grid(ui, "plot_advanced").show(ui, |ui| {
-                ui.label("Plot index").on_hover_text("Distinguishes plots with the same keys and parameters.");
-                ui.add_sized([180.0, 36.0], egui::DragValue::new(&mut self.plot_index));
-                ui.end_row();
-                ui.label("Meta group").on_hover_text("PoS2 plot identity parameter. Leave at zero unless you are managing plot groups.");
-                ui.add_sized([180.0, 36.0], egui::DragValue::new(&mut self.plot_meta));
-                ui.end_row();
-                ui.label("Hash domain");
-                egui::ComboBox::from_id_salt("plot_domain").width(180.0).selected_text(if self.plot_testnet { "PoS2 testnet" } else { "Production" }).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.plot_testnet, false, "Production");
-                    ui.selectable_value(&mut self.plot_testnet, true, "PoS2 testnet");
-                });
-                ui.end_row();
-                ui.label("Compute work limit").on_hover_text("Maximum 16-round AES evaluations. Stops the job before it exceeds this compute budget.");
-                ui.add_sized([180.0, 36.0], egui::DragValue::new(&mut self.plot_max_work).range(1..=u64::MAX));
-                ui.end_row();
-            });
-        });
         ui.horizontal_wrapped(|ui| {
-            if primary_button(ui, "Create plot").on_hover_text("Create a new plot using the file, keys, and resource limits above. Existing files are never overwritten.").clicked() {
+            ui.label("Number of plots");
+            ui.add(egui::DragValue::new(&mut self.plot_count).range(1..=100));
+            if primary_button(ui, "Queue plots").on_hover_text("Create a new plot using the file, keys, and resource limits above. Existing files are never overwritten.").clicked() {
                 match self.plot_request() {
-                    Ok(request) if !self.plot_output.trim().is_empty() => {
-                        self.backend.command(Command::Plot {
-                            request,
+                    Ok(request) if PathBuf::from(self.plot_output.trim()).is_dir() => {
+                        if state.plot_queued + usize::from(self.plot_count) > 100 {
+                            self.feedback("The queue holds up to 100 waiting plots. Choose a smaller batch.", true);
+                            return;
+                        }
+                        if u32::from(request.index) + u32::from(self.plot_count) > 65536 {
+                            self.feedback("Batch exceeds the plot index limit. Choose a lower starting index.", true);
+                            return;
+                        }
+                        let jobs = (0..self.plot_count).map(|offset| Command::Plot {
+                            request: PlotRequest { index: request.index + offset, pool: request.pool.clone(), ..request },
                             output: PathBuf::from(self.plot_output.trim()),
                             limits: PlotLimits {
                                 memory_bytes: self.plot_memory_mib * 1024 * 1024,
@@ -1581,20 +1543,67 @@ impl Desktop {
                                 max_work: self.plot_max_work,
                             },
                             gpu: self.plot_gpu,
-                        })
+                        }).collect();
+                        self.backend.command(Command::BatchPlots(jobs));
+                        if let Some(next) = self.plot_index.checked_add(self.plot_count) { self.plot_index = next; }
                     }
-                    Ok(_) => self.feedback("Choose an output directory", true),
+                    Ok(_) => self.feedback("Choose an existing output directory", true),
                     Err(error) => self.feedback(error, true),
                 }
             }
-            if ui.button("Cancel job").clicked() {
+            if ui.add_enabled(state.plot_active || state.plot_queued > 0, egui::Button::new("Cancel queue")).clicked() {
                 self.backend.command(Command::CancelPlot);
             }
         });
-        if let Some(job) = &state.plot_job {
-            ui.label(job);
-        }
-        section(ui, "Verify an existing plot", |ui| {
+        ui.weak(
+            "Plots run one at a time using the selected memory budget. Each plot gets a new index.",
+        );
+        section(ui, "Plot jobs", |ui| {
+            ui.horizontal(|ui| {
+                if state.plot_active {
+                    ui.spinner();
+                    ui.strong("Running");
+                } else if state
+                    .plot_job
+                    .as_ref()
+                    .is_some_and(|job| job.contains("complete:"))
+                {
+                    ui.colored_label(crate::theme::GREEN, "Last job completed");
+                } else if state
+                    .plot_job
+                    .as_ref()
+                    .is_some_and(|job| job.contains("stopped:"))
+                {
+                    ui.colored_label(ui.visuals().error_fg_color, "Last job stopped");
+                } else {
+                    ui.strong("Ready");
+                }
+                ui.label(format!("{} queued", state.plot_queued));
+            });
+            if let Some(job) = &state.plot_job {
+                egui::CollapsingHeader::new("Job details").show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("plot_current")
+                        .max_height(120.0)
+                        .show(ui, |ui| {
+                            ui.add(egui::Label::new(job).wrap());
+                        });
+                });
+            }
+            egui::CollapsingHeader::new(format!("Completed jobs ({})", state.plot_history.len()))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("plot_history")
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            for job in state.plot_history.iter().rev() {
+                                ui.label(job);
+                                ui.separator();
+                            }
+                        });
+                });
+        });
+        egui::CollapsingHeader::new("Verify an existing plot").show(ui, |ui| {
             ui.label("Choose an existing plot. Uses the resource budgets above; unread chunks are not verified and proofs are not submitted to the network.");
             field(ui, "Existing plot file", &mut self.proof_file);
             field(ui, "Challenge (32-byte hex)", &mut self.proof_challenge);
@@ -1614,7 +1623,64 @@ impl Desktop {
                 }
             }
         });
-        ui.weak("Auto prefers a usable native Rust CUDA helper, otherwise hardware Vulkan. This is a vendor policy, not a speed benchmark. The job reports its chosen device; failures do not switch backends. Disable GPU for the portable CPU path.");
+    }
+
+    fn plot_performance(&mut self, ui: &mut Ui) {
+        section(ui, "Size & performance", |ui| {
+            ui.weak("PoS2 in-memory plotting supports even sizes k18–k32. Larger sizes need more memory.");
+            compact_grid("plot_parameters").show(ui, |ui| {
+                ui.label("Plot size").on_hover_text("Only even k sizes are supported. Small sizes are for development, not mainnet farming.");
+                egui::ComboBox::from_id_salt("plot_size").width(180.0).selected_text(format!("k{}", self.plot_k)).show_ui(ui, |ui| {
+                    for size in (18..=32).step_by(2) {
+                        ui.selectable_value(&mut self.plot_k, size, format!("k{size}"));
+                    }
+                });
+                ui.end_row();
+                ui.label("Strength").on_hover_text("Controls the proof-of-space work parameter. Valid values depend on plot size.");
+                let maximum = self.plot_k
+                    - if self.plot_k < 28 {
+                        2
+                    } else {
+                        self.plot_k - 26
+                    }
+                    - 1;
+                self.plot_strength = self.plot_strength.clamp(2, maximum);
+                ui.add_sized([120.0, 28.0], egui::DragValue::new(&mut self.plot_strength).range(2..=maximum));
+                ui.end_row();
+                ui.label("Compute device");
+                egui::ComboBox::from_id_salt("plot_compute").width(180.0).selected_text(if self.plot_gpu { "GPU (Settings backend)" } else { "CPU" }).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.plot_gpu, false, "CPU");
+                    ui.selectable_value(&mut self.plot_gpu, true, "GPU (Settings backend)");
+                });
+                ui.end_row();
+                ui.label("Memory budget (MiB)").on_hover_text("A maximum, not a reservation. Leave memory for the node and other applications.");
+                ui.add_sized([120.0, 28.0], egui::DragValue::new(&mut self.plot_memory_mib).range(128..=524288));
+                ui.end_row();
+            });
+        });
+    }
+
+    fn plot_advanced(&mut self, ui: &mut Ui) {
+        egui::CollapsingHeader::new("Advanced plot parameters").show(ui, |ui| {
+            ui.weak("Keep these defaults unless your network or plotting setup requires a change.");
+            compact_grid("plot_advanced").show(ui, |ui| {
+                ui.label("Plot index").on_hover_text("Distinguishes plots with the same keys and parameters.");
+                ui.add_sized([120.0, 28.0], egui::DragValue::new(&mut self.plot_index));
+                ui.end_row();
+                ui.label("Meta group").on_hover_text("PoS2 plot identity parameter. Leave at zero unless you are managing plot groups.");
+                ui.add_sized([120.0, 28.0], egui::DragValue::new(&mut self.plot_meta));
+                ui.end_row();
+                ui.label("Hash domain");
+                egui::ComboBox::from_id_salt("plot_domain").width(180.0).selected_text(if self.plot_testnet { "PoS2 testnet" } else { "Production" }).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.plot_testnet, false, "Production");
+                    ui.selectable_value(&mut self.plot_testnet, true, "PoS2 testnet");
+                });
+                ui.end_row();
+                ui.label("Compute work limit").on_hover_text("Maximum 16-round AES evaluations. Stops the job before it exceeds this compute budget.");
+                ui.add_sized([120.0, 28.0], egui::DragValue::new(&mut self.plot_max_work).range(1..=u64::MAX));
+                ui.end_row();
+            });
+        });
     }
 
     fn plotting_account(&mut self, ui: &mut Ui, state: &State) {
@@ -1625,18 +1691,28 @@ impl Desktop {
                     self.page = Page::Wallets;
                 }
             }
-            for account in &state.accounts {
-                if selection_button(
-                    ui,
-                    &account.account.name,
-                    self.selected_account.as_ref() == Some(&account.account.id),
+            egui::ComboBox::from_id_salt("plot_wallet")
+                .selected_text(
+                    state
+                        .accounts
+                        .iter()
+                        .find(|account| self.selected_account.as_ref() == Some(&account.account.id))
+                        .map_or("Choose wallet", |account| account.account.name.as_str()),
                 )
-                .clicked()
-                {
-                    self.selected_account = Some(account.account.id.clone());
-                    self.plotting_password.zeroize();
-                }
-            }
+                .show_ui(ui, |ui| {
+                    for account in &state.accounts {
+                        if ui
+                            .selectable_value(
+                                &mut self.selected_account,
+                                Some(account.account.id.clone()),
+                                &account.account.name,
+                            )
+                            .changed()
+                        {
+                            self.plotting_password.zeroize();
+                        }
+                    }
+                });
             if selected_unlocked(state, self.selected_account.as_deref()) {
                 ui.colored_label(crate::theme::GREEN, "Using your unlocked wallet.");
             } else if self.selected_account.is_some() {
@@ -1658,20 +1734,17 @@ impl Desktop {
             }
             if let Some((id, farmer, pool)) = &state.plotting_keys
                 && self.selected_account.as_ref() == Some(id)
-            {
-                if ui
+                && ui
                     .button("Use loaded keys for a self-farming plot")
                     .clicked()
-                {
-                    self.farmer_key.clone_from(farmer);
-                    self.pool_binding.clone_from(pool);
-                    self.portable = false;
-                    self.feedback(
-                        "Public plotting keys applied. Choose a directory and plot size below.",
-                        false,
-                    );
-                }
-                ui.label("For a portable plot, keep your own pool contract hash instead of using a pool public key.");
+            {
+                self.farmer_key.clone_from(farmer);
+                self.pool_binding.clone_from(pool);
+                self.portable = false;
+                self.feedback(
+                    "Public plotting keys applied. Choose a directory and plot size below.",
+                    false,
+                );
             }
         });
     }
@@ -1744,17 +1817,22 @@ impl Desktop {
                     .command(Command::Settings(self.settings_draft.clone()));
             }
         });
-        ui.weak("Themes preview immediately and can be saved while wallets are unlocked. Lock wallets and stop farming before changing other settings.");
+        ui.weak("Appearance and payout addresses can be saved while wallets are unlocked. Stop farming to change its payout address. Lock wallets and finish active jobs before changing connections.");
         ui.add_space(18.0);
         if ui.available_width() >= 850.0 {
             ui.columns(2, |columns| {
                 self.connection_settings(&mut columns[0]);
+                self.storage_settings(&mut columns[0]);
                 self.farming_settings(&mut columns[1]);
             });
         } else {
             self.connection_settings(ui);
             self.farming_settings(ui);
+            self.storage_settings(ui);
         }
+    }
+
+    fn storage_settings(&mut self, ui: &mut Ui) {
         section(ui, "Storage", |ui| {
             ui.label("Plot directories");
             let mut remove = None;
@@ -1875,13 +1953,74 @@ impl Desktop {
         });
     }
 
+    fn payout_settings(&mut self, ui: &mut Ui) {
+        let state = self.backend.snapshot();
+        ui.label("Farmer payout address");
+        ui.horizontal_wrapped(|ui| {
+            egui::ComboBox::from_id_salt("payout_wallet")
+                .selected_text(
+                    state
+                        .accounts
+                        .iter()
+                        .find(|account| self.payout_wallet.as_ref() == Some(&account.account.id))
+                        .map_or("Choose unlocked wallet", |account| {
+                            account.account.name.as_str()
+                        }),
+                )
+                .show_ui(ui, |ui| {
+                    for account in state.accounts.iter().filter(|account| account.unlocked) {
+                        if ui
+                            .selectable_value(
+                                &mut self.payout_wallet,
+                                Some(account.account.id.clone()),
+                                &account.account.name,
+                            )
+                            .changed()
+                        {
+                            self.payout_pending = false;
+                        }
+                    }
+                });
+            ui.label("Derivation");
+            if ui
+                .add(egui::DragValue::new(&mut self.payout_index).range(0..=99_999))
+                .changed()
+            {
+                self.payout_pending = false;
+            }
+            if ui
+                .add_enabled(
+                    selected_unlocked(&state, self.payout_wallet.as_deref()),
+                    egui::Button::new("Load address"),
+                )
+                .clicked()
+                && let Some(id) = &self.payout_wallet
+            {
+                self.payout_pending = true;
+                self.backend.command(Command::PayoutAddress {
+                    id: id.clone(),
+                    index: self.payout_index,
+                });
+            }
+        });
+        ui.weak(format!(
+            "Unhardened address: m/12381/8444/2/{}. Save settings after loading.",
+            self.payout_index
+        ));
+        if !state.accounts.iter().any(|account| account.unlocked)
+            && ui.button("Unlock a wallet…").clicked()
+        {
+            self.page = Page::Wallets;
+        }
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings_draft.farmer_payout_address)
+                .hint_text("Load from a wallet or enter a payout address")
+                .desired_width(f32::INFINITY),
+        );
+    }
+
     fn farming_settings(&mut self, ui: &mut Ui) {
         section(ui, "Farmer connection", |ui| {
-            field(
-                ui,
-                "Farmer configuration file (optional)",
-                &mut self.settings_draft.farmer_config,
-            );
             field(
                 ui,
                 "Farmer full-node WebSocket hostname",
@@ -1898,11 +2037,11 @@ impl Desktop {
                 "Farmer SSL root directory",
                 &mut self.settings_draft.farmer_ssl_root,
             );
-            field(
-                ui,
-                "Farmer payout address",
-                &mut self.settings_draft.farmer_payout_address,
-            );
+            self.payout_settings(ui);
+            egui::CollapsingHeader::new("Existing farmer setup").show(ui, |ui| {
+                ui.weak("Use an existing YAML setup for externally managed keys and pool accounts. Account farming uses the settings above.");
+                field(ui, "Farmer YAML file", &mut self.settings_draft.farmer_config);
+            });
         });
         section(ui, "Compute & performance", |ui| {
             ui.label("Compute backend");
@@ -1986,6 +2125,16 @@ impl eframe::App for Desktop {
         }
         context.request_repaint_after(Duration::from_millis(500));
         let state = self.backend.snapshot();
+        if self.payout_pending
+            && let Some((id, index, address)) = &state.payout_address
+            && self.payout_wallet.as_ref() == Some(id)
+            && self.payout_index == *index
+        {
+            self.settings_draft
+                .farmer_payout_address
+                .clone_from(address);
+            self.payout_pending = false;
+        }
         if self.selected_account.is_none() {
             self.selected_account = state
                 .accounts
@@ -2111,7 +2260,7 @@ impl eframe::App for Desktop {
             .show(ui, |ui| {
                 crate::theme::paint_background(ui);
                 if !self.message.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
+                    alert_frame(ui, self.message_error, |ui| {
                         ui.colored_label(
                             if self.message_error {
                                 ui.visuals().error_fg_color
@@ -2135,7 +2284,7 @@ impl eframe::App for Desktop {
                     && (state.notice != self.dismissed_notice
                         || state.notice_revision != self.dismissed_revision)
                 {
-                    ui.horizontal_wrapped(|ui| {
+                    alert_frame(ui, state.notice_error, |ui| {
                         ui.colored_label(
                             if state.notice_error {
                                 ui.visuals().error_fg_color
@@ -2427,7 +2576,7 @@ fn section_with_copy<Response>(
                 .fill(ui.visuals().window_fill)
                 .stroke(ui.visuals().window_stroke)
                 .corner_radius(12)
-                .inner_margin(20)
+                .inner_margin(14)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
@@ -2468,7 +2617,7 @@ fn section_with_copy<Response>(
                             ui.label(RichText::new(title).size(17.0).strong());
                         }
                     });
-                    ui.add_space(12.0);
+                    ui.add_space(8.0);
                     content(ui)
                 })
                 .inner
@@ -2483,13 +2632,37 @@ fn card(ui: &mut Ui, title: &str, value: &str) {
         .fill(ui.visuals().window_fill)
         .stroke(ui.visuals().window_stroke)
         .corner_radius(12)
-        .inner_margin(20)
+        .inner_margin(14)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.set_min_height(78.0);
             ui.weak(title);
             ui.add_space(8.0);
             ui.label(RichText::new(value).size(27.0).strong());
+        });
+}
+
+fn compact_grid(id: &str) -> egui::Grid {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .spacing([16.0, 6.0])
+        .min_row_height(28.0)
+}
+
+fn alert_frame(ui: &mut Ui, error: bool, content: impl FnOnce(&mut Ui)) {
+    let accent = if error {
+        ui.visuals().error_fg_color
+    } else {
+        crate::theme::GREEN
+    };
+    egui::Frame::new()
+        .fill(ui.visuals().window_fill)
+        .stroke(egui::Stroke::new(1.5, accent))
+        .corner_radius(8)
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(content);
         });
 }
 
@@ -2748,6 +2921,32 @@ mod node_view_tests {
                 );
                 output.textures_delta.clear();
             }
+        }
+    }
+
+    #[test]
+    fn plotting_controls_use_their_content_width() {
+        let context = egui::Context::default();
+        for _ in 0..3 {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(960.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let mut value = 12288u64;
+                    let response = compact_grid("compact_plot_test").show(ui, |ui| {
+                        ui.label("Memory budget (MiB)");
+                        ui.add_sized([120.0, 28.0], egui::DragValue::new(&mut value));
+                        ui.end_row();
+                    });
+                    assert!(response.response.rect.width() < 400.0);
+                },
+            );
+            output.textures_delta.clear();
         }
     }
 

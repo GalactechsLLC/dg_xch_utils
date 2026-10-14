@@ -96,6 +96,38 @@ async fn rollback_to_on(
 
 #[async_trait]
 impl CoinStore for PostgresStore {
+    fn supports_explorer_queries(&self) -> bool {
+        cfg!(feature = "coin-index")
+    }
+
+    fn supports_wallet_sync(&self) -> bool {
+        cfg!(feature = "hint")
+    }
+
+    #[cfg(feature = "hint")]
+    async fn wallet_coin_records(
+        &self,
+        request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, StoreError> {
+        let mut query = crate::wallet_sync::query::<sqlx::Postgres>(request, height)?;
+        // Keep cancellation bounded on the server as well as at the RPC deadline.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SET LOCAL statement_timeout='5s'")
+            .execute(&mut *tx)
+            .await?;
+        let rows = query.build().persistent(false).fetch_all(&mut *tx).await?;
+        let records = rows
+            .iter()
+            .map(row_to_coin_record)
+            .collect::<Result<_, _>>()?;
+        tx.commit().await?;
+        Ok(crate::wallet_sync::response(request, height, records))
+    }
+
     #[cfg(feature = "coin-index")]
     async fn coin_page(
         &self,

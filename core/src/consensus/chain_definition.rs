@@ -12,6 +12,10 @@ pub struct ChainDefinition {
     pub genesis_seed: String,
     pub rewards: RewardSchedule,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_network: Option<ChiaNetwork>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pos2_activation_height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus: Option<LaunchConsensus>,
 }
 
@@ -22,11 +26,26 @@ impl Default for ChainDefinition {
             genesis_seed: "dg_xch/dgx/no-prefarm/v1".into(),
             rewards: RewardSchedule::NO_PREFARM,
             consensus: None,
+            base_network: None,
+            pos2_activation_height: None,
         }
     }
 }
 
 impl ChainDefinition {
+    /// Testnet11's rules on an independent chain, with PoS2 enabled at genesis.
+    #[must_use]
+    pub fn dg_pos2_test() -> Self {
+        Self {
+            network_id: "dg_pos2_test".into(),
+            genesis_seed: "dg_xch/dg_pos2_test/testnet11/pos2/v1".into(),
+            rewards: RewardSchedule::CHIA,
+            base_network: Some(ChiaNetwork::Testnet11),
+            pos2_activation_height: Some(0),
+            consensus: None,
+        }
+    }
+
     #[must_use]
     pub fn dgx() -> Self {
         Self {
@@ -57,31 +76,55 @@ impl ChainDefinition {
     pub fn constants(&self) -> Result<ConsensusConstants, String> {
         if self.network_id.is_empty()
             || self.network_id.len() > 64
-            || !self
-                .network_id
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            || !self.network_id.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+            })
             || ChiaNetwork::from_str(&self.network_id).is_ok()
         {
-            return Err("custom network id must be 1..64 lowercase letters, digits or hyphens and cannot name a Chia network".into());
+            return Err("custom network id must be 1..64 lowercase letters, digits, hyphens or underscores and cannot name a Chia network".into());
         }
         if self.genesis_seed.is_empty() || self.genesis_seed.len() > 1024 {
             return Err("genesis_seed must contain 1..1024 bytes".into());
         }
         self.rewards.validate(DGX_V1_BASELINE.max_coin_amount)?;
-        if self.rewards.genesis_pool != 0 || self.rewards.genesis_farmer != 0 {
+        if self.base_network.is_none()
+            && (self.rewards.genesis_pool != 0 || self.rewards.genesis_farmer != 0)
+        {
             return Err("this fork definition requires zero genesis rewards".into());
         }
-        let mut constants = ConsensusConstants {
-            rewards: self.rewards,
-            genesis_challenge: Bytes32::default(),
-            agg_sig_me_additional_data: Bytes32::default(),
-            genesis_pre_farm_pool_puzzle_hash: Bytes32::default(),
-            genesis_pre_farm_farmer_puzzle_hash: Bytes32::default(),
-            bech32_prefix: "dgx",
-            ..DGX_V1_BASELINE
+        if self.base_network.is_some() && self.consensus.is_some() {
+            return Err(
+                "base_network and launch consensus parameters are mutually exclusive".into(),
+            );
+        }
+        if self.base_network.is_none() && self.pos2_activation_height.is_some() {
+            return Err("pos2_activation_height requires base_network".into());
+        }
+        let mut constants = if let Some(network) = self.base_network {
+            ConsensusConstants {
+                rewards: self.rewards,
+                ..ConsensusConstants::from(network)
+            }
+        } else {
+            ConsensusConstants {
+                rewards: self.rewards,
+                genesis_challenge: Bytes32::default(),
+                agg_sig_me_additional_data: Bytes32::default(),
+                genesis_pre_farm_pool_puzzle_hash: Bytes32::default(),
+                genesis_pre_farm_farmer_puzzle_hash: Bytes32::default(),
+                bech32_prefix: "dgx",
+                ..DGX_V1_BASELINE
+            }
         };
-        let identity = if let Some(parameters) = &self.consensus {
+        if let Some(height) = self.pos2_activation_height {
+            constants.hard_fork2_height = height;
+        }
+        let identity = if self.base_network.is_some() {
+            let mut identity = b"dg_xch/chain-definition/v3\0".to_vec();
+            identity
+                .extend(serde_json::to_vec(&(self, constants)).map_err(|error| error.to_string())?);
+            identity
+        } else if let Some(parameters) = &self.consensus {
             parameters.apply(&mut constants)?;
             let mut identity = b"dg_xch/chain-definition/v2\0".to_vec();
             identity.extend(serde_json::to_vec(self).map_err(|error| error.to_string())?);
@@ -266,6 +309,8 @@ impl ChainSelection {
             }
             definition.constants()?;
             Ok(Self::Custom(definition.clone()))
+        } else if network == "dg_pos2_test" {
+            Ok(Self::Custom(ChainDefinition::dg_pos2_test()))
         } else if network == "dgx" {
             Ok(Self::Dgx)
         } else {

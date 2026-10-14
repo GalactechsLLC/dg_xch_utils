@@ -338,6 +338,95 @@ impl WForm {
     }
 }
 
+/// Keep consecutive prover squarings in stack limbs; materialize only proof checkpoints.
+pub(crate) struct SquaringState {
+    form: WForm,
+    discriminant: crate::limbs::SwWide,
+    bound: crate::limbs::SwGcd,
+}
+
+impl SquaringState {
+    pub(crate) fn new(form: &Form, discriminant: &BigInt, bound: &BigInt) -> Self {
+        Self {
+            form: WForm::from_form(form),
+            discriminant: crate::limbs::SwWide::from_bigint(discriminant),
+            bound: crate::limbs::SwGcd::from_bigint(bound),
+        }
+    }
+
+    pub(crate) fn square(&mut self) {
+        self.form = wsquare(&self.form, &self.discriminant, &self.bound);
+    }
+
+    pub(crate) fn snapshot(&self) -> Form {
+        self.form.to_form()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct LimbForm(WForm);
+
+pub(crate) struct CompositionContext {
+    discriminant: crate::limbs::SwWide,
+    bound: crate::limbs::SwGcd,
+    identity: LimbForm,
+}
+
+impl CompositionContext {
+    pub(crate) fn new(discriminant: &BigInt) -> Result<Self> {
+        Ok(Self {
+            discriminant: crate::limbs::SwWide::from_bigint(discriminant),
+            bound: crate::limbs::SwGcd::from_bigint(&nucomp_bound(discriminant)),
+            identity: LimbForm(WForm::from_form(&Form::identity(discriminant)?)),
+        })
+    }
+    pub(crate) fn identity(&self) -> LimbForm {
+        self.identity
+    }
+    pub(crate) fn multiply(&self, left: LimbForm, right: LimbForm) -> LimbForm {
+        if left.0.a.is_one() && left.0.b.is_one() {
+            return right;
+        }
+        if right.0.a.is_one() && right.0.b.is_one() {
+            return left;
+        }
+        LimbForm(wmultiply(
+            &left.0,
+            &right.0,
+            &self.discriminant,
+            &self.bound,
+        ))
+    }
+    pub(crate) fn square(&self, value: LimbForm) -> LimbForm {
+        if value.0.a.is_one() && value.0.b.is_one() {
+            return value;
+        }
+        LimbForm(wsquare(&value.0, &self.discriminant, &self.bound))
+    }
+    pub(crate) fn pow(&self, mut value: LimbForm, mut exponent: u64) -> LimbForm {
+        let mut output = self.identity;
+        while exponent != 0 {
+            if exponent & 1 != 0 {
+                output = self.multiply(output, value);
+            }
+            exponent >>= 1;
+            if exponent != 0 {
+                value = self.square(value);
+            }
+        }
+        output
+    }
+}
+
+impl LimbForm {
+    pub(crate) fn from_form(form: &Form) -> Self {
+        Self(WForm::from_form(form))
+    }
+    pub(crate) fn into_form(self) -> Form {
+        self.0.to_form()
+    }
+}
+
 fn wnormalize(
     a: &mut crate::limbs::SwWide,
     b: &mut crate::limbs::SwWide,
@@ -1241,6 +1330,7 @@ pub(crate) fn fast_pow_u64_mod(base: u64, exponent: u64, modulus: &BigInt) -> Re
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn get_block(i: u64, k: u64, t: u64, b: &BigInt) -> Result<u64> {
     let mut res = fast_pow_u64_mod(2, t - k * (i + 1), b)?;
     res <<= k as usize;

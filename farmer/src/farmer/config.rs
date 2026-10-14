@@ -250,6 +250,8 @@ where
     pub ssl_root_path: Option<String>,
     pub fullnode_ws_host: String,
     pub fullnode_ws_port: u16,
+    #[serde(default = "default_signage_point_timeout_seconds")]
+    pub signage_point_timeout_seconds: u64,
     pub fullnode_rpc_host: String,
     pub fullnode_rpc_port: u16,
     pub farmer_info: Vec<FarmingInfo>,
@@ -263,6 +265,11 @@ where
 }
 impl<C: Clone + Serialize> Config<C> {
     pub fn validate_keys(&self) -> Result<(), Error> {
+        if self.signage_point_timeout_seconds == 0 {
+            return Err(Error::other(
+                "signage_point_timeout_seconds must be positive",
+            ));
+        }
         if let Some(config) = &self.harvester_configs.pos2 {
             config.validate()?;
         }
@@ -339,6 +346,7 @@ impl<C: Clone> Default for Config<C> {
             fullnode_rpc_port: 8555,
             fullnode_ws_host: "localhost".to_string(),
             fullnode_ws_port: 8444,
+            signage_point_timeout_seconds: default_signage_point_timeout_seconds(),
             farmer_info: vec![],
             pool_info: vec![],
             pool_ca_certificates: vec![],
@@ -512,4 +520,8 @@ mod harvester_config_tests {
             serde_yaml::from_str("pos1:\n  plot_directories: [/old]\n").unwrap();
         assert_eq!(legacy.directories(), [std::path::PathBuf::from("/old")]);
     }
+}
+
+fn default_signage_point_timeout_seconds() -> u64 {
+    60
 }

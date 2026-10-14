@@ -12,6 +12,10 @@ RUN cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features
 FROM build-base AS discovery-builder
 RUN cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features
 
+# CPU-only private PoS2 network: node, farmer, plotter and regular timelord.
+FROM build-base AS pos2-test-builder
+RUN cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features --features "hint,timelord"
+
 FROM build-base AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends glslang-tools \
     && rm -rf /var/lib/apt/lists/*
@@ -102,6 +106,11 @@ CMD ["--root", "/stack"]
 FROM runtime AS setup-pool
 ENTRYPOINT ["/usr/local/bin/dg_xch_stack_pool"]
 CMD ["--root", "/stack", "prepare"]
+
+FROM runtime-base AS pos2-test
+COPY --from=pos2-test-builder /build/target/release/dgx /usr/local/bin/dgx
+EXPOSE 58444 8080 8582
+ENTRYPOINT ["/usr/local/bin/dgx"]
 
 # Preserve the ordinary build and existing Compose behavior.
 FROM runtime AS stack

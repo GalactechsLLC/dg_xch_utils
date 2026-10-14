@@ -14,6 +14,22 @@ use std::sync::Arc;
 // wrapper — the single-writer/WAL-reader concurrency lives inside the backend, unchanged.
 #[async_trait]
 impl<T: CoinStore + Send + Sync> CoinStore for Arc<T> {
+    fn supports_explorer_queries(&self) -> bool {
+        (**self).supports_explorer_queries()
+    }
+
+    fn supports_wallet_sync(&self) -> bool {
+        (**self).supports_wallet_sync()
+    }
+
+    async fn wallet_coin_records(
+        &self,
+        request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, StoreError> {
+        (**self).wallet_coin_records(request, height).await
+    }
+
     #[cfg(feature = "coin-index")]
     async fn coin_page(
         &self,

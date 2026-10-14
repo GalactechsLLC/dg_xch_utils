@@ -287,6 +287,13 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> FullNodeApi for StoreApi
         StoreApi::timelord_peak(self).await
     }
 
+    async fn farmer_signage_point(&self) -> Option<NewSignagePoint> {
+        if !self.production_ready().await {
+            return None;
+        }
+        self.slot_state.lock().await.latest_farmer_signage_point()
+    }
+
     async fn timelord_genesis(&self) -> Option<NewGenesisTimelord> {
         StoreApi::timelord_genesis(self).await
     }

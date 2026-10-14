@@ -198,6 +198,34 @@ fn prepare_coin_changes(
 
 #[async_trait]
 impl CoinStore for SqliteStore {
+    fn supports_explorer_queries(&self) -> bool {
+        cfg!(feature = "coin-index")
+    }
+
+    fn supports_wallet_sync(&self) -> bool {
+        cfg!(feature = "hint")
+    }
+
+    #[cfg(feature = "hint")]
+    async fn wallet_coin_records(
+        &self,
+        request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, StoreError> {
+        let mut query = crate::wallet_sync::query::<sqlx::Sqlite>(request, height)?;
+        // One statement provides a consistent snapshot across selectors and record hydration.
+        let rows = query
+            .build()
+            .persistent(false)
+            .fetch_all(&self.read)
+            .await?;
+        let records = rows
+            .iter()
+            .map(row_to_coin_record)
+            .collect::<Result<_, _>>()?;
+        Ok(crate::wallet_sync::response(request, height, records))
+    }
+
     #[cfg(feature = "coin-index")]
     async fn coin_page(
         &self,

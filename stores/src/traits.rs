@@ -14,6 +14,28 @@ use dg_xch_core::protocols::wallet::CoinStateFilters;
 /// streamed range delete/update returning a count, never a materialized changed-coin set.
 #[async_trait]
 pub trait CoinStore {
+    /// Whether this backend implements the complete indexed explorer query surface.
+    fn supports_explorer_queries(&self) -> bool {
+        false
+    }
+
+    /// Whether this backend supports bounded, complete puzzle-hash and hint history pages.
+    fn supports_wallet_sync(&self) -> bool {
+        false
+    }
+
+    /// Return a unique coin-ID-ordered page, including spent coins, at the pinned height.
+    async fn wallet_coin_records(
+        &self,
+        _request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+        _height: u32,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, StoreError> {
+        Err(StoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Backend does not support indexed wallet sync queries",
+        )))
+    }
+
     /// Service-tier bounded history. Backends without query indexes fail explicitly.
     #[cfg(feature = "coin-index")]
     async fn coin_page(

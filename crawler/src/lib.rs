@@ -1,6 +1,7 @@
 pub mod config;
 pub mod metrics;
 pub mod probe;
+mod protocol;
 mod routes;
 pub mod state;
 use config::Config;
@@ -39,6 +40,7 @@ impl App {
             .configure(
                 Role::Crawler,
                 Policy {
+                    crawler: Some(config.crawler_policy()?),
                     concurrency: config.concurrency,
                     interval_ms: config.interval_ms,
                     timeout_seconds: config.timeout_seconds,
@@ -84,7 +86,12 @@ impl App {
         );
     }
 }
-fn log_probe(config: &Config, endpoint: std::net::SocketAddr, obs: &probe::Observation) {
+fn log_probe(
+    config: &Config,
+    endpoint: std::net::SocketAddr,
+    obs: &probe::Observation,
+    tcp_connect_timeout_seconds: u64,
+) {
     use config::ProbeLog;
     if config.probe_log == ProbeLog::Off
         || (config.probe_log == ProbeLog::Errors && obs.error.is_none())
@@ -93,7 +100,7 @@ fn log_probe(config: &Config, endpoint: std::net::SocketAddr, obs: &probe::Obser
     }
     eprintln!(
         "{}",
-        serde_json::json!({"event":"crawler_probe","timestamp":now(),"network":config.network,"endpoint":endpoint,"family":if endpoint.is_ipv6(){"ipv6"}else{"ipv4"},"result":if obs.error.is_some(){"error"}else{"success"},"phase":obs.phase,"connected":obs.handshake.is_some(),"peer_response":obs.peer_request_ms.is_some(),"connect_ms":obs.connect_ms,"peer_request_ms":obs.peer_request_ms,"received_peers":obs.peers.len(),"error":obs.error.as_ref().map(|e|e.chars().take(256).collect::<String>())})
+        serde_json::json!({"event":"crawler_probe","timestamp":now(),"network":config.network,"endpoint":endpoint,"family":if endpoint.is_ipv6(){"ipv6"}else{"ipv4"},"result":if obs.error.is_some(){"error"}else{"success"},"phase":obs.phase,"reason":obs.error.as_deref().map(|error|dg_xch_servers::discovery::failure_reason(obs.phase,error)),"connected":obs.handshake.is_some(),"peer_response":obs.peer_request_ms.is_some(),"tcp_connect_timeout_seconds":tcp_connect_timeout_seconds,"peak_height":obs.peak_height,"connect_ms":obs.connect_ms,"peer_request_ms":obs.peer_request_ms,"received_peers":obs.peers.len(),"error":obs.error.as_ref().map(|e|e.chars().take(256).collect::<String>())})
     );
 }
 async fn bootstrap(app: Arc<App>) {
@@ -101,15 +108,24 @@ async fn bootstrap(app: Arc<App>) {
     for seed in app.config.seeds() {
         match tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host(&seed)).await {
             Ok(Ok(addresses)) => {
+                let mut admissible_addresses = 0;
                 for endpoint in addresses.take(256) {
-                    if config::admissible(endpoint, app.config.allow_private_addresses)
-                        && let Err(error) = app
-                            .store
-                            .seen(endpoint, &format!("seed:{seed}"), None)
-                            .await
+                    if (!app.config.enable_ipv6 && endpoint.is_ipv6())
+                        || !config::admissible(endpoint, app.config.allow_private_addresses)
+                    {
+                        continue;
+                    }
+                    admissible_addresses += 1;
+                    if let Err(error) = app
+                        .store
+                        .seen(endpoint, &format!("seed:{seed}"), None)
+                        .await
                     {
                         errors.push(error.to_string());
                     }
+                }
+                if admissible_addresses == 0 {
+                    errors.push(format!("{seed}: DNS returned no admissible peer addresses"));
                 }
             }
             Ok(Err(error)) => errors.push(format!("{seed}: {error}")),
@@ -135,8 +151,9 @@ async fn crawl(app: Arc<App>, identity: Identity, mut stop: watch::Receiver<bool
             _=poll.tick()=>if probes.len()<app.config.concurrency{
                 match app.store.claim(Role::Crawler).await{
                     Ok(Some(claim))=>{let app=app.clone();let identity=identity.clone();probes.spawn(async move{
-                        let obs=probe::probe(claim.endpoint,&app.config.network,&identity,Duration::from_secs(claim.policy.timeout_seconds)).await;
-                        log_probe(&app.config,claim.endpoint,&obs);
+                        let policy=claim.policy.crawler.expect("crawler policy configured");
+                        let obs=probe::probe(claim.endpoint,&app.config.network,&identity,Duration::from_secs(claim.policy.timeout_seconds),&policy).await;
+                        log_probe(&app.config,claim.endpoint,&obs,policy.tcp_connect_timeout_seconds);
                         if let Err(error)=app.store.finish(claim,obs,None).await{app.storage_failure("completion",&error);}
                     });},Ok(None)=>{},Err(error)=>app.storage_failure("claim",&error),
                 }
