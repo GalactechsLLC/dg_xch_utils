@@ -37,6 +37,55 @@ impl PoolHttp {
         let pool = &self.0;
         let path = request.uri().path().to_owned();
         let method = request.method().as_str().to_owned();
+        if matches!(method.as_str(), "GET" | "HEAD")
+            && matches!(path.as_str(), "/health" | "/metrics")
+        {
+            let snapshot = pool.store.lock().await.stats().await;
+            return Ok(match snapshot {
+                Ok(_) if path == "/health" => {
+                    Response::ok("pool database available").content_type("text/plain")
+                }
+                Ok(stats) => {
+                    let text = dg_xch_servers::observability::gauges(
+                        "chia_pool",
+                        &[
+                            (
+                                "registered_farmers",
+                                "Registered farmers in the pool database",
+                                stats.farmers as f64,
+                            ),
+                            (
+                                "accepted_partials",
+                                "Retained accepted partials",
+                                stats.accepted_partials as f64,
+                            ),
+                            (
+                                "reward_claims",
+                                "Retained reward claims",
+                                stats.reward_claims as f64,
+                            ),
+                            (
+                                "signed_payouts",
+                                "Signed payout batches",
+                                stats.signed_payouts as f64,
+                            ),
+                            (
+                                "confirmed_payouts",
+                                "Confirmed payout batches",
+                                stats.confirmed_payouts as f64,
+                            ),
+                            ("storage_healthy", "Pool database readable", 1.0),
+                        ],
+                    )
+                    .map_err(PortfuError::Io)?;
+                    Response::ok(text).content_type("text/plain; version=0.0.4; charset=utf-8")
+                }
+                Err(_) => Response::from_status_and_message(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "pool database unavailable",
+                ),
+            });
+        }
         if path.starts_with("/v2/") && !pool.enable_v2 {
             return Ok(Response::from_status_and_message(
                 StatusCode::NOT_FOUND,
@@ -123,6 +172,18 @@ impl ServiceTrait for PoolHttp {
         request: &'a mut Request,
     ) -> Pin<Box<dyn Future<Output = Result<Response, PortfuError>> + Send + 'a>> {
         Box::pin(async move {
+            if matches!(request.method().as_str(), "GET" | "HEAD")
+                && matches!(request.uri().path(), "/metrics" | "/health")
+            {
+                return tokio::time::timeout(Duration::from_secs(5), self.dispatch(request))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Ok(Response::from_status_and_message(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "pool database check timed out",
+                        ))
+                    });
+            }
             let Ok(_permit) = self.0.requests.try_acquire() else {
                 return Ok(Response::from_status_and_message(
                     StatusCode::TOO_MANY_REQUESTS,

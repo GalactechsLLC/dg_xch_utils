@@ -7,16 +7,19 @@ use crate::harvesters::{Harvester, ProofHandler, SignatureHandler};
 use crate::utils::{get_ssl_root_path, load_client_id};
 use dg_xch_clients::ClientSSLConfig;
 use dg_xch_clients::api::pool::PoolClient;
-use dg_xch_clients::websocket::WsClientConfig;
 use dg_xch_clients::websocket::farmer::FarmerClient;
+use dg_xch_clients::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 
 use dg_xch_core::protocols::farmer::FarmerSharedState;
-use dg_xch_core::protocols::{ChiaMessageFilter, ChiaMessageHandler, ProtocolMessageTypes};
+use dg_xch_core::protocols::{
+    ChiaMessageFilter, ChiaMessageHandler, NodeType, ProtocolMessageTypes,
+};
 use dg_xch_pos::plots::disk_plot::DiskPlot;
 use dg_xch_pos::plots::plot_reader::PlotReader;
 use log::{error, info};
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::Error;
 use std::marker::PhantomData;
@@ -176,6 +179,8 @@ where
                 }
                 client_run = Arc::new(AtomicBool::new(true));
                 connection_guard.0 = client_run.clone();
+                // Keep proof/signature handlers from using the previous connection during greeting.
+                let mut client_slot = s.full_node_client.write().await;
                 match s
                     .create_farmer_client(
                         s.shared_state.clone(),
@@ -193,20 +198,17 @@ where
                         } else {
                             error!("Failed to read chia version from client handshake");
                         }
-                        *s.full_node_client.write().await = Some(c);
-                        if let Err(e) = s
-                            .attach_client_handlers(s.full_node_client.clone(), s.config.clone())
-                            .await
-                        {
-                            error!("Failed to attach socket listeners: {e:?}");
-                            continue;
-                        } else {
-                            info!("Farmer Client Initialized");
-                            break;
-                        }
+                        *client_slot = Some(c);
+                        *s.shared_state.last_sp_timestamp.write().await = Instant::now();
+                        info!(
+                            "Farmer Client Initialized (signage timeout {} seconds)",
+                            config.signage_point_timeout_seconds
+                        );
+                        break;
                     }
                     Err(e) => {
                         error!("Failed to Start Farmer Client, Waiting and trying again: {e:?}");
+                        drop(client_slot);
                         tokio::time::sleep(Duration::from_secs(3)).await;
                         continue;
                     }
@@ -227,7 +229,7 @@ where
                 let dur = Instant::now()
                     .duration_since(*s.shared_state.last_sp_timestamp.read().await)
                     .as_secs();
-                if dur >= 60 {
+                if dur >= config.signage_point_timeout_seconds {
                     info!(
                         "Failed to get Signage Point after {dur} seconds, restarting farmer client"
                     );
@@ -300,11 +302,14 @@ where
         config: Arc<RwLock<Config<C>>>,
         client_run: Arc<AtomicBool>,
     ) -> Result<FarmerClient<T>, Error> {
+        let ssl_path = get_ssl_root_path(&*config.read().await)?;
+        crate::utils::ensure_farmer_tls(&ssl_path)?;
+        let handlers = self
+            .build_client_handlers(self.full_node_client.clone(), config.clone())
+            .await?;
         let config = config.read().await;
         let network_id = config.network_id()?;
-        let ssl_path = get_ssl_root_path(&*config)?;
-        crate::utils::ensure_farmer_tls(&ssl_path)?;
-        FarmerClient::new_with_constants(
+        let client = WsClient::new(
             Arc::new(WsClientConfig {
                 host: config.fullnode_ws_host.clone(),
                 port: config.fullnode_ws_port,
@@ -320,22 +325,24 @@ where
                 server_port: 0,
                 rate_limited: true,
             }),
-            shared_state.clone(),
-            client_run.clone(),
+            NodeType::Farmer,
+            Arc::new(RwLock::new(handlers)),
+            client_run,
             30,
-            config.constants()?,
         )
-        .await
+        .await?;
+        *shared_state.upstream_handshake.write().await = client.handshake.clone();
+        Ok(FarmerClient {
+            client,
+            shared_state,
+        })
     }
 
-    async fn attach_client_handlers(
+    async fn build_client_handlers(
         &self,
         client: Arc<RwLock<Option<FarmerClient<T>>>>,
         config: Arc<RwLock<Config<C>>>,
-    ) -> Result<(), Error> {
-        if let Some(c) = &*client.read().await {
-            c.client.connection.write().await.clear().await;
-        }
+    ) -> Result<HashMap<Uuid, Arc<ChiaMessageHandler>>, Error> {
         let signage_handle_id = Uuid::new_v4();
         let request_signed_values_id = Uuid::new_v4();
         let harvester_id = load_client_id(config.clone()).await?;
@@ -355,55 +362,44 @@ where
         .await?;
         let config = config.read().await;
         let inner_client = client.clone();
-        if let Some(c) = &*client.read().await {
-            c.client
-                .connection
-                .write()
-                .await
-                .subscribe(
-                    signage_handle_id,
-                    Arc::new(ChiaMessageHandler::new(
-                        NEW_SIGNAGE_POINT_FILTER.clone(),
-                        Arc::new(NewSignagePointHandle {
-                            id: signage_handle_id,
-                            harvester_id,
-                            shared_state: self.shared_state.clone(),
-                            pool_state: self.shared_state.pool_states.clone(),
-                            pool_client: self.pool_client.clone(),
-                            signage_points: self.shared_state.signage_points.clone(),
-                            cache_time: self.shared_state.cache_time.clone(),
-                            harvester: self.harvester.clone(),
-                            constants: config.constants()?,
-                            client: inner_client.clone(),
-                            config: self.config.clone(),
-                            proof_handle,
-                        }),
-                    )),
-                )
-                .await;
-            c.client
-                .connection
-                .write()
-                .await
-                .subscribe(
-                    request_signed_values_id,
-                    Arc::new(ChiaMessageHandler::new(
-                        SIGNED_VALUES_FILTER.clone(),
-                        Arc::new(RequestSignedValuesHandle {
-                            id: request_signed_values_id,
-                            shared_state: self.shared_state.clone(),
-                            pool_client: self.pool_client.clone(),
-                            harvester: self.harvester.clone(),
-                            constants: config.constants()?,
-                            client: inner_client.clone(),
-                            config: self.config.clone(),
-                            signature_handle,
-                        }),
-                    )),
-                )
-                .await;
-        }
-        Ok(())
+        let mut handlers = HashMap::new();
+        handlers.insert(
+            signage_handle_id,
+            Arc::new(ChiaMessageHandler::new(
+                NEW_SIGNAGE_POINT_FILTER.clone(),
+                Arc::new(NewSignagePointHandle {
+                    id: signage_handle_id,
+                    harvester_id,
+                    shared_state: self.shared_state.clone(),
+                    pool_state: self.shared_state.pool_states.clone(),
+                    pool_client: self.pool_client.clone(),
+                    signage_points: self.shared_state.signage_points.clone(),
+                    cache_time: self.shared_state.cache_time.clone(),
+                    harvester: self.harvester.clone(),
+                    constants: config.constants()?,
+                    client: inner_client.clone(),
+                    config: self.config.clone(),
+                    proof_handle,
+                }),
+            )),
+        );
+        handlers.insert(
+            request_signed_values_id,
+            Arc::new(ChiaMessageHandler::new(
+                SIGNED_VALUES_FILTER.clone(),
+                Arc::new(RequestSignedValuesHandle {
+                    id: request_signed_values_id,
+                    shared_state: self.shared_state.clone(),
+                    pool_client: self.pool_client.clone(),
+                    harvester: self.harvester.clone(),
+                    constants: config.constants()?,
+                    client: inner_client.clone(),
+                    config: self.config.clone(),
+                    signature_handle,
+                }),
+            )),
+        );
+        Ok(handlers)
     }
 }
 static NEW_SIGNAGE_POINT_FILTER: Lazy<Arc<ChiaMessageFilter>> = Lazy::new(|| {

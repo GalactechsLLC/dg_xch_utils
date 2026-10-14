@@ -2,10 +2,10 @@ use crate::discriminant::{bigint_from_be, bit_len, create_discriminant_int};
 use crate::error::{Error, Result};
 use crate::form::{
     B_BYTES, FORM_SIZE, Form, fast_pow_form_pair_with, fast_pow_form_with, fast_pow_u64_mod, get_b,
-    get_block, nucomp_bound,
+    nucomp_bound,
 };
 use num_bigint::BigInt;
-use num_traits::One;
+use rayon::prelude::*;
 
 const SEGMENT_LEN: usize = 8 + B_BYTES + FORM_SIZE;
 
@@ -186,18 +186,200 @@ pub fn prove_result_bounded(
     prove_with_parameters(&discriminant, &input, iterations, spacing, window)
 }
 
+/// A memory-bounded squaring history for multiple proofs from one chain origin.
+/// Checkpoints are coarsened in place as the chain grows, without repeating squarings.
+pub struct StreamingProver {
+    discriminant: BigInt,
+    input: Form,
+    squaring: crate::form::SquaringState,
+    iterations: u64,
+    window: u64,
+    spacing: u64,
+    checkpoints: Vec<Form>,
+    checkpoint_limit: usize,
+    witness_threads: usize,
+    witness_pool: Option<rayon::ThreadPool>,
+}
+
+pub struct StreamingProof {
+    pub bytes: Vec<u8>,
+    pub new_squarings: u64,
+    pub reused_squarings: u64,
+    pub checkpoint_budget_bytes: u64,
+}
+
+impl StreamingProver {
+    pub fn new(
+        challenge: &[u8],
+        input: &[u8],
+        discriminant_bits: usize,
+        memory_bytes: u64,
+    ) -> Result<Self> {
+        Self::new_with_threads(challenge, input, discriminant_bits, memory_bytes, 1)
+    }
+
+    pub fn new_with_threads(
+        challenge: &[u8],
+        input: &[u8],
+        discriminant_bits: usize,
+        memory_bytes: u64,
+        witness_threads: usize,
+    ) -> Result<Self> {
+        if !(1..=4).contains(&witness_threads) {
+            return Err(Error::InvalidProofParameters);
+        }
+        let witness_pool = if witness_threads > 1 {
+            Some(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(witness_threads)
+                    .build()
+                    .map_err(|_| Error::ProverMemoryLimit)?,
+            )
+        } else {
+            None
+        };
+        let bucket_budget = 1024 * witness_threads as u64;
+        let available = memory_bytes
+            .checked_sub(64 * 1024)
+            .ok_or(Error::ProverMemoryLimit)?;
+        let mut window = 12;
+        while window > 1 && (1u64 << window) * bucket_budget > available / 4 {
+            window -= 1;
+        }
+        let checkpoint_limit = usize::try_from(
+            available
+                .checked_sub((1u64 << window) * bucket_budget)
+                .ok_or(Error::ProverMemoryLimit)?
+                / 512,
+        )
+        .map_err(|_| Error::ProverMemoryLimit)?;
+        if checkpoint_limit == 0 {
+            return Err(Error::ProverMemoryLimit);
+        }
+        let discriminant = create_discriminant_int(challenge, discriminant_bits)?;
+        let input = Form::deserialize(&discriminant, input)?;
+        let squaring =
+            crate::form::SquaringState::new(&input, &discriminant, &nucomp_bound(&discriminant));
+        let mut checkpoints = Vec::new();
+        checkpoints
+            .try_reserve_exact(checkpoint_limit)
+            .map_err(|_| Error::ProverMemoryLimit)?;
+        Ok(Self {
+            discriminant,
+            input,
+            squaring,
+            iterations: 0,
+            window,
+            spacing: 1,
+            checkpoints,
+            checkpoint_limit,
+            witness_threads,
+            witness_pool,
+        })
+    }
+
+    pub fn prove(&mut self, iterations: u64) -> Result<StreamingProof> {
+        if iterations == 0 {
+            return Err(Error::InvalidProofParameters);
+        }
+        let before = self.iterations;
+        while self.iterations < iterations {
+            let mut stride = self
+                .window
+                .checked_mul(self.spacing)
+                .ok_or(Error::InvalidProofParameters)?;
+            if self.iterations.is_multiple_of(stride) {
+                if self.checkpoints.len() == self.checkpoint_limit {
+                    let mut index = 0;
+                    self.checkpoints.retain(|_| {
+                        let keep = index % 2 == 0;
+                        index += 1;
+                        keep
+                    });
+                    self.spacing = self
+                        .spacing
+                        .checked_mul(2)
+                        .ok_or(Error::InvalidProofParameters)?;
+                    stride = self
+                        .window
+                        .checked_mul(self.spacing)
+                        .ok_or(Error::InvalidProofParameters)?;
+                }
+                if self.iterations.is_multiple_of(stride) {
+                    self.checkpoints.push(self.squaring.snapshot());
+                }
+            }
+            self.squaring.square();
+            self.iterations += 1;
+        }
+        let stride = self
+            .window
+            .checked_mul(self.spacing)
+            .ok_or(Error::InvalidProofParameters)?;
+        let (output, new_squarings) = if iterations == self.iterations {
+            (self.squaring.snapshot(), self.iterations - before)
+        } else {
+            // A late farmer can supply a candidate whose infusion precedes our latest SP.
+            // Recover its output from the nearest retained checkpoint without discarding history.
+            let index =
+                usize::try_from(iterations / stride).map_err(|_| Error::ProverMemoryLimit)?;
+            let checkpoint = self
+                .checkpoints
+                .get(index)
+                .ok_or(Error::InvalidProofParameters)?;
+            let mut tail = crate::form::SquaringState::new(
+                checkpoint,
+                &self.discriminant,
+                &nucomp_bound(&self.discriminant),
+            );
+            let steps = iterations % stride;
+            for _ in 0..steps {
+                tail.square();
+            }
+            (tail.snapshot(), steps)
+        };
+        let needed =
+            usize::try_from(iterations.div_ceil(stride)).map_err(|_| Error::ProverMemoryLimit)?;
+        let witness = generate_wesolowski_parallel(
+            &self.discriminant,
+            &output,
+            &self.input,
+            self.checkpoints
+                .get(..needed)
+                .ok_or(Error::InvalidProofParameters)?,
+            iterations,
+            self.window,
+            self.spacing,
+            self.witness_threads,
+            self.witness_pool.as_ref(),
+        )?;
+        let bits = bit_len(&self.discriminant);
+        let mut bytes = output.serialize(bits)?.to_vec();
+        bytes.extend_from_slice(&witness.serialize(bits)?);
+        Ok(StreamingProof {
+            bytes,
+            new_squarings,
+            reused_squarings: iterations.saturating_sub(new_squarings),
+            checkpoint_budget_bytes: 64 * 1024
+                + self.checkpoint_limit as u64 * 512
+                + (1u64 << self.window) * 1024 * self.witness_threads as u64,
+        })
+    }
+}
+
 fn bounded_parameters(iterations: u64, memory_bytes: u64) -> Result<(u64, u64)> {
     const FORM_BUDGET: u64 = 512;
+    const BUCKET_BUDGET: u64 = 1024;
     const FIXED_BUDGET: u64 = 64 * 1024;
     let available = memory_bytes
         .checked_sub(FIXED_BUDGET)
         .ok_or(Error::ProverMemoryLimit)?;
     let (initial_spacing, mut window) = approximate_parameters(iterations).unwrap_or((1, 20));
-    while window > 1 && (1u64 << window) > available / (4 * FORM_BUDGET) {
+    while window > 1 && (1u64 << window) > available / (4 * BUCKET_BUDGET) {
         window -= 1;
     }
     let bucket_bytes = (1u64 << window)
-        .checked_mul(FORM_BUDGET)
+        .checked_mul(BUCKET_BUDGET)
         .ok_or(Error::ProverMemoryLimit)?;
     let checkpoints = available
         .checked_sub(bucket_bytes)
@@ -365,7 +547,6 @@ fn prove_with_parameters(
     k: u64,
 ) -> Result<Vec<u8>> {
     let d_bits = bit_len(discriminant);
-    let mut y = x.clone();
     let kl = k.checked_mul(l).ok_or(Error::InvalidProofParameters)?;
     if kl == 0 || k > 20 {
         return Err(Error::InvalidProofParameters);
@@ -380,12 +561,14 @@ fn prove_with_parameters(
     // NUCOMP bound computed once for the whole iterated-squaring run.
     let nl = nucomp_bound(discriminant);
 
+    let mut squaring = crate::form::SquaringState::new(x, discriminant, &nl);
     for i in 0..num_iterations {
         if i.is_multiple_of(kl) {
-            intermediates.push(y.clone());
+            intermediates.push(squaring.snapshot());
         }
-        y = y.square_with(discriminant, &nl)?;
+        squaring.square();
     }
+    let y = squaring.snapshot();
 
     let witness = generate_wesolowski(discriminant, &y, x, &intermediates, num_iterations, k, l)?;
     let mut out = y.serialize(d_bits)?.to_vec();
@@ -402,7 +585,35 @@ fn generate_wesolowski(
     k: u64,
     l: u64,
 ) -> Result<Form> {
+    generate_wesolowski_parallel(
+        discriminant,
+        y,
+        x_init,
+        intermediates,
+        num_iterations,
+        k,
+        l,
+        1,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_wesolowski_parallel(
+    discriminant: &BigInt,
+    y: &Form,
+    x_init: &Form,
+    intermediates: &[Form],
+    num_iterations: u64,
+    k: u64,
+    l: u64,
+    threads: usize,
+    pool: Option<&rayon::ThreadPool>,
+) -> Result<Form> {
     let b = get_b(discriminant, x_init, y)?;
+    if num_iterations < bit_len(&b) as u64 {
+        return Form::identity(discriminant);
+    }
     let k1 = k / 2;
     let k0 = k - k1;
     let bucket_count = 1usize
@@ -416,67 +627,138 @@ fn generate_wesolowski(
         .ok_or(Error::InvalidProofParameters)?;
 
     // NUCOMP bound computed once for every loop composition below.
-    let nl = nucomp_bound(discriminant);
-    let mut x = Form::identity(discriminant)?;
-    for j in (0..l).rev() {
-        x = fast_pow_form_with(&x, discriminant, &nl, &(BigInt::one() << k as usize))?;
+    let context = crate::form::CompositionContext::new(discriminant)?;
+    let stride = k.checked_mul(l).ok_or(Error::InvalidProofParameters)?;
+    let stride_mod = fast_pow_u64_mod(2, stride, &b)?;
+    let checkpoints = num_iterations.div_ceil(stride);
+    let range = |start: u64, end: u64, first: u64, last: u64| -> Result<crate::form::LimbForm> {
+        let mut x = context.identity();
+        for j in (start..end).rev() {
+            for _ in 0..k {
+                x = context.square(x);
+            }
 
-        let mut ys = Vec::new();
-        ys.try_reserve_exact(bucket_count)
-            .map_err(|_| Error::ProverMemoryLimit)?;
-        ys.resize(bucket_count, Form::identity(discriminant)?);
-        let chunks =
-            num_iterations.div_ceil(k.checked_mul(l).ok_or(Error::InvalidProofParameters)?);
-        for i in 0..chunks {
-            let block_number = i
-                .checked_mul(l)
-                .and_then(|base| base.checked_add(j))
-                .ok_or(Error::InvalidProofParameters)?;
-            if block_number
-                .checked_add(1)
-                .and_then(|next| k.checked_mul(next))
-                .is_some_and(|end| num_iterations >= end)
-            {
-                let block = get_block(block_number, k, num_iterations, &b)?;
-                let block_index =
-                    usize::try_from(block).map_err(|_| Error::InvalidProofParameters)?;
-                if block_index >= ys.len() {
-                    return Err(Error::InvalidProofParameters);
+            let mut ys = Vec::new();
+            ys.try_reserve_exact(bucket_count)
+                .map_err(|_| Error::ProverMemoryLimit)?;
+            ys.resize(bucket_count, None);
+            let mut residue = None;
+            // Reverse checkpoint traversal lets each quotient digit reuse the previous modular
+            // residue instead of recomputing a full modular exponentiation for every bucket.
+            // Class-group bucket multiplication is commutative.
+            for i in (first..last).rev() {
+                let block_number = i
+                    .checked_mul(l)
+                    .and_then(|base| base.checked_add(j))
+                    .ok_or(Error::InvalidProofParameters)?;
+                if let Some(end) = block_number
+                    .checked_add(1)
+                    .and_then(|next| k.checked_mul(next))
+                    && end <= num_iterations
+                {
+                    let r = match residue.take() {
+                        Some(previous) => (previous * &stride_mod) % &b,
+                        None => fast_pow_u64_mod(2, num_iterations - end, &b)?,
+                    };
+                    let block = crate::discriminant::u64_low_word(&((&r << k as usize) / &b));
+                    residue = Some(r);
+                    let index =
+                        usize::try_from(block).map_err(|_| Error::InvalidProofParameters)?;
+                    if index >= ys.len() {
+                        return Err(Error::InvalidProofParameters);
+                    }
+                    let checkpoint = crate::form::LimbForm::from_form(
+                        intermediates
+                            .get(i as usize)
+                            .ok_or(Error::InvalidProofParameters)?,
+                    );
+                    ys[index] = Some(match ys[index] {
+                        Some(old) => context.multiply(old, checkpoint),
+                        None => checkpoint,
+                    });
                 }
-                ys[block_index] = ys[block_index].multiply_with(
-                    intermediates
-                        .get(i as usize)
-                        .ok_or(Error::InvalidProofParameters)?,
-                    discriminant,
-                    &nl,
-                )?;
             }
-        }
 
-        for b1 in 0..bucket1_count {
-            let mut z = Form::identity(discriminant)?;
-            for b0 in 0..bucket0_count {
-                z = z.multiply_with(&ys[b1 * bucket0_count + b0], discriminant, &nl)?;
+            for b1 in 1..bucket1_count {
+                let mut z = context.identity();
+                for b0 in 0..bucket0_count {
+                    if let Some(bucket) = ys[b1 * bucket0_count + b0] {
+                        z = context.multiply(z, bucket);
+                    }
+                }
+                x = context.multiply(x, context.pow(z, (b1 as u64) * (1u64 << k0)));
             }
-            z = fast_pow_form_with(
-                &z,
-                discriminant,
-                &nl,
-                &BigInt::from((b1 as u64) * (1u64 << k0)),
-            )?;
-            x = x.multiply_with(&z, discriminant, &nl)?;
-        }
-
-        for b0 in 0..bucket0_count {
-            let mut z = Form::identity(discriminant)?;
-            for b1 in 0..bucket1_count {
-                z = z.multiply_with(&ys[b1 * bucket0_count + b0], discriminant, &nl)?;
+            for b0 in 1..bucket0_count {
+                let mut z = context.identity();
+                for b1 in 0..bucket1_count {
+                    if let Some(bucket) = ys[b1 * bucket0_count + b0] {
+                        z = context.multiply(z, bucket);
+                    }
+                }
+                x = context.multiply(x, context.pow(z, b0 as u64));
             }
-            z = fast_pow_form_with(&z, discriminant, &nl, &BigInt::from(b0 as u64))?;
-            x = x.multiply_with(&z, discriminant, &nl)?;
         }
+        Ok(x)
+    };
+    let count = threads.min(usize::try_from(l).unwrap_or(usize::MAX)).max(1);
+    let chunk = l.div_ceil(count as u64);
+    let parts = if threads > l as usize {
+        let columns = (threads as u64 / l).min(checkpoints).max(1);
+        let width = checkpoints.div_ceil(columns);
+        let mut jobs = Vec::new();
+        for row in (0..l).rev() {
+            for column in 0..columns {
+                let first = column * width;
+                let last = (first + width).min(checkpoints);
+                if first < last {
+                    jobs.push((row, first, last));
+                }
+            }
+        }
+        let pool = pool.ok_or(Error::InvalidProofParameters)?;
+        let completed: Result<Vec<_>> = pool.install(|| {
+            jobs.into_par_iter()
+                .map(|(row, first, last)| Ok((row, range(row, row + 1, first, last)?)))
+                .collect()
+        });
+        let mut rows = vec![context.identity(); l as usize];
+        for (row, part) in completed? {
+            rows[row as usize] = context.multiply(rows[row as usize], part);
+        }
+        rows.into_iter().rev().map(|row| (1, row)).collect()
+    } else if count == 1 {
+        vec![(l, range(0, l, 0, checkpoints)?)]
+    } else {
+        let mut jobs = Vec::new();
+        for thread in 0..count {
+            let end = l.saturating_sub(thread as u64 * chunk);
+            let start = end.saturating_sub(chunk);
+            if start < end {
+                jobs.push((start, end));
+            }
+        }
+        let pool = pool.ok_or(Error::InvalidProofParameters)?;
+        let completed: Result<Vec<_>> = pool.install(|| {
+            jobs.into_par_iter()
+                .map(|(start, end)| Ok((start, end, range(start, end, 0, checkpoints)?)))
+                .collect()
+        });
+        let mut completed = completed?;
+        completed.sort_unstable_by_key(|(_, end, _)| std::cmp::Reverse(*end));
+        completed
+            .into_iter()
+            .map(|(start, end, part)| (end - start, part))
+            .collect()
+    };
+    let mut x = context.identity();
+    for (length, part) in parts {
+        for _ in 0..k.checked_mul(length).ok_or(Error::InvalidProofParameters)? {
+            x = context.square(x);
+        }
+        x = context.multiply(x, part);
     }
 
+    let mut x = x.into_form();
     x.reduce();
     Ok(x)
 }

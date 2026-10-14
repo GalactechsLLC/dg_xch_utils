@@ -79,6 +79,7 @@ pub struct PeakSlotContext<'a> {
 }
 
 pub struct SlotState {
+    latest_farmer_sp: Option<dg_xch_core::protocols::farmer::NewSignagePoint>,
     received_times: HashMap<Bytes32, f64>,
     peak_hash: Option<Bytes32>,
     constants: ConsensusConstants,
@@ -94,6 +95,7 @@ impl SlotState {
     #[must_use]
     pub fn new(constants: ConsensusConstants) -> Self {
         let mut state = Self {
+            latest_farmer_sp: None,
             received_times: HashMap::new(),
             peak_hash: None,
             constants,
@@ -110,12 +112,45 @@ impl SlotState {
     }
 
     pub fn initialize_genesis_sub_slot(&mut self) {
+        self.latest_farmer_sp = None;
         self.peak_hash = None;
         self.finished_sub_slots = vec![FinishedSubSlot {
             eos: None,
             sps: self.empty_sps(),
             start_total_iters: 0,
         }];
+    }
+
+    /// Keep the exact validated announcement, including its difficulty and source data.
+    pub fn set_latest_farmer_signage_point(
+        &mut self,
+        sp: dg_xch_core::protocols::farmer::NewSignagePoint,
+    ) {
+        if self.latest_farmer_signage_point().is_some_and(|old| {
+            old.challenge_hash == sp.challenge_hash
+                && old.peak_height == sp.peak_height
+                && old.signage_point_index > sp.signage_point_index
+        }) {
+            return;
+        }
+        self.latest_farmer_sp = Some(sp);
+    }
+
+    pub fn latest_farmer_signage_point(
+        &self,
+    ) -> Option<dg_xch_core::protocols::farmer::NewSignagePoint> {
+        let sp = self.latest_farmer_sp.as_ref()?;
+        let slot = self.finished_sub_slots.last()?;
+        let challenge = match &slot.eos {
+            Some(eos) => eos.challenge_chain.hash().ok()?,
+            None => self.constants.genesis_challenge,
+        };
+        if sp.challenge_hash != challenge
+            || self.get_signage_point(&sp.challenge_chain_sp).is_none()
+        {
+            return None;
+        }
+        Some(sp.clone())
     }
 
     pub fn peak_hash(&self) -> Option<Bytes32> {
@@ -964,6 +999,7 @@ impl SlotState {
     }
 
     pub fn clear_slots(&mut self) {
+        self.latest_farmer_sp = None;
         self.received_times.clear();
         self.finished_sub_slots.clear();
         self.future_eos.clear();

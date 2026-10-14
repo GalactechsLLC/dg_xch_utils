@@ -17,8 +17,8 @@ use crate::clvm::runtime::ClvmRuntime;
 use crate::clvm::sexp::{AtomBuf, PairBuf, SExp};
 use crate::clvm::tree_hash_cache::TreeHashCache;
 use crate::clvm::utils::{
-    CANONICAL_INTS, COST_CONDITIONS, DISABLE_OP, ENABLE_KECCAK_OPS_OUTSIDE_FORK, LIMITS,
-    NEW_COST_MODEL, RELAXED_BLS,
+    CANONICAL_INTS, COST_CONDITIONS, DISABLE_OP, DISABLE_PRINTS, ENABLE_KECCAK_OPS_OUTSIDE_FORK,
+    LIMITS, NEW_COST_MODEL, RELAXED_BLS,
 };
 use crate::consensus::constants::ConsensusConstants;
 use crate::consensus::generator_puzzles::ROM_BOOTSTRAP_GENERATOR_HEX;
@@ -305,7 +305,11 @@ pub fn execute_block_generator_result(
         .ok_or(ChiaError::BlockCostExceedsMax)?;
     let (cost, output) = if input.flags.simple_generator {
         generator
-            .run(cost_left, input.flags.clvm_flags, &Program::default())
+            .run(
+                cost_left,
+                input.flags.clvm_flags | DISABLE_PRINTS,
+                &Program::default(),
+            )
             .map_err(generator_run_error)?
     } else {
         // (ROM path: reveal hashes are computed inside the CLVM bootstrap, not here.)
@@ -318,7 +322,7 @@ pub fn execute_block_generator_result(
             generator.sexp().to_owned(),
             SExp::from(vec![generator_ref_atoms(input)]),
         ]));
-        rom.run(cost_left, input.flags.clvm_flags, &args)
+        rom.run(cost_left, input.flags.clvm_flags | DISABLE_PRINTS, &args)
             .map_err(generator_run_error)?
     };
     let cost = byte_cost
@@ -634,7 +638,11 @@ pub fn coin_spend_from_generator(
         .checked_sub(byte_cost)
         .ok_or(ChiaError::BlockCostExceedsMax)?;
     let (_cost, output) = generator
-        .run(cost_left, input.flags.clvm_flags, &Program::default())
+        .run(
+            cost_left,
+            input.flags.clvm_flags | DISABLE_PRINTS,
+            &Program::default(),
+        )
         .map_err(generator_run_error)?;
     let out_sexp = output.sexp();
     let all_spends = out_sexp
@@ -742,7 +750,11 @@ fn run_simple_generator_spends(
         .checked_sub(byte_cost)
         .ok_or(ChiaError::BlockCostExceedsMax)?;
     let (_cost, output) = generator
-        .run(cost_left, input.flags.clvm_flags, &Program::default())
+        .run(
+            cost_left,
+            input.flags.clvm_flags | DISABLE_PRINTS,
+            &Program::default(),
+        )
         .map_err(generator_run_error)?;
     let out_sexp = output.sexp();
     let all_spends = out_sexp
@@ -771,7 +783,11 @@ fn run_simple_generator_spends(
         let conditions = if with_conditions {
             // Trusted context (already-validated block): full budget.
             let (_spend_cost, cond_out) = puzzle_reveal
-                .run(cost_left, input.flags.clvm_flags, &solution)
+                .run(
+                    cost_left,
+                    input.flags.clvm_flags | DISABLE_PRINTS,
+                    &solution,
+                )
                 .map_err(generator_run_error)?;
             parse_raw_conditions(cond_out.sexp())?
         } else {
@@ -1208,7 +1224,7 @@ pub fn conditions_from_spend_bundle(
     constants: &ConsensusConstants,
 ) -> Result<SpendBundleConditions, ChiaError> {
     let flags = BlockGeneratorFlags::for_height(constants, height);
-    let clvm_flags = flags.clvm_flags | crate::clvm::utils::MEMPOOL_MODE;
+    let clvm_flags = flags.clvm_flags | crate::clvm::utils::MEMPOOL_MODE | DISABLE_PRINTS;
     let max_cost = constants.max_block_cost_clvm;
     const QUOTE_BYTES: usize = 2;
     let byte_cost = (spend_bundle_generator_length(&bundle.coin_spends) - QUOTE_BYTES) as u64
@@ -1331,7 +1347,7 @@ fn conditions_from_generator_output(
     let mut created = HashSet::<Bytes32>::new();
     let mut conditions_cost = 0_u64;
     let all_spends = output.first()?;
-    let mut runtime = ClvmRuntime::new(max_cost, clvm_flags);
+    let mut runtime = ClvmRuntime::new(max_cost, clvm_flags | DISABLE_PRINTS);
     for (spend_index, spend_sexp) in all_spends.ref_list().into_iter().enumerate() {
         let spend_parts = spend_sexp.ref_list();
         if spend_parts.len() < 4 {

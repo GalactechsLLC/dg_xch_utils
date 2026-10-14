@@ -5,6 +5,7 @@ exclude = ["fuzz"]
 members = [
     "cli",
     "clients",
+    "crawler",
     "core",
     "full-node",
     "gui",

@@ -183,3 +183,51 @@ async fn v2_login_uses_client_signatures_and_rechecks_membership() {
     chain.active.store(false, Ordering::Relaxed);
     assert!(service.authenticate(request).await.is_err());
 }
+
+#[tokio::test]
+async fn http_health_and_metrics_read_actual_database_counts() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let directory = tempfile::tempdir().unwrap();
+    let (pool, key, _) = setup(directory.path()).await;
+    pool.register(PoolVersion::V1, registration(PoolVersion::V1, &key))
+        .await
+        .unwrap();
+    let reservation = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = reservation.local_addr().unwrap();
+    drop(reservation);
+    let server = portfu::prelude::ServerBuilder::new()
+        .host(addr.ip().to_string())
+        .port(addr.port())
+        .service(crate::http::service(Arc::new(pool)))
+        .build();
+    let handle = server.handle();
+    let task = tokio::spawn(server.run());
+    let start = std::time::Instant::now();
+    loop {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            break;
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    for (path, expected) in [
+        ("/health", "pool database available"),
+        ("/metrics", "chia_pool_registered_farmers 1\n"),
+    ] {
+        let mut socket = tokio::net::TcpStream::connect(addr).await.unwrap();
+        socket
+            .write_all(
+                format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut bytes = Vec::new();
+        socket.read_to_end(&mut bytes).await.unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("HTTP/1.1 200"));
+        assert!(text.contains(expected), "{text}");
+    }
+    handle.shutdown();
+    task.await.unwrap().unwrap();
+}

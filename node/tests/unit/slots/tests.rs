@@ -49,3 +49,46 @@ fn backtrack_rc_challenge_is_identity_without_matching_slots() {
     let rc = Bytes32::from([3; 32]);
     assert_eq!(state.backtrack_rc_challenge(rc), rc);
 }
+
+#[test]
+fn farmer_greeting_uses_only_cached_signage_still_in_current_slot() {
+    use dg_xch_core::protocols::farmer::NewSignagePoint;
+    let mut state = SlotState::new(MAINNET);
+    assert!(state.latest_farmer_signage_point().is_none());
+    let vdf = VdfInfo {
+        challenge: MAINNET.genesis_challenge,
+        number_of_iterations: 123,
+        output: ClassgroupElement::get_default_element(),
+    };
+    let point = SignagePoint {
+        cc_vdf: Some(vdf),
+        cc_proof: None,
+        rc_vdf: Some(vdf),
+        rc_proof: None,
+    };
+    let mut ann = NewSignagePoint {
+        challenge_hash: MAINNET.genesis_challenge,
+        challenge_chain_sp: vdf.output.hash().unwrap(),
+        reward_chain_sp: vdf.output.hash().unwrap(),
+        difficulty: 30,
+        sub_slot_iters: 67_108_864,
+        signage_point_index: 18,
+        peak_height: 0,
+        last_tx_height: 0,
+        sp_source_data: None,
+    };
+    state.finished_sub_slots[0].sps[18] = Some(point);
+    state.set_latest_farmer_signage_point(ann.clone());
+    assert_eq!(state.latest_farmer_signage_point(), Some(ann.clone()));
+    let mut older = ann.clone();
+    older.signage_point_index = 17;
+    state.set_latest_farmer_signage_point(older);
+    assert_eq!(state.latest_farmer_signage_point(), Some(ann.clone()));
+    state.finished_sub_slots[0].sps[18] = None;
+    assert!(state.latest_farmer_signage_point().is_none());
+    ann.challenge_hash = [99; 32].into();
+    state.set_latest_farmer_signage_point(ann);
+    assert!(state.latest_farmer_signage_point().is_none());
+    state.initialize_genesis_sub_slot();
+    assert!(state.latest_farmer_signage_point().is_none());
+}

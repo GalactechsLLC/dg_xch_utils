@@ -69,6 +69,8 @@ pub enum RootCommands {
     )]
     #[cfg(feature = "full-node")]
     FullNode(Box<FullNodeArgs>),
+    #[command(about = "Continuously crawl Chia peers and serve a dashboard and Prometheus metrics")]
+    Crawler(Box<crate::crawler::CrawlerArgs>),
     //START OF FULLNODE API
     #[command(about = "Get the current BlockchainState", long_about = None)]
     PrintPlottingInfo {

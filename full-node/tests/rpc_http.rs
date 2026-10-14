@@ -25,6 +25,8 @@ use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs_from_bytes, load_private_key_from_bytes,
 };
+#[cfg(feature = "hint")]
+use dg_xch_core::traits::SizedBytes;
 use dg_xch_node::Mempool;
 use http::StatusCode;
 use portfu::prelude::{ServerBuilder, ServerHandle};
@@ -540,22 +542,28 @@ async fn tls_raw_client_with_valid_cert_succeeds() {
 // Issue one POST /healthz over TLS with the given client config; true means the handshake failed or
 // the RPC route returned a non-200 response.
 async fn raw_request_fails(port: u16, cfg: Arc<rustls::ClientConfig>) -> bool {
+    raw_request_fails_on_path(port, cfg, "/healthz").await
+}
+
+async fn raw_request_fails_on_path(port: u16, cfg: Arc<rustls::ClientConfig>, path: &str) -> bool {
     tokio::time::timeout(
         common::network::NETWORK_TIMEOUT,
-        raw_request_is_rejected(port, cfg),
+        raw_request_is_rejected(port, cfg, path),
     )
     .await
     .expect("RPC TLS exchange must finish; a timeout is not an authentication rejection")
 }
 
-async fn raw_request_is_rejected(port: u16, cfg: Arc<rustls::ClientConfig>) -> bool {
+async fn raw_request_is_rejected(port: u16, cfg: Arc<rustls::ClientConfig>, path: &str) -> bool {
     let connector = tokio_rustls::TlsConnector::from(cfg);
     let tcp = common::network::connect_ready(([127, 0, 0, 1], port).into()).await;
     let server_name = rustls::pki_types::ServerName::try_from("localhost").expect("name");
     let Ok(mut tls) = connector.connect(server_name, tcp).await else {
         return true;
     };
-    let req = "POST /healthz HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+    );
     if tls.write_all(req.as_bytes()).await.is_err() {
         return true;
     }
@@ -569,6 +577,165 @@ async fn raw_request_is_rejected(port: u16, cfg: Arc<rustls::ClientConfig>) -> b
         }
     }
     !String::from_utf8_lossy(&buf).starts_with("HTTP/1.1 200")
+}
+
+#[tokio::test]
+async fn wallet_rpc_capabilities_match_store_support_and_require_client_authentication() {
+    use dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest;
+    let (port, handle, _, node) = spawn_tls_server().await;
+    let client = FullnodeClient::new_verified(
+        "127.0.0.1",
+        port,
+        10,
+        Some(write_client_certs("wallet_capabilities")),
+        &None,
+    )
+    .unwrap();
+    let capabilities = client.get_rpc_capabilities().await.unwrap().unwrap();
+    assert!(capabilities.success);
+    assert_eq!(
+        capabilities.endpoints.get("/get_rpc_capabilities"),
+        Some(&1)
+    );
+    let wallet_supported = cfg!(feature = "hint") && node.store.supports_wallet_sync();
+    assert_eq!(
+        capabilities
+            .endpoints
+            .contains_key("/get_wallet_coin_records"),
+        wallet_supported
+    );
+    for endpoint in ["/get_coin_records_page", "/get_coin_summary"] {
+        assert_eq!(
+            capabilities.endpoints.contains_key(endpoint),
+            cfg!(feature = "coin-index") && node.store.supports_explorer_queries()
+        );
+    }
+    if !wallet_supported {
+        let error = client
+            .get_wallet_coin_records(&WalletCoinRecordsRequest {
+                puzzle_hashes: vec![Bytes32::default()],
+                hints: vec![],
+                peak_hash: node.store.get_peak().await.unwrap().unwrap().0,
+                cursor: None,
+                limit: 1,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.error.unwrap().contains("does not support"));
+    }
+    let config = Arc::new(
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(
+                dg_xch_core::protocols::shared::NoCertificateVerification,
+            ))
+            .with_no_client_auth(),
+    );
+    for path in ["/get_rpc_capabilities", "/get_wallet_coin_records"] {
+        assert!(
+            raw_request_fails_on_path(port, config.clone(), path).await,
+            "{path} must require a trusted client certificate"
+        );
+    }
+    handle.shutdown();
+}
+
+#[cfg(feature = "hint")]
+#[tokio::test]
+async fn wallet_rpc_pages_unique_historical_coins_and_rejects_invalid_checkpoints() {
+    use dg_xch_core::blockchain::{coin::Coin, coin_record::CoinRecord};
+    use dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse;
+    let (port, handle, _, node) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
+    let (peak_hash, height) = node.store.get_peak().await.unwrap().unwrap();
+    let ph = Bytes32::from([0x9a; 32]);
+    let hint = Bytes32::from([0x9b; 32]);
+    let records: Vec<_> = (1..=4)
+        .map(|amount| CoinRecord {
+            coin: Coin {
+                parent_coin_info: Bytes32::from([0x9c; 32]),
+                puzzle_hash: if amount == 4 {
+                    Bytes32::from([0x9d; 32])
+                } else {
+                    ph
+                },
+                amount,
+            },
+            confirmed_block_index: height - 1,
+            spent_block_index: 0,
+            coinbase: false,
+            timestamp: 1,
+            spent: false,
+        })
+        .collect();
+    node.store
+        .apply_block(height, 1, &records, &[records[0].coin.name()])
+        .await
+        .unwrap();
+    node.store
+        .apply_hints(&[
+            (hint, records[0].coin.name()),
+            (hint, records[3].coin.name()),
+        ])
+        .await
+        .unwrap();
+    let mut expected: Vec<_> = records.iter().map(|record| record.coin.name()).collect();
+    expected.sort_by_key(SizedBytes::bytes);
+    let mut found = Vec::new();
+    let mut cursor = None;
+    let mut spent_seen = false;
+    for page in 0..2 {
+        let (status, value) = call(
+            port,
+            "/get_wallet_coin_records",
+            json!({
+                "puzzle_hashes": [ph, ph], "hints": [hint, hint], "peak_hash": peak_hash,
+                "cursor": cursor, "limit": 2,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let response: WalletCoinRecordsResponse = serde_json::from_value(value).unwrap();
+        assert!(response.success);
+        assert_eq!((response.peak_hash, response.height), (peak_hash, height));
+        assert_eq!(response.coin_records.len(), 2);
+        for record in &response.coin_records {
+            let id = record.coin.name();
+            assert!(cursor.is_none_or(|previous: Bytes32| id.bytes() > previous.bytes()));
+            spent_seen |=
+                id == records[0].coin.name() && record.spent && record.spent_block_index == height;
+            found.push(id);
+        }
+        cursor = response.next_cursor;
+        if page == 0 {
+            assert_eq!(cursor, found.last().copied());
+        } else {
+            assert_eq!(cursor, None);
+        }
+    }
+    assert_eq!(found, expected);
+    assert!(spent_seen, "wallet discovery includes spent coin history");
+    for body in [
+        json!({"puzzle_hashes": [], "peak_hash": peak_hash, "limit": 1}),
+        json!({"puzzle_hashes": [ph], "hints": vec![hint;100], "peak_hash": peak_hash, "limit": 1}),
+        json!({"puzzle_hashes": [ph], "peak_hash": peak_hash, "limit": 501}),
+        json!({"puzzle_hashes": [ph], "peak_hash": Bytes32::default(), "limit": 1}),
+    ] {
+        let (_, response) = call(port, "/get_wallet_coin_records", body).await;
+        assert_eq!(response["success"], false);
+    }
+    node.synced
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    let (_, response) = call(
+        port,
+        "/get_wallet_coin_records",
+        json!({
+            "puzzle_hashes": [ph], "peak_hash": peak_hash, "limit": 1,
+        }),
+    )
+    .await;
+    assert_eq!(response["success"], false);
+    assert!(response["error"].as_str().unwrap().contains("syncing"));
+    handle.shutdown();
 }
 
 #[tokio::test]
@@ -634,4 +801,54 @@ async fn tls_local_mode_requires_client_cert_on_loopback() {
         "local mode must still authenticate protected routes"
     );
     run.shutdown();
+}
+
+#[cfg(feature = "coin-index")]
+#[tokio::test]
+async fn explorer_private_queries_pin_checkpoints_and_enforce_bounds() {
+    let (port, handle, _, node) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
+    let (hash, height) = node.store.get_peak().await.unwrap().unwrap();
+    let records = node.store.get_coins_added_at_height(height).await.unwrap();
+    let ph = records[0].coin.puzzle_hash;
+    let (_, summary) = call(
+        port,
+        "/get_coin_summary",
+        json!({"puzzle_hash":ph,"peak_hash":hash}),
+    )
+    .await;
+    assert_eq!(summary["success"], true);
+    assert_eq!(summary["height"], height);
+    assert!(summary["summary"]["balance"].is_string());
+    let (_, page) = call(
+        port,
+        "/get_coin_records_page",
+        json!({"puzzle_hashes":[ph],"peak_hash":hash,"offset":0,"limit":1,"spent":null}),
+    )
+    .await;
+    assert_eq!(page["success"], true);
+    assert_eq!(page["coin_records"].as_array().unwrap().len(), 1);
+    let (_, bad) = call(
+        port,
+        "/get_coin_records_page",
+        json!({"puzzle_hashes":[ph],"peak_hash":hash,"offset":0,"limit":501}),
+    )
+    .await;
+    assert_eq!(bad["success"], false);
+    let (_, fork) = call(
+        port,
+        "/get_coin_summary",
+        json!({"puzzle_hash":ph,"peak_hash":Bytes32::default()}),
+    )
+    .await;
+    assert_eq!(fork["success"], false);
+    node.synced
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    let (_, syncing) = call(
+        port,
+        "/get_coin_summary",
+        json!({"puzzle_hash":ph,"peak_hash":hash}),
+    )
+    .await;
+    assert_eq!(syncing["success"], false);
+    handle.shutdown();
 }

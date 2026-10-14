@@ -341,6 +341,17 @@ pub struct PortfuRpcTlsContext {
 /// remain usable. Protected routes select one of these named stores and require a matching cert:
 /// `chia-peers` for the Chia protocol and `rpc-clients` for administrative APIs.
 pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsContext, IoError> {
+    let server_name =
+        std::env::var("DGX_FULL_NODE_TLS_SERVER_NAME").unwrap_or_else(|_| "localhost".into());
+    build_portfu_rpc_tls_context_for_host(mode, &server_name)
+}
+
+/// Use the real service DNS name for TLS hostname verification in distributed deployments.
+pub fn build_portfu_rpc_tls_context_for_host(
+    mode: &RpcTlsMode,
+    server_name: &str,
+) -> Result<PortfuRpcTlsContext, IoError> {
+    rustls::pki_types::ServerName::try_from(server_name.to_owned()).map_err(IoError::other)?;
     let (rpc_ca, identity_key) = match mode {
         RpcTlsMode::PrivateCa { ssl_dir } => {
             let (ca_crt, ca_key) = resolve_private_ca(ssl_dir)?;
@@ -364,12 +375,12 @@ pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsCon
         ],
     };
     let (cert_bytes, key_bytes) =
-        generate_ca_signed_cert_data_for_host(&rpc_ca, &identity_key, "localhost")?;
+        generate_ca_signed_cert_data_for_host(&rpc_ca, &identity_key, server_name)?;
     let certs = load_certs_from_bytes(&cert_bytes)?;
     let node_id = Bytes32::new(hash_256(
         certs.first().map(AsRef::as_ref).unwrap_or_default(),
     ));
-    let tls_config = TlsConfig::new(TlsIdentity::new("localhost", cert_bytes, key_bytes))
+    let tls_config = TlsConfig::new(TlsIdentity::new(server_name, cert_bytes, key_bytes))
         .client_auth(client_auth)
         .versions(TlsVersionPolicy::Tls13Only);
     Ok(PortfuRpcTlsContext {

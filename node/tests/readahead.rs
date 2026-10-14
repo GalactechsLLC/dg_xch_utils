@@ -123,6 +123,199 @@ fn readahead() -> WindowReadahead {
     WindowReadahead::new(Arc::new(SyncMetrics::default()), TIMEOUT)
 }
 
+#[tokio::test(start_paused = true)]
+async fn direct_and_prefetch_share_cooldowns_and_success_restores_the_peer() {
+    let rig = Rig::new();
+    let bad = rig.scripted(0, Duration::ZERO, false, true);
+    let good = rig.peer(1);
+    let sources = vec![bad.clone(), good.clone()];
+    let mut ahead = readahead();
+    ahead.fill(&sources, 100, 1_000, BATCH);
+    assert!(ahead.take(100, 131).await.is_none());
+    assert_eq!(ahead.select_source(&sources, 0, 131), Some(1));
+    // Another peer can serve the same range without any retry sleep.
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        ahead
+            .fetch_from(good.as_ref(), 100, 131)
+            .await
+            .unwrap()
+            .len(),
+        32
+    );
+    assert_eq!(started.elapsed(), Duration::ZERO);
+    ahead.abort_all();
+    let before = rig
+        .served
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(id, _, _)| *id == 0)
+        .count();
+    ahead.fill(&sources, 200, 1_000, BATCH);
+    assert!(ahead.take(200, 231).await.is_some());
+    assert_eq!(
+        rig.served
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, _, _)| *id == 0)
+            .count(),
+        before
+    );
+    ahead.abort_all();
+    tokio::time::advance(Duration::from_secs(5)).await;
+    assert_eq!(ahead.select_source(&sources, 0, 131), Some(0));
+    // Probe succeeds after the peer recovers; the next failure starts at the base delay.
+    assert!(
+        ahead
+            .fetch_from(rig.peer(0).as_ref(), 100, 131)
+            .await
+            .is_ok()
+    );
+    assert!(ahead.fetch_from(bad.as_ref(), 100, 131).await.is_err());
+    tokio::time::advance(Duration::from_secs(5)).await;
+    assert_eq!(ahead.select_source(&sources, 0, 131), Some(0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn repeated_rejections_back_off_per_peer_and_remain_probeable() {
+    let rig = Rig::new();
+    let bad = rig.scripted(0, Duration::ZERO, false, true);
+    let mut ahead = readahead();
+    let sources = vec![bad.clone()];
+    for seconds in [5, 10, 20, 40, 80, 160, 300, 300] {
+        assert!(ahead.fetch_from(bad.as_ref(), 100, 131).await.is_err());
+        // Refreshing the prefetch plan must not reset a still-connected peer's history.
+        ahead.fill(&sources, 200, 1_000, BATCH);
+        assert_eq!(ahead.inflight(), 0);
+        assert_eq!(ahead.select_source(&sources, 0, 131), None);
+        tokio::time::advance(Duration::from_secs(seconds) - Duration::from_millis(1)).await;
+        assert_eq!(ahead.select_source(&sources, 0, 131), None);
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(ahead.select_source(&sources, 0, 131), Some(0));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn tip_rejections_use_a_short_cooldown_and_timeouts_do_not_block_healthy_peers() {
+    let rig = Rig::new();
+    let tip: Arc<dyn BlockRangeSource> = Arc::new(AdvertisedSource {
+        inner: rig.scripted(0, Duration::ZERO, false, true),
+        height: Some(131),
+        closed: false,
+    });
+    let ahead = readahead();
+    let sources = vec![tip.clone(), rig.peer(1)];
+    assert!(ahead.fetch_from(tip.as_ref(), 100, 131).await.is_err());
+    assert_eq!(ahead.select_source(&sources, 0, 131), Some(1));
+    tokio::time::advance(Duration::from_millis(250)).await;
+    assert_eq!(ahead.select_source(&sources, 0, 131), Some(0));
+    let stalled = rig.scripted(2, Duration::ZERO, true, false);
+    assert!(matches!(
+        ahead.fetch_from(stalled.as_ref(), 100, 131).await,
+        Err(SyncError::PeerStalled(2))
+    ));
+    assert_eq!(
+        ahead.select_source(&[stalled, sources[1].clone()], 0, 131),
+        Some(1)
+    );
+    assert_eq!(
+        rig.live.load(Ordering::SeqCst),
+        0,
+        "timeout cancels the fetch"
+    );
+}
+
+#[tokio::test]
+async fn completed_prefetches_do_not_consume_connection_capacity() {
+    let rig = Rig::new();
+    let mut ahead = readahead();
+    ahead.fill(&[rig.peer(0)], 100, 1_000, BATCH);
+    assert!(ahead.busy_peer(0));
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+        if !ahead.busy_peer(0) {
+            break;
+        }
+    }
+    assert!(!ahead.busy_peer(0));
+    assert_eq!(ahead.inflight(), 1, "the fetched body remains resident");
+    assert_eq!(ahead.take(100, 131).await.unwrap().len(), 32);
+}
+
+#[tokio::test(start_paused = true)]
+async fn stale_success_and_cancelled_fetches_cannot_erase_or_invent_failures() {
+    let rig = Rig::new();
+    let ahead = Arc::new(readahead());
+    let slow = rig.scripted(0, Duration::from_secs(1), false, false);
+    let bad = rig.scripted(0, Duration::ZERO, false, true);
+    let task_ahead = ahead.clone();
+    let old = tokio::spawn(async move { task_ahead.fetch_from(slow.as_ref(), 100, 131).await });
+    tokio::task::yield_now().await;
+    assert_eq!(rig.live.load(Ordering::SeqCst), 1);
+    assert!(ahead.fetch_from(bad.as_ref(), 200, 231).await.is_err());
+    assert!(old.await.unwrap().is_ok());
+    let sources = vec![bad, rig.peer(1)];
+    assert_eq!(
+        ahead.select_source(&sources, 0, 231),
+        Some(1),
+        "old success cannot clear a new rejection"
+    );
+    let hanging = rig.scripted(2, Duration::ZERO, true, false);
+    let task_ahead = ahead.clone();
+    let task_source = hanging.clone();
+    let cancelled =
+        tokio::spawn(async move { task_ahead.fetch_from(task_source.as_ref(), 100, 131).await });
+    tokio::task::yield_now().await;
+    cancelled.abort();
+    assert!(cancelled.await.unwrap_err().is_cancelled());
+    assert_eq!(rig.live.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        ahead.select_source(&[hanging], 0, 131),
+        Some(0),
+        "replanning is not a peer failure"
+    );
+}
+
+struct IncompleteSource(Vec<FullBlock>);
+
+#[async_trait::async_trait]
+impl BlockRangeSource for IncompleteSource {
+    fn peer_id(&self) -> u64 {
+        0
+    }
+    fn is_closed(&self) -> bool {
+        false
+    }
+    async fn fetch_range(&self, _: u32, _: u32) -> Result<Vec<FullBlock>, SyncError> {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn incomplete_or_wrong_height_responses_are_failures_in_both_fetch_paths() {
+    let rig = Rig::new();
+    for blocks in [vec![], vec![common::restamp_block(&rig.base, 101)]] {
+        let source: Arc<dyn BlockRangeSource> = Arc::new(IncompleteSource(blocks));
+        let mut ahead = readahead();
+        assert!(matches!(
+            ahead.fetch_from(source.as_ref(), 100, 100).await,
+            Err(SyncError::RangeMismatch { .. })
+        ));
+        assert_eq!(
+            ahead.select_source(std::slice::from_ref(&source), 0, 100),
+            None
+        );
+        // An independently failed prefetch applies the same exclusion.
+        let mut other = readahead();
+        other.fill(std::slice::from_ref(&source), 100, 100, 1);
+        assert!(other.take(100, 100).await.is_none());
+        assert_eq!(other.select_source(&[source], 0, 100), None);
+        ahead.abort_all();
+    }
+}
+
 struct AdvertisedSource {
     inner: Arc<dyn BlockRangeSource>,
     height: Option<u32>,
@@ -305,13 +498,15 @@ async fn failed_head_fetch_keeps_the_deeper_windows() {
         3,
         "deeper windows must survive the head failure"
     );
+    assert!(ra.take(0, BATCH - 1).await.is_none());
+    assert_eq!(ra.inflight(), 3, "retrying the gap must preserve the tail");
     let next = ra
         .take(BATCH, 2 * BATCH - 1)
         .await
         .expect("next window still served from the pipeline");
     assert_eq!(next[0].height(), BATCH);
     assert_eq!(ra.metrics().readahead_hits.load(Ordering::Relaxed), 1);
-    assert_eq!(ra.metrics().readahead_misses.load(Ordering::Relaxed), 1);
+    assert_eq!(ra.metrics().readahead_misses.load(Ordering::Relaxed), 2);
     ra.abort_all();
     assert!(rig.drained().await);
 }
@@ -427,13 +622,14 @@ async fn wait_for_served(rig: &Rig, n: usize) {
     }
 }
 
-// Aggressive knob — unset is UNCHANGED: the default config keeps the one-window-per-peer cap, so
-// with only 2 peers just 2 windows dispatch even though START_DEPTH is 4 (byte-identical to the shipped default —
-// the `busy_peer` exclusion is exactly "already carries a window").
+// The default cap permits one active request per connection. Hold requests open so this test
+// measures concurrent requests rather than completed windows resident in the buffer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn default_config_keeps_one_window_per_peer() {
     let rig = Rig::new();
-    let sources: Vec<_> = (0..2).map(|i| rig.peer(i)).collect();
+    let sources: Vec<_> = (0..2)
+        .map(|i| rig.scripted(i, Duration::ZERO, true, false))
+        .collect();
     let mut ra = WindowReadahead::with_config(
         Arc::new(SyncMetrics::default()),
         TIMEOUT,

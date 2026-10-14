@@ -235,6 +235,7 @@ pub(in crate::node) async fn update_slot_state_on_peak<
         if let Some(fa) =
             farmer_announce_for_eos(eos, next_diff, next_ssi, peak_height, last_tx_height)
         {
+            state.set_latest_farmer_signage_point(fa.clone());
             farmer_announces.push(fa);
         }
     }
@@ -245,6 +246,7 @@ pub(in crate::node) async fn update_slot_state_on_peak<
         if let Some(fa) =
             farmer_announce_for_sp(sp, *index, next_diff, next_ssi, peak_height, last_tx_height)
         {
+            state.set_latest_farmer_signage_point(fa.clone());
             farmer_announces.push(fa);
         }
     }
@@ -343,6 +345,7 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
                         peak_height,
                         last_tx_height,
                     ) {
+                        state.set_latest_farmer_signage_point(fa.clone());
                         farmer_announces.push(fa);
                     }
                 }
@@ -373,6 +376,7 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
                         peak_height,
                         last_tx_height,
                     ) {
+                        state.set_latest_farmer_signage_point(fa.clone());
                         farmer_announces.push(fa);
                     }
                 }

@@ -21,5 +21,6 @@ docker/plots/
 **/ssl/
 local-node/
 wallet-data/
+crawler-data/
 config.yaml
 config.yml

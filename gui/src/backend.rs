@@ -11,7 +11,7 @@ use dg_xch_plotter::backend::{
 };
 use dg_xch_pos2::plotting::PlotLimits;
 use dg_xch_wallet::accounts::{Account, WalletSession, WalletSnapshot};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,6 +44,10 @@ pub struct State {
     pub farmer_stats: String,
     pub pool_settings: Vec<dg_xch_farmer::pool_management::PoolSettings>,
     pub plot_job: Option<String>,
+    pub plot_active: bool,
+    pub plot_queued: usize,
+    pub plot_history: Vec<String>,
+    pub payout_address: Option<(String, u32, String)>,
     pub inventory: Vec<(PathBuf, String)>,
     pub notice: String,
     pub notice_error: bool,
@@ -64,6 +68,11 @@ pub enum OfferAction {
 }
 
 pub enum Command {
+    BatchPlots(Vec<Command>),
+    PayoutAddress {
+        id: String,
+        index: u32,
+    },
     Offer {
         id: String,
         genesis: Bytes32,
@@ -253,10 +262,14 @@ impl Backend {
 
     pub fn command(&self, command: Command) {
         let importing = matches!(&command, Command::Import { .. });
+        let loading_payout = matches!(&command, Command::PayoutAddress { .. });
         update(&self.state, |state| {
             state.notice_revision = state.notice_revision.wrapping_add(1);
             state.notice = "Working…".into();
             state.notice_error = false;
+            if loading_payout {
+                state.payout_address = None;
+            }
             if importing {
                 state.import_result = None;
             }
@@ -423,25 +436,59 @@ async fn command_worker(
     let mut wallets: HashMap<String, (mpsc::Sender<WalletCommand>, JoinHandle<()>)> =
         HashMap::new();
     let mut farming_keys = HashMap::new();
+    let mut payout_keys = HashMap::new();
+    let mut plot_queue = VecDeque::new();
     let mut farmer: Option<FarmerService> = None;
     let mut plot: Option<JoinHandle<()>> = None;
     let mut inventory: Option<JoinHandle<()>> = None;
     let mut tick = tokio::time::interval(Duration::from_secs(2));
     loop {
-        let command = tokio::select! {
-            command = commands.recv() => match command { Some(command) => command, None => break },
-            _ = tick.tick() => {
-                if let Some(error) = farmer.as_mut().and_then(FarmerService::failure) {
-                    if let Some(service) = farmer.take() { service.stop().await; }
-                    update(&state, |state| { state.farmer_running = false; state.notice = error; state.notice_error = true; });
+        if plot.as_ref().is_some_and(|job| job.is_finished())
+            && let Some(job) = plot.take()
+        {
+            let outcome = job.await;
+            update(&state, |state| {
+                state.plot_active = false;
+                if let Err(error) = outcome {
+                    state.plot_job = Some(format!("Job stopped: {error}"));
                 }
-                if let Some(service) = &farmer {
-                    let recent = service.state.most_recent_sp.read().await;
-                    let counts = dg_xch_core::protocols::farmer::SerialPlotCounts::from(service.state.plot_counts.as_ref());
-                    let counts = serde_json::to_string_pretty(&counts).unwrap_or_default();
-                    update(&state, |state| state.farmer_stats = format!("Signage point: {}\nChallenge: {}\nLast point: {} seconds ago\nPlots: {counts}", recent.index, recent.hash, recent.timestamp.elapsed().as_secs()));
+                if let Some(job) = &state.plot_job {
+                    state.plot_history.push(job.clone());
                 }
-                continue;
+                if state.plot_history.len() > 100 {
+                    state.plot_history.remove(0);
+                }
+            });
+        }
+        let command = if plot.is_none() && !plot_queue.is_empty() {
+            // Process pending commands before starting another plot.
+            match commands.try_recv() {
+                Ok(command) => command,
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    let Some(command) = plot_queue.pop_front() else {
+                        continue;
+                    };
+                    update(&state, |state| state.plot_queued = plot_queue.len());
+                    command
+                }
+            }
+        } else {
+            tokio::select! {
+                command = commands.recv() => match command { Some(command) => command, None => break },
+                _ = tick.tick() => {
+                    if let Some(error) = farmer.as_mut().and_then(FarmerService::failure) {
+                        if let Some(service) = farmer.take() { service.stop().await; }
+                        update(&state, |state| { state.farmer_running = false; state.notice = error; state.notice_error = true; });
+                    }
+                    if let Some(service) = &farmer {
+                        let recent = service.state.most_recent_sp.read().await;
+                        let counts = dg_xch_core::protocols::farmer::SerialPlotCounts::from(service.state.plot_counts.as_ref());
+                        let counts = serde_json::to_string_pretty(&counts).unwrap_or_default();
+                        update(&state, |state| state.farmer_stats = format!("Signage point: {}\nChallenge: {}\nLast point: {} seconds ago\nPlots: {counts}", recent.index, recent.hash, recent.timestamp.elapsed().as_secs()));
+                    }
+                    continue;
+                }
             }
         };
         let settings = configuration.borrow().clone();
@@ -452,6 +499,18 @@ async fn command_worker(
         });
         let result: Result<(), Error> = async {
             match command {
+                Command::BatchPlots(jobs) => {
+                    if jobs.is_empty() || plot_queue.len() + jobs.len() > 100 { return Err(Error::other("Choose a batch that fits the 100-plot queue")); }
+                    if !jobs.iter().all(|job| matches!(job, Command::Plot { output, .. } if output.is_dir())) { return Err(Error::other("Choose an existing output directory")); }
+                    plot_queue.extend(jobs);
+                    update(&state, |state| { state.plot_queued = plot_queue.len(); state.notice = format!("{} plots queued", plot_queue.len()); });
+                },
+                Command::PayoutAddress { id, index } => {
+                    if index >= 100_000 { return Err(Error::other("Derivation index must be below 100000")); }
+                    let key = payout_keys.get(&id).ok_or_else(|| Error::other("Unlock the selected wallet first"))?;
+                    let address = payout_address(key, index, settings.constants()?.bech32_prefix)?;
+                    update(&state, |state| { state.payout_address = Some((id, index, address)); state.notice = "Payout address loaded. Save settings to use it.".into(); });
+                },
                 Command::PlottingKeys { id, password } => {
                     update(&state, |state| state.plotting_keys = None);
                     let account = Account::load(&paths.accounts(), &id)?;
@@ -473,16 +532,19 @@ async fn command_worker(
                     if account.network != settings.network { return Err(Error::other("account belongs to another network")); }
                     let genesis = settings.trusted_genesis()?;
                     let secret = tokio::task::spawn_blocking(move || account.unlock(&password)).await.map_err(Error::other)??;
+                    let payout_key = dg_xch_keys::master_sk_to_wallet_sk_unhardened_intermediate(&secret)?.sk_to_pk();
                     let keys = (dg_xch_keys::master_sk_to_farmer_sk(&secret)?, dg_xch_keys::master_sk_to_pool_sk(&secret)?);
                     let session = WalletSession::new_with_mode(secret, settings.client()?, Arc::new(settings.constants()?), genesis, paths.data.join("wallets").join(&id).join(format!("{}.sqlite", hex::encode(genesis))), settings.wallet_sync_mode).await?;
                     let (sender, receiver) = mpsc::channel(4);
                     update(&state, |state| if let Some(account) = state.accounts.iter_mut().find(|account| account.account.id == id) { account.unlocked = true; account.snapshot = Some(session.snapshot()); account.error = None; });
                     let worker = tokio::spawn(wallet_worker(id.clone(), session, receiver, state.clone(), settings.poll_seconds));
+                    payout_keys.insert(id.clone(), payout_key);
                     farming_keys.insert(id.clone(), keys);
                     wallets.insert(id, (sender, worker));
                     update(&state, |state| state.notice = "Wallet unlocked. Balance tracking is running in the background.".into());
                 },
                 Command::Lock(id) => {
+                    payout_keys.remove(&id);
                     farming_keys.remove(&id);
                     if let Some((_, handle)) = wallets.remove(&id) { handle.abort(); let _ = handle.await; }
                     update(&state, |state| if let Some(account) = state.accounts.iter_mut().find(|account| account.account.id == id) { account.unlocked = false; account.snapshot = None; account.error = None; });
@@ -517,7 +579,19 @@ async fn command_worker(
                         update(&state, |state| { state.settings = Some(settings); state.notice = "Appearance saved.".into(); });
                         return Ok(());
                     }
-                    if !wallets.is_empty() || farmer.is_some() { return Err(Error::other("lock wallets and stop farming before changing settings")); }
+                    let mut payout_only = appearance_only.clone();
+                    payout_only.farmer_payout_address = settings.farmer_payout_address.clone();
+                    if payout_only == settings && farmer.is_none() {
+                        if !settings.farmer_payout_address.trim().is_empty() {
+                            let hash = dg_xch_keys::decode_puzzle_hash(&settings.farmer_payout_address)?;
+                            if dg_xch_keys::encode_puzzle_hash(&hash, settings.constants()?.bech32_prefix)? != settings.farmer_payout_address.to_lowercase() { return Err(Error::other("payout address belongs to another network")); }
+                        }
+                        paths.save(&settings)?;
+                        configuration.send(settings.clone()).map_err(Error::other)?;
+                        update(&state, |state| { state.settings = Some(settings); state.notice = "Payout address saved.".into(); });
+                        return Ok(());
+                    }
+                    if !wallets.is_empty() || farmer.is_some() || plot.is_some() || !plot_queue.is_empty() { return Err(Error::other("lock wallets, stop farming and finish or cancel plotting before changing connection settings")); }
                     paths.save(&settings)?;
                     configuration.send(settings.clone()).map_err(Error::other)?;
                     update(&state, |state| state.settings = Some(settings));
@@ -580,8 +654,13 @@ async fn command_worker(
                     });
                 },
                 Command::Plot { request, output, limits, gpu } => {
-                    if plot.as_ref().is_some_and(|job| !job.is_finished()) { return Err(Error::other("a plot job is already running")); }
                     if !output.is_dir() { return Err(Error::other("choose an existing output directory")); }
+                    if plot.is_some() {
+                        if plot_queue.len() >= 100 { return Err(Error::other("Plot queue is full (100 pending plots)")); }
+                        plot_queue.push_back(Command::Plot { request, output, limits, gpu });
+                        update(&state, |state| { state.plot_queued = plot_queue.len(); state.notice = format!("Plot queued. {} waiting.", plot_queue.len()); });
+                        return Ok(());
+                    }
                     let started = time::OffsetDateTime::now_utc();
                     let staging = tempfile::Builder::new().prefix(".dgx-plot-").tempdir_in(&output)?;
                     let output = staging.path().join("plot.partial");
@@ -590,6 +669,7 @@ async fn command_worker(
                     let state = state.clone();
                     update(&state, |state| state.plot_job = Some("Selecting plotting backend".into()));
                     let (selection, job_label) = resolve_execution(&settings, gpu, &cancelled).await?;
+                    update(&state, |state| state.plot_active = true);
                     if selection.as_ref().is_some_and(|selection| selection.backend == SelectedGpuBackend::Cuda) {
                         use std::ffi::OsString;
                         let mut args: Vec<OsString> = vec!["--output".into(), output.clone().into_os_string(), "--farmer-key".into(), hex::encode(request.farmer_public_key).into(),
@@ -628,7 +708,7 @@ async fn command_worker(
                         }));
                     }));
                 },
-                Command::CancelPlot => { cancelled.store(true, Ordering::Release); update(&state, |state| state.notice = "Cancellation requested. The job will stop at its next cancellation checkpoint.".into()); },
+                Command::CancelPlot => { plot_queue.clear(); update(&state, |state| state.plot_queued = 0); cancelled.store(true, Ordering::Release); update(&state, |state| state.notice = "Queue cleared. The active job will stop at its next cancellation checkpoint.".into()); },
                 Command::ProvePlot { path, challenge, testnet, gpu, memory_bytes, max_work } => {
                     if plot.as_ref().is_some_and(|job| !job.is_finished()) { return Err(Error::other("a plot job is already running")); }
                     let info = dg_xch_plotter::inspect(&path)?;
@@ -638,7 +718,7 @@ async fn command_worker(
                     let state = state.clone();
                     update(&state, |state| state.plot_job = Some("Selecting development proof-check backend".into()));
                     let (selection, job_label) = resolve_execution(&settings, gpu, &cancelled).await?;
-                    update(&state, |state| state.plot_job = Some(format!("{job_label}: reading challenge fragments and reconstructing candidate proofs")));
+                    update(&state, |state| { state.plot_active = true; state.plot_job = Some(format!("{job_label}: reading challenge fragments and reconstructing candidate proofs")); });
                     if selection.as_ref().is_some_and(|selection| selection.backend == SelectedGpuBackend::Cuda) {
                         let mut args = vec!["--prove-plot".into(), path.into_os_string(), "--challenge".into(), hex::encode(challenge).into(),
                             "--memory-mib".into(), (memory_bytes / 1024 / 1024).to_string().into(),
@@ -717,6 +797,18 @@ async fn command_worker(
 }
 
 type FarmingKeys = (blst::min_pk::SecretKey, blst::min_pk::SecretKey);
+
+fn payout_address(
+    key: &blst::min_pk::PublicKey,
+    index: u32,
+    prefix: &str,
+) -> Result<String, Error> {
+    let key = dg_xch_keys::derive_child_pk_unhardened(key, index)?;
+    let hash = dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk(
+        key.to_bytes().into(),
+    )?;
+    dg_xch_keys::encode_puzzle_hash(&hash, prefix)
+}
 
 async fn account_farming_keys(
     account: &Account,
@@ -908,6 +1000,119 @@ fn publish_plot(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn payout_public_derivation_matches_wallet_addresses() {
+        let phrase = bip39::Mnemonic::from_entropy(&[23; 32])
+            .unwrap()
+            .to_string();
+        let secret = dg_xch_keys::key_from_mnemonic_str(&phrase).unwrap();
+        let public = dg_xch_keys::master_sk_to_wallet_sk_unhardened_intermediate(&secret)
+            .unwrap()
+            .sk_to_pk();
+        for index in [0, 1, 42, 99_999] {
+            let private = dg_xch_keys::master_sk_to_wallet_sk_unhardened(&secret, index).unwrap();
+            let hash = dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::puzzle_hash_for_pk(
+                private.sk_to_pk().to_bytes().into(),
+            )
+            .unwrap();
+            for prefix in ["xch", "txch"] {
+                assert_eq!(
+                    super::payout_address(&public, index, prefix).unwrap(),
+                    dg_xch_keys::encode_puzzle_hash(&hash, prefix).unwrap()
+                );
+            }
+        }
+    }
+
+    fn small_plot_batch(directory: &std::path::Path, count: u16) -> Command {
+        Command::BatchPlots(
+            (0..count)
+                .map(|index| Command::Plot {
+                    request: dg_xch_plotter::PlotRequest {
+                        farmer_public_key: [1; 48],
+                        pool: dg_xch_plotter::PoolBinding::PublicKey([2; 48]),
+                        k: 18,
+                        strength: 2,
+                        index,
+                        meta_group: 0,
+                        testnet: true,
+                    },
+                    output: directory.into(),
+                    // Deliberately fail the resource check without allocating plot memory.
+                    limits: dg_xch_pos2::plotting::PlotLimits {
+                        memory_bytes: 1,
+                        max_entries: 1,
+                        max_work: 1,
+                    },
+                    gpu: false,
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn plot_batch_advances_after_failures_and_retains_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config: directory.path().join("config"),
+            data: directory.path().join("data"),
+        };
+        let backend = Backend::for_smoke_test(paths, Settings::default()).unwrap();
+        backend.command(small_plot_batch(directory.path(), 3));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let state = backend.snapshot();
+            if state.plot_history.len() == 3 {
+                assert_eq!(state.plot_queued, 0);
+                assert!(!state.plot_active);
+                assert!(
+                    state
+                        .plot_history
+                        .iter()
+                        .all(|job| job.contains("stopped:"))
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Queue did not drain: {:?}",
+                state.plot_history
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_clears_pending_plots_before_starting_another() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config: directory.path().join("config"),
+            data: directory.path().join("data"),
+        };
+        let (configuration, _) = tokio::sync::watch::channel(Settings::default());
+        let (sender, receiver) = tokio::sync::mpsc::channel(4);
+        sender
+            .send(small_plot_batch(directory.path(), 3))
+            .await
+            .unwrap();
+        sender.send(Command::CancelPlot).await.unwrap();
+        drop(sender);
+        let state = Arc::new(Mutex::new(State::default()));
+        super::command_worker(
+            paths,
+            configuration,
+            receiver,
+            state.clone(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+        let state = state.lock().unwrap();
+        assert_eq!(state.plot_queued, 0);
+        assert!(!state.plot_active);
+        assert!(state.plot_history.is_empty());
+        assert!(state.notice.contains("Queue cleared"));
+    }
+
     #[test]
     fn generated_plot_name_preserves_identity_and_never_overwrites() {
         let root = tempfile::tempdir().unwrap();

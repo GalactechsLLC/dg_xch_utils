@@ -168,6 +168,18 @@ impl Drop for ActiveJob {
     }
 }
 
+/// Record CPU work run by a backend-owned pool alongside the shared compute pools.
+pub fn measure<Output>(phase: Phase, operation: impl FnOnce() -> Output) -> Output {
+    let counters = counters(phase);
+    counters.active.fetch_add(1, Ordering::Relaxed);
+    let _active = ActiveJob {
+        counters,
+        started: Instant::now(),
+        cpu_started: thread_cpu_nanos(),
+    };
+    operation()
+}
+
 pub fn map<Input: Sync, Output: Send>(
     phase: Phase,
     inputs: &[Input],
@@ -194,13 +206,7 @@ pub fn map<Input: Sync, Output: Send>(
                 counters
                     .wait_nanos
                     .fetch_add(submitted.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                counters.active.fetch_add(1, Ordering::Relaxed);
-                let _active = ActiveJob {
-                    counters,
-                    started: Instant::now(),
-                    cpu_started: thread_cpu_nanos(),
-                };
-                operation(input)
+                measure(phase, || operation(input))
             })
             .collect()
     })

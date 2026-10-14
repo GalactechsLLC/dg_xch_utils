@@ -24,3 +24,6 @@ tarpaulin/
 *.profraw
 *.a
 *.lib
+
+# Default crawler runtime observations
+/crawler-data/

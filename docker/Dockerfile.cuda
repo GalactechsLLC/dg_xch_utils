@@ -54,4 +54,5 @@ FROM cuda-runtime AS plotter-cuda
 ENTRYPOINT ["/usr/local/bin/dg_xch_plotter_cuda"]
 
 FROM cuda-runtime AS farmer-nvidia
+EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/dgx", "farmer"]

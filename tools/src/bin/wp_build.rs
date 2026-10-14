@@ -63,6 +63,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dir.display()
             )
             .into()),
+            dg_full_node::config::Backend::Rocksdb(_) => {
+                Err("rocksdb:// --db is not supported by wp_build".into())
+            }
         }
     })
 }

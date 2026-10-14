@@ -322,6 +322,7 @@ fn create_farmer(
         fullnode_ws_port: 8444,
         fullnode_rpc_host: "localhost".to_owned(),
         fullnode_rpc_port: 8444,
+        signage_point_timeout_seconds: Config::<()>::default().signage_point_timeout_seconds,
         farmer_info: vec![FarmingInfo {
             farmer_secret_key: Bytes32::from(farmer.to_bytes()),
             pool_secret_key: Some(Bytes32::from(pool.to_bytes())),
@@ -470,7 +471,7 @@ fn initialize(root: &Path) -> Result<(), Error> {
     let introducer = root.join("introducer");
     {
         let tls = service_identity(&introducer, &roots)?;
-        let config = serde_json::json!({ "listen": "0.0.0.0:8445", "chain": chain, "tls": tls, "peer_server_name": "localhost", "allow_private_addresses": true, "max_connections": 32, "max_peers": 128, "peer_ttl_seconds": 3600 });
+        let config = serde_json::json!({ "listen": "0.0.0.0:8445", "chain": chain, "tls": tls, "peer_server_name": "localhost", "allow_private_addresses": true, "max_connections": 32, "peer_ttl_seconds": 3600 });
         ensure_service(&introducer, &config)?;
     }
     let timelord = root.join("timelord");

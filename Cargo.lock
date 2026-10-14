@@ -1229,6 +1229,7 @@ dependencies = [
  "dg_logger",
  "dg_xch_clients",
  "dg_xch_core",
+ "dg_xch_crawler",
  "dg_xch_farmer",
  "dg_xch_gui",
  "dg_xch_introducer",
@@ -1332,6 +1333,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "dg_xch_crawler"
+version = "3.0.0"
+dependencies = [
+ "dg_xch_core",
+ "dg_xch_serialize",
+ "dg_xch_servers",
+ "futures-util",
+ "hex",
+ "portfu",
+ "prometheus",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "dg_xch_dev_tools"
 version = "3.0.0"
 dependencies = [
@@ -1394,6 +1417,7 @@ dependencies = [
  "hex",
  "log",
  "once_cell",
+ "prometheus",
  "rand 0.10.2",
  "rayon",
  "rustls",
@@ -1420,6 +1444,7 @@ dependencies = [
  "dg_xch_keys",
  "dg_xch_plotter",
  "dg_xch_pos2",
+ "dg_xch_puzzles",
  "dg_xch_servers",
  "dg_xch_wallet",
  "eframe",
@@ -1440,6 +1465,8 @@ dependencies = [
  "dg_xch_serialize",
  "dg_xch_servers",
  "futures-util",
+ "portfu",
+ "prometheus",
  "rustls",
  "serde",
  "serde_json",
@@ -1549,6 +1576,7 @@ dependencies = [
  "dg_xch_pos",
  "dg_xch_puzzles",
  "dg_xch_serialize",
+ "dg_xch_servers",
  "dg_xch_wallet",
  "hex",
  "libc",
@@ -1664,16 +1692,19 @@ dependencies = [
  "dg_xch_pos",
  "dg_xch_serialize",
  "directories",
+ "hex",
  "http",
  "http-body-util",
  "hyper",
  "hyper-tungstenite",
  "hyper-util",
  "log",
+ "portfu",
  "prometheus",
  "rustls",
  "serde",
  "serde_json",
+ "sqlx",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -1719,6 +1750,7 @@ dependencies = [
  "libsqlite3-sys",
  "log",
  "memmap2",
+ "rayon",
  "rocksdb",
  "serde",
  "serde_json",
@@ -1756,6 +1788,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "rayon",
  "rug",
  "sha2",
 ]
@@ -5428,6 +5461,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
+ "uuid",
  "webpki-roots 0.26.11",
 ]
 
@@ -5509,6 +5543,7 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -5547,6 +5582,7 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -5573,6 +5609,7 @@ dependencies = [
  "time",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
