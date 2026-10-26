@@ -15,6 +15,6 @@ bytes = "1.11.1"
 dg_xch_serialize = {path = "../serialize", version="3.0.0"}
 proc-macro2 = "1.0.106"
 quote = "1.0.45"
-sha2 = { version = "0.10.9", features = ["oid"] }
-syn = { version = "2.0.117", features = ["full"] }
+sha2 = { version = "0.11.1", features = ["oid"] }
+syn = { version = "3.0.9", features = ["full"] }
 proc-macro-crate = "3.4.0"

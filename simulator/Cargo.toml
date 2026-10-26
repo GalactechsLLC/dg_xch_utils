@@ -24,6 +24,9 @@ name = "sim_node"
 required-features = ["server"]
 
 [dependencies]
+clap = { version = "4.5.60", features = ["derive"], optional = true }
+serde_json = "1.0.154"
+zeroize = { version = "1.9.1", optional = true }
 dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, features = ["bls"] }
 dg_xch_keys = { path = "../keys", version = "3.0.0" }
 dg_xch_node = { path = "../node", version = "3.0.0" }
@@ -31,7 +34,7 @@ dg_xch_node = { path = "../node", version = "3.0.0" }
 # the simulator's own store — a wallet syncs against the sim as if it were a mainnet node. `hint`
 # pulls the coin-index + hint secondary indexes a wallet needs to discover coins and CAT/NFT assets.
 dg_full_node = { path = "../full-node", features = ["hint"], optional = true }
-rustls = { version = "0.23.45", optional = true }
+rustls = { version = "0.23.46", optional = true }
 num-bigint = { version = "0.4.6", optional = true }
 async-trait = { version = "0.1.89", optional = true }
 dg_xch_pos = { path = "../proof_of_space", version = "3.0.0" }
@@ -47,15 +50,16 @@ log = "0.4.29"
 portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false, features = ["tasks", "tls"] }
 rand_chacha = "0.10.0"
 serde = { version = "1.0.228", features = ["derive"] }
-tokio = {version = "1.50.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+tokio = {version = "1.54.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
 
 [dev-dependencies]
 async-trait = "0.1.89"
 tempfile = "3"
 num-bigint = "0.4.6"
-serde_json = "1.0.145"
+serde_json = "1.0.154"
 
 [features]
+falcon = ["dg_xch_core/falcon", "dg_xch_node/falcon", "pos2", "dep:clap", "dep:zeroize"]
 default = ["pos2"]
 # Native plot creation, proving, and solving for proof of space 2.
 pos2 = ["dep:dg_xch_plotter"]
@@ -67,3 +71,8 @@ server = [
     "dep:num-bigint",
     "dep:async-trait",
 ]
+
+[[bin]]
+name = "dg_xch_falcon_dev"
+path = "src/bin/falcon_dev.rs"
+required-features = ["falcon"]

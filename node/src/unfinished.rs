@@ -209,10 +209,17 @@ impl UnfinishedCache {
             .collect()
     }
 
-    /// Drop every cached block at or below `height` (peak advanced past them).
-    pub fn prune_below(&mut self, height: u32) {
+    /// Retain candidates whose infusion is still ahead of the peak. Their
+    /// provisional height may equal the new peak's height: infusion reparents
+    /// them and can drop transaction foliage. Genesis candidates are the
+    /// exception, since their prefarm target cannot be used at a later height.
+    pub fn prune_on_peak(&mut self, total_iters: u128) {
         self.blocks.retain(|_, group| {
-            group.retain(|_, e| e.height > height || e.block.is_none());
+            group.retain(|_, entry| {
+                entry.block.as_ref().is_none_or(|block| {
+                    entry.height > 0 && block.reward_chain_block.total_iters > total_iters
+                })
+            });
             !group.is_empty()
         });
     }

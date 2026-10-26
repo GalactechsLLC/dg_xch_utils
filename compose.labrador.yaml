@@ -1,0 +1,248 @@
+name: dgx-labrador-v2
+
+x-service: &service
+  image: dgx-labrador-v2:local
+  build:
+    context: .
+    target: labrador-stack
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  mem_limit: 6g
+  cpus: 2
+  logging:
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-node-command: &node-command
+  - --listen
+  - 0.0.0.0:8444
+  - --rpc-tls
+  - private-ca
+  - --ssl-dir
+  - /data/ssl
+  - --chain-config
+  - /common/chain.json
+  - --db
+  - sqlite:///data/chain.db
+  - --introducer
+  - introducer:8445
+  - --target-outbound
+  - "2"
+  - --target-peer-count
+  - "16"
+  - --compute-workers
+  - "1"
+  - --sqlite-writer-cache-mb
+  - "64"
+  - --uncompact
+
+x-node-health: &node-health
+  test: [CMD, curl, --silent, --fail, --cacert, /data/ssl/ca/private_ca.crt, https://localhost:8444/metrics]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 30s
+
+services:
+  discovery-db:
+    image: postgres:16.15-alpine3.24
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: falcon
+      POSTGRES_PASSWORD: falcon-development
+      POSTGRES_DB: falcon
+    volumes:
+      - discovery-db:/var/lib/postgresql/data
+    networks: [chain]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U falcon -d falcon"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    cpus: 1
+
+  init-stack:
+    <<: *service
+    restart: "no"
+    entrypoint: [dg_xch_stack_init, --root, /stack, --chain-profile, labrador, --cpu-farmers]
+    network_mode: none
+    volumes:
+      - common:/stack/common
+      - node-cpu:/stack/node-cpu
+      - node-nvidia:/stack/node-nvidia
+      - node-amd:/stack/node-amd
+      - farmer-cpu:/stack/farmer-cpu
+      - farmer-nvidia:/stack/farmer-nvidia
+      - farmer-amd:/stack/farmer-amd
+      - introducer:/stack/introducer
+      - timelord:/stack/timelord
+
+  introducer:
+    <<: *service
+    entrypoint: [dgx, --config-dir, /service/app, introducer, --config, /service/config.json]
+    environment:
+      DGX_INTRODUCER_DATABASE_URL: postgres://falcon:falcon-development@discovery-db:5432/falcon
+    depends_on:
+      discovery-db:
+        condition: service_healthy
+      init-stack:
+        condition: service_completed_successfully
+    volumes:
+      - introducer:/service:ro
+    networks: [chain]
+    mem_limit: 256m
+    cpus: 0.5
+
+  node-cpu:
+    <<: *service
+    command: *node-command
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+      introducer:
+        condition: service_started
+    volumes:
+      - common:/common:ro
+      - node-cpu:/data
+    networks: [chain]
+    healthcheck: *node-health
+
+  node-nvidia:
+    <<: *service
+    command: *node-command
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+      introducer:
+        condition: service_started
+    volumes:
+      - common:/common:ro
+      - node-nvidia:/data
+    networks: [chain]
+    healthcheck: *node-health
+
+  node-amd:
+    <<: *service
+    command: *node-command
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+      introducer:
+        condition: service_started
+    volumes:
+      - common:/common:ro
+      - node-amd:/data
+    networks: [chain]
+    healthcheck: *node-health
+
+  farmer-cpu:
+    <<: *service
+    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, /service/config.yaml]
+    depends_on:
+      prepare-plots:
+        condition: service_completed_successfully
+      node-cpu:
+        condition: service_healthy
+    network_mode: service:node-cpu
+    volumes:
+      - farmer-cpu:/service:ro
+      - type: volume
+        source: plots
+        target: /plots
+        read_only: true
+        volume:
+          subpath: cpu
+    mem_limit: 4g
+    cpus: 4
+
+  farmer-amd:
+    <<: *service
+    entrypoint: [dgx, --config-dir, /service/app, farmer, --config, /service/config.yaml]
+    depends_on:
+      prepare-plots:
+        condition: service_completed_successfully
+      node-amd:
+        condition: service_healthy
+    network_mode: service:node-amd
+    volumes:
+      - farmer-amd:/service:ro
+      - type: volume
+        source: plots
+        target: /plots
+        read_only: true
+        volume:
+          subpath: amd
+    mem_limit: 4g
+    cpus: 4
+
+  timelord:
+    <<: *service
+    entrypoint: [dgx, --config-dir, /service/app, timelord, run, --config, /service/config.json]
+    depends_on:
+      node-cpu:
+        condition: service_healthy
+    network_mode: service:node-cpu
+    volumes:
+      - timelord:/service:ro
+    mem_limit: 1g
+    cpus: 1
+
+  prepare-plots:
+    <<: *service
+    restart: "no"
+    entrypoint: [dg_xch_stack_plot, --root, /stack, --plots-root, /plots, --chain-profile, labrador, --farmers, "cpu,amd", --count, "2", --memory-mib, "1024"]
+    depends_on:
+      init-stack:
+        condition: service_completed_successfully
+    network_mode: none
+    volumes:
+      - common:/stack/common:ro
+      - farmer-cpu:/stack/farmer-cpu:ro
+      - farmer-nvidia:/stack/farmer-nvidia:ro
+      - farmer-amd:/stack/farmer-amd:ro
+      - plots:/plots
+    mem_limit: 6g
+    cpus: 2
+
+  check-stack:
+    <<: *service
+    profiles: [check]
+    restart: "no"
+    depends_on:
+      farmer-cpu:
+        condition: service_started
+      farmer-amd:
+        condition: service_started
+      node-nvidia:
+        condition: service_healthy
+    entrypoint: [dg_xch_stack_check, --root, /stack, --chain-profile, labrador, --min-height, "104", --require-farmer, "cpu,amd", --wallet-transfers]
+    networks: [chain]
+    volumes:
+      - common:/stack/common:ro
+      - farmer-cpu:/stack/farmer-cpu:ro
+      - farmer-nvidia:/stack/farmer-nvidia:ro
+      - farmer-amd:/stack/farmer-amd:ro
+
+networks:
+  chain:
+    internal: true
+
+volumes:
+  common:
+  node-cpu:
+  node-nvidia:
+  node-amd:
+  farmer-cpu:
+  farmer-nvidia:
+  farmer-amd:
+  introducer:
+  timelord:
+  plots:
+  discovery-db:

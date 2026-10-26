@@ -539,7 +539,7 @@ impl Desktop {
                     );
                     if ui.button("Generate recovery phrase").clicked() {
                         self.mnemonic.zeroize();
-                        match bip39::Mnemonic::generate(24) {
+                        match bip39::Mnemonic::generate(bip39::WordCount::Words24) {
                             Ok(mnemonic) => {
                                 self.mnemonic = mnemonic.to_string();
                                 self.backup_confirmed = false;
@@ -2325,7 +2325,7 @@ impl eframe::App for Desktop {
         if let Some(confirmation) = &self.offer_confirmation {
             let mut submit = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("offer_confirmation")).show(&context, |ui| {
+            egui::Modal::new(egui::Id::unique("offer_confirmation")).show(&context, |ui| {
                 ui.set_max_width(560.0);
                 ui.heading("Review offer operation");
                 ui.label(format!("Network: {}", self.settings.network));
@@ -2352,7 +2352,7 @@ impl eframe::App for Desktop {
         if let Some(confirmation) = &self.asset_confirmation {
             let mut submit = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("asset_confirmation")).show(&context, |ui| {
+            egui::Modal::new(egui::Id::unique("asset_confirmation")).show(&context, |ui| {
                 ui.set_width((context.content_rect().width() - 64.0).clamp(240.0, 560.0));
                 ui.heading("Review asset transaction");
                 ui.add_space(12.0);
@@ -2584,7 +2584,7 @@ fn section_with_copy<Response>(
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    let id = ui.id().with("copied_at");
+                                    let id = ui.scope_id().with("copied_at");
                                     let now = ui.input(|input| input.time);
                                     let copied = ui
                                         .ctx()

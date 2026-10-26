@@ -186,6 +186,7 @@ mod tests {
                 .unwrap()
             };
             let claim = SpendBundle {
+                authorization: Default::default(),
                 coin_spends: claims,
                 ..SpendBundle::default()
             };

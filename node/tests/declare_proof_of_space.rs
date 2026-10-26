@@ -115,6 +115,7 @@ fn rc_sp_hash(rcb: &RewardChainBlock) -> Bytes32 {
 fn synth_declare(v: &BlockView) -> DeclareProofOfSpace {
     let rcb = v.rcb;
     DeclareProofOfSpace {
+        authorization: Default::default(),
         // The resolved cc challenge (must equal the SP's cc challenge, which is
         // `pos_ss_cc_challenge_hash`); the genesis check and try_build_candidate's cc-match key off it.
         challenge_hash: rcb.pos_ss_cc_challenge_hash,

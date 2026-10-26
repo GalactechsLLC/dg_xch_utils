@@ -2,12 +2,12 @@ use super::*;
 impl Store {
     pub async fn claim(&self, role: Role) -> Result<Option<Claim>, Error> {
         let mut tx = self.pool.begin().await.map_err(Error::other)?;
-        let Some(budget)=sqlx::query("SELECT concurrency,interval_ms,timeout_seconds,revisit_seconds,cooldown_seconds,allow_private,crawler_port,minimum_height,peak_wait_ms,tcp_connect_timeout_seconds,crawler_enable_ipv6,next_start<=clock_timestamp() AS ready FROM dg_discovery.budgets WHERE network=$1 AND role=$2 FOR UPDATE")
+        let Some(budget)=sqlx::query("SELECT subnet_interval_ms,subnet_concurrency,verification_concurrency,adaptive_multiplier,concurrency,interval_ms,timeout_seconds,revisit_seconds,cooldown_seconds,allow_private,crawler_port,minimum_height,peak_wait_ms,tcp_connect_timeout_seconds,crawler_enable_ipv6,next_start<=clock_timestamp() AS ready FROM dg_discovery.budgets WHERE network=$1 AND role=$2 FOR UPDATE")
             .bind(&self.network).bind(role.as_str()).fetch_optional(&mut *tx).await.map_err(Error::other)? else{return Err(Error::other("discovery role has no configured network budget"));};
         if !budget.get::<bool, _>("ready") {
             return Ok(None);
         }
-        let active:i64=sqlx::query_scalar("SELECT count(*) FROM dg_discovery.jobs WHERE network=$1 AND role=$2 AND lease_token IS NOT NULL AND lease_until>floor(extract(epoch FROM clock_timestamp()))::bigint")
+        let active:i64=sqlx::query_scalar("SELECT count(*) FROM dg_discovery.jobs WHERE network=$1 AND role=$2 AND NOT verifying AND lease_token IS NOT NULL AND lease_until>floor(extract(epoch FROM clock_timestamp()))::bigint")
             .bind(&self.network).bind(role.as_str()).fetch_one(&mut *tx).await.map_err(Error::other)?;
         let policy = Policy {
             crawler: budget
@@ -27,7 +27,9 @@ impl Store {
             cooldown_seconds: budget.get::<i32, _>("cooldown_seconds") as u64,
             allow_private: budget.get("allow_private"),
         };
-        if active >= policy.concurrency as i64 {
+        let reserved = (budget.get::<i32, _>("verification_concurrency") as usize)
+            .min(policy.concurrency.saturating_sub(1));
+        if active >= (policy.concurrency - reserved) as i64 {
             return Ok(None);
         }
         let now: i64 =
@@ -35,8 +37,8 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(Error::other)?;
-        let Some(row)=sqlx::query("SELECT host(j.ip) AS ip,j.port,j.attempts,j.consecutive_failures FROM dg_discovery.jobs j JOIN dg_discovery.peers p ON p.network=j.network AND p.ip=j.ip AND p.port=j.port WHERE j.network=$1 AND j.role=$2 AND j.next_attempt<=$3 AND (j.lease_until IS NULL OR j.lease_until<=$3) AND ($4 OR p.publicly_routable) AND ($6 OR p.family=4) AND ($5::integer IS NULL OR (j.port=$5 AND j.ignore_until<=$3 AND j.ban_until<=$3)) AND NOT EXISTS(SELECT 1 FROM dg_discovery.cooldowns c WHERE c.network=j.network AND c.role=j.role AND c.ip=j.ip AND c.next_at>$3) ORDER BY j.next_attempt,j.ip,j.port LIMIT 1 FOR UPDATE OF p SKIP LOCKED")
-            .bind(&self.network).bind(role.as_str()).bind(now).bind(policy.allow_private).bind(policy.crawler.map(|c| i32::from(c.port))).bind(role != Role::Crawler || policy.crawler.is_none_or(|c| c.enable_ipv6)).fetch_optional(&mut *tx).await.map_err(Error::other)? else{return Ok(None);};
+        let Some(row)=sqlx::query("SELECT host(j.ip) AS ip,j.port,j.attempts,j.consecutive_failures FROM dg_discovery.jobs j JOIN dg_discovery.peers p ON p.network=j.network AND p.ip=j.ip AND p.port=j.port WHERE j.network=$1 AND j.role=$2 AND j.next_attempt<=$3 AND (j.lease_until IS NULL OR j.lease_until<=$3) AND ($4 OR p.publicly_routable) AND ($6 OR p.family=4) AND ($5::integer IS NULL OR (j.port=$5 AND j.ignore_until<=$3 AND j.ban_until<=$3)) AND NOT EXISTS(SELECT 1 FROM dg_discovery.cooldowns c WHERE c.network=j.network AND c.role=j.role AND c.ip=j.ip AND c.next_at>$3) AND NOT EXISTS(SELECT 1 FROM dg_discovery.subnet_cooldowns sc WHERE sc.network=j.network AND sc.role=j.role AND sc.subnet=j.subnet AND sc.next_at>clock_timestamp()) AND (SELECT count(*) FROM dg_discovery.jobs active WHERE active.network=j.network AND active.role=j.role AND active.lease_until>$3 AND active.subnet=j.subnet AND active.lease_token IS NOT NULL)<$7 ORDER BY j.next_attempt,j.ip,j.port LIMIT 1 FOR UPDATE OF p SKIP LOCKED")
+            .bind(&self.network).bind(role.as_str()).bind(now).bind(policy.allow_private).bind(policy.crawler.map(|c| i32::from(c.port))).bind(role != Role::Crawler || policy.crawler.is_none_or(|c| c.enable_ipv6)).bind(budget.get::<i32,_>("subnet_concurrency")).fetch_optional(&mut *tx).await.map_err(Error::other)? else{return Ok(None);};
         let endpoint = SocketAddr::new(
             row.get::<String, _>("ip").parse().map_err(Error::other)?,
             row.get::<i32, _>("port") as u16,
@@ -46,14 +48,16 @@ impl Store {
             .crawler
             .map_or(0, |c| 3 + c.peak_wait_ms.div_ceil(1000));
         let until = now + (policy.timeout_seconds + peak_wait_seconds + 15) as i64;
-        sqlx::query("UPDATE dg_discovery.jobs SET lease_token=$5,lease_until=$6,next_attempt=$6,last_attempt=$7,attempts=attempts+1 WHERE network=$1 AND role=$2 AND ip=$3::inet AND port=$4")
+        sqlx::query("UPDATE dg_discovery.jobs SET verifying=false,lease_token=$5,lease_until=$6,next_attempt=$6,last_attempt=$7,attempts=attempts+1 WHERE network=$1 AND role=$2 AND ip=$3::inet AND port=$4")
             .bind(&self.network).bind(role.as_str()).bind(endpoint.ip().to_string()).bind(i32::from(endpoint.port())).bind(token).bind(until).bind(now).execute(&mut *tx).await.map_err(Error::other)?;
         sqlx::query("INSERT INTO dg_discovery.cooldowns(network,role,ip,next_at) VALUES($1,$2,$3::inet,$4) ON CONFLICT(network,role,ip) DO UPDATE SET next_at=excluded.next_at")
-            .bind(&self.network).bind(role.as_str()).bind(endpoint.ip().to_string()).bind(now+if policy.crawler.is_some() { if endpoint.is_ipv6() { policy.revisit_seconds.min(600) } else { policy.revisit_seconds } } else { policy.cooldown_seconds } as i64).execute(&mut *tx).await.map_err(Error::other)?;
+            .bind(&self.network).bind(role.as_str()).bind(endpoint.ip().to_string()).bind(now+if policy.crawler.is_some() { policy.revisit_seconds } else { policy.cooldown_seconds } as i64).execute(&mut *tx).await.map_err(Error::other)?;
         sqlx::query("UPDATE dg_discovery.budgets SET next_start=clock_timestamp()+make_interval(secs=>$3) WHERE network=$1 AND role=$2")
-            .bind(&self.network).bind(role.as_str()).bind(policy.interval_ms as f64/1000.0).execute(&mut *tx).await.map_err(Error::other)?;
+            .bind(&self.network).bind(role.as_str()).bind(policy.interval_ms as f64 * f64::from(budget.get::<i32,_>("adaptive_multiplier"))/1000.0).execute(&mut *tx).await.map_err(Error::other)?;
         sqlx::query("INSERT INTO dg_discovery.counters(network,role,worker_id,attempts) VALUES($1,$2,$3,1) ON CONFLICT(network,role,worker_id) DO UPDATE SET attempts=dg_discovery.counters.attempts+1")
             .bind(&self.network).bind(role.as_str()).bind(self.worker_id).execute(&mut *tx).await.map_err(Error::other)?;
+        sqlx::query("INSERT INTO dg_discovery.subnet_cooldowns(network,role,subnet,next_at) VALUES($1,$2,network(set_masklen($3::inet,CASE WHEN family($3::inet)=4 THEN 24 ELSE 64 END)),clock_timestamp()+make_interval(secs=>$4)) ON CONFLICT(network,role,subnet) DO UPDATE SET next_at=excluded.next_at")
+            .bind(&self.network).bind(role.as_str()).bind(endpoint.ip().to_string()).bind(budget.get::<i64,_>("subnet_interval_ms") as f64/1000.0).execute(&mut *tx).await.map_err(Error::other)?;
         tx.commit().await.map_err(Error::other)?;
         Ok(Some(Claim {
             endpoint,
@@ -116,13 +120,7 @@ impl Store {
                     .peak_height
                     .is_some_and(|height| height >= c.minimum_height)
         });
-        let delay = if claim.policy.crawler.is_some() {
-            if claim.endpoint.is_ipv6() {
-                claim.policy.revisit_seconds.min(600)
-            } else {
-                claim.policy.revisit_seconds
-            }
-        } else if successful {
+        let delay = if claim.policy.crawler.is_some() || successful {
             claim.policy.revisit_seconds
         } else {
             claim
@@ -196,7 +194,7 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(Error::other)?;
-        let accepted=sqlx::query("UPDATE dg_discovery.jobs SET next_attempt=$6,last_error=$7,last_error_phase=$8,last_error_at=$9,successes=successes+$10,consecutive_failures=CASE WHEN $10=1 THEN 0 ELSE consecutive_failures+1 END,lease_token=NULL,lease_until=NULL WHERE network=$1 AND role=$2 AND ip=$3::inet AND port=$4 AND lease_token=$5 AND lease_until>$11")
+        let accepted=sqlx::query("UPDATE dg_discovery.jobs SET next_attempt=$6,last_error=$7,last_error_phase=$8,last_error_at=$9,successes=successes+$10,consecutive_failures=CASE WHEN $10=1 THEN 0 ELSE consecutive_failures+1 END,verifying=false,lease_token=NULL,lease_until=NULL WHERE network=$1 AND role=$2 AND ip=$3::inet AND port=$4 AND lease_token=$5 AND lease_until>$11")
             .bind(&self.network).bind(claim.role.as_str()).bind(claim.endpoint.ip().to_string()).bind(i32::from(claim.endpoint.port())).bind(claim.token).bind(now+(delay+jitter) as i64).bind(&error).bind(error.as_ref().map(|_|obs.phase.as_str())).bind(error.as_ref().map(|_|now)).bind(i64::from(successful)).bind(now).execute(&mut *tx).await.map_err(Error::other)?;
         if accepted.rows_affected() == 0 {
             return Ok(false);
@@ -210,6 +208,7 @@ impl Store {
                 .handshake
                 .as_ref()
                 .is_none_or(|h| h.node_type != dg_xch_core::protocols::NodeType::Introducer as u8)
+                && obs.error.as_deref() != Some("peak verification deferred: slow-wait budget full")
             {
                 reliability.update(reachable, now as u64);
             }
@@ -279,7 +278,7 @@ impl Store {
             tx.commit().await.map_err(Error::other)?;
             sqlx::query("DELETE FROM dg_discovery.history WHERE network=$1 AND bucket<$2")
                 .bind(&self.network)
-                .bind((now - 86400) / 60)
+                .bind((now - i64::from(self.history_days().await?) * 86400) / 60)
                 .execute(&self.pool)
                 .await
                 .map_err(Error::other)?;

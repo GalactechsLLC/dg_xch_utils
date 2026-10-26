@@ -609,11 +609,13 @@ async fn fill_mempool_to_capacity(node: &Arc<FullNode>) {
             before_height_absolute: None,
             before_seconds_absolute: None,
             agg_sig_unsafe: vec![],
+            falcon_signatures: vec![],
             cost: 5_500_000_000,
             removal_amount: u128::from(u64::MAX / 2),
             addition_amount: u128::from(u64::MAX / 2) - u128::from(fee),
         };
         let bundle = SpendBundle {
+            authorization: Default::default(),
             coin_spends: vec![],
             aggregated_signature: dg_xch_core::blockchain::sized_bytes::Bytes96::from([i; 96]),
         };

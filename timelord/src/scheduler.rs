@@ -125,6 +125,7 @@ struct Candidate {
     slot_start: u128,
     rc_prev: Bytes32,
     signage_total_iters: u128,
+    genesis_prefarm: bool,
 }
 
 pub struct Scheduler {
@@ -406,6 +407,7 @@ impl Scheduler {
             let rewards = &self.rewards;
             self.candidates.retain(|_, candidate| {
                 candidate.total_iters > state.total_iters
+                    && (!candidate.genesis_prefarm || state.height.is_none())
                     && candidate.slot_start >= state.slot_start
                     && (!state.new_epoch
                         || !candidate.overflow
@@ -431,6 +433,9 @@ impl Scheduler {
         let Some(state) = &self.state else {
             return Ok(UnfinishedDisposition::Ignored("chain_not_initialized"));
         };
+        if self.constants.signature_profile.is_bls() && !message.authorization.is_none() {
+            return Err(invalid("unexpected Falcon authorization on BLS timelord"));
+        }
         let block = &message.reward_chain_block;
         let hash = block.hash()?;
         if self.candidates.contains_key(&hash.const_bytes()) || self.infused.contains(&hash) {
@@ -476,11 +481,13 @@ impl Scheduler {
             ),
         }
         .ok_or_else(|| invalid("unfinished block proof of space is invalid"))?;
-        if !verify_plot_signature(
-            &block.proof_of_space.plot_public_key,
-            signage_hash,
-            &block.challenge_chain_sp_signature,
-        ) {
+        if self.constants.signature_profile.is_bls()
+            && !verify_plot_signature(
+                &block.proof_of_space.plot_public_key,
+                signage_hash,
+                &block.challenge_chain_sp_signature,
+            )
+        {
             return Err(invalid("unfinished block signage signature is invalid"));
         }
         let required = calculate_iterations_quality_for_proof(
@@ -516,11 +523,32 @@ impl Scheduler {
             None if block.signage_point_index == 0 => message.rc_prev,
             _ => return Err(invalid("invalid unfinished reward signage-point fields")),
         };
-        if !verify_plot_signature(
-            &block.proof_of_space.plot_public_key,
-            reward_signage_hash,
-            &block.reward_chain_sp_signature,
-        ) {
+        let authorized = if self.constants.signature_profile.is_bls() {
+            verify_plot_signature(
+                &block.proof_of_space.plot_public_key,
+                reward_signage_hash,
+                &block.reward_chain_sp_signature,
+            )
+        } else {
+            message.authorization.as_ref().is_some_and(|auth| {
+                auth.verify_messages(
+                    self.constants.genesis_challenge,
+                    &[
+                        (
+                            block.proof_of_space.plot_public_key,
+                            signage_hash.const_bytes().to_vec(),
+                            block.challenge_chain_sp_signature,
+                        ),
+                        (
+                            block.proof_of_space.plot_public_key,
+                            reward_signage_hash.const_bytes().to_vec(),
+                            block.reward_chain_sp_signature,
+                        ),
+                    ],
+                )
+            })
+        };
+        if !authorized {
             return Err(invalid("unfinished reward signage signature is invalid"));
         }
         let overflow = is_overflow_block(&self.constants, block.signage_point_index)?;
@@ -562,6 +590,8 @@ impl Scheduler {
                 slot_start,
                 rc_prev: message.rc_prev,
                 signage_total_iters,
+                genesis_prefarm: message.foliage.prev_block_hash
+                    == self.constants.genesis_challenge,
             },
         );
         Ok(UnfinishedDisposition::Accepted)
@@ -922,6 +952,7 @@ mod tests {
                 slot_start,
                 rc_prev: state.reward.challenge,
                 signage_total_iters: state.total_iters,
+                genesis_prefarm: false,
             },
         );
         hash
@@ -1226,6 +1257,30 @@ mod tests {
         let mut result = prove_plan(&plan);
         result.challenge.info.number_of_iterations += 1;
         assert!(scheduler.finish(plan, result).is_err());
+    }
+
+    #[test]
+    fn genesis_peak_expires_prefarm_candidates_but_preserves_reparentable_candidates() {
+        let mut scheduler = scheduler();
+        candidate(&mut scheduler, 5, false);
+        let prefarm = candidate(&mut scheduler, 9, false);
+        scheduler
+            .candidates
+            .get_mut(&prefarm.const_bytes())
+            .unwrap()
+            .genesis_prefarm = true;
+        let regular = candidate(&mut scheduler, 10, false);
+        let Output::InfusionPoint(point) = advance(&mut scheduler) else {
+            panic!("expected first candidate infusion")
+        };
+        scheduler.set_peak(peak(&scheduler, &point, 15)).unwrap();
+        assert!(!scheduler.candidates.contains_key(&prefarm.const_bytes()));
+        assert!(scheduler.candidates.contains_key(&regular.const_bytes()));
+        assert!(matches!(advance(&mut scheduler), Output::SignagePoint(_)));
+        let Output::InfusionPoint(point) = advance(&mut scheduler) else {
+            panic!("expected reparented candidate infusion")
+        };
+        assert_eq!(point.unfinished_reward_hash, regular);
     }
 
     #[test]

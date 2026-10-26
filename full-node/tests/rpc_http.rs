@@ -200,6 +200,28 @@ async fn oversize_body_is_413() {
     run.shutdown();
 }
 
+#[tokio::test]
+async fn push_tx_body_has_a_separate_bounded_json_limit() {
+    let (port, run, mempool, rpc) = spawn_tls_server_mode(dg_full_node::RpcTlsMode::Local).await;
+    mempool.lock().await.set_peak(common::PEAK_HEIGHT, 0);
+    let coin = common::seed_easy_coin(rpc.store.as_ref(), 1_000).await;
+    let bundle = common::easy_bundle(&coin, 1);
+    let mut body = serde_json::to_vec(&json!({"spend_bundle": bundle})).unwrap();
+    body.resize(dg_full_node::rpc::MAX_RPC_BODY_BYTES + 1, b' ');
+    let (status, value) = call_raw(port, "/push_tx", body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["status"], "SUCCESS", "{value}");
+    let (status, value) = call_raw(
+        port,
+        "/push_tx",
+        vec![b'{'; dg_full_node::rpc::MAX_PUSH_TX_BODY_BYTES + 1],
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(value["success"], false);
+    run.shutdown();
+}
+
 // The client-shaped assertion: the coin_records envelope parses through dg_xch_clients'
 // real response wrapper (`response["coin_records"]` + `response["success"]`).
 #[tokio::test]

@@ -7,7 +7,7 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Data, DeriveInput, Fields, Index, parse_macro_input};
 
-#[proc_macro_derive(ChiaSerial)]
+#[proc_macro_derive(ChiaSerial, attributes(chia_skip_sexp))]
 pub fn derive_chia_serial(input: TokenStream) -> TokenStream {
     let input: DeriveInput = parse_macro_input!(input);
     let generics = input.generics.clone();
@@ -154,12 +154,18 @@ fn create_sexp_from(data: Data) -> TokenStream2 {
                             #core::constants::NULL_SEXP
                         }
                     } else {
-                        let to_sexp = fields.named.iter().map(|f| {
-                            let name = &f.ident;
-                            quote_spanned! {f.span()=>
-                                #core::clvm::sexp::SExp::from(&val.#name),
-                            }
-                        });
+                        let to_sexp = fields
+                            .named
+                            .iter()
+                            .filter(|f| {
+                                !f.attrs.iter().any(|a| a.path().is_ident("chia_skip_sexp"))
+                            })
+                            .map(|f| {
+                                let name = &f.ident;
+                                quote_spanned! {f.span()=>
+                                    #core::clvm::sexp::SExp::from(&val.#name),
+                                }
+                            });
                         quote! {
                             (&[
                                 #(#to_sexp)*

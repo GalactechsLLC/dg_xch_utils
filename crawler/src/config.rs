@@ -7,6 +7,9 @@ use std::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub controls: dg_xch_servers::discovery::CrawlControls,
+    pub telemetry: crate::telemetry::TelemetryConfig,
+    pub geography: crate::geography::GeoConfig,
     pub probe_log: ProbeLog,
     pub listen: SocketAddr,
     pub database_url: Option<String>,
@@ -62,12 +65,15 @@ impl std::str::FromStr for ProbeLog {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            controls: Default::default(),
+            telemetry: Default::default(),
+            geography: Default::default(),
             probe_log: ProbeLog::Errors,
             database_url: None,
             listen: SocketAddr::from(([127, 0, 0, 1], 8580)),
             network: "mainnet".into(),
             seed: vec![],
-            enable_ipv6: true,
+            enable_ipv6: false,
             peer_port: None,
             minimum_height: None,
             peak_wait_ms: 60_000,
@@ -84,6 +90,8 @@ impl Default for Config {
 }
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
+        self.controls.validate()?;
+        self.telemetry.validate()?;
         if self.network.is_empty()
             || self.network.len() > 64
             || self.listen.port() == 0
@@ -167,7 +175,14 @@ impl Config {
     }
     pub fn seeds(&self) -> Vec<String> {
         if self.seed.is_empty() {
-            vec![format!("node.chia.net:{}", self.peer_port.unwrap_or(8444))]
+            [
+                "node.chia.net",
+                "dns-introducer.chia.net",
+                "seeder.dexie.space",
+            ]
+            .into_iter()
+            .map(|host| format!("{host}:{}", self.peer_port.unwrap_or(8444)))
+            .collect()
         } else {
             self.seed.clone()
         }

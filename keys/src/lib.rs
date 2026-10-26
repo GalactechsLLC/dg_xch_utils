@@ -249,7 +249,7 @@ pub fn key_from_mnemonic(mnemonic: &Mnemonic) -> Result<SecretKey, Error> {
 }
 
 pub fn random_key() -> Result<SecretKey, Error> {
-    let mnemonic = Mnemonic::generate(24)
+    let mnemonic = Mnemonic::generate(bip39::WordCount::Words24)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
     key_from_mnemonic(&mnemonic)
 }

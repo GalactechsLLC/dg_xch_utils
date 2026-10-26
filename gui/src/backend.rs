@@ -1117,6 +1117,7 @@ mod tests {
     fn generated_plot_name_preserves_identity_and_never_overwrites() {
         let root = tempfile::tempdir().unwrap();
         let info = dg_xch_plotter::PlotInfo {
+            signature_profile: Default::default(),
             plot_id: [0xab; 32],
             k: 28,
             strength: 2,

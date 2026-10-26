@@ -66,6 +66,7 @@ pub(super) fn initialize(args: &InitArgs) -> Result<(), Error> {
         fullnode_rpc_host: args.fullnode_host.clone(),
         fullnode_ws_port: args.fullnode_port,
         fullnode_rpc_port: args.fullnode_port,
+        falcon_key_file: None,
         farmer_info: vec![FarmingInfo {
             farmer_secret_key: Bytes32::from(farmer.to_bytes()),
             pool_secret_key: Some(Bytes32::from(pool.to_bytes())),

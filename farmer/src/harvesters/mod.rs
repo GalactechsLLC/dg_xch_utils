@@ -111,6 +111,8 @@ pub trait Harvester<T: 'static, H: 'static, C: Clone + 'static> {
 }
 
 pub struct FarmingKeys {
+    #[cfg(feature = "falcon")]
+    pub falcon: Option<Arc<dg_xch_core::signatures::falcon_keys::FalconKeyring>>,
     pub farmer_public_keys: Vec<Bytes48>,
     pub pool_public_keys: Vec<Bytes48>,
     pub pool_contract_hashes: Vec<Bytes32>,

@@ -86,7 +86,8 @@ where
         if let Some(workers) = config.performance.compute_workers {
             dg_xch_core::compute::configure(workers).map_err(Error::other)?;
         }
-        let mut engine = Engine::new(store.clone(), NativePrimitives, constants);
+        let primitives = ChainPrimitives::new(&constants)?;
+        let mut engine = Engine::new(store.clone(), primitives.clone(), constants);
         engine.set_coalesce_coin_writes(config.performance.coalesce_coin_writes);
         let mut chaser = Chaser::new(engine, SyncConfig::default());
         chaser.set_confirm_transaction_blocks(config.performance.confirm_transaction_blocks);
@@ -137,6 +138,7 @@ where
             maintenance_tasks: Mutex::new(tokio::task::JoinSet::new()),
             constants,
             claimed_peak: claimed_peak.clone(),
+            primitives,
             peak_book: Arc::new(PeakBook::new(claimed_peak)),
             new_peak_signal: Arc::new(Notify::new()),
             validated_tip: Arc::new(RwLock::new(None)),

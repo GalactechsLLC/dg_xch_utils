@@ -96,6 +96,12 @@ struct ValidationState {
 pub struct SpendBundle {
     pub coin_spends: Vec<CoinSpend>,
     pub aggregated_signature: Bytes96,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::extension::AuthorizationExtension::is_none"
+    )]
+    #[chia_skip_sexp]
+    pub authorization: crate::signatures::extension::AuthorizationExtension,
 }
 
 impl Default for SpendBundle {
@@ -113,6 +119,11 @@ impl SpendBundle {
         let mut coin_spends = vec![];
         let mut signatures = vec![];
         for bundle in bundles {
+            if !bundle.authorization.is_none() {
+                return Err(Error::other(
+                    "Falcon witnesses require occurrence-aware block assembly",
+                ));
+            }
             coin_spends.extend(bundle.coin_spends);
             signatures.push(bundle.aggregated_signature.try_into()?);
         }
@@ -125,6 +136,7 @@ impl SpendBundle {
                 .into()
         };
         Ok(SpendBundle {
+            authorization: Default::default(),
             coin_spends,
             aggregated_signature,
         })
@@ -135,6 +147,7 @@ impl SpendBundle {
         let mut sig = [0u8; 96];
         sig[0] = 0xc0; // compressed + infinity flag
         SpendBundle {
+            authorization: Default::default(),
             coin_spends: vec![],
             aggregated_signature: sig.into(),
         }

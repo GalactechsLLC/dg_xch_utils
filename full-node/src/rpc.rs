@@ -48,6 +48,9 @@ pub const MAX_BLOCKS_PER_REQUEST: u32 = 128;
 pub const MAX_IDS_PER_REQUEST: usize = 32_690;
 /// Request-body cap (1 MiB). An oversize body is refused with HTTP 413.
 pub const MAX_RPC_BODY_BYTES: usize = 1024 * 1024;
+/// Transaction JSON expands the binary witness (byte arrays can take four times
+/// their wire size). Keep this allowance scoped to authenticated transaction submission.
+pub const MAX_PUSH_TX_BODY_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const RPC_TRUST_STORE: &str = "rpc-clients";
 // UI_ACTUAL_SPACE_CONSTANT_FACTOR — the netspace estimate's plot-efficiency constant.
 const UI_ACTUAL_SPACE_CONSTANT_FACTOR: f64 = 0.762;

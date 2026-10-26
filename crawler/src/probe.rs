@@ -198,6 +198,20 @@ pub async fn probe(
     deadline: Duration,
     policy: &dg_xch_servers::discovery::CrawlerPolicy,
 ) -> Observation {
+    probe_controlled(endpoint, network, identity, deadline, policy, None).await
+}
+/// Production probes may transfer a slow peak wait into a shared verification pool.
+pub async fn probe_controlled(
+    endpoint: SocketAddr,
+    network: &str,
+    identity: &Identity,
+    deadline: Duration,
+    policy: &dg_xch_servers::discovery::CrawlerPolicy,
+    control: Option<(
+        &dg_xch_servers::discovery::Store,
+        &dg_xch_servers::discovery::Claim,
+    )>,
+) -> Observation {
     let mut obs = Observation::default();
     if endpoint.is_ipv6() && !policy.enable_ipv6 {
         obs.error = Some("IPv6 probing is disabled".into());
@@ -213,7 +227,7 @@ pub async fn probe(
     )
     .await;
     obs.error = match connection {
-        Ok(Ok(connection)) => finish_connection(connection, policy, &mut obs)
+        Ok(Ok(connection)) => finish_connection(connection, policy, &mut obs, control)
             .await
             .err()
             .map(|error| error.to_string()),
@@ -327,6 +341,10 @@ async fn finish_connection(
     connection: Connection,
     policy: &dg_xch_servers::discovery::CrawlerPolicy,
     obs: &mut Observation,
+    control: Option<(
+        &dg_xch_servers::discovery::Store,
+        &dg_xch_servers::discovery::Claim,
+    )>,
 ) -> Result<(), Error> {
     let Connection {
         mut socket,
@@ -381,26 +399,51 @@ async fn finish_connection(
             .is_some_and(|height| height >= policy.minimum_height)
     {
         obs.phase = ProbePhase::Verification;
-        let wait = async {
-            loop {
-                let reply = receive(
-                    &mut socket,
-                    ProtocolMessageTypes::NewPeak,
-                    None,
-                    obs,
-                    version,
-                    &limiter,
-                )
-                .await?;
-                let height = decode::<NewPeak>(reply.data.as_slice(), version)?.height;
-                obs.peak_height = Some(height);
-                if height >= policy.minimum_height {
-                    return Ok::<_, Error>(());
+        let result = {
+            let wait = async {
+                loop {
+                    let reply = receive(
+                        &mut socket,
+                        ProtocolMessageTypes::NewPeak,
+                        None,
+                        obs,
+                        version,
+                        &limiter,
+                    )
+                    .await?;
+                    let height = decode::<NewPeak>(reply.data.as_slice(), version)?.height;
+                    obs.peak_height = Some(height);
+                    if height >= policy.minimum_height {
+                        return Ok::<_, Error>(());
+                    }
+                }
+            };
+            // This deadline starts after connection/discovery and is not truncated by it.
+            tokio::pin!(wait);
+            let quick_ms = if control.is_some() {
+                policy.peak_wait_ms.min(2500)
+            } else {
+                policy.peak_wait_ms
+            };
+            let mut result = tokio::time::timeout(Duration::from_millis(quick_ms), &mut wait).await;
+            if result.is_err()
+                && quick_ms < policy.peak_wait_ms
+                && let Some((store, claim)) = control
+            {
+                if store.reserve_verification(claim).await? {
+                    result = tokio::time::timeout(
+                        Duration::from_millis(policy.peak_wait_ms - quick_ms),
+                        &mut wait,
+                    )
+                    .await;
+                } else {
+                    return Err(Error::other(
+                        "peak verification deferred: slow-wait budget full",
+                    ));
                 }
             }
+            result
         };
-        // This deadline starts after connection/discovery and is not truncated by it.
-        let result = tokio::time::timeout(Duration::from_millis(policy.peak_wait_ms), wait).await;
         if request_error.is_none() {
             match result {
                 Ok(Ok(())) => {}

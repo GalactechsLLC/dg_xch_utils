@@ -8,6 +8,13 @@ use std::str::FromStr;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChainDefinition {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::SignatureProfile::is_bls"
+    )]
+    pub signature_profile: crate::signatures::SignatureProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub falcon_aggregation: Option<crate::signatures::labrador::LabradorProfile>,
     pub network_id: String,
     pub genesis_seed: String,
     pub rewards: RewardSchedule,
@@ -22,6 +29,8 @@ pub struct ChainDefinition {
 impl Default for ChainDefinition {
     fn default() -> Self {
         Self {
+            signature_profile: crate::signatures::SignatureProfile::Bls12381Aug,
+            falcon_aggregation: None,
             network_id: "dgx".into(),
             genesis_seed: "dg_xch/dgx/no-prefarm/v1".into(),
             rewards: RewardSchedule::NO_PREFARM,
@@ -37,6 +46,8 @@ impl ChainDefinition {
     #[must_use]
     pub fn dg_pos2_test() -> Self {
         Self {
+            signature_profile: crate::signatures::SignatureProfile::Bls12381Aug,
+            falcon_aggregation: None,
             network_id: "dg_pos2_test".into(),
             genesis_seed: "dg_xch/dg_pos2_test/testnet11/pos2/v1".into(),
             rewards: RewardSchedule::CHIA,
@@ -73,7 +84,33 @@ impl ChainDefinition {
         }
     }
 
+    /// Small native plots and VDFs for isolated integration testing only.
+    #[must_use]
+    pub fn falcon_development(genesis_seed: String) -> Self {
+        let mut definition = Self::development(genesis_seed);
+        definition.network_id = "dgx-falcon-dev-v2".into();
+        definition.signature_profile = crate::signatures::SignatureProfile::FnDsa512V2;
+        let parameters = definition
+            .consensus
+            .as_mut()
+            .expect("development parameters");
+        parameters.plot_size_v2 = 18;
+        parameters.difficulty_constant_factor_bits = 1;
+        parameters.sub_slot_iters_starting = 1024;
+        parameters.development_discriminant_bits = Some(512);
+        definition
+    }
+
     pub fn constants(&self) -> Result<ConsensusConstants, String> {
+        if self.falcon_aggregation.is_some() && self.signature_profile.is_bls() {
+            return Err("LaBRADOR requires a Falcon development chain".into());
+        }
+        if !self.signature_profile.is_bls()
+            && (self.base_network.is_some()
+                || !self.consensus.as_ref().is_some_and(|c| c.development))
+        {
+            return Err("Falcon is currently available only on explicit development chains".into());
+        }
         if self.network_id.is_empty()
             || self.network_id.len() > 64
             || !self.network_id.bytes().all(|byte| {
@@ -119,6 +156,8 @@ impl ChainDefinition {
         if let Some(height) = self.pos2_activation_height {
             constants.hard_fork2_height = height;
         }
+        constants.signature_profile = self.signature_profile;
+        constants.falcon_aggregation = self.falcon_aggregation;
         let identity = if self.base_network.is_some() {
             let mut identity = b"dg_xch/chain-definition/v3\0".to_vec();
             identity
@@ -154,6 +193,8 @@ impl ChainDefinition {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchConsensus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub development_discriminant_bits: Option<u16>,
     pub version: u16,
     pub development: bool,
     pub pos2_activation_height: u32,
@@ -171,6 +212,7 @@ pub struct LaunchConsensus {
 impl Default for LaunchConsensus {
     fn default() -> Self {
         Self {
+            development_discriminant_bits: None,
             version: 2,
             development: false,
             pos2_activation_height: 0,
@@ -189,6 +231,14 @@ impl Default for LaunchConsensus {
 
 impl LaunchConsensus {
     fn apply(&self, constants: &mut ConsensusConstants) -> Result<(), String> {
+        if let Some(bits) = self.development_discriminant_bits {
+            if !self.development || !(128..=1024).contains(&bits) || !bits.is_multiple_of(8) {
+                return Err(
+                    "custom VDF discriminants require development mode and 128..1024 bits".into(),
+                );
+            }
+            constants.discriminant_size_bits = u64::from(bits);
+        }
         if self.version != 2
             || self.difficulty_starting == 0
             || !(1..=96).contains(&self.difficulty_constant_factor_bits)

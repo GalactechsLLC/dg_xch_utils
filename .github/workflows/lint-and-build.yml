@@ -61,9 +61,11 @@ jobs:
         run: git submodule update --init --recursive
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      # Fails the build on any RustSec advisory against the committed Cargo.lock (SSDF PW.7 / A03:2025).
+      # Audit both independently resolved dependency graphs without vulnerability suppressions.
       - name: Run cargo audit
-        run: cargo audit
+        run: |
+          cargo audit
+          cargo audit --file plotter/cuda/Cargo.lock
   native-desktop:
     name: Native Desktop
     permissions:

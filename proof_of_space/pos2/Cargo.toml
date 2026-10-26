@@ -13,7 +13,7 @@ resident = ["dep:bytemuck"]
 vulkan = ["resident", "dep:pollster", "dep:wgpu"]
 
 [dependencies]
-aes = { version = "0.8.4", features = ["hazmat"] }
+aes = { version = "0.9.3", features = ["hazmat"] }
 blake3 = { workspace = true }
 bytemuck = { version = "1.25", features = ["derive"], optional = true }
 dg_xch_core = { workspace = true }

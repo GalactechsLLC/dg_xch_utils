@@ -590,6 +590,7 @@ fn process_item_spends(
     if fast_forwarded > 0 {
         // Re-run the rebased bundle to make sure it remains valid.
         let new_bundle = SpendBundle {
+            authorization: Default::default(),
             coin_spends: post_ff.iter().map(|(spend, ..)| spend.clone()).collect(),
             aggregated_signature: item.bundle.aggregated_signature,
         };
@@ -1655,6 +1656,15 @@ impl Mempool {
         let mut skipped_items: usize = 0;
         let mut coin_spends: Vec<CoinSpend> = Vec::new();
         let mut sigs: Vec<Bytes96> = Vec::new();
+        let mut falcon_signatures = HashMap::new();
+        let mut falcon_count = 0usize;
+        #[cfg(feature = "labrador")]
+        let mut wallet_evidence = dg_xch_core::signatures::labrador::Evidence::default();
+        #[cfg(feature = "labrador")]
+        let wallet_zk = constants.falcon_aggregation
+            == Some(dg_xch_core::signatures::labrador::LabradorProfile::Packed11ZkV2);
+        #[cfg(feature = "labrador")]
+        let mut wallet_bytes = 0usize;
         let mut additions: Vec<Coin> = Vec::new();
         let mut removals: Vec<Coin> = Vec::new();
         // Dedup state: coin id -> (solution bytes, per-spend cost) of the first-selected spend of
@@ -1665,6 +1675,41 @@ impl Mempool {
         let mut ff_state: HashMap<Bytes32, UnspentLineageInfo> = HashMap::new();
 
         for item in self.items_by_fee() {
+            if !constants.signature_profile.is_bls()
+                && falcon_count + item.conds.falcon_signatures.len()
+                    > dg_xch_core::signatures::falcon_block::MAX_TRANSACTION_SIGNATURES
+            {
+                continue;
+            }
+            #[cfg(feature = "labrador")]
+            if wallet_zk {
+                let auth = item.bundle.authorization.as_ref()?;
+                let proofs = match &auth.labrador {
+                    Some(bytes) => {
+                        dg_xch_core::signatures::labrador::evidence_stats(
+                            item.conds.falcon_signatures.len(),
+                            bytes,
+                        )
+                        .ok()?
+                        .0
+                    }
+                    None => 0,
+                };
+                // Bound the composed proof before committing any selection state.
+                // This estimate includes per-occurrence indices and group framing.
+                let size = auth
+                    .labrador
+                    .as_ref()
+                    .map_or(auth.transactions.len() * 666, Vec::len)
+                    + item.conds.falcon_signatures.len() * 2
+                    + 16;
+                if wallet_evidence.proof_count() + proofs
+                    > dg_xch_core::signatures::labrador::MAX_ZK_PROOFS
+                    || wallet_bytes + size > 1024 * 1024 - 8192
+                {
+                    continue;
+                }
+            }
             // The wall-clock budget for the whole selection.
             if start.elapsed() >= timeout {
                 debug!("block assembly: timeout reached, stopping selection");
@@ -1684,8 +1729,12 @@ impl Mempool {
                 .bundle_coin_spends
                 .iter()
                 .any(|b| b.eligible_for_dedup || b.supports_fast_forward());
-            let processed = if item.bundle_coin_spends.is_empty() {
-                // No per-spend metadata (test-synthesized conditions): plain assembly.
+            let processed = if item.bundle_coin_spends.is_empty()
+                || !constants.signature_profile.is_bls()
+            {
+                // Falcon witnesses bind exact coin/condition occurrences, so
+                // fast-forwarding or deduplication cannot rewrite their spends.
+                // The same path covers test items without per-spend metadata.
                 ProcessedItem {
                     unique_spends: item.bundle.coin_spends.clone(),
                     unique_additions: additions_for_conditions(&item.conds, &[]),
@@ -1799,6 +1848,52 @@ impl Mempool {
             removals.extend(processed.unique_spends.iter().map(|cs| cs.coin));
             coin_spends.extend(processed.unique_spends);
             sigs.push(item.bundle.aggregated_signature);
+            if !constants.signature_profile.is_bls() {
+                falcon_count += item.conds.falcon_signatures.len();
+                let auth = item.bundle.authorization.as_ref()?;
+                if auth.genesis != constants.genesis_challenge || !auth.header.is_empty() {
+                    return None;
+                }
+                #[cfg(feature = "labrador")]
+                if wallet_zk {
+                    wallet_evidence
+                        .add(
+                            &item
+                                .conds
+                                .falcon_signatures
+                                .iter()
+                                .map(|c| c.requirement())
+                                .collect::<Vec<_>>(),
+                            auth.transaction_witness().ok()?,
+                        )
+                        .ok()?;
+                    wallet_bytes += auth
+                        .labrador
+                        .as_ref()
+                        .map_or(auth.transactions.len() * 666, Vec::len)
+                        + item.conds.falcon_signatures.len() * 2
+                        + 16;
+                }
+                if auth.labrador.is_none() {
+                    if auth.transactions.len() != item.conds.falcon_signatures.len() {
+                        return None;
+                    }
+                    for (condition, signature) in
+                        item.conds.falcon_signatures.iter().zip(&auth.transactions)
+                    {
+                        if falcon_signatures
+                            .insert((condition.coin_id, condition.condition_index), *signature)
+                            .is_some()
+                        {
+                            return None;
+                        }
+                    }
+                } else if constants.falcon_aggregation
+                    != Some(dg_xch_core::signatures::labrador::LabradorProfile::Packed11ZkV2)
+                {
+                    return None;
+                }
+            }
             additions.extend(processed.unique_additions);
             cost_sum = new_cost_sum;
             exec_cond_sum = exec_cond_sum.saturating_add(item_exec_cond);
@@ -1830,14 +1925,6 @@ impl Mempool {
                 return None;
             }
         };
-        // The included items' aggregate signatures combined.
-        let aggregated_signature = match aggregate_signatures(sigs.iter()) {
-            Ok(sig) => sig,
-            Err(e) => {
-                warn!("block assembly: signature aggregation failed: {e}");
-                return None;
-            }
-        };
         // The re-run cost check: run the emitted generator through our own validator and take
         // ITS cost.
         let rerun = execute_block_generator_result(&BlockGeneratorInput {
@@ -1865,6 +1952,94 @@ impl Mempool {
             );
             return None;
         }
+        let authorization = if constants.signature_profile.is_bls() {
+            Default::default()
+        } else if constants.falcon_aggregation
+            == Some(dg_xch_core::signatures::labrador::LabradorProfile::Packed11ZkV2)
+        {
+            #[cfg(feature = "labrador")]
+            {
+                let requirements = conds
+                    .falcon_signatures
+                    .iter()
+                    .map(|c| c.requirement())
+                    .collect::<Vec<_>>();
+                let auth = wallet_evidence
+                    .finish(constants.genesis_challenge, &requirements)
+                    .ok()?;
+                dg_xch_core::consensus::block_generator::validate_block_authorization(
+                    &conds,
+                    &auth.transaction_witness().ok()?,
+                    constants,
+                )
+                .ok()?;
+                auth.into()
+            }
+            #[cfg(not(feature = "labrador"))]
+            {
+                return None;
+            }
+        } else {
+            let signatures = conds
+                .falcon_signatures
+                .iter()
+                .map(|c| falcon_signatures.remove(&(c.coin_id, c.condition_index)))
+                .collect::<Option<Vec<_>>>()?;
+            if !falcon_signatures.is_empty() {
+                return None;
+            }
+            dg_xch_core::consensus::block_generator::validate_block_authorization(
+                &conds,
+                &dg_xch_core::signatures::AuthorizationWitness::FalconDirect(&signatures),
+                constants,
+            )
+            .ok()?;
+            #[allow(unused_mut)]
+            let mut auth = dg_xch_core::signatures::extension::FalconAuthorization {
+                genesis: constants.genesis_challenge,
+                header: Vec::new(),
+                transactions: signatures,
+                labrador: None,
+            };
+            #[cfg(feature = "labrador")]
+            if let Some(profile) = constants.falcon_aggregation {
+                use dg_xch_core::signatures::labrador::{self, Aggregation};
+                let requirements = conds
+                    .falcon_signatures
+                    .iter()
+                    .map(|c| c.requirement())
+                    .collect::<Vec<_>>();
+                match labrador::prepare(
+                    profile,
+                    constants.genesis_challenge,
+                    &requirements,
+                    &auth.transactions,
+                ) {
+                    Aggregation::Pending => return None,
+                    Aggregation::Direct => {}
+                    Aggregation::Proof(proof) => {
+                        auth.transactions.clear();
+                        auth.labrador = Some(proof);
+                    }
+                }
+            }
+            auth.into()
+        };
+        // The included items' aggregate signatures combined.
+        let aggregated_signature = if constants.signature_profile.is_bls() {
+            match aggregate_signatures(sigs.iter()) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    warn!("block assembly: signature aggregation failed: {e}");
+                    return None;
+                }
+            }
+        } else {
+            dg_xch_core::signatures::falcon_condition::transaction_reference(
+                constants.genesis_challenge,
+                &conds.falcon_signatures,
+            )
+        };
         debug!(
             "block assembly: {} spends, {} additions, cost {}, fees {}",
             coin_spends.len(),
@@ -1873,6 +2048,7 @@ impl Mempool {
             fee_sum
         );
         Some(BlockTransactions {
+            authorization,
             program,
             block_refs: Vec::new(),
             additions,

@@ -53,6 +53,7 @@ pub struct PlotRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlotInfo {
+    pub signature_profile: dg_xch_core::signatures::SignatureProfile,
     pub plot_id: [u8; 32],
     pub k: u8,
     pub strength: u8,
@@ -74,10 +75,52 @@ pub fn read_metadata(path: &Path) -> Result<PlotMetadata, Error> {
     input.seek(std::io::SeekFrom::Start(43))?;
     let mut memo = zeroize::Zeroizing::new(vec![0u8; if info.portable { 112 } else { 128 }]);
     input.read_exact(&mut memo)?;
-    if identity(&memo, info.strength, info.index, info.meta_group)?.as_ref() != info.plot_id {
+    if identity_for_profile(
+        &memo,
+        info.strength,
+        info.index,
+        info.meta_group,
+        info.signature_profile,
+    )?
+    .as_ref()
+        != info.plot_id
+    {
         return Err(invalid("plot identity changed while reading metadata"));
     }
     Ok(PlotMetadata { info, memo })
+}
+
+fn identity_for_profile(
+    memo: &[u8],
+    strength: u8,
+    index: u16,
+    meta_group: u8,
+    profile: dg_xch_core::signatures::SignatureProfile,
+) -> Result<Bytes32, Error> {
+    if profile.is_bls() {
+        return identity(memo, strength, index, meta_group);
+    }
+    if memo.len() != 128 || &memo[..8] != b"DGXFAL02" || memo[8..32].iter().any(|b| *b != 0) {
+        return Err(invalid("invalid Falcon plot memo"));
+    }
+    let pool = Bytes48::const_new(
+        memo[32..80]
+            .try_into()
+            .map_err(|_| invalid("pool key commitment"))?,
+    );
+    let plot = Bytes48::const_new(
+        memo[80..128]
+            .try_into()
+            .map_err(|_| invalid("plot key commitment"))?,
+    );
+    Ok(calculate_plot_id_v2(
+        strength,
+        plot,
+        Some(pool),
+        None,
+        index,
+        meta_group,
+    ))
 }
 
 fn identity(memo: &[u8], strength: u8, index: u16, meta_group: u8) -> Result<Bytes32, Error> {
@@ -136,9 +179,9 @@ pub fn inspect_reader(file: &mut (impl Read + Seek)) -> Result<PlotInfo, Error> 
     file.rewind()?;
     let mut header = [0; 43];
     file.read_exact(&mut header)?;
-    if &header[..4] != b"pos2" || header[4] != 1 {
+    if &header[..4] != b"pos2" || !matches!(header[4], 1 | 2) {
         return Err(invalid(
-            "expected PoS2 fat-plot format 1; legacy and Benes plots are unsupported",
+            "expected PoS2 fat-plot format 1 (BLS) or 2 (Falcon)",
         ));
     }
     let plot_id: [u8; 32] = header[5..37]
@@ -155,7 +198,14 @@ pub fn inspect_reader(file: &mut (impl Read + Seek)) -> Result<PlotInfo, Error> 
     }
     let mut memo = zeroize::Zeroizing::new(vec![0; memo_len]);
     file.read_exact(&mut memo)?;
-    if identity(&memo, strength, index, meta_group)?.as_ref() != plot_id {
+    let signature_profile = if header[4] == 1 {
+        dg_xch_core::signatures::SignatureProfile::Bls12381Aug
+    } else {
+        dg_xch_core::signatures::SignatureProfile::FnDsa512V2
+    };
+    if identity_for_profile(&memo, strength, index, meta_group, signature_profile)?.as_ref()
+        != plot_id
+    {
         return Err(invalid("plot ID does not match memo and metadata"));
     }
     let chunks = read_u64(file)?;
@@ -197,6 +247,7 @@ pub fn inspect_reader(file: &mut (impl Read + Seek)) -> Result<PlotInfo, Error> 
         return Err(invalid("unexpected trailing data"));
     }
     Ok(PlotInfo {
+        signature_profile,
         plot_id,
         k,
         strength,

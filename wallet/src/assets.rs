@@ -1,15 +1,13 @@
-use crate::common::sign_coin_spends;
 use crate::conditions::{Conditions, announcement_id};
 use crate::memory_wallet::MemoryWallet;
-use crate::{Wallet, WalletStore};
+use crate::signing::TransactionWallet;
 use dg_xch_core::blockchain::{
     coin_record::CoinRecord, coin_spend::CoinSpend, sized_bytes::Bytes32, spend_bundle::SpendBundle,
 };
 use dg_xch_core::clvm::program::SerializedProgram;
 use dg_xch_core::clvm::{program::Program, sexp::SExp};
-use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Error;
 
 const MAX_PUZZLE_BYTES: usize = 256 * 1024;
@@ -305,6 +303,22 @@ pub(crate) async fn build_transaction(
     fee: u64,
     change: Bytes32,
 ) -> Result<SpendBundle, Error> {
+    build_asset_transaction(wallet, coins, assets, reserved, action, fee, change, 0).await
+}
+
+/// Build an asset spend using the same lineage, announcement and fee rules for
+/// either signature scheme. `height` selects the chain's current execution rules.
+#[allow(clippy::too_many_arguments)]
+pub async fn build_asset_transaction<W: TransactionWallet>(
+    wallet: &W,
+    coins: &[CoinRecord],
+    assets: &[AssetCoin],
+    reserved: &HashSet<Bytes32>,
+    action: &AssetAction,
+    fee: u64,
+    change: Bytes32,
+    height: u32,
+) -> Result<SpendBundle, Error> {
     let mut native_spends = Vec::new();
     let cost = match action {
         AssetAction::LaunchCat2 { amount } if *amount > 0 => *amount,
@@ -346,7 +360,7 @@ pub(crate) async fn build_transaction(
             let parent = funding
                 .first()
                 .ok_or_else(|| Error::other("missing DID funding coin"))?;
-            let inner = wallet.puzzle_for_puzzle_hash(&change).await?.to_owned();
+            let inner = wallet.owner_puzzle(&change).await?.to_owned();
             let (issue, spends) = dg_xch_puzzles::dids::launch_did(parent.name(), &inner)?;
             conditions = conditions.extend(issue);
             native_spends.extend(spends);
@@ -466,7 +480,7 @@ pub(crate) async fn build_transaction(
                     for (index, (selected_asset, selected_cat)) in selected.into_iter().enumerate()
                     {
                         let inner_puzzle = wallet
-                            .puzzle_for_puzzle_hash(&selected_asset.owner_puzzle_hash)
+                            .owner_puzzle(&selected_asset.owner_puzzle_hash)
                             .await?
                             .to_owned();
                         let conditions = if index == 0 {
@@ -480,7 +494,7 @@ pub(crate) async fn build_transaction(
                             asset_id: selected_asset.asset_id,
                             lineage_proof: selected_cat.lineage_proof(),
                             inner_puzzle,
-                            inner_solution: dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(conditions.sexp().to_owned())?,
+                            inner_solution: wallet.conditions_solution(conditions)?,
                         });
                     }
                     native_spends
@@ -503,10 +517,10 @@ pub(crate) async fn build_transaction(
                     let conditions = extra.program();
                     let lineage = nft.lineage_proof;
                     let inner = wallet
-                        .puzzle_for_puzzle_hash(&asset.owner_puzzle_hash)
+                        .owner_puzzle(&asset.owner_puzzle_hash)
                         .await?
                         .to_owned();
-                    let solution = dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(conditions.sexp().to_owned())?;
+                    let solution = wallet.conditions_solution(conditions)?;
                     native_spends.push(info.spend(
                         asset.record.coin,
                         lineage,
@@ -526,10 +540,10 @@ pub(crate) async fn build_transaction(
                         )
                         .program();
                     let inner = wallet
-                        .puzzle_for_puzzle_hash(&asset.owner_puzzle_hash)
+                        .owner_puzzle(&asset.owner_puzzle_hash)
                         .await?
                         .to_owned();
-                    let solution = dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(conditions.sexp().to_owned())?;
+                    let solution = wallet.conditions_solution(conditions)?;
                     native_spends.push(did.info.spend(
                         asset.record.coin,
                         did.lineage_proof,
@@ -559,48 +573,21 @@ pub(crate) async fn build_transaction(
         } else {
             bound
         };
-        let puzzle = wallet
-            .puzzle_for_puzzle_hash(&coin.puzzle_hash)
-            .await?
-            .to_owned();
-        let solution =
-            dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(
-                spend_conditions.program().sexp().to_owned(),
-            )?;
+        let puzzle = wallet.owner_puzzle(&coin.puzzle_hash).await?.to_owned();
+        let solution = wallet.conditions_solution(spend_conditions.program())?;
         native_spends.push(CoinSpend {
             coin: *coin,
             puzzle_reveal: puzzle.serialized()?,
             solution: solution.serialized()?,
         });
     }
-    let spends = native_spends;
-    let store = wallet.wallet_store();
-    sign_coin_spends(
-        spends,
-        |key| {
-            let key = *key;
-            let store = store.clone();
-            async move { store.lock().await.secret_key_for_public_key(&key).await }
-        },
-        HashMap::new(),
-        wallet
-            .wallet_info()
-            .constants
-            .agg_sig_me_additional_data
-            .as_ref(),
-        wallet
-            .wallet_info()
-            .constants
-            .max_block_cost_clvm
-            .to_u64()
-            .ok_or_else(|| Error::other("invalid network cost limit"))?,
-    )
-    .await
+    wallet.authorize(native_spends, height).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Wallet;
     use dg_xch_clients::rpc::full_node::FullnodeClient;
     use dg_xch_core::blockchain::coin::Coin;
     use dg_xch_core::consensus::constants::TESTNET_11;

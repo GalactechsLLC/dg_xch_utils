@@ -55,6 +55,9 @@ pub fn get_client_builder(
     let mut builder = ClientBuilder::new()
         .https_only(true)
         .redirect(reqwest::redirect::Policy::none())
+        // Polling clients must retire idle connections before the server's
+        // 30-second header deadline. Active requests retain their own timeout.
+        .pool_idle_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(timeout));
     if let Some(ssl) = ssl_path {
         let (certificate, private_key) =
@@ -70,12 +73,9 @@ pub fn get_client_builder(
         identity.extend_from_slice(&private_key);
         builder = builder.identity(reqwest::Identity::from_pem(&identity).map_err(Error::other)?);
         let authorities = std::fs::read(&ssl.ssl_ca_crt_path)?;
-        builder = builder.tls_built_in_root_certs(false);
-        for certificate in
-            reqwest::Certificate::from_pem_bundle(&authorities).map_err(Error::other)?
-        {
-            builder = builder.add_root_certificate(certificate);
-        }
+        builder = builder.tls_certs_only(
+            reqwest::Certificate::from_pem_bundle(&authorities).map_err(Error::other)?,
+        );
     }
     Ok(builder)
 }
@@ -503,5 +503,50 @@ mod identity_file_tests {
         std::os::unix::fs::symlink(&original, &identity.config.ssl_key_path).unwrap();
         assert!(get_client(&Some(identity.config.clone()), 1).is_err());
         assert_eq!(std::fs::read(original).unwrap(), CHIA_CA_KEY.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod idle_connection_tests {
+    #[tokio::test]
+    async fn rpc_pool_closes_idle_connection_before_server_header_deadline() {
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                headers.push(socket.read_u8().await.unwrap());
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+            let mut byte = [0];
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(20), socket.read(&mut byte))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                0
+            );
+        });
+        let client = super::get_client_builder(&None, 5)
+            .unwrap()
+            .https_only(false)
+            .build()
+            .unwrap();
+        client
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        server.await.unwrap();
+        drop(client);
     }
 }

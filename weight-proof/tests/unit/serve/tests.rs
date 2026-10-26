@@ -255,6 +255,7 @@ fn build_chain(spec: &ChainSpec) -> MemStore {
             Vec::new()
         };
         let block = FullBlock {
+            authorization: Default::default(),
             finished_sub_slots,
             reward_chain_block: RewardChainBlock {
                 weight: u128::from(h) + 1,

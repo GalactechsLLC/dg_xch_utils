@@ -135,6 +135,7 @@ impl NodeChain {
             )?
         };
         let bundle = SpendBundle {
+            authorization: Default::default(),
             coin_spends: spends,
             ..SpendBundle::default()
         };

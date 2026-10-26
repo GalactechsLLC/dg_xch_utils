@@ -271,7 +271,7 @@
   },
   "base/softfork": {
     "value": "()",
-    "cost": 142,
+    "cost": 241,
     "error": null
   },
   "base/softfork_zero_cost": {
@@ -601,7 +601,7 @@
   },
   "mempool/softfork": {
     "value": "()",
-    "cost": 142,
+    "cost": 241,
     "error": null
   },
   "mempool/softfork_zero_cost": {

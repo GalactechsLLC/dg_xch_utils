@@ -1,9 +1,11 @@
 pub mod config;
+pub mod geography;
 pub mod metrics;
 pub mod probe;
 mod protocol;
 mod routes;
 pub mod state;
+pub mod telemetry;
 use config::Config;
 use dg_xch_servers::discovery::{Policy, Role, Store};
 use probe::Identity;
@@ -23,7 +25,12 @@ use tokio::{
 pub struct App {
     pub config: Config,
     pub store: Store,
+    pub geography: tokio::sync::RwLock<geography::Geography>,
+    pub nodes: Vec<telemetry::Node>,
+    pub observatory_error: Mutex<Option<String>>,
     summary_cache: Mutex<Option<(Instant, Summary)>>,
+    chain_cache: Mutex<Option<(Instant, serde_json::Value)>>,
+    insights_cache: Mutex<std::collections::BTreeMap<u32, (Instant, serde_json::Value)>>,
     seed_error: Mutex<Option<String>>,
     worker_tick: AtomicU64,
     started: Instant,
@@ -50,10 +57,23 @@ impl App {
                 },
             )
             .await?;
+        store.configure_controls(&config.controls).await?;
+        let geography = tokio::sync::RwLock::new(geography::Geography::open(&config.geography)?);
+        let nodes = config
+            .telemetry
+            .nodes
+            .iter()
+            .map(telemetry::Node::new)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Arc::new(Self {
+            geography,
+            nodes,
+            observatory_error: Mutex::new(None),
             config,
             store,
             summary_cache: Mutex::new(None),
+            chain_cache: Mutex::new(None),
+            insights_cache: Mutex::new(Default::default()),
             seed_error: Mutex::new(None),
             worker_tick: AtomicU64::new(0),
             started: Instant::now(),
@@ -70,6 +90,46 @@ impl App {
         let mut value = self.store.summary(self.config.recent_seconds).await?;
         value.seed_error = self.seed_error.lock().await.clone();
         *cache = Some((Instant::now(), value.clone()));
+        Ok(value)
+    }
+    pub async fn chain(&self) -> Result<serde_json::Value, Error> {
+        let mut cache = self.chain_cache.lock().await;
+        if let Some((at, value)) = &*cache
+            && at.elapsed() < Duration::from_secs(15)
+        {
+            return Ok(value.clone());
+        }
+        let value =
+            telemetry::dashboard(&self.store, self.config.telemetry.interval_seconds).await?;
+        *cache = Some((Instant::now(), value.clone()));
+        Ok(value)
+    }
+    pub async fn insights(&self, days: u32) -> Result<serde_json::Value, Error> {
+        let days = match days {
+            0..=1 => 1,
+            2..=7 => 7,
+            8..=30 => 30,
+            _ => 90,
+        };
+        let mut cache = self.insights_cache.lock().await;
+        if let Some((at, value)) = cache.get(&days)
+            && at.elapsed() < Duration::from_secs(30)
+        {
+            return Ok(value.clone());
+        }
+        let chain = self.chain().await?;
+        let height = if chain["quorum"] == true {
+            telemetry::integer(&chain["checkpoint_height"]).and_then(|n| u32::try_from(n).ok())
+        } else {
+            None
+        };
+        let mut value = self
+            .store
+            .insights(self.config.recent_seconds, days, height)
+            .await?;
+        value["geography"] = self.geography.read().await.status();
+        value["error"] = serde_json::json!(self.observatory_error.lock().await.clone());
+        cache.insert(days, (Instant::now(), value.clone()));
         Ok(value)
     }
     pub fn live(&self) -> bool {
@@ -139,8 +199,6 @@ async fn crawl(app: Arc<App>, identity: Identity, mut stop: watch::Receiver<bool
     let mut seeds = None;
     let mut poll = tokio::time::interval(Duration::from_millis(app.config.interval_ms));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut maintenance = tokio::time::interval(Duration::from_secs(30));
-    maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut bootstrap_clock = tokio::time::interval(Duration::from_secs(3600));
     loop {
         app.worker_tick
@@ -152,17 +210,14 @@ async fn crawl(app: Arc<App>, identity: Identity, mut stop: watch::Receiver<bool
                 match app.store.claim(Role::Crawler).await{
                     Ok(Some(claim))=>{let app=app.clone();let identity=identity.clone();probes.spawn(async move{
                         let policy=claim.policy.crawler.expect("crawler policy configured");
-                        let obs=probe::probe(claim.endpoint,&app.config.network,&identity,Duration::from_secs(claim.policy.timeout_seconds),&policy).await;
+                        let obs=probe::probe_controlled(claim.endpoint,&app.config.network,&identity,Duration::from_secs(claim.policy.timeout_seconds),&policy,Some((&app.store,&claim))).await;
                         log_probe(&app.config,claim.endpoint,&obs,policy.tcp_connect_timeout_seconds);
                         if let Err(error)=app.store.finish(claim,obs,None).await{app.storage_failure("completion",&error);}
                     });},Ok(None)=>{},Err(error)=>app.storage_failure("claim",&error),
                 }
             },
             Some(result)=probes.join_next(),if !probes.is_empty()=>{if let Err(error)=result{eprintln!("crawler probe task failed: {error}");}},
-            _=maintenance.tick()=>{
-                let result=async{app.store.maintenance(Role::Crawler,app.config.retention_days).await?;let summary=app.summary().await?;app.store.sample(&summary).await?;eprintln!("{}",serde_json::json!({"event":"crawler_summary","data":summary}));Ok::<_,Error>(())}.await;
-                if let Err(error)=result{app.storage_failure("maintenance",&error);}
-            },
+
         }
     }
     if let Some(task) = seeds {
@@ -191,9 +246,61 @@ pub async fn run(config: Config) -> Result<(), Error> {
         app.config.network, app.config.listen
     );
     let (stop_tx, stop_rx) = watch::channel(false);
+    let observer = tokio::spawn(observe(app.clone(), stop_rx.clone()));
+    let telemetry = tokio::spawn(collect_chain(app.clone(), stop_rx.clone()));
     let task = tokio::spawn(crawl(app, identity, stop_rx));
     let result = server.run().await;
     let _ = stop_tx.send(true);
     task.await.map_err(Error::other)?;
+    observer.await.map_err(Error::other)?;
+    telemetry.await.map_err(Error::other)?;
     result.map_err(|e| Error::other(e.to_string()))
+}
+
+async fn observe(app: Arc<App>, mut stop: watch::Receiver<bool>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut reload = Instant::now();
+    loop {
+        tokio::select! {
+            _=stop.changed()=>break,
+            _=tick.tick()=>{
+                let mut errors=Vec::new();
+                if reload.elapsed()>Duration::from_secs(3600) {
+                    let config=app.config.geography.clone();
+                    match tokio::task::spawn_blocking(move||geography::Geography::open(&config)).await {
+                        Ok(Ok(geo))=>{*app.geography.write().await=geo;reload=Instant::now();},
+                        Ok(Err(e))=>errors.push(e.to_string()),Err(e)=>errors.push(e.to_string()),
+                    }
+                }
+                if let Err(e)=app.geography.read().await.enrich(&app.store).await {errors.push(e.to_string());}
+                if let Err(e)=app.store.observatory_maintenance(app.config.recent_seconds).await {errors.push(e.to_string());}
+                let maintenance=async {
+                    app.store.maintenance(Role::Crawler,app.config.retention_days).await?;
+                    let summary=app.summary().await?;app.store.sample(&summary).await?;
+                    eprintln!("{}",serde_json::json!({"event":"crawler_summary","data":summary}));Ok::<_,Error>(())
+                }.await;
+                if let Err(e)=maintenance {errors.push(e.to_string());}
+                *app.observatory_error.lock().await=(!errors.is_empty()).then(||errors.join("; "));
+            }
+        }
+    }
+}
+async fn collect_chain(app: Arc<App>, mut stop: watch::Receiver<bool>) {
+    let mut tick =
+        tokio::time::interval(Duration::from_secs(app.config.telemetry.interval_seconds));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _=stop.changed()=>break,
+            _=tick.tick()=>{
+                let result=tokio::time::timeout(Duration::from_secs(90),telemetry::collect(&app.store,&app.config.telemetry,&app.nodes)).await;
+                match result {
+                    Ok(Ok(()))=>{},
+                    Ok(Err(e))=>app.storage_failure("node telemetry",&e),
+                    Err(_)=>app.storage_failure("node telemetry",&Error::other("collection deadline exceeded")),
+                }
+            }
+        }
+    }
 }

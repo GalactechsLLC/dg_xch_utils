@@ -238,6 +238,7 @@ fn the_mempool_admission_path_retains_nothing() {
             .collect::<Vec<_>>(),
     );
     let bundle = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![CoinSpend {
             coin: Coin {
                 parent_coin_info: Bytes32::new([1; 32]),

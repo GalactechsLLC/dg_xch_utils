@@ -35,7 +35,7 @@ impl Sort {
         }
     }
 }
-fn filters(q: &mut QueryBuilder<'_, Postgres>, network: &str, page: &Page) {
+fn filters(q: &mut QueryBuilder<Postgres>, network: &str, page: &Page) {
     q.push(" WHERE p.network=").push_bind(network.to_owned());
     if let Some(version) = &page.version {
         q.push(" AND coalesce(p.software_version,'')=")
@@ -112,7 +112,7 @@ fn filters(q: &mut QueryBuilder<'_, Postgres>, network: &str, page: &Page) {
         }
     }
 }
-fn cursor_value(q: &mut QueryBuilder<'_, Postgres>, cursor: &Cursor) -> Result<(), Error> {
+fn cursor_value(q: &mut QueryBuilder<Postgres>, cursor: &Cursor) -> Result<(), Error> {
     match cursor.sort {
         Sort::Version => {
             q.push_bind(
@@ -153,9 +153,10 @@ fn cursor_value(q: &mut QueryBuilder<'_, Postgres>, cursor: &Cursor) -> Result<(
 }
 impl Store {
     pub async fn peer(&self, endpoint: SocketAddr) -> Result<Option<Peer>, Error> {
-        let row = sqlx::query(&format!(
+        // Only compile-time column/join constants are interpolated; endpoint and network are bound.
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {PEER_COLUMNS}{PEER_FROM} WHERE p.network=$1 AND p.ip=$2::inet AND p.port=$3"
-        ))
+        )))
         .bind(&self.network)
         .bind(endpoint.ip().to_string())
         .bind(i32::from(endpoint.port()))
@@ -308,9 +309,10 @@ impl Store {
     pub async fn summary(&self, recent_seconds: u64) -> Result<Summary, Error> {
         let now = self.clock().await? as i64;
         let cutoff = now - recent_seconds as i64;
-        let budget=sqlx::query("SELECT concurrency,interval_ms,timeout_seconds,tcp_connect_timeout_seconds,crawler_port,minimum_height,peak_wait_ms,allow_private,crawler_enable_ipv6 FROM dg_discovery.budgets WHERE network=$1 AND role='crawler'").bind(&self.network).fetch_one(&self.pool).await.map_err(Error::other)?;
-        let row=sqlx::query(&format!("SELECT count(*) AS known,count(DISTINCT p.ip) FILTER(WHERE p.reported_gossip_timestamp >= $3::bigint - 432000) AS total_nodes_5_days,count(DISTINCT p.ip) FILTER(WHERE p.family=4 AND p.reported_gossip_timestamp >= $3::bigint - 432000) AS ipv4_nodes_5_days,count(DISTINCT p.ip) FILTER(WHERE p.family=6 AND p.reported_gossip_timestamp >= $3::bigint - 432000) AS ipv6_nodes_5_days,count(*) FILTER(WHERE j.reliable AND p.node_type=1 AND p.peak_observed_at>=$2 AND p.peak_height>=coalesce($4::bigint,0) AND ($5::integer IS NULL OR p.port=$5) AND j.ignore_until<=$3 AND j.ban_until<=$3) AS reliable,count(*) FILTER(WHERE j.ignore_until>$3 AND j.ban_until<=$3) AS ignored,count(*) FILTER(WHERE j.ban_until>$3) AS banned,count(*) FILTER(WHERE p.first_success IS NOT NULL) AS ever_connected,count(*) FILTER(WHERE p.last_success>=$2) AS recent,count(DISTINCT p.node_id) FILTER(WHERE p.last_success>=$2) AS identities,count(*) FILTER(WHERE j.next_attempt<=$3 AND (j.lease_until IS NULL OR j.lease_until<=$3) AND ($5::integer IS NULL OR (p.port=$5 AND j.ignore_until<=$3 AND j.ban_until<=$3)) AND ($6 OR p.publicly_routable) AND ($7 OR p.family=4) AND NOT EXISTS(SELECT 1 FROM dg_discovery.cooldowns c WHERE c.network=p.network AND c.role='crawler' AND c.ip=p.ip AND c.next_at>$3)) AS due,count(*) FILTER(WHERE j.lease_until>$3) AS inflight,count(*) FILTER(WHERE p.family=4 AND p.last_success>=$2) AS ipv4_recent,count(*) FILTER(WHERE p.family=6 AND p.last_success>=$2) AS ipv6_recent,count(*) FILTER(WHERE j.attempts>0) AS attempted,count(*) FILTER(WHERE j.attempts>0 AND p.first_success IS NOT NULL) AS attempted_connected,count(*) FILTER(WHERE j.last_error IS NOT NULL) AS failed_latest,count(*) FILTER(WHERE j.last_error IS NOT NULL AND j.next_attempt>$3 AND (j.lease_until IS NULL OR j.lease_until<=$3) AND ($7 OR p.family=4)) AS pending_retry,count(*) FILTER(WHERE p.family=4) AS ipv4_known,count(*) FILTER(WHERE p.family=6) AS ipv6_known,count(*) FILTER(WHERE p.family=6 AND j.attempts>0) AS ipv6_attempted,avg(p.connect_ms) FILTER(WHERE p.last_success>=$2) AS connect_ms,avg(p.peer_request_ms) FILTER(WHERE p.last_peer_response>=$2) AS peer_request_ms{PEER_FROM} WHERE p.network=$1"))
-            .bind(&self.network).bind(cutoff).bind(now).bind(budget.get::<Option<i64>, _>("minimum_height")).bind(budget.get::<Option<i32>, _>("crawler_port")).bind(budget.get::<bool, _>("allow_private")).bind(budget.get::<bool, _>("crawler_enable_ipv6")).fetch_one(&self.pool).await.map_err(Error::other)?;
+        let budget=sqlx::query("SELECT subnet_concurrency,concurrency,interval_ms,timeout_seconds,tcp_connect_timeout_seconds,crawler_port,minimum_height,peak_wait_ms,allow_private,crawler_enable_ipv6 FROM dg_discovery.budgets WHERE network=$1 AND role='crawler'").bind(&self.network).fetch_one(&self.pool).await.map_err(Error::other)?;
+        // PEER_FROM is a compile-time join clause; all filter values below use bind parameters.
+        let row=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT count(*) AS known,count(DISTINCT p.ip) FILTER(WHERE p.reported_gossip_timestamp >= $3::bigint - 432000) AS total_nodes_5_days,count(DISTINCT p.ip) FILTER(WHERE p.family=4 AND p.reported_gossip_timestamp >= $3::bigint - 432000) AS ipv4_nodes_5_days,count(DISTINCT p.ip) FILTER(WHERE p.family=6 AND p.reported_gossip_timestamp >= $3::bigint - 432000) AS ipv6_nodes_5_days,count(*) FILTER(WHERE j.reliable AND p.node_type=1 AND p.peak_observed_at>=$2 AND p.peak_height>=coalesce($4::bigint,0) AND ($5::integer IS NULL OR p.port=$5) AND j.ignore_until<=$3 AND j.ban_until<=$3) AS reliable,count(*) FILTER(WHERE j.ignore_until>$3 AND j.ban_until<=$3) AS ignored,count(*) FILTER(WHERE j.ban_until>$3) AS banned,count(*) FILTER(WHERE p.first_success IS NOT NULL) AS ever_connected,count(*) FILTER(WHERE p.last_success>=$2) AS recent,count(DISTINCT p.node_id) FILTER(WHERE p.last_success>=$2) AS identities,count(*) FILTER(WHERE j.next_attempt<=$3 AND (j.lease_until IS NULL OR j.lease_until<=$3) AND ($5::integer IS NULL OR (p.port=$5 AND j.ignore_until<=$3 AND j.ban_until<=$3)) AND ($6 OR p.publicly_routable) AND ($7 OR p.family=4) AND NOT EXISTS(SELECT 1 FROM dg_discovery.cooldowns c WHERE c.network=p.network AND c.role='crawler' AND c.ip=p.ip AND c.next_at>$3) AND NOT EXISTS(SELECT 1 FROM dg_discovery.subnet_cooldowns sc WHERE sc.network=j.network AND sc.role='crawler' AND sc.subnet=j.subnet AND sc.next_at>clock_timestamp()) AND (SELECT count(*) FROM dg_discovery.jobs active WHERE active.network=j.network AND active.role='crawler' AND active.lease_token IS NOT NULL AND active.lease_until>$3 AND active.subnet=j.subnet)<$8) AS due,count(*) FILTER(WHERE j.lease_until>$3) AS inflight,count(*) FILTER(WHERE p.family=4 AND p.last_success>=$2) AS ipv4_recent,count(*) FILTER(WHERE p.family=6 AND p.last_success>=$2) AS ipv6_recent,count(*) FILTER(WHERE j.attempts>0) AS attempted,count(*) FILTER(WHERE j.attempts>0 AND p.first_success IS NOT NULL) AS attempted_connected,count(*) FILTER(WHERE j.last_error IS NOT NULL) AS failed_latest,count(*) FILTER(WHERE j.last_error IS NOT NULL AND j.next_attempt>$3 AND (j.lease_until IS NULL OR j.lease_until<=$3) AND ($7 OR p.family=4)) AS pending_retry,count(*) FILTER(WHERE p.family=4) AS ipv4_known,count(*) FILTER(WHERE p.family=6) AS ipv6_known,count(*) FILTER(WHERE p.family=6 AND j.attempts>0) AS ipv6_attempted,avg(p.connect_ms) FILTER(WHERE p.last_success>=$2) AS connect_ms,avg(p.peer_request_ms) FILTER(WHERE p.last_peer_response>=$2) AS peer_request_ms{PEER_FROM} WHERE p.network=$1")))
+            .bind(&self.network).bind(cutoff).bind(now).bind(budget.get::<Option<i64>, _>("minimum_height")).bind(budget.get::<Option<i32>, _>("crawler_port")).bind(budget.get::<bool, _>("allow_private")).bind(budget.get::<bool, _>("crawler_enable_ipv6")).bind(budget.get::<i32,_>("subnet_concurrency")).fetch_one(&self.pool).await.map_err(Error::other)?;
         let n = |name| row.get::<i64, _>(name) as usize;
         let mut errors = std::collections::BTreeMap::new();
         for r in sqlx::query("SELECT last_error_phase,count(*) AS count FROM dg_discovery.jobs WHERE network=$1 AND role='crawler' AND last_error IS NOT NULL GROUP BY last_error_phase")
@@ -367,9 +369,26 @@ impl Store {
         column: &str,
         cutoff: i64,
     ) -> Result<std::collections::BTreeMap<String, usize>, Error> {
-        // Column is a private, fixed call-site identifier, never user input.
-        let rows=sqlx::query(&format!("SELECT coalesce({column},'') AS label,count(*) AS count FROM dg_discovery.peers WHERE network=$1 AND last_success>=$2 GROUP BY {column} ORDER BY count(*) DESC,label LIMIT 64"))
-            .bind(&self.network).bind(cutoff).fetch_all(&self.pool).await.map_err(Error::other)?;
+        let query = match column {
+            "software_version" => {
+                "SELECT coalesce(software_version,'') AS label,count(*) AS count FROM dg_discovery.peers WHERE network=$1 AND last_success>=$2 GROUP BY software_version ORDER BY count(*) DESC,label LIMIT 64"
+            }
+            "protocol_version" => {
+                "SELECT coalesce(protocol_version,'') AS label,count(*) AS count FROM dg_discovery.peers WHERE network=$1 AND last_success>=$2 GROUP BY protocol_version ORDER BY count(*) DESC,label LIMIT 64"
+            }
+            _ => {
+                return Err(Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "unsupported distribution column",
+                ));
+            }
+        };
+        let rows = sqlx::query(query)
+            .bind(&self.network)
+            .bind(cutoff)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(Error::other)?;
         Ok(rows
             .into_iter()
             .map(|r| (r.get("label"), r.get::<i64, _>("count") as usize))
@@ -387,6 +406,8 @@ impl Store {
         Ok(rows
             .into_iter()
             .map(|r| Point {
+                activity_observed: true,
+                interval_seconds: 60,
                 timestamp: (r.get::<i64, _>("bucket") * 60) as u64,
                 sampled_at: r.get::<i64, _>("observed_at") as u64,
                 known: r.get::<i64, _>("known") as usize,
@@ -405,6 +426,44 @@ impl Store {
                 handshakes: r.get::<i64, _>("handshakes") as usize,
                 peer_responses: r.get::<i64, _>("responses") as usize,
                 failures: r.get::<i64, _>("failures") as usize,
+                average_connect_ms: r.get("connect_ms"),
+                average_peer_request_ms: r.get("request_ms"),
+            })
+            .collect())
+    }
+    /// Long-range samples use latest inventory values per bucket, never invented zeros.
+    pub async fn history_range(&self, days: u32) -> Result<Vec<Point>, Error> {
+        if days <= 1 {
+            return self.history().await;
+        }
+        let days = days.min(90);
+        let width = if days <= 7 { 10i64 } else { 120i64 };
+        let cutoff = self.clock().await?.saturating_sub(u64::from(days) * 86400) as i64 / 60;
+        let rows=sqlx::query("WITH samples AS (SELECT DISTINCT ON (bucket/$3) bucket/$3 AS group_bucket,observed_at,known,recent,identities,total_nodes_5_days,ipv4_nodes_5_days,ipv6_nodes_5_days FROM dg_discovery.history WHERE network=$1 AND bucket>=$2 ORDER BY bucket/$3,bucket DESC), probes AS (SELECT bucket/$3 AS group_bucket,sum(completed)::bigint AS completed,sum(handshakes)::bigint AS handshakes,sum(responses)::bigint AS responses,sum(failures)::bigint AS failures,sum(connect_ms*handshakes)/nullif(sum(handshakes) FILTER(WHERE connect_ms IS NOT NULL),0) AS connect_ms,sum(request_ms*responses)/nullif(sum(responses) FILTER(WHERE request_ms IS NOT NULL),0) AS request_ms FROM dg_discovery.probe_history WHERE network=$1 AND bucket>=$2 GROUP BY bucket/$3) SELECT s.*,p.completed,p.handshakes,p.responses,p.failures,p.connect_ms,p.request_ms FROM samples s LEFT JOIN probes p USING(group_bucket) ORDER BY s.group_bucket")
+            .bind(&self.network).bind(cutoff).bind(width).fetch_all(&self.pool).await.map_err(Error::other)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| Point {
+                activity_observed: r.get::<Option<i64>, _>("completed").is_some(),
+                interval_seconds: width as u64 * 60,
+                timestamp: (r.get::<i64, _>("group_bucket") * width * 60) as u64,
+                sampled_at: r.get::<i64, _>("observed_at") as u64,
+                known: r.get::<i64, _>("known") as usize,
+                recent: r.get::<i64, _>("recent") as usize,
+                identities: r.get::<i64, _>("identities") as usize,
+                total_nodes_5_days: r
+                    .get::<Option<i64>, _>("total_nodes_5_days")
+                    .map(|n| n as usize),
+                ipv4_nodes_5_days: r
+                    .get::<Option<i64>, _>("ipv4_nodes_5_days")
+                    .map(|n| n as usize),
+                ipv6_nodes_5_days: r
+                    .get::<Option<i64>, _>("ipv6_nodes_5_days")
+                    .map(|n| n as usize),
+                completed_probes: r.get::<Option<i64>, _>("completed").unwrap_or(0) as usize,
+                handshakes: r.get::<Option<i64>, _>("handshakes").unwrap_or(0) as usize,
+                peer_responses: r.get::<Option<i64>, _>("responses").unwrap_or(0) as usize,
+                failures: r.get::<Option<i64>, _>("failures").unwrap_or(0) as usize,
                 average_connect_ms: r.get("connect_ms"),
                 average_peer_request_ms: r.get("request_ms"),
             })
@@ -456,7 +515,9 @@ impl Store {
         let query = format!(
             "WITH failures AS (SELECT j.last_error_phase,{reason} AS reason,j.last_error,family(j.ip) AS family FROM dg_discovery.jobs j WHERE j.network=$1 AND j.role='crawler' AND j.last_error IS NOT NULL) SELECT last_error_phase,reason,min(last_error) AS last_error,count(DISTINCT last_error) AS error_variants,count(*) AS count,count(*) FILTER(WHERE family=4) AS ipv4,count(*) FILTER(WHERE family=6) AS ipv6,sum(count(*)) OVER()::bigint AS total FROM failures GROUP BY last_error_phase,reason ORDER BY count(*) DESC,last_error_phase,reason LIMIT 12"
         );
-        let rows = sqlx::query(&query)
+        // The CASE expression uses only FAILURE_RULES constants and the two literal column names
+        // above. The requested network remains a bind parameter.
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(&self.network)
             .fetch_all(&self.pool)
             .await

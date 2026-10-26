@@ -75,6 +75,7 @@ async fn due(s: &Store) {
     reset(s, Role::Crawler).await;
 }
 async fn cleanup(s: &Store) {
+    // SQL identifiers below come only from this fixed table allowlist; network is bound.
     for table in [
         "peers",
         "cooldowns",
@@ -82,10 +83,17 @@ async fn cleanup(s: &Store) {
         "history",
         "observations",
         "budgets",
+        "geography",
+        "subnet_cooldowns",
+        "distribution_history",
+        "probe_history",
+        "node_samples",
+        "chain_blocks",
+        "chain_status",
     ] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM dg_discovery.{table} WHERE network=$1"
-        ))
+        )))
         .bind(&s.network)
         .execute(&s.pool)
         .await
@@ -375,6 +383,13 @@ async fn typed_schema_partitions_and_indexes_exclude_chain_store_tables() {
             "counters",
             "history",
             "observations",
+            "geography",
+            "subnet_cooldowns",
+            "distribution_history",
+            "probe_history",
+            "node_samples",
+            "chain_blocks",
+            "chain_status",
         ]
         .iter()
         .any(|p| name.starts_with(p))
@@ -386,7 +401,11 @@ async fn typed_schema_partitions_and_indexes_exclude_chain_store_tables() {
             .fetch_all(&a.pool)
             .await
             .unwrap();
-    assert!(indexes.iter().all(|s| s.contains("(network,")));
+    assert!(
+        indexes
+            .iter()
+            .all(|s| s.contains("(network,") || s.contains("(network)"))
+    );
     for network in ["mainnet", "testnet11"] {
         let plan:serde_json::Value=sqlx::query_scalar("EXPLAIN (FORMAT JSON) SELECT endpoint FROM dg_discovery.peers WHERE network=$1 ORDER BY last_success DESC NULLS LAST,ip,port LIMIT 50").bind(network).fetch_one(&a.pool).await.unwrap();
         let plan = plan.to_string();
@@ -505,10 +524,11 @@ async fn hot_dashboard_sorts_use_partition_indexes_with_large_catalogs() {
     for network in ["mainnet", "testnet11"] {
         for column in ["last_success", "software_version", "peer_request_ms"] {
             for direction in ["ASC", "DESC"] {
+                // The column and direction are selected only from the literal lists above.
                 let query = format!(
                     "EXPLAIN (FORMAT JSON) SELECT p.endpoint,j.last_error FROM dg_discovery.peers p LEFT JOIN dg_discovery.jobs j ON j.network=p.network AND j.ip=p.ip AND j.port=p.port AND j.role='crawler' WHERE p.network=$1 ORDER BY p.{column} {direction} NULLS LAST,p.ip,p.port LIMIT 50"
                 );
-                let plan: serde_json::Value = sqlx::query_scalar(&query)
+                let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
                     .bind(network)
                     .fetch_one(&mut *tx)
                     .await
@@ -1615,6 +1635,7 @@ async fn concurrent_gossip_keeps_one_endpoint_max_timestamp_and_only_the_latest_
 #[ignore = "requires isolated PostgreSQL via DGX_TEST_POSTGRES_URL"]
 async fn v7_migration_keeps_existing_rows_and_marks_unknown_gossip_history_as_null() {
     let (a, _) = setup().await;
+    // All SQL below interpolates only this generated identifier (fixed prefix + UUID hex).
     let schema = format!("migration_{}", uuid::Uuid::new_v4().simple());
     let mut tx = a.pool.begin().await.unwrap();
     for migration in [
@@ -1625,31 +1646,33 @@ async fn v7_migration_keeps_existing_rows_and_marks_unknown_gossip_history_as_nu
         include_str!("../../servers/src/discovery_v5.sql"),
         include_str!("../../servers/src/discovery_v6.sql"),
     ] {
-        sqlx::raw_sql(&migration.replace("dg_discovery", &schema))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            migration.replace("dg_discovery", &schema),
+        ))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     }
-    sqlx::query(&format!("INSERT INTO {schema}.peers(network,ip,port,publicly_routable,first_seen,last_seen,first_source,first_gossiped,last_gossiped,reported_gossip_timestamp) VALUES('mainnet','1.1.1.1'::inet,8444,true,1,3,'9.9.9.9:8444',2,3,123)"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {schema}.peers(network,ip,port,publicly_routable,first_seen,last_seen,first_source,first_gossiped,last_gossiped,reported_gossip_timestamp) VALUES('mainnet','1.1.1.1'::inet,8444,true,1,3,'9.9.9.9:8444',2,3,123)")))
         .execute(&mut *tx).await.unwrap();
-    sqlx::query(&format!("INSERT INTO {schema}.history(network,bucket,observed_at,known,recent,identities) VALUES('mainnet',1,60,1,1,1)"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {schema}.history(network,bucket,observed_at,known,recent,identities) VALUES('mainnet',1,60,1,1,1)")))
         .execute(&mut *tx).await.unwrap();
-    sqlx::raw_sql(
-        &include_str!("../../servers/src/discovery_v7.sql").replace("dg_discovery", &schema),
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        include_str!("../../servers/src/discovery_v7.sql").replace("dg_discovery", &schema),
+    ))
     .execute(&mut *tx)
     .await
     .unwrap();
-    let row: (Option<String>, String, String) = sqlx::query_as(&format!(
+    let row: (Option<String>, String, String) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT last_gossiped_by,first_source,reported_gossip_timestamp::text FROM {schema}.peers"
-    ))
+    )))
     .fetch_one(&mut *tx)
     .await
     .unwrap();
     assert_eq!(row, (None, "9.9.9.9:8444".into(), "123".into()));
-    let row: (i64, Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(&format!(
+    let row: (i64, Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT known,total_nodes_5_days,ipv4_nodes_5_days,ipv6_nodes_5_days FROM {schema}.history"
-    ))
+    )))
     .fetch_one(&mut *tx)
     .await
     .unwrap();
@@ -1666,4 +1689,181 @@ async fn v7_migration_keeps_existing_rows_and_marks_unknown_gossip_history_as_nu
     let replica = Store::connect(&url(), a.network.clone()).await.unwrap();
     assert_eq!(replica.counts().await.unwrap().known, 0);
     cleanup(&a).await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL via DGX_TEST_POSTGRES_URL"]
+async fn observatory_subnet_budgets_and_slow_pool_are_shared_and_fenced() {
+    use dg_xch_servers::discovery::CrawlControls;
+    let (a, b) = setup().await;
+    a.configure(
+        Role::Crawler,
+        Policy {
+            concurrency: 3,
+            interval_ms: 1,
+            ..policy()
+        },
+    )
+    .await
+    .unwrap();
+    a.configure_controls(&CrawlControls {
+        subnet_interval_ms: 0,
+        subnet_concurrency: 1,
+        verification_concurrency: 1,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    for ip in [
+        "8.8.8.1:8444",
+        "8.8.8.2:8444",
+        "9.9.9.1:8444",
+        "1.1.1.1:8444",
+    ] {
+        a.seen(ip.parse().unwrap(), "seed", None).await.unwrap();
+    }
+    let first = a.claim(Role::Crawler).await.unwrap().unwrap();
+    reset(&a, Role::Crawler).await;
+    let second = b.claim(Role::Crawler).await.unwrap().unwrap();
+    reset(&a, Role::Crawler).await;
+    assert!(
+        a.claim(Role::Crawler).await.unwrap().is_none(),
+        "fast pool must leave room for verification"
+    );
+    assert!(a.reserve_verification(&first).await.unwrap());
+    assert!(!b.reserve_verification(&second).await.unwrap());
+    let third = b.claim(Role::Crawler).await.unwrap().unwrap();
+    reset(&a, Role::Crawler).await;
+    assert!(a.claim(Role::Crawler).await.unwrap().is_none());
+    assert!(
+        a.finish(first.clone(), success(&a.network), None)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !b.reserve_verification(&first).await.unwrap(),
+        "completed lease cannot enter slow pool"
+    );
+    assert!(b.reserve_verification(&second).await.unwrap());
+    a.finish(third, success(&a.network), None).await.unwrap();
+    cleanup(&a).await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL via DGX_TEST_POSTGRES_URL"]
+async fn ipv6_revisit_honors_longer_operator_delay() {
+    let (a, _) = setup().await;
+    let mut p = policy();
+    p.crawler = Some(dg_xch_servers::discovery::CrawlerPolicy {
+        enable_ipv6: true,
+        port: 8444,
+        minimum_height: 0,
+        peak_wait_ms: 100,
+        tcp_connect_timeout_seconds: 2,
+    });
+    a.configure(Role::Crawler, p).await.unwrap();
+    let endpoint = "[::1]:8444".parse().unwrap();
+    a.seen(endpoint, "seed", None).await.unwrap();
+    let claim = a.claim(Role::Crawler).await.unwrap().unwrap();
+    let started = claim.started_at;
+    let mut obs = success(&a.network);
+    obs.peak_height = Some(42);
+    a.finish(claim, obs, None).await.unwrap();
+    let peer = a.peer(endpoint).await.unwrap().unwrap();
+    assert!(peer.next_attempt >= started + 3600);
+    cleanup(&a).await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL via DGX_TEST_POSTGRES_URL"]
+async fn observatory_history_geography_and_adaptive_pacing_preserve_unknowns() {
+    use dg_xch_servers::discovery::CrawlControls;
+    let (a, b) = setup().await;
+    a.configure_controls(&CrawlControls::default())
+        .await
+        .unwrap();
+    let endpoint = "8.8.8.8:8444".parse().unwrap();
+    a.seen(endpoint, "seed", None).await.unwrap();
+    let claim = a.claim(Role::Crawler).await.unwrap().unwrap();
+    let mut obs = success(&a.network);
+    obs.peak_height = Some(100);
+    a.finish(claim, obs, None).await.unwrap();
+    let now = a.clock().await.unwrap() as i64;
+    sqlx::query("INSERT INTO dg_discovery.geography(network,ip,country,asn,organization,database_epoch,updated_at) VALUES($1,'8.8.8.8','US',15169,'Example',1,$2)").bind(&a.network).bind(now).execute(&a.pool).await.unwrap();
+    a.observatory_maintenance(86400).await.unwrap();
+    b.observatory_maintenance(86400).await.unwrap();
+    let d = a.insights(86400, 7, Some(110)).await.unwrap();
+    assert_eq!(d["distribution"]["countries"][0]["label"], "US");
+    assert_eq!(d["distribution"]["asns"][0]["asn"], 15169);
+    assert_eq!(d["peer_height_lag_p95"], 10.0);
+    assert_eq!(d["history"].as_array().unwrap().len(), 1);
+    let summary = a.summary(86400).await.unwrap();
+    a.sample(&summary).await.unwrap();
+    let mut old = summary.clone();
+    old.timestamp = (now - 2 * 86400) as u64;
+    a.sample(&old).await.unwrap();
+    let history = a.history_range(7).await.unwrap();
+    assert_eq!(history.len(), 2);
+    assert!(!history[0].activity_observed);
+    assert!(history[1].activity_observed);
+    // A sharp rise in refusals relative to baseline slows all replicas.
+    sqlx::query("UPDATE dg_discovery.budgets SET adaptive_baseline=0.1 WHERE network=$1")
+        .bind(&a.network)
+        .execute(&a.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM dg_discovery.distribution_history WHERE network=$1")
+        .bind(&a.network)
+        .execute(&a.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO dg_discovery.observations(network,role,attempt_id,worker_id,ip,port,started_at,finished_at,successful,handshake_completed,peer_response,error,error_phase,received_peers) SELECT $1,'crawler',gen_random_uuid(),gen_random_uuid(),'8.8.4.4',8444,$2,$2,false,false,false,'connection refused','tcp_connect',0 FROM generate_series(1,60)").bind(&a.network).bind(now).execute(&a.pool).await.unwrap();
+    a.observatory_maintenance(86400).await.unwrap();
+    assert_eq!(
+        b.insights(86400, 1, None).await.unwrap()["adaptive_multiplier"],
+        2
+    );
+    cleanup(&a).await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL via DGX_TEST_POSTGRES_URL"]
+async fn v9_upgrade_preserves_catalog_leases_and_adds_observatory_tables() {
+    let pool = sqlx::PgPool::connect(&url()).await.unwrap();
+    // All SQL below interpolates only this generated identifier (fixed prefix + UUID hex).
+    let schema = format!("upgrade_{}", uuid::Uuid::new_v4().simple());
+    for migration in [
+        include_str!("../../servers/src/discovery.sql"),
+        include_str!("../../servers/src/discovery_v2.sql"),
+        include_str!("../../servers/src/discovery_v3.sql"),
+        include_str!("../../servers/src/discovery_v4.sql"),
+        include_str!("../../servers/src/discovery_v5.sql"),
+        include_str!("../../servers/src/discovery_v6.sql"),
+        include_str!("../../servers/src/discovery_v7.sql"),
+        include_str!("../../servers/src/discovery_v8.sql"),
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            migration.replace("dg_discovery", &schema),
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {schema}.peers(network,ip,port,publicly_routable,first_seen,last_seen,first_source) VALUES('mainnet','8.8.8.8',8444,true,1,2,'fixture')"))).execute(&pool).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {schema}.jobs(network,role,ip,port,next_attempt,lease_token,lease_until) VALUES('mainnet','crawler','8.8.8.8',8444,100,gen_random_uuid(),100)"))).execute(&pool).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        include_str!("../../servers/src/discovery_v9.sql").replace("dg_discovery", &schema),
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    use sqlx::Row;
+    let row=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT subnet::text AS subnet,verifying,lease_token IS NOT NULL AS leased FROM {schema}.jobs"))).fetch_one(&pool).await.unwrap();
+    assert_eq!(row.get::<String, _>("subnet"), "8.8.8.0/24");
+    assert!(!row.get::<bool, _>("verifying"));
+    assert!(row.get::<bool, _>("leased"));
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&pool)
+        .await
+        .unwrap();
 }

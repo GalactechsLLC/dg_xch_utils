@@ -1,6 +1,99 @@
 'use strict';
+// Shared charts use real timestamps, preserve gaps, and expose exact values on focus or hover.
+window.DruidChart = (() => {
+  const states = new WeakMap();
+  const compact = value => new Intl.NumberFormat(undefined, {notation:'compact',maximumFractionDigits:1}).format(value);
+  const full = value => value.toLocaleString(undefined,{maximumFractionDigits:2});
+  function render(canvas, options) {
+    if (!canvas.clientWidth) {const existing=states.get(canvas);if(existing)existing.tooltip.hidden=true;return;}
+    let state = states.get(canvas);
+    if (!state) {
+      let wrapper = canvas.parentElement;
+      if(!wrapper.classList.contains('chart-wrap')){wrapper=document.createElement('div');wrapper.className='chart-wrap';canvas.before(wrapper);wrapper.append(canvas);}
+      wrapper.classList.add('plot-container');
+      const tooltip = wrapper.querySelector('.chart-tooltip') || document.createElement('div');
+      tooltip.className = 'chart-tooltip'; tooltip.hidden = true; tooltip.setAttribute('role','status');
+      canvas.after(tooltip); canvas.tabIndex = 0;
+      state = {canvas, tooltip, selected:null}; states.set(canvas,state);
+      const select = event => {
+        if (!state.times?.length) return;
+        const x = event.clientX - canvas.getBoundingClientRect().left;
+        const t = state.start + (x-state.left)/(state.right-state.left)*(state.end-state.start);
+        state.selected = state.times.reduce((a,b)=>Math.abs(a-t)<Math.abs(b-t)?a:b);
+        paint(state);
+      };
+      canvas.addEventListener('pointermove',select); canvas.addEventListener('click',select);
+      canvas.addEventListener('pointerleave',()=>{if(document.activeElement!==canvas){state.selected=null;paint(state);}});
+      canvas.addEventListener('focus',()=>{state.selected=state.times?.at(-1)??null;paint(state);});
+      canvas.addEventListener('blur',()=>{state.selected=null;paint(state);});
+      canvas.addEventListener('keydown',event=>{
+        if(!['ArrowLeft','ArrowRight','Home','End','Escape'].includes(event.key))return;
+        event.preventDefault();
+        if(event.key==='Escape')state.selected=null;
+        else {const index=state.times.indexOf(state.selected);state.selected=state.times[event.key==='Home'?0:event.key==='End'?state.times.length-1:Math.max(0,Math.min(state.times.length-1,index+(event.key==='ArrowLeft'?-1:1)))];}
+        paint(state);
+      });
+    }
+    state.options = options; paint(state);
+  }
+  function paint(s) {
+    const {canvas,options:o,tooltip}=s,w=canvas.clientWidth,h=290;
+    if (!w) return;
+    const dpr=window.devicePixelRatio||1;canvas.width=Math.round(w*dpr);canvas.height=h*dpr;
+    const c=canvas.getContext('2d');c.scale(dpr,dpr);
+    const theme=getComputedStyle(document.body),color=name=>theme.getPropertyValue(name).trim();
+    c.font='11px Sora, sans-serif'; c.fillStyle=color('--muted'); tooltip.hidden=true;
+    const groups=o.groups.map(g=>({...g,points:g.points.slice().sort((a,b)=>a.time-b.time)}));
+    const points=groups.flatMap(g=>g.points).filter(p=>p.value!=null&&Number.isFinite(Number(p.value)));
+    s.times=[...new Set(points.map(p=>p.time))].sort((a,b)=>a-b);
+    if(!points.length){c.textAlign='center';c.fillText(o.empty||'No measurements in this range',w/2,136);canvas.setAttribute('aria-label',o.empty||'No measurements in this range');return;}
+    s.start=o.start??Math.min(...points.map(p=>p.time));s.end=o.end??Math.max(...points.map(p=>p.time));
+    if(s.start===s.end){s.start-=1800;s.end+=1800;}
+    s.left=w<500?55:70;s.right=w-18;const top=30,bottom=h-48;
+    const values=points.map(p=>Number(p.value));let low=o.zero===false?Math.min(...values):0,high=Math.max(...values);
+    let span=Math.max(high-low,o.integer?1:Math.abs(high)*.02||1);
+    if(o.zero===false){low=Math.max(0,low-span*.08);high+=span*.08;}
+    const rough=Math.max(high-low,o.integer?1:span)/4,base=10**Math.floor(Math.log10(rough));
+    const step=Math.max(o.integer?1:0,[1,2,2.5,5,10].find(n=>n*base>=rough)*base);
+    low=Math.floor(low/step)*step;high=Math.max(low+step,Math.ceil(high/step)*step);
+    const x=t=>s.left+(s.right-s.left)*(t-s.start)/(s.end-s.start),y=v=>bottom-(bottom-top)*(v-low)/(high-low);
+    const format=o.format||full;
+    let axis=o.axis||compact;
+    const tickValues=[];for(let v=low;v<=high+step*.01;v+=step)tickValues.push(v);
+    if(!o.axis&&new Set(tickValues.map(axis)).size<tickValues.length){
+      const decimals=Math.max(0,Math.min(10,-Math.floor(Math.log10(step))+1));
+      axis=v=>v.toLocaleString(undefined,{maximumFractionDigits:decimals});
+    }
+    s.left=Math.max(s.left,...tickValues.map(v=>c.measureText(axis(v)).width+14));
+    c.textAlign='left';c.fillText(o.unit||'',s.left,13);
+    for(let v=low;v<=high+step*.01;v+=step){const yy=y(v);c.strokeStyle=color('--line');c.lineWidth=.8;c.beginPath();c.moveTo(s.left,yy);c.lineTo(s.right,yy);c.stroke();c.fillStyle=color('--muted');c.textAlign='right';c.fillText(axis(v),s.left-9,yy+4);}
+    const ticks=w<500?2:4,spanTime=s.end-s.start;
+    for(let i=0;i<=ticks;i++){
+      const t=s.start+spanTime*i/ticks,d=new Date(t*1000);c.textAlign=i===0?'left':i===ticks?'right':'center';
+      if(spanTime>18*3600){c.fillText(d.toLocaleDateString(undefined,{month:'short',day:'numeric'}),x(t),h-24);if(spanTime<=2*86400)c.fillText(d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}),x(t),h-9);}
+      else c.fillText(d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',...(spanTime<600?{second:'2-digit'}:{})}),x(t),h-15);
+    }
+    groups.forEach((g,index)=>{
+      c.strokeStyle=color(g.color||['--accent','--chart-blue','--chart-amber'][index%3]);c.fillStyle=c.strokeStyle;c.lineWidth=2.2;c.lineJoin='round';c.setLineDash(g.dashed?[5,4]:[]);c.beginPath();let prev=null;
+      for(const p of g.points){if(p.value==null||!Number.isFinite(Number(p.value))){prev=null;continue;}
+        if(!prev||p.time-prev.time>(o.gap||180))c.moveTo(x(p.time),y(p.value));else c.lineTo(x(p.time),y(p.value));prev=p;}
+      c.stroke();c.setLineDash([]);
+      g.points.forEach((p,i)=>{if(p.value==null||!Number.isFinite(Number(p.value)))return;const before=g.points[i-1],after=g.points[i+1];
+        if(g.points.length<=12||((!before||before.value==null||p.time-before.time>(o.gap||180))&&(!after||after.value==null||after.time-p.time>(o.gap||180)))){c.beginPath();c.arc(x(p.time),y(p.value),3,0,Math.PI*2);c.fill();}});
+    });
+    canvas.setAttribute('aria-label',`${o.unit||'Measurements'}. ${groups.map(g=>g.name).join(', ')}. ${s.times.length} observed timestamps. Use arrow keys for exact values. Missing observations appear as gaps.`);
+    if(s.selected==null)return;
+    if(!s.times.includes(s.selected))s.selected=s.times.at(-1);
+    const xx=x(s.selected);c.strokeStyle=color('--muted');c.setLineDash([3,4]);c.beginPath();c.moveTo(xx,top);c.lineTo(xx,bottom);c.stroke();c.setLineDash([]);
+    tooltip.replaceChildren();const label=document.createElement('strong');label.textContent=new Date(s.selected*1000).toLocaleString();tooltip.append(label);
+    for(const g of groups){const p=g.points.find(p=>p.time===s.selected),row=document.createElement('div');row.className='tooltip-value';const name=document.createElement('span'),value=document.createElement('b');name.textContent=g.name;value.textContent=p?.value==null?'Not observed':format(Number(p.value));row.append(name,value);tooltip.append(row);}
+    tooltip.hidden=false;tooltip.style.left=`${Math.max(0,Math.min(w-tooltip.offsetWidth,xx> w/2?xx-tooltip.offsetWidth-12:xx+12))}px`;tooltip.style.top='32px';
+  }
+  return {render};
+})();
+
 const el = id => document.getElementById(id);
-const number = value => value == null ? '—' : Number(value).toLocaleString();
+const number = value => value == null ? '—' : Number(value).toLocaleString(undefined,{maximumFractionDigits:2});
 const date = seconds => seconds == null ? 'Not observed' : new Date(seconds * 1000).toLocaleString();
 const time = seconds => new Date(seconds * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
 const ms = value => value == null ? '—' : `${value.toFixed(1)} ms`;
@@ -41,7 +134,7 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape'){closeHelp()
 window.addEventListener('scroll',()=>{if(helpOwner)placeHelp();},{passive:true});
 document.querySelectorAll('.help').forEach(button=>button.setAttribute('aria-expanded','false'));
 
-let latestSummary=null, historyError=null, series=[], chartMode='reachability', selectedSample=null, chartSamples=[], chartGeometry=null, refreshing=false;
+let latestSummary=null, historyError=null, series=[], chartMode='reachability', selectedSample=null, chartSamples=[], chartGeometry=null, refreshing=false, refreshPending=false;
 const hiddenSeries=new Set();
 const charts={
   gossip:[['total_nodes_5_days','Unique IPs · 5 days','green'],['ipv4_nodes_5_days','IPv4 · 5 days','blue'],['ipv6_nodes_5_days','IPv6 · 5 days','amber']],
@@ -52,9 +145,10 @@ const charts={
 };
 const colorVariable={green:'--accent',blue:'--chart-blue',amber:'--chart-amber',red:'--error'};
 const chartDescriptions={gossip:'Unique IPs from accepted gossip with an advertised timestamp in the previous five days. Connections are not required.',inventory:'Retained IP-and-port endpoints, including seeds and older gossip, compared with recent connections.',reachability:'Endpoints and certificate identities observed during the recent connection window.',activity:'Completed probe results per minute, including retries.',latency:'Mean measured connection and peer-response times per minute.'};
+function historyBucket(){const range=Number(el('history-range').value);return range<=86400?60:range<=604800?600:7200;}
 function formatSample(key,value) { return key.endsWith('_ms') ? ms(value) : value==null ? '—' : number(value); }
 function chartControls() {
-  text('chart-description',chartDescriptions[chartMode]);
+  text('chart-description',chartMode==='activity'?`Completed results per minute, averaged over ${historyBucket()/60}-minute buckets. Retries are included; handshakes and failures can overlap.`:chartMode==='latency'?`Mean connection and peer-response times per ${historyBucket()/60}-minute bucket.`:chartDescriptions[chartMode]);
   const legend=el('chart-legend');legend.replaceChildren();
   charts[chartMode].forEach(([key,label,color])=>{
     const button=node('button');button.type='button';button.append(node('span',null,`series-dot ${color}`),node('span',label));button.setAttribute('aria-pressed',String(!hiddenSeries.has(key)));
@@ -67,64 +161,23 @@ function chartWindow() {
   return series.filter(point=>point.timestamp>=end-Number(el('history-range').value));
 }
 function drawChart() {
-  const canvas=el('history'),width=canvas.clientWidth,height=260,ratio=devicePixelRatio||1;
-  if(!width)return;
-  canvas.width=Math.round(width*ratio);canvas.height=height*ratio;
-  const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);
-  const theme=getComputedStyle(document.body),color=name=>theme.getPropertyValue(name).trim();
-  chartSamples=chartWindow();chartGeometry=null;
-  const tooltip=el('chart-tooltip');tooltip.hidden=true;
-  const highlights=el('chart-highlights');highlights.replaceChildren();
-  const last=chartSamples.at(-1);
-  charts[chartMode].forEach(([key,label])=>{const item=node('div');item.append(node('strong',last ? formatSample(key,last[key]) : '—'),node('small',chartMode==='activity' ? `${label} / latest minute` : label));highlights.append(item);});
-  ctx.font='11px Sora, sans-serif';ctx.fillStyle=color('--muted');
-  if(!chartSamples.length){ctx.fillText(historyError ? 'History is temporarily unavailable.' : series.length ? 'No observations in this time range.' : 'Your first minute sample is on its way.',16,110);text('history-caption',historyError || (series.length ? 'Choose a wider time range' : 'Collecting observations'));return;}
-  const left=chartMode==='latency'?58:52,right=width-14,top=16,bottom=height-32;
-  let first=chartSamples[0].timestamp,end=last.timestamp;
-  if(end===first){first-=30;end+=30;}
+  const samples=chartWindow().filter(p=>!['activity','latency'].includes(chartMode)||p.timestamp+(p.interval_seconds||historyBucket())<=Date.now()/1000);
   const visible=charts[chartMode].filter(([key])=>!hiddenSeries.has(key));
-  if(!chartSamples.some(point=>visible.some(([key])=>point[key]!=null))){ctx.fillText(visible.length?'No measurements for this view in this range.':'Select a series below to display it.',16,110);text('history-caption',historyError || (visible.length?(chartMode==='gossip'?'Five-day discovery history unavailable for these samples':'No measurements in this range'):'All series hidden'));return;}
-  const rawMax=Math.max(1,...chartSamples.flatMap(point=>visible.map(([key])=>point[key]??0)));
-  const power=10**Math.floor(Math.log10(rawMax)),max=Math.ceil(rawMax/power)*power;
-  const x=stamp=>left+(right-left)*(stamp-first)/(end-first),y=value=>bottom-(bottom-top)*value/max;
-  chartGeometry={left,right,top,bottom,x,y};
-  for(let i=0;i<=4;i++){
-    const value=max*i/4,yy=y(value);ctx.strokeStyle=color('--line');ctx.lineWidth=1;ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(right,yy);ctx.stroke();
-    ctx.fillStyle=color('--muted');ctx.textAlign='right';ctx.fillText(chartMode==='latency'?`${Math.round(value)} ms`:number(Math.round(value)),left-10,yy+4);
-  }
-  const ticks=width<500 ? 2 : 4;
-  for(let i=0;i<=ticks;i++){const stamp=first+(end-first)*i/ticks;ctx.textAlign=i===0?'left':i===ticks?'right':'center';ctx.fillText(time(stamp),x(stamp),height-8);}
-  visible.forEach(([key,,seriesColor],index)=>{
-    ctx.strokeStyle=color(colorVariable[seriesColor]);ctx.lineWidth=key==='identities'?2:2.5;ctx.setLineDash(key==='identities'?[4,4]:[]);ctx.beginPath();let previous=null;
-    for(const point of chartSamples){const value=point[key];if(value==null){previous=null;continue;}const xx=x(point.timestamp),yy=y(value);if(!previous||point.timestamp-previous.timestamp>90)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);previous=point;}
-    ctx.stroke();ctx.setLineDash([]);
-    // A lone observation between gaps still needs a visible point.
-    chartSamples.forEach((point,i)=>{if(point[key]==null)return;const before=chartSamples[i-1],after=chartSamples[i+1];if((!before||before[key]==null||point.timestamp-before.timestamp>90)&&(!after||after[key]==null||after.timestamp-point.timestamp>90)){ctx.fillStyle=ctx.strokeStyle;ctx.beginPath();ctx.arc(x(point.timestamp),y(point[key]),index===0?5:3,0,2*Math.PI);ctx.fill();}});
+  const value=(p,key)=>p[key]==null?null:chartMode==='activity'?p[key]*60/(p.interval_seconds||historyBucket()):p[key];
+  const last=samples.at(-1),highlights=el('chart-highlights');highlights.replaceChildren();
+  visible.forEach(([key,label])=>{const item=node('div');item.append(node('strong',last?formatSample(key,value(last,key)):'—'),node('small',chartMode==='activity'?`${label} / min`:label));highlights.append(item);});
+  const end=Math.max(Date.now()/1000,series.at(-1)?.timestamp||0);
+  window.DruidChart.render(el('history'),{
+    groups:visible.map(([key,name,col])=>({name,color:colorVariable[col],dashed:key==='identities',points:samples.map(p=>({time:p.timestamp,value:value(p,key)}))})),
+    start:end-Number(el('history-range').value),end,gap:historyBucket()*1.5,
+    unit:chartMode==='latency'?'Milliseconds':chartMode==='activity'?'Completed results / minute':chartMode==='gossip'?'Distinct IP addresses':'Endpoints / identities',
+    format:v=>chartMode==='latency'?ms(v):Number(v).toLocaleString(undefined,{maximumFractionDigits:2}),integer:!['latency','activity'].includes(chartMode),
+    empty:historyError?'History is temporarily unavailable':visible.length?'No measurements in this range':'Select a series below to display it'
   });
-  text('history-caption',historyError || `${time(chartSamples[0].timestamp)} – ${time(last.timestamp)} · ${number(chartSamples.length)} minute samples`);
-  if(selectedSample!=null){selectedSample=Math.max(0,Math.min(selectedSample,chartSamples.length-1));const point=chartSamples[selectedSample],xx=x(point.timestamp);
-    ctx.setLineDash([3,3]);ctx.strokeStyle=color('--muted');ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(xx,top);ctx.lineTo(xx,bottom);ctx.stroke();ctx.setLineDash([]);
-    visible.forEach(([key,,seriesColor])=>{if(point[key]==null)return;ctx.fillStyle=color(colorVariable[seriesColor]);ctx.beginPath();ctx.arc(xx,y(point[key]),4,0,2*Math.PI);ctx.fill();});
-    tooltip.replaceChildren(node('strong',chartMode==='activity'||chartMode==='latency' ? `${time(point.timestamp)} – ${time(point.timestamp+60)}` : date(point.sampled_at??point.timestamp)));
-    charts[chartMode].forEach(([key,label,seriesColor])=>{const row=node('div',null,'tooltip-value');const name=node('span');name.append(node('span',null,`series-dot ${seriesColor}`),node('span',` ${label}`));row.append(name,node('b',formatSample(key,point[key])));tooltip.append(row);});
-    if(chartMode==='activity'||chartMode==='latency')tooltip.append(node('small','Completed results during this minute.'));
-    tooltip.hidden=false;const box=tooltip.getBoundingClientRect();tooltip.style.left=`${Math.max(4,Math.min(width-box.width-4,xx>width/2?xx-box.width-12:xx+12))}px`;tooltip.style.top='12px';
-  }
+  text('history-caption',historyError||`${samples.length.toLocaleString()} observed buckets · ${historyBucket()/60} min resolution${['activity','latency'].includes(chartMode)?' · completed buckets only':''}`);
 }
-function selectChartSample(event) {
-  if(!chartGeometry||!chartSamples.length)return;
-  const xx=Math.max(chartGeometry.left,Math.min(chartGeometry.right,event.clientX-el('history').getBoundingClientRect().left));
-  selectedSample=chartSamples.reduce((best,point,index)=>Math.abs(chartGeometry.x(point.timestamp)-xx)<Math.abs(chartGeometry.x(chartSamples[best].timestamp)-xx)?index:best,0);drawChart();
-}
-let chartFrame=null;
-el('history').addEventListener('pointermove',event=>{if(chartFrame)cancelAnimationFrame(chartFrame);const pointer={clientX:event.clientX};chartFrame=requestAnimationFrame(()=>{chartFrame=null;selectChartSample(pointer);});});
-el('history').addEventListener('click',selectChartSample);
-el('history').addEventListener('pointerleave',()=>{if(chartFrame){cancelAnimationFrame(chartFrame);chartFrame=null;}if(document.activeElement!==el('history')){selectedSample=null;drawChart();}});
-el('history').addEventListener('focus',()=>{selectedSample=Math.max(0,chartSamples.length-1);drawChart();});
-el('history').addEventListener('blur',()=>{selectedSample=null;drawChart();});
-el('history').addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)||!chartSamples.length)return;event.preventDefault();selectedSample=event.key==='Home'?0:event.key==='End'?chartSamples.length-1:Math.max(0,Math.min(chartSamples.length-1,(selectedSample??chartSamples.length-1)+(event.key==='ArrowLeft'?-1:1)));drawChart();const point=chartSamples[selectedSample];text('chart-reading',`${time(point.timestamp)}. ${charts[chartMode].map(([key,label])=>`${label}: ${formatSample(key,point[key])}`).join('. ')}`);});
 document.querySelectorAll('[data-chart]').forEach(button=>button.addEventListener('click',()=>{chartMode=button.dataset.chart;selectedSample=null;document.querySelectorAll('[data-chart]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));chartControls();drawChart();}));
-el('history-range').addEventListener('change',()=>{selectedSample=null;drawChart();});
+el('history-range').addEventListener('change',()=>{selectedSample=null;chartControls();refresh();drawChart();});
 
 let versionEntries=[],versionData=null,versionExpanded=false,versionBusy=false,versionUpdated=0;
 function drawVersions() {
@@ -226,7 +279,7 @@ async function peers(targetIndex=pageIndex,automatic=false) {
   finally{if(generation===peerGeneration){peerBusy=false;pendingAutomatic=false;paginationState();}}
 }
 function resetList() {pageIndex=0;cursors=[null];nextCursor=null;el('clear-filters').hidden=selectedFailure===null&&selectedVersion===null&&!el('search').value&&el('result-filter').value==='all'&&el('family-filter').value==='all';const active=el('active-filter');active.hidden=selectedVersion===null&&selectedFailure===null;active.textContent=selectedFailure?`${(errorDescriptions[selectedFailure.reason]||errorDescriptions.protocol)[0]} · ${phaseName(selectedFailure.phase)} · latest failures`:selectedVersion===null?'':`Version: ${selectedVersion||'not reported'} · recent connections`;return peers(0);}
-function filterPeers({search='',status='all',version=null,failure=null}) {clearTimeout(searchTimer);selectedVersion=version;selectedFailure=failure;el('search').value=search;el('result-filter').value=status;el('family-filter').value='all';resetList();el('observations').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}
+function filterPeers({search='',status='all',version=null,failure=null}) {clearTimeout(searchTimer);selectedVersion=version;selectedFailure=failure;el('search').value=search;el('result-filter').value=status;el('family-filter').value='all';resetList();location.hash='peers';showView(false);el('observations').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}
 el('previous').addEventListener('click',()=>{if(!peerBusy&&pageIndex>0)peers(pageIndex-1);});
 el('next').addEventListener('click',()=>{if(!peerBusy&&nextCursor){cursors[pageIndex+1]=nextCursor;peers(pageIndex+1);}});
 let searchTimer;
@@ -247,18 +300,33 @@ function drawSummary(s) {
   const activity=el('activity');activity.replaceChildren();for(const [label,value] of [['Reliable full nodes',s.reliable],['Temporarily ignored',s.ignored],['Suspended',s.banned],['Attempts',s.totals.attempts],['Handshakes',s.totals.connections],['Peer responses',s.totals.peer_responses],['Failed probes',s.totals.failures],['Raw gossip entries · cumulative',s.totals.gossip_received],['Rejected entries',s.totals.gossip_rejected],['Pruned endpoints',s.totals.pruned],['Retained IPv6 endpoints',s.ipv6_known]]){const item=node('div');item.append(node('strong',number(value)),node('small',label));activity.append(item);}
 }
 async function refresh() {
-  if(refreshing)return;refreshing=true;
+  if(refreshing){refreshPending=true;return;}refreshing=true;
   // Keep independent panels live when one endpoint is unavailable.
   const updates=[
     get('/api/stats').then(drawSummary).catch(error=>{text('status',`Overview unavailable · ${error.message}. Retrying shortly.`);el('status').parentElement.classList.add('error');if(!latestSummary)text('network','Unavailable');}),
-    get('/api/history').then(history=>{historyError=null;series=history;drawChart();}).catch(error=>{historyError=`History unavailable · ${error.message}${series.length?' · showing previous observations':''}`;drawChart();}),
+    get(`/api/history?days=${Math.max(1,Math.ceil(Number(el('history-range').value)/86400))}`).then(history=>{historyError=null;series=history.sort((a,b)=>a.timestamp-b.timestamp).map(p=>p.activity_observed===false?{...p,completed_probes:null,handshakes:null,peer_responses:null,failures:null}:p);drawChart();}).catch(error=>{historyError=`History unavailable · ${error.message}${series.length?' · showing previous observations':''}`;drawChart();}),
     get('/api/diagnostics').then(drawDiagnostics).catch(error=>{text('failure-summary',`Diagnostics unavailable · ${error.message}`);text('failure-caption',el('failure-groups').childElementCount?'Showing previous results. Retrying shortly.':'Retrying shortly.');})
   ];
-  if(autoReload)updates.push(peers(pageIndex,true));
+  if(autoReload&&activeView==='peers')updates.push(peers(pageIndex,true));
   if(!versionData||Date.now()-versionUpdated>60000)updates.push(loadVersions());
-  try{await Promise.allSettled(updates);}finally{refreshing=false;}
+  try{await Promise.allSettled(updates);}finally{refreshing=false;if(refreshPending){refreshPending=false;refresh();}}
 }
 window.addEventListener('resize',()=>{drawChart();drawCoverage();if(helpOwner)placeHelp();});
 window.addEventListener('themechange',()=>{drawChart();drawCoverage();drawVersions();});
 document.fonts.ready.then(()=>{drawChart();drawCoverage();});
-chartControls();refresh();setInterval(refresh,15000);
+
+const viewMeta={overview:['Network overview','Peer discovery, reachability, and activity at a glance.'],blockchain:['Blockchain','Source health, chain progress, and independently checked observations.'],network:['Network composition','Explore the software and networks behind recent connections.'],peers:['Peer explorer','Find an endpoint and inspect what the crawler observed.'],crawler:['Crawler health','Understand probe outcomes, coverage, and collection quality.']};
+let activeView='overview';
+function showView(focus=true) {
+  const aliases={chain:'blockchain',geography:'network',trends:'overview',observations:'peers'};
+  const hash=location.hash.slice(1),next=aliases[hash]||hash;
+  activeView=Object.hasOwn(viewMeta,next)?next:'overview';
+  document.querySelectorAll('[data-view]').forEach(panel=>{panel.hidden=panel.dataset.view!==activeView;});
+  document.querySelectorAll('[data-view-link]').forEach(link=>{if(link.dataset.viewLink===activeView)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
+  text('view-title',viewMeta[activeView][0]);text('view-description',viewMeta[activeView][1]);document.title=`${viewMeta[activeView][0]} · Druid Garden`;
+  closeHelp();drawChart();drawCoverage();drawVersions();window.dispatchEvent(new Event('viewchange'));
+  if(activeView==='peers')peers(pageIndex,true);
+  if(focus){window.scrollTo({top:0,behavior:'instant'});el('view-title').focus({preventScroll:true});}
+}
+window.addEventListener('hashchange',()=>showView());
+chartControls();showView(false);refresh();setInterval(()=>{if(!document.hidden)refresh();},15000);

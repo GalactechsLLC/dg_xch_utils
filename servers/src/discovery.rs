@@ -3,11 +3,14 @@
 mod catalog;
 #[path = "discovery/models.rs"]
 mod models;
+#[path = "discovery/observatory.rs"]
+mod observatory;
 #[path = "discovery/reliability.rs"]
 mod reliability;
 #[path = "discovery/work.rs"]
 mod work;
 pub use models::*;
+pub use observatory::CrawlControls;
 pub use reliability::{PeerStat, Reliability};
 pub use sqlx;
 use sqlx::{
@@ -26,7 +29,7 @@ pub struct Store {
 }
 impl Store {
     pub async fn connect(url: &str, network: String) -> Result<Self, Error> {
-        if network.is_empty() || network.len() > 64 {
+        if network.is_empty() || network.len() > 129 {
             return Err(Error::other("invalid discovery network"));
         }
         let pool = PgPoolOptions::new()
@@ -67,6 +70,8 @@ impl Store {
                         | "dgx-discovery-typed-v5"
                         | "dgx-discovery-typed-v6"
                         | "dgx-discovery-typed-v7"
+                        | "dgx-discovery-typed-v8"
+                        | "dgx-discovery-typed-v9"
                 )
             )
         {
@@ -97,6 +102,8 @@ impl Store {
                     | "dgx-discovery-typed-v5"
                     | "dgx-discovery-typed-v6"
                     | "dgx-discovery-typed-v7"
+                    | "dgx-discovery-typed-v8"
+                    | "dgx-discovery-typed-v9"
             )
         ) {
             sqlx::raw_sql(include_str!("discovery_v3.sql"))
@@ -111,6 +118,8 @@ impl Store {
                     | "dgx-discovery-typed-v5"
                     | "dgx-discovery-typed-v6"
                     | "dgx-discovery-typed-v7"
+                    | "dgx-discovery-typed-v8"
+                    | "dgx-discovery-typed-v9"
             )
         ) {
             sqlx::raw_sql(include_str!("discovery_v4.sql"))
@@ -120,7 +129,13 @@ impl Store {
         }
         if !matches!(
             marker.as_deref(),
-            Some("dgx-discovery-typed-v5" | "dgx-discovery-typed-v6" | "dgx-discovery-typed-v7")
+            Some(
+                "dgx-discovery-typed-v5"
+                    | "dgx-discovery-typed-v6"
+                    | "dgx-discovery-typed-v7"
+                    | "dgx-discovery-typed-v8"
+                    | "dgx-discovery-typed-v9"
+            )
         ) {
             sqlx::raw_sql(include_str!("discovery_v5.sql"))
                 .execute(&mut *tx)
@@ -129,15 +144,38 @@ impl Store {
         }
         if !matches!(
             marker.as_deref(),
-            Some("dgx-discovery-typed-v6" | "dgx-discovery-typed-v7")
+            Some(
+                "dgx-discovery-typed-v6"
+                    | "dgx-discovery-typed-v7"
+                    | "dgx-discovery-typed-v8"
+                    | "dgx-discovery-typed-v9"
+            )
         ) {
             sqlx::raw_sql(include_str!("discovery_v6.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(Error::other)?;
         }
-        if marker.as_deref() != Some("dgx-discovery-typed-v7") {
+        if !matches!(
+            marker.as_deref(),
+            Some("dgx-discovery-typed-v7" | "dgx-discovery-typed-v8" | "dgx-discovery-typed-v9")
+        ) {
             sqlx::raw_sql(include_str!("discovery_v7.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(Error::other)?;
+        }
+        if !matches!(
+            marker.as_deref(),
+            Some("dgx-discovery-typed-v8" | "dgx-discovery-typed-v9")
+        ) {
+            sqlx::raw_sql(include_str!("discovery_v8.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(Error::other)?;
+        }
+        if marker.as_deref() != Some("dgx-discovery-typed-v9") {
+            sqlx::raw_sql(include_str!("discovery_v9.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(Error::other)?;

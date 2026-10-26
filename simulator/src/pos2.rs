@@ -1,4 +1,4 @@
-use crate::plots::PlotKeys;
+use crate::plots::{PlotKeys, PlotSigning};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_plotter::reader::PlotReader;
@@ -16,31 +16,21 @@ use std::sync::atomic::AtomicBool;
 /// later runs. The id and the filename both come from `(campaign_seed, plot_index)`, so a second
 /// run of the same campaign finds its plots already on disk.
 #[derive(Debug, Clone)]
-pub struct PlotSet {
+pub struct PlotSet<K = PlotKeys> {
     pub dir: PathBuf,
     pub k: u8,
     pub strength: u8,
     pub testnet: bool,
-    pub plots: Vec<Plot>,
+    pub plots: Vec<Plot<K>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Plot {
+pub struct Plot<K = PlotKeys> {
     pub path: PathBuf,
     pub plot_id: Bytes32,
-    pub keys: PlotKeys,
+    pub keys: K,
     /// False when the plot was already on disk and was reused.
     pub created: bool,
-}
-
-/// The 128 byte pool-public-key memo a plot carries: pool key, farmer key, then the master secret
-/// the local key derives from.
-fn memo(keys: &PlotKeys) -> Vec<u8> {
-    let mut out = Vec::with_capacity(128);
-    out.extend_from_slice(&keys.pool_public_key.bytes());
-    out.extend_from_slice(&keys.farmer.sk_to_pk().to_bytes());
-    out.extend_from_slice(&keys.master.to_bytes());
-    out
 }
 
 impl PlotSet {
@@ -53,10 +43,24 @@ impl PlotSet {
         strength: u8,
         testnet: bool,
     ) -> Result<Self, Error> {
+        let keys = (0..count)
+            .map(|index| PlotKeys::derive(campaign_seed, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::setup_keys(dir, keys, k, strength, testnet)
+    }
+}
+
+impl<K: PlotSigning> PlotSet<K> {
+    pub fn setup_keys(
+        dir: &Path,
+        keys: Vec<K>,
+        k: u8,
+        strength: u8,
+        testnet: bool,
+    ) -> Result<Self, Error> {
         std::fs::create_dir_all(dir)?;
-        let mut plots = Vec::with_capacity(count as usize);
-        for index in 0..count {
-            let keys = PlotKeys::derive(campaign_seed, index)?;
+        let mut plots = Vec::with_capacity(keys.len());
+        for (index, keys) in keys.into_iter().enumerate() {
             let plot_index = u16::try_from(index).unwrap_or(u16::MAX);
             // The id a v2 proof will derive from its fields; created under anything else, the plot
             // would farm proofs no verifier accepts.
@@ -73,7 +77,7 @@ impl PlotSet {
                     &native,
                     plot_index,
                     0,
-                    &memo(&keys),
+                    &keys.memo(),
                     &cancelled,
                 )?;
                 temporary.as_file().sync_all()?;

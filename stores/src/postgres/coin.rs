@@ -237,20 +237,21 @@ impl CoinStore for PostgresStore {
         if names.is_empty() {
             return Ok(Vec::new());
         }
-        let placeholders = (1..=names.len())
-            .map(|i| format!("${i}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
+        let mut query = sqlx::QueryBuilder::new(
             "SELECT confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, \
-             timestamp FROM coin_record WHERE coin_name IN ({placeholders})"
+             timestamp FROM coin_record WHERE coin_name IN (",
         );
-        // Variable-arity IN list — same non-persistent rule as apply_block_on.
-        let mut query = sqlx::query(&sql).persistent(false);
+        let mut placeholders = query.separated(",");
         for name in names {
-            query = query.bind(*name);
+            placeholders.push_bind(*name);
         }
-        let rows = query.fetch_all(&self.pool).await?;
+        placeholders.push_unseparated(")");
+        // Variable-arity IN list — same non-persistent rule as apply_block_on.
+        let rows = query
+            .build()
+            .persistent(false)
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter().map(row_to_coin_record).collect()
     }
 
@@ -376,7 +377,8 @@ impl CoinStore for PostgresStore {
                 break;
             }
             let remaining = i64::try_from(max_items - out.len()).unwrap_or(i64::MAX);
-            let rows = sqlx::query(&sql)
+            // spent_clause is selected from fixed literals; request values are bound.
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(*ph)
                 .bind(i64::from(min_height))
                 .bind(remaining)
@@ -429,7 +431,8 @@ impl CoinStore for PostgresStore {
         let min_amount = amount_be(filters.min_amount);
         let mut merged = std::collections::HashMap::new();
         for ph in puzzle_hashes {
-            let rows = sqlx::query(&sql)
+            // height_filter is a fixed match-arm literal; request values are bound.
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(*ph)
                 .bind(i64::from(min_height))
                 .bind(min_amount.clone())
@@ -443,7 +446,8 @@ impl CoinStore for PostgresStore {
             merge_coin_states_bounded(&mut merged, states, max_items + 1);
             #[cfg(feature = "hint")]
             if filters.include_hinted {
-                let rows = sqlx::query(&hint_sql)
+                // Same literal-only height_filter as the direct puzzle-hash query.
+                let rows = sqlx::query(sqlx::AssertSqlSafe(hint_sql.as_str()))
                     .bind(*ph)
                     .bind(i64::from(min_height))
                     .bind(min_amount.clone())

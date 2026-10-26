@@ -24,13 +24,15 @@ use crate::clvm::bls_ops::{
     op_bls_pairing_identity, op_bls_verify,
 };
 use crate::clvm::core_ops::{op_cons, op_eq, op_first, op_if, op_listp, op_raise, op_rest};
+use crate::clvm::keccak_ops::op_keccak256;
 use crate::clvm::more_ops::{
     op_add, op_all, op_any, op_ash, op_coinid, op_concat, op_div, op_div_deprecated, op_divmod,
     op_gr, op_gr_bytes, op_logand, op_logior, op_lognot, op_logxor, op_lsh, op_mod, op_modpow,
-    op_multiply, op_not, op_point_add, op_pubkey_for_exp, op_sha256, op_softfork, op_strlen,
-    op_substr, op_subtract, op_unknown,
+    op_multiply, op_not, op_point_add, op_pubkey_for_exp, op_sha256, op_strlen, op_substr,
+    op_subtract, op_unknown,
 };
-use crate::clvm::utils::{DISABLE_OP, NEW_COST_MODEL};
+use crate::clvm::secp_ops::op_secp_verify;
+use crate::clvm::utils::{DISABLE_OP, ENABLE_KECCAK_OPS_OUTSIDE_FORK, NEW_COST_MODEL};
 use crate::errors::ClvmError;
 
 // division with negative numbers are disallowed
@@ -63,7 +65,16 @@ impl Dialect for ChiaDialect {
         let opcode: Option<u8> = match arena.atom(o) {
             Some(atom) => {
                 let b = atom.as_ref();
-                if b.len() == 1 { Some(b[0]) } else { None }
+                match b {
+                    [0x13, 0xd6, 0x1f, 0x00] => {
+                        return op_secp_verify(arena, argument_list, max_cost, false);
+                    }
+                    [0x1c, 0x3a, 0x8f, 0x00] => {
+                        return op_secp_verify(arena, argument_list, max_cost, true);
+                    }
+                    [v] => Some(*v),
+                    _ => None,
+                }
             }
             None => return Err(ClvmError::ExpectedAtomGotPair(arena.display(o))),
         };
@@ -118,7 +129,7 @@ impl Dialect for ChiaDialect {
             33 => op_any,
             34 => op_all,
             // 35 - Not Used
-            36 => op_softfork,
+            // 36 (softfork) is handled by the evaluator, like quote and apply.
             48 => op_coinid,
             // 49..=59 — the CLVM BLS operators, dispatched unconditionally in the base
             // dialect: the 2.0 hard fork moved the BLS extension outside the softfork guard.
@@ -142,6 +153,7 @@ impl Dialect for ChiaDialect {
                 op_modpow
             }
             61 => op_mod,
+            62 if (self.flags & ENABLE_KECCAK_OPS_OUTSIDE_FORK) != 0 => op_keccak256,
             _ => {
                 return if (self.flags & NO_UNKNOWN_OPS) != 0 {
                     Err(ClvmError::Unimplemented(v))

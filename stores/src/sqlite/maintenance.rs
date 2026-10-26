@@ -69,7 +69,9 @@ impl SqliteStore {
                 }
                 let started = Instant::now();
                 log::info!("SQLite index statement started temp_store=FILE cache_mib=16 sort_threads=2 sql={statement}");
-                let result = sqlx::query(statement).execute(&mut connection).await;
+                // run_schema is crate-private and called only with embedded migrations or
+                // fixed index statements; no request data or identifiers are interpolated.
+                let result = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(&mut connection).await;
                 telemetry.schema_seconds.record(started.elapsed().as_secs_f64());
                 telemetry.schema_statements.fetch_add(1, Ordering::Relaxed);
                 if let Err(error) = result {

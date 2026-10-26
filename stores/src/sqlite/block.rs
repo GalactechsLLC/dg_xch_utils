@@ -8,7 +8,8 @@ use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::clvm::program::SerializedProgram;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
-use sqlx::{Connection, Row, TransactionManager};
+use sqlx::{Connection, Row};
+use sqlx_core::transaction::TransactionManager;
 use std::io::Cursor;
 use std::sync::atomic::Ordering;
 

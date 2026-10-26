@@ -1,5 +1,5 @@
 use crate::error::SimError;
-use crate::plots::PlotKeys;
+use crate::plots::PlotSigning;
 use crate::pos2::PlotSet;
 use crate::timelord::prove_vdf;
 use dg_xch_core::blockchain::class_group_element::ClassgroupElement;
@@ -43,9 +43,9 @@ pub struct FarmedProof {
 /// Genesis fixes the challenge, so the only freedom is which plot wins: unlike a running chain there
 /// is no signage point to vary. A plot set therefore has to be large enough, or its constants
 /// loosened enough, that some plot lands a proof in range against the one genesis challenge.
-pub fn farm_genesis(
+pub fn farm_genesis<K: PlotSigning>(
     constants: &ConsensusConstants,
-    plots: &PlotSet,
+    plots: &PlotSet<K>,
     difficulty: u64,
     sub_slot_iters: u64,
 ) -> Result<FarmedProof, SimError> {
@@ -74,9 +74,9 @@ pub fn farm_genesis(
             }
             let pos = ProofOfSpace::v2(
                 pos_challenge,
-                Some(plot.keys.pool_public_key),
+                Some(plot.keys.pool_public_key()),
                 None,
-                plot.keys.plot_public_key,
+                plot.keys.plot_public_key(),
                 u16::try_from(plot_index).unwrap_or(u16::MAX),
                 0,
                 plots.strength,
@@ -133,10 +133,10 @@ pub fn farm_genesis(
 pub fn build_genesis_unfinished(
     constants: &ConsensusConstants,
     farmed: &FarmedProof,
-    keys: &PlotKeys,
+    keys: &impl PlotSigning,
     timestamp: u64,
 ) -> Result<UnfinishedBlock, SimError> {
-    if keys.plot_public_key != farmed.proof_of_space.plot_public_key {
+    if keys.plot_public_key() != farmed.proof_of_space.plot_public_key {
         return Err(SimError::Invariant(
             "genesis signing key does not match the proof".to_string(),
         ));

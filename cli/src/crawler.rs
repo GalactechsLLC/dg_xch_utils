@@ -13,6 +13,15 @@ pub struct CrawlerArgs {
     /// Shared PostgreSQL catalog; alternatively use DGX_CRAWLER_DATABASE_URL.
     #[arg(long)]
     database_url: Option<String>,
+    /// JSON array of up to three {name,url,ssl} RPC sources (or DGX_CRAWLER_NODES).
+    #[arg(long)]
+    nodes: Option<String>,
+    /// Local GeoLite2 Country MMDB path.
+    #[arg(long)]
+    country_database: Option<PathBuf>,
+    /// Local GeoLite2 ASN MMDB path.
+    #[arg(long)]
+    asn_database: Option<PathBuf>,
     #[arg(long)]
     listen: Option<SocketAddr>,
     /// Chia network ID; alternatively supply the root --network flag.
@@ -21,7 +30,7 @@ pub struct CrawlerArgs {
     /// Repeat to supply bootstrap nodes (IP or hostname with port).
     #[arg(long)]
     seed: Vec<String>,
-    /// Enable IPv6 seed addresses and probes (true by default); use false for IPv4 only.
+    /// Enable IPv6 seed addresses and probes (disabled by default).
     #[arg(long, action = clap::ArgAction::Set)]
     enable_ipv6: Option<bool>,
     /// Expected network port (8444 for mainnet, 58444 for testnet11).
@@ -125,6 +134,28 @@ impl CrawlerArgs {
         }
         if let Some(value) = self.probe_log {
             config.probe_log = value;
+        }
+        if let Some(nodes) = self
+            .nodes
+            .clone()
+            .or_else(|| std::env::var("DGX_CRAWLER_NODES").ok())
+        {
+            config.telemetry.nodes = serde_json::from_str(&nodes)
+                .map_err(|_| Error::other("invalid crawler node configuration JSON"))?;
+        }
+        if let Some(path) = self
+            .country_database
+            .clone()
+            .or_else(|| std::env::var_os("DGX_CRAWLER_COUNTRY_DATABASE").map(PathBuf::from))
+        {
+            config.geography.country_database = Some(path);
+        }
+        if let Some(path) = self
+            .asn_database
+            .clone()
+            .or_else(|| std::env::var_os("DGX_CRAWLER_ASN_DATABASE").map(PathBuf::from))
+        {
+            config.geography.asn_database = Some(path);
         }
         config.validate()?;
         Ok(config)

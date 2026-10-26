@@ -79,12 +79,48 @@ pub async fn peers(app: State<App>, page: Query<Page>) -> Result<Response, Portf
         Err(error) => Err(PortfuError::Io(error)),
     }
 }
-pub async fn history(app: State<App>) -> Result<Response, PortfuError> {
-    json(&app.0.store.history().await.map_err(PortfuError::Io)?)
+#[derive(serde::Deserialize)]
+pub struct HistoryQuery {
+    #[serde(default = "default_days")]
+    pub days: u32,
+}
+fn default_days() -> u32 {
+    1
+}
+pub async fn history(app: State<App>, query: Query<HistoryQuery>) -> Result<Response, PortfuError> {
+    json(
+        &app.0
+            .store
+            .history_range(query.0.days)
+            .await
+            .map_err(PortfuError::Io)?,
+    )
+}
+pub async fn chain(app: State<App>) -> Result<Response, PortfuError> {
+    json(&app.0.chain().await.map_err(PortfuError::Io)?)
+}
+pub async fn insights(
+    app: State<App>,
+    query: Query<HistoryQuery>,
+) -> Result<Response, PortfuError> {
+    json(
+        &app.0
+            .insights(query.0.days)
+            .await
+            .map_err(PortfuError::Io)?,
+    )
 }
 pub async fn metrics(app: State<App>) -> Result<Response, PortfuError> {
-    let text = exposition::render(&app.0.summary().await.map_err(PortfuError::Io)?)
+    let mut text = exposition::render(&app.0.summary().await.map_err(PortfuError::Io)?)
         .map_err(PortfuError::Io)?;
+    text.push_str(
+        &exposition::observatory(
+            &app.0.config.network,
+            &app.0.insights(1).await.map_err(PortfuError::Io)?,
+            &app.0.chain().await.map_err(PortfuError::Io)?,
+        )
+        .map_err(PortfuError::Io)?,
+    );
     Ok(response(text, "text/plain; version=0.0.4; charset=utf-8"))
 }
 pub async fn ready(app: State<App>) -> Result<Response, PortfuError> {
@@ -164,7 +200,24 @@ impl portfu::prelude::ServiceTrait for Router {
                         Err(error) => Err(error),
                     }
                 }
-                "/api/history" => history(State(self.0.clone())).await,
+                "/api/history" | "/api/insights" => {
+                    match <Query<HistoryQuery> as FromRequest<portfu::prelude::Request>>::try_from(
+                        request,
+                    )
+                    .await
+                    {
+                        Ok(query) if request.uri().path() == "/api/history" => {
+                            history(State(self.0.clone()), query).await
+                        }
+                        Ok(query) => insights(State(self.0.clone()), query).await,
+                        Err(error) => Err(error),
+                    }
+                }
+                "/api/chain" => chain(State(self.0.clone())).await,
+                "/observatory.js" => Ok(response(
+                    include_str!("../static/observatory.js"),
+                    "text/javascript; charset=utf-8",
+                )),
                 "/api/diagnostics" => diagnostics(State(self.0.clone())).await,
                 "/api/versions" => match <Query<VersionQuery> as FromRequest<
                     portfu::prelude::Request,

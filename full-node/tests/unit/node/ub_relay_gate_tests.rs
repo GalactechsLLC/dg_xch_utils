@@ -8,6 +8,7 @@ use dg_xch_core::consensus::full_block_to_block_record::header_block_to_sub_bloc
 use dg_xch_core::consensus::get_block_challenge::pre_sp_tx_block_height;
 use dg_xch_core::consensus::pot_iterations::is_overflow_block;
 use dg_xch_node::PrimitiveVerifier;
+use dg_xch_node::primitives::NativePrimitives;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Golden ssi/difficulty for the slice's epoch (no epoch turn inside 9,054,336..=9,054,620 —
@@ -133,6 +134,7 @@ fn build_records(chain: &[HeaderBlock]) -> Vec<BlockRecord> {
 // relayed for it: strip the infusion-point VDFs, keep everything the farmer signed.
 fn unfinished_from_header(hb: &HeaderBlock) -> UnfinishedBlock {
     UnfinishedBlock {
+        authorization: Default::default(),
         finished_sub_slots: hb.finished_sub_slots.clone(),
         reward_chain_block: hb.reward_chain_block.get_unfinished(),
         challenge_chain_sp_proof: hb.challenge_chain_sp_proof.clone(),
@@ -344,4 +346,30 @@ async fn duplicate_ubs_are_deduped_and_validated_once() {
     assert_eq!(node.producer.dropped_count("ub_body_fail"), 0);
     assert!(cached(&node, &honest).await, "the honest entry survives");
     assert_eq!(node.ub_announce.lock().await.len(), 1, "still one announce");
+}
+
+#[tokio::test]
+async fn unfinished_overflow_without_final_slot_passes_header_gate() {
+    let (node, chain) = node_with_slice_records().await;
+    let target = chain
+        .iter()
+        .rev()
+        .find(|block| {
+            block.height() >= 9_054_550
+                && !block.finished_sub_slots.is_empty()
+                && is_overflow_block(&MAINNET, block.reward_chain_block.signage_point_index)
+                    .unwrap()
+        })
+        .expect("fixture contains a first overflow block");
+    let mut ub = unfinished_from_header(target);
+    ub.finished_sub_slots.pop();
+    // Deliberately reject at the body gate: this isolates the actual inbox header
+    // path without requiring transaction generators absent from the header fixture.
+    ub.transactions_generator = Some(SerializedProgram::from_hex("fffefd").unwrap());
+    let rejected = ub.clone();
+    drive_one(&node, ub).await;
+    assert_eq!(node.producer.dropped_count("ub_validation_fail"), 0);
+    assert_eq!(node.producer.dropped_count("ub_body_fail"), 1);
+    assert!(!cached(&node, &rejected).await);
+    assert!(node.ub_announce.lock().await.is_empty());
 }

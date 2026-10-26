@@ -12,6 +12,7 @@ members = [
     "farmer",
     "wallet",
     "keys",
+    "labrador",
     "logging",
     "macros",
     "node",

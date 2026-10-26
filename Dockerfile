@@ -1,8 +1,14 @@
-FROM rust:1.98-trixie AS build-base
-RUN apt-get update && apt-get install -y --no-install-recommends cmake m4 pkg-config clang libclang-dev \
+FROM rust:1.99.1-trixie AS build-base
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends cmake m4 pkg-config clang libclang-dev python3 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY . .
+
+# Preserve complete source and notices, including the LGPL relinking materials.
+FROM build-base AS compliance-builder
+RUN python3 docker/package-compliance.py --output /opt/dgx-compliance
+
 # Full-node images build only the CPU CLI, without stack utilities or GPU tooling.
 FROM build-base AS full-node-builder
 ARG FULL_NODE_FEATURES="hint"
@@ -16,6 +22,34 @@ RUN cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features
 FROM build-base AS pos2-test-builder
 RUN cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features --features "hint,timelord"
 
+# Shared CPU-only stack utilities, including the explicit chain-profile checks.
+FROM pos2-test-builder AS stack-cpu-builder
+RUN cargo build --locked --release -p dg_xch_dev_tools \
+    --bin dg_xch_stack_init --bin dg_xch_stack_plot --bin dg_xch_stack_check
+
+FROM build-base AS falcon-builder
+# COPY preserves source mtimes; refresh them so cached artifacts never hide edits
+# made while a preceding image build was still compiling.
+RUN --mount=type=cache,id=dgx-falcon-target,target=/build/target \
+    find . -path './target' -prune -o -type f -name '*.rs' -exec touch {} + \
+    && cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features --features "hint,timelord,falcon" \
+    && cargo build --locked --release -p dg_xch_dev_tools --features falcon \
+       --bin dg_xch_stack_init --bin dg_xch_stack_plot --bin dg_xch_stack_check \
+    && mkdir -p /build/falcon-bin \
+    && cp target/release/dgx target/release/dg_xch_stack_init target/release/dg_xch_stack_plot target/release/dg_xch_stack_check /build/falcon-bin/
+
+FROM build-base AS labrador-builder
+# COPY preserves source mtimes; refresh them so cached artifacts never hide edits
+# made while a preceding image build was still compiling.
+RUN --mount=type=cache,id=dgx-falcon-target,target=/build/target \
+    find . -path './target' -prune -o -type f -name '*.rs' -exec touch {} + \
+    && cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features --features "hint,timelord,labrador" \
+    && cargo build --locked --release -p dg_xch_dev_tools --features labrador \
+       --bin dg_xch_stack_init --bin dg_xch_stack_plot --bin dg_xch_stack_check \
+    && cargo build --locked --release -p dg_xch_labrador --features backend --bin dg_xch_labrador_worker \
+    && mkdir -p /build/labrador-bin \
+    && cp target/release/dg_xch_labrador_worker target/release/dgx target/release/dg_xch_stack_init target/release/dg_xch_stack_plot target/release/dg_xch_stack_check /build/labrador-bin/
+
 FROM build-base AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends glslang-tools \
     && rm -rf /var/lib/apt/lists/*
@@ -23,8 +57,14 @@ ARG FEATURES="hint,timelord,vulkan"
 RUN cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features --features "$FEATURES" \
     && cargo build --locked --release -p dg_xch_dev_tools --bin dg_xch_stack_init --bin dg_xch_stack_plot --bin dg_xch_stack_check --bin dg_xch_stack_pool --features vulkan
 
-FROM debian:trixie-slim AS runtime-base
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+FROM debian:trixie-20261020-slim AS runtime-base
+COPY --from=compliance-builder /opt/dgx-compliance/ /usr/local/share/dgx/
+COPY --from=compliance-builder /opt/dgx-compliance/licenses/ /usr/local/share/licenses/dgx/
+COPY LICENSE /usr/local/share/licenses/dgx/LICENSE-APACHE-2.0
+COPY licenses/ /usr/local/share/licenses/dgx/
+COPY labrador/native/LICENSE labrador/native/LICENSE-fdlibm labrador/native/LICENSE-overlay /usr/local/share/licenses/dgx/labrador/
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -u 1000 -m node \
     && install -d -o node -g node /data /service /plots /common \
@@ -112,5 +152,21 @@ COPY --from=pos2-test-builder /build/target/release/dgx /usr/local/bin/dgx
 EXPOSE 58444 8080 8582
 ENTRYPOINT ["/usr/local/bin/dgx"]
 
-# Preserve the ordinary build and existing Compose behavior.
+FROM runtime-base AS stack-cpu
+COPY --from=stack-cpu-builder /build/target/release/dgx /usr/local/bin/dgx
+COPY --from=stack-cpu-builder /build/target/release/dg_xch_stack_init /usr/local/bin/dg_xch_stack_init
+COPY --from=stack-cpu-builder /build/target/release/dg_xch_stack_plot /usr/local/bin/dg_xch_stack_plot
+COPY --from=stack-cpu-builder /build/target/release/dg_xch_stack_check /usr/local/bin/dg_xch_stack_check
+
+# Explicit CPU-only experimental Falcon network.
+FROM runtime-base AS falcon-stack
+COPY --from=falcon-builder /build/falcon-bin/dgx /usr/local/bin/dgx
+COPY --from=falcon-builder /build/falcon-bin/dg_xch_stack_init /usr/local/bin/dg_xch_stack_init
+COPY --from=falcon-builder /build/falcon-bin/dg_xch_stack_plot /usr/local/bin/dg_xch_stack_plot
+COPY --from=falcon-builder /build/falcon-bin/dg_xch_stack_check /usr/local/bin/dg_xch_stack_check
+
+FROM runtime-base AS labrador-stack
+COPY --from=labrador-builder /build/labrador-bin/ /usr/local/bin/
+
+# Keep the ordinary stack last: Docker uses the final stage when no target is supplied.
 FROM runtime AS stack

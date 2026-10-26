@@ -10,10 +10,10 @@ use std::collections::HashSet;
 pub(crate) fn query<'a, DB>(
     request: &WalletCoinRecordsRequest,
     height: u32,
-) -> Result<QueryBuilder<'a, DB>, StoreError>
+) -> Result<QueryBuilder<DB>, StoreError>
 where
     DB: Database,
-    DB::Arguments<'a>: Default,
+    DB::Arguments: Default,
     Bytes32: Encode<'a, DB> + Type<DB>,
     i64: Encode<'a, DB> + Type<DB>,
 {
@@ -126,10 +126,11 @@ mod tests {
             limit: 500,
         };
         let mut builder = query::<sqlx::Sqlite>(&request, 5_000_000).unwrap();
+        let explain = format!("EXPLAIN QUERY PLAN {}", builder.sql().as_str());
         let mut built = builder.build();
-        let explain = format!("EXPLAIN QUERY PLAN {}", built.sql());
         let arguments = built.take_arguments().unwrap().unwrap();
-        let rows = sqlx::query_with::<sqlx::Sqlite, _>(&explain, arguments)
+        // The SQL comes from our parameterized builder; EXPLAIN adds only a literal prefix.
+        let rows = sqlx::query_with::<sqlx::Sqlite, _>(sqlx::AssertSqlSafe(explain), arguments)
             .fetch_all(&pool)
             .await
             .unwrap();

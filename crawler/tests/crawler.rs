@@ -328,11 +328,11 @@ async fn disabling_ipv6_prevents_connections_while_ipv4_still_works() {
 }
 
 #[test]
-fn ipv6_configuration_defaults_on_and_preserves_explicit_false() {
+fn ipv6_configuration_defaults_off_and_preserves_explicit_false() {
     use dg_xch_crawler::config::Config;
     let old: Config = serde_json::from_str(r#"{"database_url":"postgres://fixture"}"#).unwrap();
-    assert!(old.enable_ipv6);
-    assert!(old.crawler_policy().unwrap().enable_ipv6);
+    assert!(!old.enable_ipv6);
+    assert!(!old.crawler_policy().unwrap().enable_ipv6);
     let disabled: Config =
         serde_json::from_str(r#"{"database_url":"postgres://fixture","enable_ipv6":false}"#)
             .unwrap();

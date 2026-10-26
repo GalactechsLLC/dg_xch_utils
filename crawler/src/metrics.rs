@@ -321,3 +321,231 @@ pub fn bounded_counts(counts: &BTreeMap<String, usize>, limit: usize) -> Vec<(St
     }
     pairs
 }
+
+/// All source metrics carry bounded configured names; unknown values are omitted.
+pub fn observatory(
+    network: &str,
+    insights: &serde_json::Value,
+    chain: &serde_json::Value,
+) -> Result<String, Error> {
+    use serde_json::Value;
+    let registry = Registry::new_custom(
+        None,
+        Some(std::collections::HashMap::from([(
+            "network".into(),
+            network.into(),
+        )])),
+    )
+    .map_err(Error::other)?;
+    let number = |v: &Value| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            .filter(|v: &f64| v.is_finite())
+    };
+    for (field, name, help) in [
+        (
+            "probes_per_second",
+            "chia_crawler_probes_per_second",
+            "Completed probes per second over five minutes",
+        ),
+        (
+            "connect_p95_ms",
+            "chia_crawler_connect_p95_milliseconds",
+            "95th percentile successful connection latency over five minutes",
+        ),
+        (
+            "request_p95_ms",
+            "chia_crawler_request_p95_milliseconds",
+            "95th percentile peer response latency over five minutes",
+        ),
+        (
+            "new_gossip_endpoints_per_probe",
+            "chia_crawler_discovery_yield",
+            "New gossiped endpoints divided by completed probes over five minutes",
+        ),
+        (
+            "new_endpoints",
+            "chia_crawler_new_endpoints_5_minutes",
+            "Newly discovered endpoints including bootstrap over five minutes",
+        ),
+        (
+            "fresh_endpoints",
+            "chia_crawler_fresh_endpoints_5_minutes",
+            "Endpoints with a handshake in five minutes",
+        ),
+        (
+            "peer_height_lag_p95",
+            "chia_crawler_peer_height_lag_p95",
+            "Fresh peer height lag below an agreed checkpoint; not proof of consensus validity",
+        ),
+        (
+            "adaptive_multiplier",
+            "chia_crawler_adaptive_multiplier",
+            "Multiplier applied to minimum global connection spacing",
+        ),
+        (
+            "oldest_due_seconds",
+            "chia_crawler_oldest_due_seconds",
+            "Age of oldest unsuspended queued job",
+        ),
+    ] {
+        if let Some(v) = number(&insights[field]) {
+            let g = Gauge::new(name, help).map_err(Error::other)?;
+            g.set(v);
+            registry.register(Box::new(g)).map_err(Error::other)?;
+        }
+    }
+    for (field, name) in [
+        ("fresh", "chia_observatory_telemetry_fresh"),
+        ("quorum", "chia_observatory_checkpoint_quorum"),
+    ] {
+        let g =
+            IntGauge::new(name, "One when the telemetry condition is met").map_err(Error::other)?;
+        g.set(i64::from(chain[field] == true));
+        registry.register(Box::new(g)).map_err(Error::other)?;
+    }
+    if chain["quorum"] == true
+        && let Some(h) = number(&chain["checkpoint_height"])
+    {
+        let g = Gauge::new(
+            "chia_observatory_checkpoint_height",
+            "Height agreed by at least two configured synced nodes",
+        )
+        .map_err(Error::other)?;
+        g.set(h);
+        registry.register(Box::new(g)).map_err(Error::other)?;
+    }
+    for field in [
+        "height",
+        "mempool_spendbundles",
+        "mempool_cost",
+        "mempool_max_cost",
+        "difficulty",
+        "sub_slot_iters",
+        "netspace_bytes",
+        "block_max_cost",
+    ] {
+        let g = GaugeVec::new(
+            Opts::new(
+                format!("chia_observatory_node_{field}"),
+                "Latest node-local sample; consult freshness and sync gauges",
+            ),
+            &["node"],
+        )
+        .map_err(Error::other)?;
+        for node in chain["nodes"].as_array().into_iter().flatten() {
+            if chain["fresh"] == true
+                && node["available"] == true
+                && let (Some(name), Some(value)) = (node["name"].as_str(), number(&node[field]))
+            {
+                g.with_label_values(&[name]).set(value);
+            }
+        }
+        registry.register(Box::new(g)).map_err(Error::other)?;
+    }
+    for field in ["available", "synced"] {
+        let g = IntGaugeVec::new(
+            Opts::new(
+                format!("chia_observatory_node_{field}"),
+                "One for a fresh node sample meeting this condition",
+            ),
+            &["node"],
+        )
+        .map_err(Error::other)?;
+        for node in chain["nodes"].as_array().into_iter().flatten() {
+            if let Some(name) = node["name"].as_str() {
+                g.with_label_values(&[name])
+                    .set(i64::from(chain["fresh"] == true && node[field] == true));
+            }
+        }
+        registry.register(Box::new(g)).map_err(Error::other)?;
+    }
+    for field in [
+        "blocks",
+        "transaction_blocks",
+        "lag_blocks",
+        "fees_mojos",
+        "cost",
+        "coin_spends",
+        "blocks_with_unknown_spends",
+        "seconds_per_block",
+        "seconds_per_transaction_block",
+        "average_block_fullness",
+        "fee_per_cost",
+        "reward_addresses_over_half",
+    ] {
+        if let Some(value) = number(&chain["indexed"][field]) {
+            let g=Gauge::new(format!("chia_observatory_indexed_{field}"),"Canonical indexed window of at most 4608 blocks; consult checkpoint freshness, index lag and completeness").map_err(Error::other)?;
+            g.set(value);
+            registry.register(Box::new(g)).map_err(Error::other)?;
+        }
+    }
+    let estimates = GaugeVec::new(
+        Opts::new(
+            "chia_observatory_fee_estimate_mojos",
+            "Node fee estimate in mojos for a 5000000-cost spend",
+        ),
+        &["node", "target_seconds"],
+    )
+    .map_err(Error::other)?;
+    for node in chain["nodes"].as_array().into_iter().flatten() {
+        if chain["fresh"] == true
+            && node["synced"] == true
+            && let Some(name) = node["name"].as_str()
+        {
+            for (index, target) in ["60", "300", "900"].into_iter().enumerate() {
+                if let Some(value) = number(&node["fee_estimates_mojos"][index]) {
+                    estimates.with_label_values(&[name, target]).set(value);
+                }
+            }
+        }
+    }
+    registry
+        .register(Box::new(estimates))
+        .map_err(Error::other)?;
+    let countries = IntGaugeVec::new(
+        Opts::new(
+            "chia_crawler_country_recent_ips",
+            "Distinct recently connected IPs by locally enriched country; unknown retained",
+        ),
+        &["country"],
+    )
+    .map_err(Error::other)?;
+    for row in insights["distribution"]["countries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(300)
+    {
+        if let (Some(country), Some(count)) = (row["label"].as_str(), row["count"].as_i64()) {
+            countries.with_label_values(&[country]).set(count);
+        }
+    }
+    registry
+        .register(Box::new(countries))
+        .map_err(Error::other)?;
+    let mut bytes = Vec::new();
+    TextEncoder::new()
+        .encode(&registry.gather(), &mut bytes)
+        .map_err(Error::other)?;
+    String::from_utf8(bytes).map_err(Error::other)
+}
+
+#[cfg(test)]
+mod observatory_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn stale_sources_do_not_export_current_height_or_fee_estimates() {
+        let source = json!({"name":"node-one","available":true,"synced":true,"height":42,"fee_estimates_mojos":[10,20,30]});
+        let text = observatory(
+            "mainnet",
+            &json!({}),
+            &json!({"fresh":false,"quorum":false,"nodes":[source]}),
+        )
+        .unwrap();
+        assert!(!text.contains("chia_observatory_node_height{"));
+        assert!(!text.contains("chia_observatory_fee_estimate_mojos{"));
+        assert!(text.contains("chia_observatory_checkpoint_quorum{network=\"mainnet\"} 0"));
+    }
+}

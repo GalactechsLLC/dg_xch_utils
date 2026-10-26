@@ -21,9 +21,9 @@ dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
 # server runs on, so a built proof is exactly what the p2p arm serves. tokio is `sync`-only: the whole-proof
 # cache is an async single-flight, nothing else of the runtime.
 dg_xch_stores = { path = "../stores", version = "3.0.0" }
-tokio = { version = "1.50.0", features = ["sync"] }
+tokio = { version = "1.54.1", features = ["sync"] }
 # Sha512 supports deterministic MT19937 sampling.
-sha2 = { version = "0.10.9", features = ["oid"] }
+sha2 = { version = "0.11.1", features = ["oid"] }
 # BLS signature verification for the phase-5 recent-chain header validator (rc-sp / cc-sp / plot / pool /
 # foliage signatures). Same pin/features as dg_xch_core; the Bytes48->PublicKey / Bytes96->Signature
 # conversions and the AugScheme `verify_signature` glue live in dg_xch_core.
@@ -38,5 +38,5 @@ rayon = "1.11"
 hex = "0.4.3"
 num-bigint = "0.4.6"
 # serve.rs tests drive the async builder against an in-memory BlockStore double.
-tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync"] }
 async-trait = "0.1.89"

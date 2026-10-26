@@ -58,7 +58,7 @@ fn crawler_postgres_env_routes_and_cursor_sorting_work_end_to_end() {
             .unwrap()
     };
     let html = request("/");
-    assert!(html.contains("Peer ecosystem"));
+    assert!(html.contains("Network overview"));
     assert!(
         !html
             .split("</header>")
@@ -74,6 +74,10 @@ fn crawler_postgres_env_routes_and_cursor_sorting_work_end_to_end() {
         "/health",
         "/ready",
         "/api/history",
+        "/api/history?days=90",
+        "/api/insights?days=7",
+        "/api/chain",
+        "/observatory.js",
         "/api/versions",
         "/api/diagnostics",
     ] {

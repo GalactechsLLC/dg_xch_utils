@@ -18,6 +18,6 @@ dg_xch_keys = { path = "../keys" }
 dg_xch_pos2 = { path = "../proof_of_space/pos2" }
 dg_xch_pos_common = { path = "../proof_of_space/pos_common" }
 hex = "0.4.3"
-rand = "0.10.0"
+rand = "0.10.3"
 tempfile = "3"
-zeroize = "1.9.0"
+zeroize = "1.9.1"

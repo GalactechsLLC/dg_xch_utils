@@ -117,6 +117,8 @@ pub struct Totals {
 }
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Point {
+    pub activity_observed: bool,
+    pub interval_seconds: u64,
     pub timestamp: u64,
     pub sampled_at: u64,
     pub known: usize,

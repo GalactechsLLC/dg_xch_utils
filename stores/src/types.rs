@@ -1,5 +1,6 @@
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use sqlx::{SqliteConnection, TransactionManager};
+use sqlx::SqliteConnection;
+use sqlx_core::transaction::TransactionManager;
 use std::ops::{Deref, DerefMut};
 use tokio::sync::OwnedMutexGuard;
 

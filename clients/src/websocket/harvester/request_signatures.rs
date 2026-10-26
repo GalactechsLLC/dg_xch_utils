@@ -73,6 +73,7 @@ impl<T: PlotManagerAsync + Send + Sync> MessageHandler for RequestSignaturesHand
                         ProtocolMessageTypes::RespondSignatures,
                         protocol_version,
                         &RespondSignatures {
+                            authorization: Default::default(),
                             plot_identifier: request_signatures.plot_identifier,
                             challenge_hash: request_signatures.challenge_hash,
                             sp_hash: request_signatures.sp_hash,

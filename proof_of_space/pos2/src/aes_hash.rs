@@ -1,4 +1,3 @@
-use aes::cipher::generic_array::GenericArray;
 use aes::hazmat::cipher_round;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::traits::SizedBytes;
@@ -60,8 +59,8 @@ impl AesHash {
     }
 
     fn hash_words_batch_portable(&self, inputs: &[[u32; 4]], rounds: u32, output: &mut [[u32; 4]]) {
-        let mut first_keys = aes::Block8::default();
-        let mut second_keys = aes::Block8::default();
+        let mut first_keys = aes::hazmat::Block8::default();
+        let mut second_keys = aes::hazmat::Block8::default();
         for key in &mut first_keys {
             key.copy_from_slice(&self.key1);
         }
@@ -69,7 +68,7 @@ impl AesHash {
             key.copy_from_slice(&self.key2);
         }
         for (inputs, output) in inputs.chunks(8).zip(output.chunks_mut(8)) {
-            let mut blocks = aes::Block8::default();
+            let mut blocks = aes::hazmat::Block8::default();
             for (input, block) in inputs.iter().zip(blocks.iter_mut()) {
                 block.copy_from_slice(&Self::state(input[0], input[1], input[2], input[3]));
             }
@@ -211,9 +210,9 @@ impl AesHash {
     /// The portable path: correct everywhere, but a bitsliced software round is several times the
     /// cost of the instruction, so it is a fallback rather than the plotting path.
     fn apply_portable(&self, mut state: [u8; 16], rounds: u32) -> [u8; 16] {
-        let mut block = GenericArray::clone_from_slice(&state);
-        let key1 = GenericArray::clone_from_slice(&self.key1);
-        let key2 = GenericArray::clone_from_slice(&self.key2);
+        let mut block = aes::Block::from(state);
+        let key1 = aes::Block::from(self.key1);
+        let key2 = aes::Block::from(self.key2);
         for _ in 0..rounds {
             cipher_round(&mut block, &key1);
             cipher_round(&mut block, &key2);

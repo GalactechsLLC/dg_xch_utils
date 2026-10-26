@@ -1,0 +1,247 @@
+{
+  "repository": "https://github.com/lazer-crypto/labrador",
+  "snapshot": "3f95485139ffaa65fe572da809b90772901372e5",
+  "files": {
+    "LICENSE": {
+      "source": "LICENSE",
+      "sha256": "3660dc2412130f84ec69d00ad01bb86484ed1745184bf5b168ff4a9fa7c513f2"
+    },
+    "comkey.c": {
+      "source": "comkey.c",
+      "sha256": "446a0290aadf7fef1caec036253b97b883d13b8342d75257dc652a1d075fdca6"
+    },
+    "comkey.h": {
+      "source": "comkey.h",
+      "sha256": "d5d52786e1eec37865d138a67b45e286f61ccf03d0a8e697a95ba13cd8f07a69"
+    },
+    "constraints.c": {
+      "source": "constraints.c",
+      "sha256": "cfbcd0d0159004978f808488614242ba01bbacb2b1f4bf57d623cba8068957ee"
+    },
+    "constraints.h": {
+      "source": "constraints.h",
+      "sha256": "b23ecbe5a4ced297a441c2c75a614721e89ded47cd272c92713310018225ccb5"
+    },
+    "cpucycles.c": {
+      "source": "cpucycles.c",
+      "sha256": "8a5d449ff6e8899932e33d7a65ade13464bda573b5ddec2d0361b29549c1f0b6"
+    },
+    "cpucycles.h": {
+      "source": "cpucycles.h",
+      "sha256": "6e878bf6187c0f45f00b672da2534636bda43b4064d4ea83826d7a665b7727b3"
+    },
+    "dachshund.c": {
+      "source": "dachshund.c",
+      "sha256": "d42d56271531a062f2b8bbd72af07948b2beb5d5bc54f587d10f3de156701f5b"
+    },
+    "dachshund.h": {
+      "source": "dachshund.h",
+      "sha256": "a299c1f1eeb58c6d642ae911440cf329884f14ca20aa6bb302f094347e694603"
+    },
+    "data.c": {
+      "source": "data.c",
+      "sha256": "a47f48bbdf25dbbe64cb7a805b8a30274ba19f458d2e50de87f5b2371ed3686d"
+    },
+    "data.h": {
+      "source": "data.h",
+      "sha256": "92fe93b4f40584f120b7ebdffed35ec8cbac80b0befbb387bdb7544c54c42128"
+    },
+    "data38.c": {
+      "source": "data38.c",
+      "sha256": "0cdba57737b1df32d7b86ed384486862451bc76373149b9b354e5861e385297c"
+    },
+    "falcon_poly.h": {
+      "source": "falcon_poly.h",
+      "sha256": "724ed531111a5ee9a3b763b401b2c782615bb1c5b2e750decac0e2e06eef4168"
+    },
+    "fips202.c": {
+      "source": "fips202.c",
+      "sha256": "a4428be14c6ac875b6e43293205adf723d7d2dfddc64793cb13f9483435a2d04"
+    },
+    "fips202.h": {
+      "source": "fips202.h",
+      "sha256": "72c2b61b30d13fa62a84066940298cc5313d7e08d60422e8ec8068576f4a826c"
+    },
+    "gaussian.c": {
+      "source": "gaussian.c",
+      "sha256": "35fd9ce4cb79367e05ecb2380d3d83c6f23514a53cd474f33ff7acea9f06b089",
+      "local_patch": "Restore the fdlibm copyright and permission notice; no implementation change."
+    },
+    "gaussian.h": {
+      "source": "gaussian.h",
+      "sha256": "72bd0b685aada66c37ab2d6fef1b4b0ca3489f3a6f5f339e38b3b4d68383c3f3"
+    },
+    "jlproj.c": {
+      "source": "jlproj.c",
+      "sha256": "a0e9059004ac84462fda69dede273410405289261cb41da739d36c11e4bf2e3a"
+    },
+    "jlproj.h": {
+      "source": "jlproj.h",
+      "sha256": "1540530fcb660290d4f3bf48bf5661e6a9e1c69b14f696a68500c264aba1fa25"
+    },
+    "labradoodle.c": {
+      "source": "labradoodle.c",
+      "sha256": "318fb64809776becf06e3a0b0182c1b97746296f1096699e9cc45e1e0469bea6"
+    },
+    "labradoodle.h": {
+      "source": "labradoodle.h",
+      "sha256": "fbb13a1035dc98e431879335353c60c5d846727c4b13e370713e821cbe9d07f5"
+    },
+    "labrador.c": {
+      "source": "labrador.c",
+      "sha256": "2183f3ce2283aa4128c36a030492ac6297a283a4e909a9b53ff76c3ace095f68"
+    },
+    "labrador.h": {
+      "source": "labrador.h",
+      "sha256": "bad3166ac5b2ca3e3254ad14277d24a0295f55c1e6290ee9060951b71402fecb"
+    },
+    "labrador_core.c": {
+      "source": "labrador_core.c",
+      "sha256": "6d8c5c4cd04791e95a6bf54ccfc4d5215d88e43b498d61724576eb01d3313a36"
+    },
+    "labrador_core.h": {
+      "source": "labrador_core.h",
+      "sha256": "fa1e3923f169ab283ed20481c985e33576bcc27c1621c2e790573e27fdd402e2"
+    },
+    "labrador_tail.c": {
+      "source": "labrador_tail.c",
+      "sha256": "d438aa5050f9092f03d6086d7f139f383a9b9d12cd397bd128084baf140d9169"
+    },
+    "labrador_tail.h": {
+      "source": "labrador_tail.h",
+      "sha256": "9da49afdb95badd53a67af388bf907de65b5bdee73a580c6820f2be1006c7ac2"
+    },
+    "labrados_python.c": {
+      "source": "labrados_python.c",
+      "sha256": "8996541e52f89dc5f302c76e123294c83fd8979d8fbf0d56898d0982a4ce8a93",
+      "local_patch": "Zero initialize transcript packing buffers; add an in-file modification notice."
+    },
+    "labrados_python.h": {
+      "source": "labrados_python.h",
+      "sha256": "26997ee5a9db41944e8d01b26bd5c9cdc93eb3c24ccc822ebecbbbd8b05dc8cc"
+    },
+    "lnp.c": {
+      "source": "lnp.c",
+      "sha256": "e24105b17be3748181bb270f5ed93e21483ec3b2157dc8a6bd5ac073b74f2395"
+    },
+    "lnp.h": {
+      "source": "lnp.h",
+      "sha256": "3ff4e53c4b83c5b35deb5b9364c7193a045d90c0a1f73cc7477392ca4aa8079b"
+    },
+    "malloc.h": {
+      "source": "malloc.h",
+      "sha256": "cecf5395ad4e81e1639b9274281858f1025e27bd04844cb5ebfb7accfbd06636"
+    },
+    "ntt.c": {
+      "source": "ntt.c",
+      "sha256": "eb4f2e407aeedc152d41ea2e45b7344323048bc6310fddcb2cade7c58cbe7553"
+    },
+    "orthus.h": {
+      "source": "orthus.h",
+      "sha256": "bdc3a3f239d7dc244ef10ab6d4f10346777c3181563f6221021882542f503032"
+    },
+    "orthus_pack.h": {
+      "source": "orthus_pack.h",
+      "sha256": "146be7f9aac503dcc8815a766d380ae2e5c1bb680878b59b1356fad04a5c4491"
+    },
+    "pack.c": {
+      "source": "pack.c",
+      "sha256": "abecd214394fecb9f606aaf4ef5266364a8273ac8fc166ed2a67743112bca713"
+    },
+    "pack.h": {
+      "source": "pack.h",
+      "sha256": "e79e5c07cdeec2d7ebc99900b896cedcd32be173386de0a5b512ff4ea9b3ad5b"
+    },
+    "polx.c": {
+      "source": "polx.c",
+      "sha256": "59b447f69bf01c9b0343fe2f945dd110ada3c6657848a73cee7ac837b5b66245"
+    },
+    "polx.h": {
+      "source": "polx.h",
+      "sha256": "1d64a616a18ac5efa86149c14cb7b34b7e88518182cbdfeb8ec98040d17b7aeb"
+    },
+    "poly.c": {
+      "source": "poly.c",
+      "sha256": "d2b6c5c790c7625f309b97725eb86670dcd381ce7d01c2d18d8431b4503e243f"
+    },
+    "poly.h": {
+      "source": "poly.h",
+      "sha256": "0c18eb0c2e02ad91002f85dc5a6174f15e153ce59c0dda78a0fe053c4f9e70f4"
+    },
+    "polz.c": {
+      "source": "polz.c",
+      "sha256": "23a3c4ca42f6aaef597d90b24f814204353487200d5a9214fa1e96f57757d71e"
+    },
+    "polz.h": {
+      "source": "polz.h",
+      "sha256": "018923440deb320c85c670425093beb71393816897edb1ecdc58900629cfb74c"
+    },
+    "proofsystem.c": {
+      "source": "proofsystem.c",
+      "sha256": "d4ad44e5440beca6f2c860024226e84b7a39a105652dca8a8ccd22b7c00f0466"
+    },
+    "proofsystem.h": {
+      "source": "proofsystem.h",
+      "sha256": "4156d99970f2542d156e08aa6a34f50ed856d192ec3617cdd53318cea4520a2c"
+    },
+    "randombytes.c": {
+      "source": "randombytes.c",
+      "sha256": "cdb4474e042fa760b56a9803af4c9e0b99bb53a63ba4b0a34076d2c867d25caf"
+    },
+    "randombytes.h": {
+      "source": "randombytes.h",
+      "sha256": "5ece412ed498abfd892ecec23480910b76cb8ea1b605da10adc5584ede79f048"
+    },
+    "rejection.c": {
+      "source": "rejection.c",
+      "sha256": "786f9b4423a225707d30b6c01bf5b3b2637ad77a073f54869b90ad468df3fae8"
+    },
+    "rejection.h": {
+      "source": "rejection.h",
+      "sha256": "cc418fb1fbdc5882ca68c12350ed8d39632e2e3b03d60b79e2c5f279b79ceae6"
+    },
+    "timing.c": {
+      "source": "timing.c",
+      "sha256": "04288c68b0863a23ea8492cfa04b1d2026e66359cf25c3a0fec50d0606c9f3ed"
+    },
+    "timing.h": {
+      "source": "timing.h",
+      "sha256": "a240174a679f1b5ebd03d5b78f309a15d22bd07be4e907ce9df7c82a2b988eec"
+    }
+  },
+  "authorized_overlay": {
+    "origin": "Authorized research contribution, separate from the public LaBRADOR upstream.",
+    "license": "Apache-2.0",
+    "hash_scope": "Original imported contents before the local license notice was added.",
+    "files": {
+      "aesctr.c": {
+        "sha256": "503bab8717cf5434c1ebf01a857f40190ea7d1ebfc25d4c02a32064c13e382f3",
+        "local_patch": "Add Apache-2.0 license notice; implementation unchanged."
+      },
+      "aesctr.h": {
+        "sha256": "9dc99e0dfeaf9827352fd3c1954153cd36cb9be9d1041891448b9a6fa63741d5",
+        "local_patch": "Add Apache-2.0 license notice; implementation unchanged."
+      },
+      "aesctr_portable.h": {
+        "sha256": "9dc99e0dfeaf9827352fd3c1954153cd36cb9be9d1041891448b9a6fa63741d5",
+        "local_patch": "Add Apache-2.0 license notice; implementation unchanged."
+      },
+      "scalar512/immintrin.h": {
+        "sha256": "96c5df377f5f2592001ec73de1a8c4fe976b7e08a24fa71763cc229df67bd800",
+        "local_patch": "Add Apache-2.0 license notice; implementation unchanged."
+      },
+      "scalar512/x86intrin.h": {
+        "sha256": "fd00fa671da5a1130f5a033be98047de88ad9d1f23970a3faaede69d24456144",
+        "local_patch": "Add Apache-2.0 license notice; implementation unchanged."
+      },
+      "wire.c": {
+        "sha256": "07e1629c876423203a08e89ed9a853a3ac5357ea114a2cf4edb7151850cb1ecd",
+        "local_patch": "Add Apache-2.0 license notice; implementation unchanged."
+      },
+      "wire.h": {
+        "sha256": "b085922229593adff823ca9408d66cf5525b9d5f716825811617f63a80b3f591",
+        "local_patch": "Add Apache-2.0 license notice; implementation unchanged."
+      }
+    }
+  }
+}

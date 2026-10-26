@@ -194,8 +194,21 @@ where
     F: FnOnce(Arc<Node>, Vec<u8>) -> Fut,
     Fut: Future<Output = Result<Option<Map<String, Value>>, RpcError>>,
 {
+    serve_portfu_with_body_limit(node, request, MAX_RPC_BODY_BYTES, handler).await
+}
+
+async fn serve_portfu_with_body_limit<F, Fut>(
+    node: State<Node>,
+    request: &mut Request,
+    max_body_bytes: usize,
+    handler: F,
+) -> Result<Response, PortfuError>
+where
+    F: FnOnce(Arc<Node>, Vec<u8>) -> Fut,
+    Fut: Future<Output = Result<Option<Map<String, Value>>, RpcError>>,
+{
     let body = match request
-        .consume_body_bytes_limited(MAX_RPC_BODY_BYTES, RPC_BODY_READ_TIMEOUT)
+        .consume_body_bytes_limited(max_body_bytes, RPC_BODY_READ_TIMEOUT)
         .await
     {
         Ok(body) => body,
@@ -204,7 +217,7 @@ where
                 StatusCode::PAYLOAD_TOO_LARGE,
                 serde_json::json!({
                     "success": false,
-                    "error": format!("request body exceeds {MAX_RPC_BODY_BYTES} bytes"),
+                    "error": format!("request body exceeds {max_body_bytes} bytes"),
                 }),
             ));
         }

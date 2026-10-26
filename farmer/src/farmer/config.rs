@@ -178,6 +178,8 @@ pub struct Pos2HarvesterConfig {
     pub max_work: u64,
     pub search_hashes: u64,
     pub max_qualities: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_proofs_per_signage_point: Option<usize>,
     pub deadline_ms: u64,
     pub parallelism: usize,
 }
@@ -194,6 +196,7 @@ impl Default for Pos2HarvesterConfig {
             max_work: 2_000_000_000,
             search_hashes: 100_000_000,
             max_qualities: 32,
+            max_proofs_per_signage_point: None,
             deadline_ms: 20_000,
             parallelism: 1,
         }
@@ -208,6 +211,9 @@ impl Pos2HarvesterConfig {
             || self.max_work == 0
             || self.search_hashes == 0
             || !(1..=1024).contains(&self.max_qualities)
+            || self
+                .max_proofs_per_signage_point
+                .is_some_and(|limit| !(1..=1024).contains(&limit))
             || !(1..=120_000).contains(&self.deadline_ms)
             || !(1..=32).contains(&self.parallelism)
             || (self.backend == Pos2Backend::Cpu && self.device != 0)
@@ -255,6 +261,8 @@ where
     pub fullnode_rpc_host: String,
     pub fullnode_rpc_port: u16,
     pub farmer_info: Vec<FarmingInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub falcon_key_file: Option<PathBuf>,
     pub pool_info: Vec<PoolWalletConfig>,
     #[serde(default)]
     pub pool_ca_certificates: Vec<PathBuf>,
@@ -275,6 +283,20 @@ impl<C: Clone + Serialize> Config<C> {
         }
         if let Some(config) = &self.harvester_configs.gigahorse {
             config.validate()?;
+        }
+        let constants = self.constants()?;
+        if constants.signature_profile.is_bls() {
+            if self.falcon_key_file.is_some() {
+                return Err(Error::other("BLS farmer cannot use Falcon keys"));
+            }
+        } else if !cfg!(feature = "falcon")
+            || self.falcon_key_file.is_none()
+            || !self.farmer_info.is_empty()
+            || !self.pool_info.is_empty()
+        {
+            return Err(Error::other(
+                "Falcon farming requires the falcon feature, a key file, and solo farming",
+            ));
         }
         for info in &self.farmer_info {
             for key in [
@@ -316,7 +338,7 @@ impl<C: Clone + Serialize> Config<C> {
             && !self.fullnode_rpc_host.is_empty()
             && self.fullnode_ws_port != 0
             && self.fullnode_rpc_port != 0
-            && !self.farmer_info.is_empty()
+            && (!self.farmer_info.is_empty() || self.falcon_key_file.is_some())
             && parse_payout_address(&self.payout_address).is_ok()
             && self.pool_info.iter().all(|c| {
                 self.farmer_info
@@ -348,6 +370,7 @@ impl<C: Clone> Default for Config<C> {
             fullnode_ws_port: 8444,
             signage_point_timeout_seconds: default_signage_point_timeout_seconds(),
             farmer_info: vec![],
+            falcon_key_file: None,
             pool_info: vec![],
             pool_ca_certificates: vec![],
             payout_address: "".to_string(),
@@ -421,6 +444,23 @@ impl<C: Clone> Config<C> {
         Ok(client)
     }
 
+    #[cfg(feature = "falcon")]
+    pub fn falcon_keys(
+        &self,
+    ) -> Result<Option<std::sync::Arc<dg_xch_core::signatures::falcon_keys::FalconKeyring>>, Error>
+    {
+        if self.constants()?.signature_profile.is_bls() {
+            return Ok(None);
+        }
+        let path = self
+            .falcon_key_file
+            .as_ref()
+            .ok_or_else(|| Error::other("missing Falcon key file"))?;
+        Ok(Some(std::sync::Arc::new(
+            dg_xch_core::signatures::falcon_keys::FalconKeyring::load(path)?,
+        )))
+    }
+
     pub fn constants(&self) -> Result<ConsensusConstants, Error> {
         ChainSelection::from_config(&self.selected_network, self.chain_definition.as_ref())
             .and_then(|chain| chain.constants())
@@ -483,6 +523,10 @@ pub async fn load_keys<C: Clone>(
     )
 }
 
+fn default_signage_point_timeout_seconds() -> u64 {
+    60
+}
+
 #[cfg(test)]
 mod harvester_config_tests {
     use super::*;
@@ -520,8 +564,4 @@ mod harvester_config_tests {
             serde_yaml::from_str("pos1:\n  plot_directories: [/old]\n").unwrap();
         assert_eq!(legacy.directories(), [std::path::PathBuf::from("/old")]);
     }
-}
-
-fn default_signage_point_timeout_seconds() -> u64 {
-    60
 }

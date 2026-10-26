@@ -61,6 +61,8 @@ where
     H: Harvester<T, H, C> + Sync + Send + 'static,
     C: Sync + Send + Clone + 'static,
 {
+    #[cfg(feature = "falcon")]
+    falcon_keys: Option<Arc<dg_xch_core::signatures::falcon_keys::FalconKeyring>>,
     pub pool_client: Arc<P>,
     pub shared_state: Arc<FarmerSharedState<T>>,
     pub harvester: Arc<H>,
@@ -87,7 +89,11 @@ where
         let pool_client = Arc::new(P::from_configured_client(
             config.read().await.pool_client()?,
         )?);
+        #[cfg(feature = "falcon")]
+        let falcon_keys = config.read().await.falcon_keys()?;
         let s = Self {
+            #[cfg(feature = "falcon")]
+            falcon_keys,
             pool_client,
             shared_state,
             harvester,
@@ -142,6 +148,23 @@ where
                             signage_point.last_tx_height,
                         )
                     {
+                        if !self.constants.signature_profile.is_bls() {
+                            #[cfg(feature = "falcon")]
+                            return self
+                                .handle_falcon_signature(
+                                    response,
+                                    signage_point,
+                                    is_sp_signatures,
+                                    pospace,
+                                    computed_quality_string,
+                                )
+                                .await;
+                            #[cfg(not(feature = "falcon"))]
+                            return Err(Error::other("Falcon support is not compiled"));
+                        }
+                        if !response.authorization.is_none() {
+                            return Err(Error::other("unexpected Falcon signatures on BLS chain"));
+                        }
                         if is_sp_signatures {
                             let (challenge_chain_sp, challenge_chain_sp_harv_sig) =
                                 &response.message_signatures[0];
@@ -289,6 +312,7 @@ where
                                         (None, None)
                                     };
                                     let request = DeclareProofOfSpace {
+                                        authorization: Default::default(),
                                         challenge_hash: response.challenge_hash,
                                         challenge_chain_sp: *challenge_chain_sp,
                                         signage_point_index: sp_index,
@@ -486,6 +510,7 @@ where
                                         ));
                                     }
                                     let request = SignedValues {
+                                        authorization: Default::default(),
                                         quality_string: computed_quality_string,
                                         foliage_block_data_signature: foliage_agg_sig
                                             .to_signature()
@@ -541,6 +566,130 @@ where
     }
 }
 
+#[cfg(feature = "falcon")]
+impl<P, T, H, C> RespondSignaturesHandler<P, T, H, C>
+where
+    P: PoolClient + Sized + Sync + Send + 'static,
+    T: Sync + Send + 'static,
+    H: Harvester<T, H, C> + Sync + Send + 'static,
+    C: Sync + Send + Clone + 'static,
+{
+    async fn handle_falcon_signature(
+        &self,
+        response: RespondSignatures,
+        point: &NewSignagePoint,
+        is_sp: bool,
+        proof: dg_xch_core::blockchain::proof_of_space::ProofOfSpace,
+        quality: Bytes32,
+    ) -> Result<(), Error> {
+        use dg_xch_core::signatures::falcon_block::FalconHeaderAuthorization;
+        let genesis = self.constants.genesis_challenge;
+        let mut auth = response
+            .authorization
+            .as_ref()
+            .ok_or_else(|| Error::other("missing Falcon harvester signatures"))?
+            .clone();
+        let messages: Vec<_> = response
+            .message_signatures
+            .iter()
+            .map(|(message, signature)| {
+                (
+                    proof.plot_public_key,
+                    message.const_bytes().to_vec(),
+                    *signature,
+                )
+            })
+            .collect();
+        if !auth.verify_messages(genesis, &messages) {
+            return Err(Error::other("invalid Falcon harvester signatures"));
+        }
+        let [(cc, cc_signature), (rc, rc_signature)] = response.message_signatures.as_slice()
+        else {
+            return Err(Error::other("expected two Falcon signatures"));
+        };
+        let message = if is_sp {
+            let config = self.config.read().await;
+            let payout = Bytes32::from_str(&parse_payout_address(&config.payout_address)?)?;
+            let pool_key = proof
+                .pool_public_key
+                .ok_or_else(|| Error::other("Falcon currently requires solo plots"))?;
+            let keys = self
+                .falcon_keys
+                .as_ref()
+                .ok_or_else(|| Error::other("missing Falcon keys"))?;
+            let signer = keys
+                .pool(pool_key)
+                .ok_or_else(|| Error::other("unknown Falcon pool key"))?;
+            let target = PoolTarget {
+                max_height: 0,
+                puzzle_hash: payout,
+            };
+            let pool_proof = FalconHeaderAuthorization::sign(
+                &signer,
+                genesis,
+                &target.to_bytes(PROTOCOL_VERSION)?,
+            )?;
+            let pool_signature = pool_proof.reference(genesis);
+            auth.header.push(pool_proof);
+            auth.canonicalize();
+            let request = DeclareProofOfSpace {
+                authorization: auth.into(),
+                challenge_hash: response.challenge_hash,
+                challenge_chain_sp: *cc,
+                signage_point_index: point.signage_point_index,
+                reward_chain_sp: *rc,
+                proof_of_space: proof,
+                challenge_chain_sp_signature: *cc_signature,
+                reward_chain_sp_signature: *rc_signature,
+                farmer_puzzle_hash: response.farmer_reward_address_override.unwrap_or(payout),
+                pool_target: Some(target),
+                pool_signature: Some(pool_signature),
+                include_signature_source_data: response.include_source_signature_data,
+            };
+            ChiaMessage::new(
+                ProtocolMessageTypes::DeclareProofOfSpace,
+                PROTOCOL_VERSION,
+                &request,
+                None,
+            )?
+        } else {
+            let request = SignedValues {
+                authorization: auth.into(),
+                quality_string: quality,
+                foliage_block_data_signature: *cc_signature,
+                foliage_transaction_block_signature: *rc_signature,
+            };
+            ChiaMessage::new(
+                ProtocolMessageTypes::SignedValues,
+                PROTOCOL_VERSION,
+                &request,
+                None,
+            )?
+        };
+        let client = self.client.read().await;
+        let client = client
+            .as_ref()
+            .ok_or_else(|| Error::other("farmer full-node connection unavailable"))?;
+        client
+            .client
+            .connection
+            .write()
+            .await
+            .send(Message::Binary(message.to_bytes(PROTOCOL_VERSION)?.into()))
+            .await?;
+        if is_sp {
+            if let Some(metrics) = self.shared_state.metrics.read().await.as_ref() {
+                metrics.proofs_declared.inc();
+            }
+            info!(
+                "Declared Falcon proof of space at signage point {}",
+                point.signage_point_index
+            );
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod signing_binding_tests {
     use super::{NewSignagePoint, RespondSignatures, signature_signage_point};
@@ -561,6 +710,7 @@ mod signing_binding_tests {
 
     fn response() -> RespondSignatures {
         RespondSignatures {
+            authorization: Default::default(),
             plot_identifier: "test.plot".to_string(),
             challenge_hash: [1; 32].into(),
             sp_hash: [2; 32].into(),

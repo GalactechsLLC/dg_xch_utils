@@ -9,22 +9,25 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+maxminddb = "0.32.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json"] }
+dg_xch_clients = { path = "../clients", version = "3.0.0" }
 portfu = { git = "https://github.com/GalactechsLLC/portfu.git", rev = "8cebf34added647488756b15fbeae3c608ab75f5", default-features = false, features = ["endpoint"] }
 dg_xch_core = { path = "../core", version = "3.0.0", default-features = false }
 dg_xch_servers = { path = "../servers", version = "3.0.0", features = ["discovery-postgres"] }
 dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
 futures-util = "0.3.32"
 hex = "0.4.3"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 prometheus = "0.14.0"
-rustls = "0.23.45"
+rustls = "0.23.46"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "fs"] }
-tokio-rustls = "0.26.4"
-tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "fs"] }
+tokio-rustls = "0.26.6"
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 
-uuid = { version = "1.21.0", features = ["v4"] }
+uuid = { version = "1.29.0", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"

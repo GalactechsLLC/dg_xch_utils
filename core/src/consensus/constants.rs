@@ -54,6 +54,13 @@ impl ChiaNetwork {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusConstants {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::SignatureProfile::is_bls"
+    )]
+    pub signature_profile: crate::signatures::SignatureProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub falcon_aggregation: Option<crate::signatures::labrador::LabradorProfile>,
     #[serde(default)]
     pub rewards: crate::consensus::block_rewards::RewardSchedule,
     pub slot_blocks_target: u32, //How many blocks to target per sub-slot
@@ -180,6 +187,8 @@ impl From<ChiaNetwork> for ConsensusConstants {
     }
 }
 pub const MAINNET: ConsensusConstants = ConsensusConstants {
+    signature_profile: crate::signatures::SignatureProfile::Bls12381Aug,
+    falcon_aggregation: None,
     rewards: crate::consensus::block_rewards::RewardSchedule::CHIA,
     slot_blocks_target: 32,
     min_blocks_per_challenge_block: 16,

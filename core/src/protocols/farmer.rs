@@ -181,6 +181,11 @@ pub struct DeclareProofOfSpace {
     pub pool_target: Option<PoolTarget>,       //Min Version 0.0.34
     pub pool_signature: Option<Bytes96>,       //Min Version 0.0.34
     pub include_signature_source_data: bool,   //Min Version 0.0.36
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::extension::AuthorizationExtension::is_none"
+    )]
+    pub authorization: crate::signatures::extension::AuthorizationExtension,
 }
 
 impl dg_xch_serialize::ChiaSerialize for DeclareProofOfSpace {
@@ -232,6 +237,7 @@ impl dg_xch_serialize::ChiaSerialize for DeclareProofOfSpace {
                 version,
             )?);
         }
+        dg_xch_serialize::ChiaSerialize::append_bytes(&self.authorization, &mut bytes, version)?;
         Ok(bytes)
     }
     fn from_bytes(
@@ -258,7 +264,9 @@ impl dg_xch_serialize::ChiaSerialize for DeclareProofOfSpace {
         } else {
             false
         };
+        let authorization = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?;
         Ok(Self {
+            authorization,
             challenge_hash,
             challenge_chain_sp,
             signage_point_index,
@@ -367,6 +375,12 @@ pub struct SignedValues {
     pub quality_string: Bytes32,                      //Min Version 0.0.34
     pub foliage_block_data_signature: Bytes96,        //Min Version 0.0.34
     pub foliage_transaction_block_signature: Bytes96, //Min Version 0.0.34
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::extension::AuthorizationExtension::is_none"
+    )]
+    #[chia_skip_sexp]
+    pub authorization: crate::signatures::extension::AuthorizationExtension,
 }
 
 pub type ProofsMap = Arc<RwLock<HashMap<Bytes32, Vec<(String, ProofOfSpace)>>>>;

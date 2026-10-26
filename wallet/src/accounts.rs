@@ -111,7 +111,7 @@ impl Account {
         account.encrypted_key = XChaCha20Poly1305::new_from_slice(key.as_ref())
             .map_err(|_| Error::other("invalid encryption key"))?
             .encrypt(
-                XNonce::from_slice(&account.nonce),
+                &XNonce::from(account.nonce),
                 Payload {
                     msg: plaintext.as_ref(),
                     aad: &account.associated_data()?,
@@ -147,7 +147,7 @@ impl Account {
             XChaCha20Poly1305::new_from_slice(key.as_ref())
                 .map_err(|_| Error::other("invalid encryption key"))?
                 .decrypt(
-                    XNonce::from_slice(&self.nonce),
+                    &XNonce::from(self.nonce),
                     Payload {
                         msg: &self.encrypted_key,
                         aad: &self.associated_data()?,

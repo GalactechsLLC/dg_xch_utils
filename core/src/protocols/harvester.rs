@@ -319,6 +319,11 @@ pub struct RespondSignatures {
     pub message_signatures: Vec<(Bytes32, Bytes96)>,     //Min Version 0.0.34
     pub include_source_signature_data: bool,             //Min Version 0.0.36
     pub farmer_reward_address_override: Option<Bytes32>, //Min Version 0.0.36
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::extension::AuthorizationExtension::is_none"
+    )]
+    pub authorization: crate::signatures::extension::AuthorizationExtension,
 }
 
 impl dg_xch_serialize::ChiaSerialize for RespondSignatures {
@@ -358,6 +363,7 @@ impl dg_xch_serialize::ChiaSerialize for RespondSignatures {
                 version,
             )?);
         }
+        dg_xch_serialize::ChiaSerialize::append_bytes(&self.authorization, &mut bytes, version)?;
         Ok(bytes)
     }
     fn from_bytes(
@@ -383,7 +389,9 @@ impl dg_xch_serialize::ChiaSerialize for RespondSignatures {
         } else {
             None
         };
+        let authorization = dg_xch_serialize::ChiaSerialize::from_bytes(bytes, version)?;
         Ok(Self {
+            authorization,
             plot_identifier,
             challenge_hash,
             sp_hash,

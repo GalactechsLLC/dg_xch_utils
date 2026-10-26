@@ -498,7 +498,10 @@ impl BlockStore for PostgresStore {
         // Fresh planner statistics over the fully-synced tables close the build out.
         sql.push_str("ANALYZE coin_record; ANALYZE block_record;");
         for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-            sqlx::query(stmt).execute(&self.pool).await?;
+            // Only embedded migration files and the fixed ANALYZE/CREATE clauses above.
+            sqlx::query(sqlx::AssertSqlSafe(stmt))
+                .execute(&self.pool)
+                .await?;
         }
         Ok(())
     }
@@ -577,7 +580,8 @@ async fn convert_confirmed_index_to_brin(pool: &sqlx::PgPool) -> Result<(), Stor
         "../../migrations/postgres/0009_confirmed_index_brin.sql"
     ));
     for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-        sqlx::query(stmt).execute(pool).await?;
+        // Statements come solely from the embedded BRIN migration, with comments removed.
+        sqlx::query(sqlx::AssertSqlSafe(stmt)).execute(pool).await?;
     }
     // The transactional swap: drop the stale index and take over its name as one atomic catalog
     // change (momentary ACCESS EXCLUSIVE — no heap work). A crash before COMMIT rolls back to

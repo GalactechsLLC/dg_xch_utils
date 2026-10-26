@@ -1,0 +1,8 @@
+The _exp_small approximation in gaussian.c is derived from fdlibm e_exp.c:
+https://netlib.org/fdlibm/e_exp.c
+
+Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+
+Permission to use, copy, modify, and distribute this
+software is freely granted, provided that this notice
+is preserved.

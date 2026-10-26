@@ -1,5 +1,4 @@
-use hkdf::hmac::digest::Output;
-use sha2::{Digest, Sha256, Sha256VarCore};
+use sha2::{Digest, Sha256};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Error;
 use std::mem::swap;
@@ -10,11 +9,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown};
 
 pub fn hash_256(input: impl AsRef<[u8]>) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    let mut buf = [0u8; 32];
-    hasher.finalize_into(<&mut Output<Sha256VarCore>>::from(&mut buf));
-    buf
+    Sha256::digest(input).into()
 }
 
 /// Fixed-capacity insertion-order cache used by farmer runtime statistics.

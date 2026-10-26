@@ -119,6 +119,7 @@ where
         return Err(Error::other("aggregate signature verification failed"));
     }
     Ok(SpendBundle {
+        authorization: Default::default(),
         coin_spends,
         aggregated_signature: Bytes96::from(aggsig),
     })
@@ -178,6 +179,7 @@ where
         return Err(Error::other("aggregate signature verification failed"));
     }
     Ok(SpendBundle {
+        authorization: Default::default(),
         coin_spends,
         aggregated_signature: Bytes96::from(aggsig),
     })
@@ -257,12 +259,14 @@ where
             return Err(Error::other("Failed to Validate Aggregate Signature"));
         }
         SpendBundle {
+            authorization: Default::default(),
             coin_spends,
             aggregated_signature: Bytes96::from(aggsig),
         }
     } else {
         info!("Empty Signature List");
         SpendBundle {
+            authorization: Default::default(),
             coin_spends,
             aggregated_signature: Bytes96::default(),
         }
@@ -330,12 +334,14 @@ where
             return Err(Error::other("Failed to Validate Aggregate Signature"));
         }
         SpendBundle {
+            authorization: Default::default(),
             coin_spends,
             aggregated_signature: Bytes96::from(aggsig),
         }
     } else {
         info!("Empty Signature List");
         SpendBundle {
+            authorization: Default::default(),
             coin_spends,
             aggregated_signature: Bytes96::default(),
         }

@@ -13,11 +13,12 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::consensus::block_generator::{
-    conditions_from_spend_bundle, validate_block_aggregate_signature,
+    conditions_from_spend_bundle, validate_block_authorization,
 };
 use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::errors::ChiaError;
 use dg_xch_core::protocols::full_node::NewTransaction;
+use dg_xch_core::signatures::AuthorizationWitness;
 use dg_xch_node::{Mempool, MempoolError};
 use dg_xch_stores::{BlockStore, CoinStore, StoreError};
 use std::fmt;
@@ -139,9 +140,53 @@ where
             return Err(TxAdmissionError::Validation(e));
         }
     };
-    if let Err(e) =
-        validate_block_aggregate_signature(&conds, &bundle.aggregated_signature, constants)
-    {
+    let authorization = if constants.signature_profile.is_bls() {
+        if bundle.authorization.is_none() {
+            validate_block_authorization(
+                &conds,
+                &AuthorizationWitness::BlsAggregate(&bundle.aggregated_signature),
+                constants,
+            )
+        } else {
+            Err(ChiaError::BadAggregateSignature)
+        }
+    } else if let Some(auth) = bundle.authorization.as_ref() {
+        if auth.genesis != constants.genesis_challenge
+            || !auth.header.is_empty()
+            || (auth.labrador.is_some()
+                && constants.falcon_aggregation
+                    != Some(dg_xch_core::signatures::labrador::LabradorProfile::Packed11ZkV2))
+            || bundle.aggregated_signature
+                != dg_xch_core::signatures::falcon_condition::transaction_reference(
+                    constants.genesis_challenge,
+                    &conds.falcon_signatures,
+                )
+        {
+            Err(ChiaError::BadAggregateSignature)
+        } else {
+            if auth.labrador.is_some() {
+                // Native proof verification must not occupy an async executor thread.
+                let conds = conds.clone();
+                let auth = auth.clone();
+                let constants = *constants;
+                tokio::task::spawn_blocking(move || {
+                    let witness = auth
+                        .transaction_witness()
+                        .map_err(|_| ChiaError::BadAggregateSignature)?;
+                    validate_block_authorization(&conds, &witness, &constants)
+                })
+                .await
+                .unwrap_or(Err(ChiaError::BadAggregateSignature))
+            } else {
+                auth.transaction_witness()
+                    .map_err(|_| ChiaError::BadAggregateSignature)
+                    .and_then(|witness| validate_block_authorization(&conds, &witness, constants))
+            }
+        }
+    } else {
+        Err(ChiaError::BadAggregateSignature)
+    };
+    if let Err(e) = authorization {
         mempool.lock().await.add_seen(name);
         return Err(TxAdmissionError::Validation(e));
     }

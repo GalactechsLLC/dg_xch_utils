@@ -21,7 +21,7 @@ const COIN_LOOKUP_BATCH: usize = 256;
 #[path = "../../tests/unit/sqlite/coin_lookup_tests.rs"]
 mod coin_lookup_tests;
 
-fn coin_lookup_query(names: &[Bytes32]) -> sqlx::QueryBuilder<'_, sqlx::Sqlite> {
+fn coin_lookup_query(names: &[Bytes32]) -> sqlx::QueryBuilder<sqlx::Sqlite> {
     let mut query = sqlx::QueryBuilder::new("WITH requested(ordinal, coin_name) AS (");
     query.push_values(names.iter().enumerate(), |mut bindings, (ordinal, name)| {
         bindings.push_bind(ordinal as i64).push_bind(*name);
@@ -586,7 +586,8 @@ impl CoinStore for SqliteStore {
                 break;
             }
             let remaining = i64::try_from(max_items - out.len()).unwrap_or(i64::MAX);
-            let rows = sqlx::query(&sql)
+            // spent_clause is selected from fixed literals; all request values are bound.
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(*ph)
                 .bind(i64::from(min_height))
                 .bind(i64::from(min_height))
@@ -646,7 +647,8 @@ impl CoinStore for SqliteStore {
         let mut conn = self.read.acquire().await?;
         let mut merged = std::collections::HashMap::new();
         for ph in puzzle_hashes {
-            let rows = sqlx::query(&sql)
+            // height_filter is a fixed match-arm literal; values remain bind parameters.
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(*ph)
                 .bind(i64::from(min_height))
                 .bind(i64::from(min_height))
@@ -661,7 +663,8 @@ impl CoinStore for SqliteStore {
             merge_coin_states_bounded(&mut merged, states, max_items + 1);
             #[cfg(feature = "hint")]
             if filters.include_hinted {
-                let rows = sqlx::query(&hint_sql)
+                // Same literal-only height_filter as the direct puzzle-hash query.
+                let rows = sqlx::query(sqlx::AssertSqlSafe(hint_sql.as_str()))
                     .bind(*ph)
                     .bind(i64::from(min_height))
                     .bind(i64::from(min_height))
