@@ -52,13 +52,17 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
+mod account_wallet;
 pub mod accounts;
 pub mod assets;
 pub mod common;
+#[cfg(feature = "falcon")]
+pub mod falcon;
 pub mod memory_wallet;
 pub mod offers;
 pub mod plotnft_utils;
 pub mod pooling;
+pub mod signing;
 pub mod storage;
 pub mod sync;
 

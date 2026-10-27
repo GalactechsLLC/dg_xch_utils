@@ -95,6 +95,7 @@ fn conds(spends: Vec<Spend>, fee: u64, cost: u64) -> SpendBundleConditions {
         before_height_absolute: None,
         before_seconds_absolute: None,
         agg_sig_unsafe: vec![],
+        falcon_signatures: vec![],
         cost,
         removal_amount: removal,
         addition_amount: removal - u128::from(fee),
@@ -103,6 +104,7 @@ fn conds(spends: Vec<Spend>, fee: u64, cost: u64) -> SpendBundleConditions {
 
 fn bundle(sig_tag: u8) -> SpendBundle {
     SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: Bytes96::from([sig_tag; 96]),
     }

@@ -88,6 +88,7 @@ pub struct WebsocketServer {
     /// Install the per-connection inbound rate limiter on every accepted connection. Off by
     /// default; the full-node server turns it on. Farmer/harvester servers leave it off.
     pub rate_limited: bool,
+    pub signature_profile: dg_xch_core::signatures::SignatureProfile,
     /// The server-wide timed ban list. The accept path refuses a
     /// host that is banned and not yet expired; the read loop and the message handlers enter a
     /// misbehaving peer's host here (via the registry injected into each [`SocketPeer`]). One
@@ -136,6 +137,7 @@ impl WebsocketServer {
             peers,
             message_handlers,
             rate_limited: false,
+            signature_profile: Default::default(),
             bans: Arc::new(BanRegistry::default()),
             inbound_limit: Arc::new(Semaphore::new(128)),
             #[cfg(feature = "metrics")]
@@ -173,6 +175,7 @@ impl WebsocketServer {
             peers,
             message_handlers,
             rate_limited: false,
+            signature_profile: Default::default(),
             bans: Arc::new(BanRegistry::default()),
             inbound_limit: Arc::new(Semaphore::new(128)),
             #[cfg(feature = "metrics")]
@@ -209,6 +212,7 @@ impl WebsocketServer {
                             #[cfg(feature = "metrics")]
                             let metrics = metrics.clone();
                             let rate_limited = self.rate_limited;
+                            let signature_profile = self.signature_profile;
                             let inbound_limit = self.inbound_limit.clone();
                             connections.spawn(async move {
                             let _permit = permit;
@@ -230,6 +234,7 @@ impl WebsocketServer {
                                             message_handlers: message_handlers.clone(),
                                             run: run.clone(),
                                             rate_limited,
+                                            signature_profile,
                                             bans: bans.clone(),
                                             inbound_limit: inbound_limit.clone(),
                                         };
@@ -297,6 +302,7 @@ impl WebsocketServer {
             self.message_handlers.clone(),
             run,
             self.rate_limited,
+            self.signature_profile,
             self.bans.clone(),
         )
         .await
@@ -358,6 +364,7 @@ struct ConnectionData {
     pub message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     pub run: Arc<AtomicBool>,
     pub rate_limited: bool,
+    pub signature_profile: dg_xch_core::signatures::SignatureProfile,
     pub bans: Arc<BanRegistry>,
     pub inbound_limit: Arc<Semaphore>,
 }
@@ -437,6 +444,7 @@ fn connection_handler(
                 data.message_handlers.clone(),
                 data.run.clone(),
                 data.rate_limited,
+                data.signature_profile,
                 data.bans,
             )
             .await
@@ -467,13 +475,16 @@ async fn handle_connection(
     message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     run: Arc<AtomicBool>,
     rate_limited: bool,
+    signature_profile: dg_xch_core::signatures::SignatureProfile,
     bans: Arc<BanRegistry>,
 ) -> Result<(), tungstenite::error::Error> {
     let connected_at = std::time::Instant::now();
     // A full-node listener (the server sets `rate_limited`) installs a fresh per-connection
     // inbound limiter; other server roles leave it off.
     let limiter = if rate_limited {
-        Some(Arc::new(RateLimiter::new(true)))
+        Some(Arc::new(
+            RateLimiter::new(true).with_signature_profile(signature_profile),
+        ))
     } else {
         None
     };

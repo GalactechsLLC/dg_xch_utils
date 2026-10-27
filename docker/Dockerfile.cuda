@@ -1,5 +1,5 @@
 ARG STACK_IMAGE=dgx-development:local
-ARG CUDA_BUILD_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu22.04@sha256:1470d2d7904fac4e5cb3bdfd4993305c46d3ee76deb0213eaaf248e5cf9c7400
+ARG CUDA_BUILD_IMAGE=nvidia/cuda:13.0.2-devel-ubuntu22.04@sha256:6b6617592b94e7dcc6ffbe6d00720eed27bc6e3b4f06b26b93b4070c31f57391
 
 FROM ${CUDA_BUILD_IMAGE} AS cuda-builder
 ARG TARGETARCH
@@ -7,7 +7,8 @@ ARG CUDA_ARCH=sm_86
 ARG CARGO_BUILD_JOBS=2
 ARG CUDA_OXIDE_REV=b9847e9515ed3a23096f22567d3eaf0a6e3e440c
 ARG RUST_TOOLCHAIN=nightly-2026-08-28
-ARG RUSTUP_VERSION=1.28.2
+ARG RUSTUP_VERSION=1.29.2
+ARG RUSTUP_SHA256=5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4
 ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_TOOLKIT_PATH=/usr/local/cuda \
     CUDA_OXIDE_LLC=/usr/bin/llc-22 \
@@ -17,8 +18,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/cargo/bin:/usr/lib/llvm-22/bin:/usr/local/cuda/bin:${PATH}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN test "${TARGETARCH}" = amd64 || { printf '%s\n' 'The optional native CUDA image currently requires linux/amd64; use the ordinary stack image on ARM.' >&2; exit 1; }
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git gnupg build-essential cmake m4 pkg-config xz-utils \
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends ca-certificates curl git gnupg build-essential cmake m4 pkg-config xz-utils python3 \
     && curl --proto '=https' --tlsv1.2 -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
        | gpg --dearmor -o /usr/share/keyrings/llvm.gpg \
     && printf '%s\n' 'deb [signed-by=/usr/share/keyrings/llvm.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-22 main' \
@@ -29,23 +30,23 @@ RUN apt-get update \
 RUN curl --proto '=https' --tlsv1.2 -fsSL \
        "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" \
        -o /tmp/rustup-init \
-    && curl --proto '=https' --tlsv1.2 -fsSL \
-       "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init.sha256" \
-       -o /tmp/rustup-init.sha256 \
-    && printf '%s  /tmp/rustup-init\n' "$(cut -d ' ' -f 1 /tmp/rustup-init.sha256)" | sha256sum --check \
+    && printf '%s  /tmp/rustup-init\n' "${RUSTUP_SHA256}" | sha256sum --check \
     && chmod 0755 /tmp/rustup-init \
     && /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
        --component rust-src --component rustc-dev --component llvm-tools \
-    && rm /tmp/rustup-init /tmp/rustup-init.sha256
+    && rm /tmp/rustup-init
 RUN cargo +"${RUST_TOOLCHAIN}" install --locked \
     --git https://github.com/NVlabs/cuda-oxide.git --rev "${CUDA_OXIDE_REV}" cargo-oxide
 WORKDIR /build
 COPY . .
+RUN python3 docker/package-compliance.py --output /opt/dgx-cuda-compliance --sync plotter/cuda/Cargo.toml
 WORKDIR /build/plotter/cuda
 RUN test "$(rustup show active-toolchain | cut -d ' ' -f 1)" = "${RUST_TOOLCHAIN}-x86_64-unknown-linux-gnu" \
     && cargo oxide build --arch "${CUDA_ARCH}" -- --locked --release
 
 FROM ${STACK_IMAGE} AS cuda-runtime
+COPY --from=cuda-builder /opt/dgx-cuda-compliance/ /usr/local/share/dgx/cuda/
+COPY --from=cuda-builder /opt/dgx-cuda-compliance/licenses/ /usr/local/share/licenses/dgx/cuda/
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     NVIDIA_REQUIRE_CUDA=cuda>=13.0
 COPY --from=cuda-builder /build/plotter/cuda/target/release/dg_xch_plotter_cuda /usr/local/bin/dg_xch_plotter_cuda
@@ -54,4 +55,5 @@ FROM cuda-runtime AS plotter-cuda
 ENTRYPOINT ["/usr/local/bin/dg_xch_plotter_cuda"]
 
 FROM cuda-runtime AS farmer-nvidia
+EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/dgx", "farmer"]

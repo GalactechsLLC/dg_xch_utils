@@ -9,52 +9,56 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-serde_json = "1.0.145"
+rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser", "zeroize"] }
+serde_json = "1.0.154"
 async-trait = "0.1.89"
 blst = { version = "0.3.16", features = ["portable"], optional = true }
 bytes = "1.11.1"
 const-hex = "1.16.0"
-der = "0.7.9"
+der = "0.8.2"
 dg_xch_macros = {path = "../macros", version="3.0.0"}
 dg_parser_macro = {path = "../parser_macro", version="3.0.0"}
 dg_xch_serialize = {path = "../serialize", version="3.0.0"}
+dg_xch_labrador = { path = "../labrador", version = "3.0.0", optional = true }
 futures-util = "0.3.32"
 hex = "0.4.3"
 ring = "0.17.14"
-hkdf = "0.12.4"
-hyper = {version="1.8.1", features=["full"]}
-hyper-util = {version="0.1.20", features=["full"]}
+hkdf = "0.13.0"
+k256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
+sha3 = "0.12.0"
+hyper = {version="1.12.0", features=["full"]}
+hyper-util = {version="0.1.21", features=["full"]}
 log = "0.4.29"
-libc = "0.2.189"
+libc = "0.2.191"
 rayon = "1.12.0"
 num-bigint = { version = "0.4.6", features = ["serde"] }
 num-integer = "0.1.46"
 num-traits = "0.2.19"
 once_cell = "1.21.3"
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
+fn-dsa = { version = "=0.4.0", optional = true }
+zeroize = { version = "1.9.1", optional = true }
 prometheus = {version="0.14.0", features=["protobuf"], optional = true}
-rand = "0.10.0"
+rand = "0.10.3"
 regex = "1.12.3"
-rustls = {version = "0.23.45" }
-rustls-pemfile = "2.2.0"
-rsa = { version = "0.9.10", features = ["std", "pem", "sha2"] }
+rustls = {version = "0.23.46" }
 secrecy = "0.10.3"
 serde = { version = "1.0.228", features = ["derive"] }
-sha2 = { version = "0.10.9", features = ["oid"] }
-sqlx = {version= "=0.8.6", features=["macros", "json", "time", "runtime-tokio", "tls-rustls-aws-lc-rs"], optional = true}
+sha2 = { version = "0.11.1", features = ["oid"] }
+sqlx = {version= "0.9.0", features=["macros", "json", "time", "runtime-tokio", "tls-rustls-aws-lc-rs"], optional = true}
 time = { version = "0.3.47", features = ["serde"]}
-tokio = {version = "1.50.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
-tokio-tungstenite = {version = "0.28.0", features = ["rustls", "rustls-tls-webpki-roots"] }
-uuid = {version="1.21.0", features=["v4"]}
-x509-cert = { version = "0.2.5", features = ["std", "pem", "builder"] }
+tokio = {version = "1.54.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net", "io-util"]}
+tokio-tungstenite = {version = "0.30.0", features = ["rustls", "rustls-tls-webpki-roots"] }
+uuid = {version="1.29.0", features=["v4"]}
+x509-cert = { version = "0.3.0", features = ["std", "pem", "builder"] }
 
 [dev-dependencies]
 dg_logger = { path = "../logging", version = "3.0.0" }
 dg_xch_puzzles = { path = "../puzzles", version = "3.0.0" }
-paste = "1.0.15"
-criterion = "0.7.0"
+criterion = "0.8.2"
 # Independent test-only BLS implementation used by operator tests and benchmarks.
-bls12_381 = "0.8.0"
+bls12_381 = "0.9.0"
 
 [[bench]]
 name = "clvm"
@@ -74,6 +78,11 @@ name = "bls_ops"
 harness = false
 required-features = ["bls"]
 
+[[bench]]
+name = "falcon"
+harness = false
+required-features = ["falcon"]
+
 [features]
 # BLS12-381 cryptography via blst (C + assembly). Default-on. Disabling it leaves the
 # pure-data surface (wire/chain types, serialization, RPC structs) compiling without a
@@ -82,6 +91,8 @@ required-features = ["bls"]
 # compiled out — a `bls`-less build is NOT consensus-capable.
 bls = ["dep:blst"]
 bounded-bls = ["bls", "blst/no-threads"]
+falcon = ["dep:fn-dsa", "dep:zeroize"]
+labrador = ["falcon", "dep:dg_xch_labrador"]
 mysql = ["sqlx/mysql"]
 postgres = ["sqlx/postgres"]
 sqlite = ["sqlx/sqlite"]

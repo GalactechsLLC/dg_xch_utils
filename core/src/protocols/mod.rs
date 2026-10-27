@@ -1,5 +1,6 @@
 pub mod ban;
 pub mod error;
+pub mod explorer;
 pub mod farmer;
 pub mod full_node;
 pub mod harvester;
@@ -7,13 +8,16 @@ pub mod introducer;
 pub mod outbound_limiter;
 pub mod peer_peak;
 pub mod pool;
+pub mod pool_falcon;
 pub mod pool_v2;
+pub mod pool_web;
 pub mod rate_limits;
 pub mod rate_limits_v3;
 pub mod shared;
 pub mod simulator;
 pub mod timelord;
 pub mod wallet;
+pub mod wallet_sync;
 
 use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::unsized_bytes::UnsizedBytes;
@@ -1380,7 +1384,13 @@ impl ReadStream {
                                                 }
                                             }
                                             if !matched{
-                                                error!("No Matches for Message: {msg_arc:?}");
+                                                error!(
+                                                    "No Matches for Message: msg_type={:?} id={:?} payload_bytes={} peer_id={}",
+                                                    msg_arc.msg_type,
+                                                    msg_arc.id,
+                                                    msg_arc.data.as_slice().len(),
+                                                    self.peer_id,
+                                                );
                                             }
                                             debug!("Processed Message: {:?}", msg_arc.msg_type);
                                         }
@@ -1389,6 +1399,9 @@ impl ReadStream {
                                         }
                                     }
                                 }
+                                // Tungstenite handles Ping replies at the transport layer.
+                                // Heartbeats are control frames, not Chia protocol messages.
+                                Message::Ping(_) | Message::Pong(_) => {},
                                 Message::Close(e) => {
                                     debug!(
                                         "websocket close connection={} peer_id={} frame={e:?}",

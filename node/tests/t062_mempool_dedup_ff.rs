@@ -182,6 +182,7 @@ fn dedup_spend(parent_tag: u8, amount: u64) -> (Coin, CoinSpend) {
 
 fn bundle(spends: Vec<CoinSpend>, sig_tag: u8) -> SpendBundle {
     SpendBundle {
+        authorization: Default::default(),
         coin_spends: spends,
         aggregated_signature: infinity_sig(sig_tag),
     }

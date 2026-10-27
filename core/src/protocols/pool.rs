@@ -12,6 +12,7 @@ pub enum PoolVersion {
     #[default]
     V1,
     V2,
+    Falcon,
 }
 
 impl PoolVersion {
@@ -19,6 +20,7 @@ impl PoolVersion {
         match self {
             Self::V1 => 1,
             Self::V2 => 2,
+            Self::Falcon => 3,
         }
     }
 }

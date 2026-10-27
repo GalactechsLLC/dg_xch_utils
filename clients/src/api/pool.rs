@@ -401,3 +401,38 @@ pub async fn create_pool_login_parts(
         })
     }
 }
+
+/// Validate signed pool requests before transmitting them to a remote origin.
+pub fn validate_pool_url(base: &str) -> Result<reqwest::Url, Error> {
+    let url = reqwest::Url::parse(base).map_err(|_| Error::other("invalid pool URL"))?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(Error::other(
+            "pool requires an HTTPS URL without credentials, query or fragment",
+        ));
+    }
+    Ok(url)
+}
+
+impl DefaultPoolClient {
+    pub async fn browser_login<T: Serialize + Debug>(
+        &self,
+        base: &str,
+        request: T,
+    ) -> Result<dg_xch_core::protocols::pool_web::BrowserTicket, PoolError> {
+        validate_pool_url(base)?;
+        send_request(
+            self.client
+                .post(format!("{}/web/login", base.trim_end_matches('/'))),
+            "web/login",
+            &None::<HashMap<String, String>>,
+            RequestMode::Json(request),
+        )
+        .await
+    }
+}

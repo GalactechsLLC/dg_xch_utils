@@ -9,12 +9,12 @@ async fn maintenance_has_an_isolated_disk_backed_sort_profile() {
         .unwrap();
     let mut maintenance = store.maintenance_options.connect().await.unwrap();
     for (pragma, expected) in [
-        ("temp_store", 1i64),
-        ("cache_size", -16384),
-        ("mmap_size", 0),
-        ("threads", 2),
+        ("PRAGMA temp_store", 1i64),
+        ("PRAGMA cache_size", -16384),
+        ("PRAGMA mmap_size", 0),
+        ("PRAGMA threads", 2),
     ] {
-        let value: i64 = sqlx::query_scalar(&format!("PRAGMA {pragma}"))
+        let value: i64 = sqlx::query_scalar(pragma)
             .fetch_one(&mut maintenance)
             .await
             .unwrap();

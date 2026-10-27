@@ -89,17 +89,18 @@ impl SqliteStore {
             // WRITER_CACHE_BULK_KIB) — because catch-up batch commits span many blocks and spill
             // at 64 MiB.
             .pragma("cache_size", "-65536")
-            // Keep the writer-COMMIT autocheckpoint out of normal operation: an autocheckpoint
-            // firing inside a confirm COMMIT copies the whole accumulated WAL into the DB file
-            // and fsyncs it on the hot path. The dedicated checkpointer below does that
-            // copy+fsync off the writer. This threshold (262 144 pages ≈ 1 GiB) is only a
-            // disk-fill failsafe for when that background task is gone.
-            .pragma("wal_autocheckpoint", "262144");
+            // The dedicated checkpointer owns WAL draining. A size-triggered
+            // autocheckpoint otherwise copies/fsyncs a large WAL inside COMMIT,
+            // putting background maintenance back on the block-confirmation path.
+            .pragma("wal_autocheckpoint", "0");
         let mut writer = opts.clone().connect().await?;
         // The store opens in the bulk (catch-up) phase; `set_near_tip` re-profiles on each flip.
-        sqlx::query(&format!("PRAGMA cache_size = -{WRITER_CACHE_BULK_KIB}"))
-            .execute(&mut writer)
-            .await?;
+        // SQLite PRAGMA assignments do not accept bind parameters; this is an i64 constant.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "PRAGMA cache_size = -{WRITER_CACHE_BULK_KIB}"
+        )))
+        .execute(&mut writer)
+        .await?;
         migrate(&mut writer).await?;
         let read = SqlitePoolOptions::new()
             .max_connections(4)
@@ -184,7 +185,8 @@ impl SqliteStore {
         let mut guard = self.writer.lock().await;
         self.bulk_cache_kib.store(kib, Ordering::Relaxed);
         if !self.near_tip.load(Ordering::Relaxed) {
-            sqlx::query(&format!("PRAGMA cache_size = -{kib}"))
+            // Only the range-checked u64 above is formatted, never SQL text from a caller.
+            sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA cache_size = -{kib}")))
                 .execute(&mut *guard)
                 .await?;
             self.telemetry
@@ -206,7 +208,8 @@ impl SqliteStore {
             } else {
                 bulk_cache_kib.load(Ordering::Relaxed)
             };
-            if let Err(e) = sqlx::query(&format!("PRAGMA cache_size = -{kib}"))
+            // Both cache profiles are u64 values; decimal formatting cannot inject SQL.
+            if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA cache_size = -{kib}")))
                 .execute(&mut *guard)
                 .await
             {

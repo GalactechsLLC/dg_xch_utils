@@ -2,6 +2,8 @@ use crate::blockchain::sized_bytes::Bytes32;
 use crate::consensus::constants::ConsensusConstants;
 
 pub(super) const DGX_V1_BASELINE: ConsensusConstants = ConsensusConstants {
+    signature_profile: crate::signatures::SignatureProfile::Bls12381Aug,
+    falcon_aggregation: None,
     rewards: crate::consensus::block_rewards::RewardSchedule::CHIA,
     slot_blocks_target: 32,
     min_blocks_per_challenge_block: 16,

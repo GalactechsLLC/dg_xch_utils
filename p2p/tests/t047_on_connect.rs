@@ -5,6 +5,7 @@ use common::{MemApi, RunningServer, empty_api, install_crypto, spawn_full_node};
 use dg_xch_clients::websocket::{WsClient, WsClientConfig};
 use dg_xch_core::blockchain::peer_info::TimestampedPeerInfo;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
+use dg_xch_core::protocols::farmer::NewSignagePoint;
 use dg_xch_core::protocols::full_node::{NewPeak, RequestMempoolTransactions};
 use dg_xch_core::protocols::timelord::{NewGenesisTimelord, NewPeakTimelord};
 use dg_xch_core::protocols::{
@@ -28,6 +29,7 @@ struct GreetingApi {
     timelord: Option<Box<NewPeakTimelord>>,
     genesis: Option<NewGenesisTimelord>,
     filter: Option<Vec<u8>>,
+    farmer: Option<NewSignagePoint>,
 }
 
 #[async_trait]
@@ -49,6 +51,9 @@ impl FullNodeApi for GreetingApi {
     }
     async fn timelord_genesis(&self) -> Option<NewGenesisTimelord> {
         self.genesis.clone()
+    }
+    async fn farmer_signage_point(&self) -> Option<NewSignagePoint> {
+        self.farmer.clone()
     }
     async fn mempool_sync_filter(&self) -> Option<Vec<u8>> {
         self.filter.clone()
@@ -182,6 +187,7 @@ async fn outbound_identity_is_the_remote_certificate_not_the_client_certificate(
         timelord: None,
         genesis: None,
         filter: None,
+        farmer: None,
     })
     .await;
     let (tx, mut rx) = mpsc::channel(2);
@@ -227,6 +233,7 @@ async fn full_node_peer_is_greeted_with_new_peak_on_connect() {
         timelord: None,
         genesis: None,
         filter: None,
+        farmer: None,
     })
     .await;
     let (handlers, mut rx) = capture_handlers(&[ProtocolMessageTypes::NewPeak]);
@@ -254,6 +261,7 @@ async fn synced_node_requests_mempool_sync_on_full_node_connect() {
         timelord: None,
         genesis: None,
         filter: Some(filter.clone()),
+        farmer: None,
     })
     .await;
     let (handlers, mut rx) = capture_handlers(&[ProtocolMessageTypes::RequestMempoolTransactions]);
@@ -280,6 +288,7 @@ async fn unsynced_node_does_not_request_mempool_sync_on_connect() {
         timelord: None,
         genesis: None,
         filter: None,
+        farmer: None,
     })
     .await;
     let (handlers, mut rx) = capture_handlers(&[
@@ -312,6 +321,7 @@ async fn timelord_peer_is_greeted_with_new_peak_timelord() {
         timelord: Some(want.clone()),
         genesis: None,
         filter: None,
+        farmer: None,
     })
     .await;
     let (handlers, mut rx) = capture_handlers(&[ProtocolMessageTypes::NewPeakTimelord]);
@@ -338,6 +348,7 @@ async fn peakless_node_sends_no_greeting() {
         timelord: None,
         genesis: None,
         filter: None,
+        farmer: None,
     })
     .await;
     let (handlers, mut rx) = capture_handlers(&[
@@ -381,6 +392,7 @@ async fn explicit_genesis_work_is_sent_only_to_timelords_without_a_peak() {
             timelord: peak,
             genesis: Some(genesis.clone()),
             filter: None,
+            farmer: None,
         })
         .await;
         let (handlers, mut receiver) = capture_handlers(&[
@@ -414,4 +426,57 @@ async fn explicit_genesis_work_is_sent_only_to_timelords_without_a_peak() {
             .run
             .store(false, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+#[tokio::test]
+async fn farmer_receives_latest_signage_immediately_after_handshake() {
+    let sp = NewSignagePoint {
+        challenge_hash: [1; 32].into(),
+        challenge_chain_sp: [2; 32].into(),
+        reward_chain_sp: [3; 32].into(),
+        difficulty: 30,
+        sub_slot_iters: 67_108_864,
+        signage_point_index: 18,
+        peak_height: 0,
+        last_tx_height: 0,
+        sp_source_data: None,
+    };
+    let server = spawn_greeting_node(GreetingApi {
+        inner: empty_api(),
+        peak: None,
+        timelord: None,
+        genesis: None,
+        filter: None,
+        farmer: Some(sp.clone()),
+    })
+    .await;
+    let (handlers, mut rx) = capture_handlers(&[ProtocolMessageTypes::NewSignagePoint]);
+    let client = dial_as(server.port, NodeType::Farmer, handlers).await;
+    let msg = recv_within(&mut rx, "farmer signage greeting").await;
+    let received = NewSignagePoint::from_bytes(
+        &mut Cursor::new(msg.data.as_slice()),
+        client.client_config.protocol_version,
+    )
+    .unwrap();
+    assert_eq!(received, sp);
+}
+
+#[tokio::test]
+async fn farmer_is_not_given_a_fabricated_signage_point() {
+    let server = spawn_greeting_node(GreetingApi {
+        inner: empty_api(),
+        peak: None,
+        timelord: None,
+        genesis: None,
+        filter: None,
+        farmer: None,
+    })
+    .await;
+    let (handlers, mut rx) = capture_handlers(&[ProtocolMessageTypes::NewSignagePoint]);
+    let _client = dial_as(server.port, NodeType::Farmer, handlers).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), rx.recv())
+            .await
+            .is_err()
+    );
 }

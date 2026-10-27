@@ -93,3 +93,36 @@ fn legacy_configuration_is_saved_privately() {
         );
     }
 }
+
+#[test]
+fn metrics_default_on_missing_configuration_and_explicit_disable_is_preserved() {
+    let config = Config::<()>::default();
+    let mut json = serde_json::to_value(config).unwrap();
+    json.as_object_mut().unwrap().remove("metrics");
+    let config: Config<()> = serde_json::from_value(json.clone()).unwrap();
+    assert!(config.metrics.unwrap().enabled);
+    json["metrics"] = serde_json::Value::Null;
+    let config: Config<()> = serde_json::from_value(json).unwrap();
+    assert!(config.metrics.is_none());
+}
+
+#[test]
+fn signage_timeout_defaults_for_existing_credentials_and_can_be_overridden() {
+    let mut json = serde_json::to_value(Config::<()>::default()).unwrap();
+    json.as_object_mut()
+        .unwrap()
+        .remove("signage_point_timeout_seconds");
+    let old: Config<()> = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(old.signage_point_timeout_seconds, 60);
+    json["signage_point_timeout_seconds"] = 900.into();
+    let configured: Config<()> = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(configured.signage_point_timeout_seconds, 900);
+    assert!(configured.validate_keys().is_ok());
+    json["signage_point_timeout_seconds"] = 0.into();
+    assert!(
+        serde_json::from_value::<Config<()>>(json)
+            .unwrap()
+            .validate_keys()
+            .is_err()
+    );
+}

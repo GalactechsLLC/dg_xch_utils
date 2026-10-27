@@ -8,9 +8,20 @@ use std::str::FromStr;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChainDefinition {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::SignatureProfile::is_bls"
+    )]
+    pub signature_profile: crate::signatures::SignatureProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub falcon_aggregation: Option<crate::signatures::labrador::LabradorProfile>,
     pub network_id: String,
     pub genesis_seed: String,
     pub rewards: RewardSchedule,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_network: Option<ChiaNetwork>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pos2_activation_height: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus: Option<LaunchConsensus>,
 }
@@ -18,15 +29,34 @@ pub struct ChainDefinition {
 impl Default for ChainDefinition {
     fn default() -> Self {
         Self {
+            signature_profile: crate::signatures::SignatureProfile::Bls12381Aug,
+            falcon_aggregation: None,
             network_id: "dgx".into(),
             genesis_seed: "dg_xch/dgx/no-prefarm/v1".into(),
             rewards: RewardSchedule::NO_PREFARM,
             consensus: None,
+            base_network: None,
+            pos2_activation_height: None,
         }
     }
 }
 
 impl ChainDefinition {
+    /// Testnet11's rules on an independent chain, with PoS2 enabled at genesis.
+    #[must_use]
+    pub fn dg_pos2_test() -> Self {
+        Self {
+            signature_profile: crate::signatures::SignatureProfile::Bls12381Aug,
+            falcon_aggregation: None,
+            network_id: "dg_pos2_test".into(),
+            genesis_seed: "dg_xch/dg_pos2_test/testnet11/pos2/v1".into(),
+            rewards: RewardSchedule::CHIA,
+            base_network: Some(ChiaNetwork::Testnet11),
+            pos2_activation_height: Some(0),
+            consensus: None,
+        }
+    }
+
     #[must_use]
     pub fn dgx() -> Self {
         Self {
@@ -54,34 +84,86 @@ impl ChainDefinition {
         }
     }
 
+    /// Small native plots and VDFs for isolated integration testing only.
+    #[must_use]
+    pub fn falcon_development(genesis_seed: String) -> Self {
+        let mut definition = Self::development(genesis_seed);
+        definition.network_id = "dgx-falcon-dev-v2".into();
+        definition.signature_profile = crate::signatures::SignatureProfile::FnDsa512V2;
+        let parameters = definition
+            .consensus
+            .as_mut()
+            .expect("development parameters");
+        parameters.plot_size_v2 = 18;
+        parameters.difficulty_constant_factor_bits = 1;
+        parameters.sub_slot_iters_starting = 1024;
+        parameters.development_discriminant_bits = Some(512);
+        definition
+    }
+
     pub fn constants(&self) -> Result<ConsensusConstants, String> {
+        if self.falcon_aggregation.is_some() && self.signature_profile.is_bls() {
+            return Err("LaBRADOR requires a Falcon development chain".into());
+        }
+        if !self.signature_profile.is_bls()
+            && (self.base_network.is_some()
+                || !self.consensus.as_ref().is_some_and(|c| c.development))
+        {
+            return Err("Falcon is currently available only on explicit development chains".into());
+        }
         if self.network_id.is_empty()
             || self.network_id.len() > 64
-            || !self
-                .network_id
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            || !self.network_id.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+            })
             || ChiaNetwork::from_str(&self.network_id).is_ok()
         {
-            return Err("custom network id must be 1..64 lowercase letters, digits or hyphens and cannot name a Chia network".into());
+            return Err("custom network id must be 1..64 lowercase letters, digits, hyphens or underscores and cannot name a Chia network".into());
         }
         if self.genesis_seed.is_empty() || self.genesis_seed.len() > 1024 {
             return Err("genesis_seed must contain 1..1024 bytes".into());
         }
         self.rewards.validate(DGX_V1_BASELINE.max_coin_amount)?;
-        if self.rewards.genesis_pool != 0 || self.rewards.genesis_farmer != 0 {
+        if self.base_network.is_none()
+            && (self.rewards.genesis_pool != 0 || self.rewards.genesis_farmer != 0)
+        {
             return Err("this fork definition requires zero genesis rewards".into());
         }
-        let mut constants = ConsensusConstants {
-            rewards: self.rewards,
-            genesis_challenge: Bytes32::default(),
-            agg_sig_me_additional_data: Bytes32::default(),
-            genesis_pre_farm_pool_puzzle_hash: Bytes32::default(),
-            genesis_pre_farm_farmer_puzzle_hash: Bytes32::default(),
-            bech32_prefix: "dgx",
-            ..DGX_V1_BASELINE
+        if self.base_network.is_some() && self.consensus.is_some() {
+            return Err(
+                "base_network and launch consensus parameters are mutually exclusive".into(),
+            );
+        }
+        if self.base_network.is_none() && self.pos2_activation_height.is_some() {
+            return Err("pos2_activation_height requires base_network".into());
+        }
+        let mut constants = if let Some(network) = self.base_network {
+            ConsensusConstants {
+                rewards: self.rewards,
+                ..ConsensusConstants::from(network)
+            }
+        } else {
+            ConsensusConstants {
+                rewards: self.rewards,
+                genesis_challenge: Bytes32::default(),
+                agg_sig_me_additional_data: Bytes32::default(),
+                genesis_pre_farm_pool_puzzle_hash: Bytes32::default(),
+                genesis_pre_farm_farmer_puzzle_hash: Bytes32::default(),
+                bech32_prefix: "dgx",
+                ..DGX_V1_BASELINE
+            }
         };
-        let identity = if let Some(parameters) = &self.consensus {
+        if let Some(height) = self.pos2_activation_height {
+            constants.hard_fork2_height = height;
+        }
+        constants.signature_profile = self.signature_profile;
+        constants.falcon_aggregation = self.falcon_aggregation;
+        let identity = if self.base_network.is_some() {
+            let mut identity = b"dg_xch/chain-definition/v3\0".to_vec();
+            identity
+                .extend(serde_json::to_vec(&(self, constants)).map_err(|error| error.to_string())?);
+            identity
+        } else if let Some(parameters) = &self.consensus {
             parameters.apply(&mut constants)?;
             let mut identity = b"dg_xch/chain-definition/v2\0".to_vec();
             identity.extend(serde_json::to_vec(self).map_err(|error| error.to_string())?);
@@ -111,6 +193,8 @@ impl ChainDefinition {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchConsensus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub development_discriminant_bits: Option<u16>,
     pub version: u16,
     pub development: bool,
     pub pos2_activation_height: u32,
@@ -128,6 +212,7 @@ pub struct LaunchConsensus {
 impl Default for LaunchConsensus {
     fn default() -> Self {
         Self {
+            development_discriminant_bits: None,
             version: 2,
             development: false,
             pos2_activation_height: 0,
@@ -146,6 +231,14 @@ impl Default for LaunchConsensus {
 
 impl LaunchConsensus {
     fn apply(&self, constants: &mut ConsensusConstants) -> Result<(), String> {
+        if let Some(bits) = self.development_discriminant_bits {
+            if !self.development || !(128..=1024).contains(&bits) || !bits.is_multiple_of(8) {
+                return Err(
+                    "custom VDF discriminants require development mode and 128..1024 bits".into(),
+                );
+            }
+            constants.discriminant_size_bits = u64::from(bits);
+        }
         if self.version != 2
             || self.difficulty_starting == 0
             || !(1..=96).contains(&self.difficulty_constant_factor_bits)
@@ -266,6 +359,8 @@ impl ChainSelection {
             }
             definition.constants()?;
             Ok(Self::Custom(definition.clone()))
+        } else if network == "dg_pos2_test" {
+            Ok(Self::Custom(ChainDefinition::dg_pos2_test()))
         } else if network == "dgx" {
             Ok(Self::Dgx)
         } else {

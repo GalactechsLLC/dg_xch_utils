@@ -21,7 +21,7 @@ const COIN_LOOKUP_BATCH: usize = 256;
 #[path = "../../tests/unit/sqlite/coin_lookup_tests.rs"]
 mod coin_lookup_tests;
 
-fn coin_lookup_query(names: &[Bytes32]) -> sqlx::QueryBuilder<'_, sqlx::Sqlite> {
+fn coin_lookup_query(names: &[Bytes32]) -> sqlx::QueryBuilder<sqlx::Sqlite> {
     let mut query = sqlx::QueryBuilder::new("WITH requested(ordinal, coin_name) AS (");
     query.push_values(names.iter().enumerate(), |mut bindings, (ordinal, name)| {
         bindings.push_bind(ordinal as i64).push_bind(*name);
@@ -198,6 +198,126 @@ fn prepare_coin_changes(
 
 #[async_trait]
 impl CoinStore for SqliteStore {
+    fn supports_explorer_queries(&self) -> bool {
+        cfg!(feature = "coin-index")
+    }
+
+    fn supports_wallet_sync(&self) -> bool {
+        cfg!(feature = "hint")
+    }
+
+    #[cfg(feature = "hint")]
+    async fn wallet_coin_records(
+        &self,
+        request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, StoreError> {
+        let mut query = crate::wallet_sync::query::<sqlx::Sqlite>(request, height)?;
+        // One statement provides a consistent snapshot across selectors and record hydration.
+        let rows = query
+            .build()
+            .persistent(false)
+            .fetch_all(&self.read)
+            .await?;
+        let records = rows
+            .iter()
+            .map(row_to_coin_record)
+            .collect::<Result<_, _>>()?;
+        Ok(crate::wallet_sync::response(request, height, records))
+    }
+
+    #[cfg(feature = "coin-index")]
+    async fn coin_page(
+        &self,
+        request: &dg_xch_core::protocols::explorer::CoinPageRequest,
+        height: u32,
+    ) -> Result<Vec<CoinRecord>, StoreError> {
+        request
+            .validate()
+            .map_err(|error| StoreError::Corrupt(error.into()))?;
+        let mut q = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, timestamp FROM coin_record WHERE ",
+        );
+        let (column, ids) = if request.parent_ids.is_empty() {
+            ("puzzle_hash", &request.puzzle_hashes)
+        } else {
+            ("coin_parent", &request.parent_ids)
+        };
+        q.push(column).push(" IN (");
+        {
+            let mut hashes = q.separated(",");
+            for hash in ids {
+                hashes.push_bind(*hash);
+            }
+        }
+        q.push(") AND confirmed_index <= ")
+            .push_bind(i64::from(height));
+        if let Some(spent) = request.spent {
+            if spent {
+                q.push(" AND spent_index > 0 AND spent_index <= ")
+                    .push_bind(i64::from(height));
+            } else {
+                q.push(" AND (spent_index = 0 OR spent_index > ")
+                    .push_bind(i64::from(height))
+                    .push(")");
+            }
+        }
+        q.push(" ORDER BY confirmed_index DESC, coin_name DESC LIMIT ")
+            .push_bind(i64::from(request.limit))
+            .push(" OFFSET ")
+            .push_bind(i64::from(request.offset));
+        let rows = q.build().fetch_all(&self.read).await?;
+        rows.iter()
+            .map(|row| {
+                let mut record = row_to_coin_record(row)?;
+                if record.spent_block_index > height {
+                    record.spent_block_index = 0;
+                    record.spent = false;
+                }
+                Ok(record)
+            })
+            .collect()
+    }
+    #[cfg(feature = "coin-index")]
+    async fn coin_summary(
+        &self,
+        ph: &Bytes32,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinSummary, StoreError> {
+        let started = std::time::Instant::now();
+        let mut total = crate::explorer::Summary::default();
+        let mut cursor: Option<Bytes32> = None;
+        // A stable read transaction prevents mixing state across keyset batches.
+        let mut tx = self.read.begin().await?;
+
+        loop {
+            crate::explorer::work_deadline(started)?;
+            let mut q = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "SELECT coin_name, confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, timestamp FROM coin_record WHERE puzzle_hash=",
+            );
+            q.push_bind(*ph)
+                .push(" AND confirmed_index <= ")
+                .push_bind(i64::from(height));
+            if let Some(cursor) = cursor {
+                q.push(" AND coin_name > ").push_bind(cursor);
+            }
+            q.push(" ORDER BY coin_name LIMIT 1000");
+            let rows = q.build().fetch_all(&mut *tx).await?;
+            for row in &rows {
+                total.add(&row_to_coin_record(row)?, height)?;
+            }
+            if let Some(row) = rows.last() {
+                cursor = Some(sqlx::Row::try_get(row, "coin_name")?);
+            }
+            if rows.len() < 1000 {
+                break;
+            }
+        }
+        crate::explorer::work_deadline(started)?;
+        tx.commit().await?;
+        Ok(total.finish())
+    }
+
     async fn prepare_coin_window(
         &self,
         changes: Vec<crate::types::OwnedCoinChanges>,
@@ -466,7 +586,8 @@ impl CoinStore for SqliteStore {
                 break;
             }
             let remaining = i64::try_from(max_items - out.len()).unwrap_or(i64::MAX);
-            let rows = sqlx::query(&sql)
+            // spent_clause is selected from fixed literals; all request values are bound.
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(*ph)
                 .bind(i64::from(min_height))
                 .bind(i64::from(min_height))
@@ -526,7 +647,8 @@ impl CoinStore for SqliteStore {
         let mut conn = self.read.acquire().await?;
         let mut merged = std::collections::HashMap::new();
         for ph in puzzle_hashes {
-            let rows = sqlx::query(&sql)
+            // height_filter is a fixed match-arm literal; values remain bind parameters.
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(*ph)
                 .bind(i64::from(min_height))
                 .bind(i64::from(min_height))
@@ -541,7 +663,8 @@ impl CoinStore for SqliteStore {
             merge_coin_states_bounded(&mut merged, states, max_items + 1);
             #[cfg(feature = "hint")]
             if filters.include_hinted {
-                let rows = sqlx::query(&hint_sql)
+                // Same literal-only height_filter as the direct puzzle-hash query.
+                let rows = sqlx::query(sqlx::AssertSqlSafe(hint_sql.as_str()))
                     .bind(*ph)
                     .bind(i64::from(min_height))
                     .bind(i64::from(min_height))

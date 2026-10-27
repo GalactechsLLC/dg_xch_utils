@@ -115,10 +115,31 @@ impl PoolConfig {
 
 pub async fn serve(config: PoolConfig) -> Result<(), Error> {
     config.validate()?;
+    let constants = config.chain.constants().map_err(Error::other)?;
     let payout_key = config
         .payouts
         .as_ref()
         .map(|payouts| {
+            if !constants.signature_profile.is_bls() {
+                #[cfg(feature = "falcon")]
+                {
+                    let keys = dg_xch_core::signatures::falcon_keys::FalconKeyring::load(
+                        &payouts.key_file,
+                    )?;
+                    let wallet =
+                        dg_xch_wallet::falcon::FalconWallet::new(keys.wallet, Arc::new(constants))?;
+                    if wallet.puzzle_hash() != config.target_puzzle_hash {
+                        return Err(Error::other(
+                            "Falcon payout key does not control the pool target",
+                        ));
+                    }
+                    return Ok(crate::payout::PayoutKey::Falcon(Arc::new(wallet)));
+                }
+                #[cfg(not(feature = "falcon"))]
+                return Err(Error::other(
+                    "Falcon pool payouts require the falcon feature",
+                ));
+            }
             let mut options = std::fs::OpenOptions::new();
             options.read(true);
             #[cfg(unix)]
@@ -167,10 +188,9 @@ pub async fn serve(config: PoolConfig) -> Result<(), Error> {
                     "pool payout key does not control the configured target puzzle hash",
                 ));
             }
-            Ok::<_, Error>(key)
+            Ok::<_, Error>(crate::payout::PayoutKey::Bls(key))
         })
         .transpose()?;
-    let constants = config.chain.constants().map_err(Error::other)?;
     let chain = Arc::new(NodeChain {
         client: Arc::new(FullnodeClient::new_verified(
             &config.node_host,

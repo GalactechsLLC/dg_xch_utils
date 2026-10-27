@@ -279,3 +279,84 @@ fn launch_parameters_require_at_least_one_valid_plot_strength() {
         assert!(definition.constants().is_err());
     }
 }
+
+#[test]
+fn pos2_test_preserves_every_testnet11_rule_except_chain_identity_and_activation() {
+    let definition = ChainDefinition::dg_pos2_test();
+    let mut constants = definition.constants().unwrap();
+    let baseline = crate::consensus::constants::TESTNET_11;
+    assert_eq!(constants.hard_fork2_height, 0);
+    assert_eq!(constants.bech32_prefix, "txch");
+    assert!(constants.is_testnet);
+    assert_ne!(constants.genesis_challenge, baseline.genesis_challenge);
+    assert_ne!(
+        constants.agg_sig_me_additional_data,
+        baseline.agg_sig_me_additional_data
+    );
+    constants.hard_fork2_height = baseline.hard_fork2_height;
+    constants.genesis_challenge = baseline.genesis_challenge;
+    constants.agg_sig_me_additional_data = baseline.agg_sig_me_additional_data;
+    assert_eq!(constants, baseline);
+    let selected = ChainSelection::from_config("dg_pos2_test", None).unwrap();
+    assert_eq!(selected, ChainSelection::Custom(definition.clone()));
+    assert!(selected.resolve().unwrap().allows_bootstrap);
+    assert_eq!(
+        serde_json::from_slice::<ChainDefinition>(&serde_json::to_vec(&definition).unwrap())
+            .unwrap(),
+        definition
+    );
+}
+
+#[test]
+fn inherited_chain_rejects_ambiguous_launch_rules() {
+    let mut definition = ChainDefinition::dg_pos2_test();
+    definition.consensus = Some(LaunchConsensus::default());
+    assert!(definition.constants().is_err());
+    let definition = ChainDefinition {
+        pos2_activation_height: Some(0),
+        ..Default::default()
+    };
+    assert!(definition.constants().is_err());
+}
+
+#[test]
+fn published_pos2_test_definition_matches_preset() {
+    let definition: ChainDefinition =
+        serde_json::from_str(include_str!("../../../../config/chains/dg_pos2_test.json")).unwrap();
+    assert_eq!(definition, ChainDefinition::dg_pos2_test());
+}
+
+#[test]
+fn fn_dsa_v2_profiles_reject_legacy_falcon_chain_definitions() {
+    use crate::signatures::{SignatureProfile, labrador::LabradorProfile};
+    let mut definition = ChainDefinition::falcon_development("migration fixture".into());
+    assert_eq!(definition.signature_profile, SignatureProfile::FnDsa512V2);
+    assert_eq!(definition.network_id, "dgx-falcon-dev-v2");
+    let current = serde_json::to_value(&definition).unwrap();
+    assert_eq!(current["signature_profile"], "fn_dsa512_v2");
+    let mut legacy = current.clone();
+    legacy["signature_profile"] = serde_json::json!("falcon512_sp1");
+    assert!(serde_json::from_value::<ChainDefinition>(legacy).is_err());
+    for (profile, old_name, new_name) in [
+        (
+            LabradorProfile::Packed11V2,
+            "labrador-packed11-v1",
+            "labrador-packed11-v2",
+        ),
+        (
+            LabradorProfile::Packed11ZkV2,
+            "labrador-packed11-zk-v1",
+            "labrador-packed11-zk-v2",
+        ),
+    ] {
+        definition.falcon_aggregation = Some(profile);
+        let mut value = serde_json::to_value(&definition).unwrap();
+        assert_eq!(value["falcon_aggregation"], new_name);
+        assert_eq!(
+            serde_json::from_value::<ChainDefinition>(value.clone()).unwrap(),
+            definition
+        );
+        value["falcon_aggregation"] = serde_json::json!(old_name);
+        assert!(serde_json::from_value::<ChainDefinition>(value).is_err());
+    }
+}

@@ -1,6 +1,7 @@
 use crate::clvm::arena::{Arena, NodePtr};
 use crate::clvm::dialect::Dialect;
 use crate::clvm::more_ops::BOOL_BASE_COST;
+use crate::clvm::utils::DISABLE_PRINTS;
 use log::info;
 use std::io::Error;
 
@@ -10,8 +11,11 @@ pub fn op_print<D: Dialect>(
     arena: &Arena,
     args: &[NodePtr],
     _max_cost: u64,
-    _dialect: &D,
+    dialect: &D,
 ) -> Result<(u64, NodePtr), Error> {
+    if dialect.flags() & DISABLE_PRINTS != 0 || !log::log_enabled!(log::Level::Info) {
+        return Ok((BOOL_BASE_COST * (args.len() as u64 + 1), NodePtr::NIL));
+    }
     if args.is_empty() {
         Ok((BOOL_BASE_COST, NodePtr::NIL))
     } else {

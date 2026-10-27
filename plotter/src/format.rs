@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use dg_xch_pos2::compact::PackedChunk;
 
-pub(crate) fn write_plot(
+pub fn write_plot(
     output: &mut (impl Write + Seek),
     plot: &NativePlot,
     index: u16,
@@ -137,7 +137,8 @@ pub fn write_packed_chunks(
         ));
     }
     dg_xch_pos2::compute::check_cancelled(cancelled)?;
-    output.write_all(b"pos2\x01")?;
+    let profile = if memo.starts_with(b"DGXFAL02") { 2 } else { 1 };
+    output.write_all(&[b'p', b'o', b's', b'2', profile])?;
     output.write_all(params.plot_id().as_ref())?;
     output.write_all(&[params.k(), params.strength()])?;
     output.write_all(&index.to_le_bytes())?;

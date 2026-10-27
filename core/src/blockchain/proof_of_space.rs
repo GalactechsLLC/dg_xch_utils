@@ -451,6 +451,18 @@ pub fn is_proof_version_active(
     }
 }
 
+/// Apply the same activation and retirement rules to blocks, farmers and pool partials.
+#[must_use]
+pub fn is_proof_eligible(
+    proof: &ProofOfSpace,
+    previous_transaction_height: u32,
+    constants: &ConsensusConstants,
+) -> bool {
+    is_proof_version_active(proof.version, previous_transaction_height, constants)
+        && (proof.version != 0
+            || !is_v1_phased_out(proof.proof.as_ref(), previous_transaction_height, constants))
+}
+
 /// The height at which v1 proofs stop being valid: a block whose previous transaction block is at
 /// or above this may not carry one.
 #[must_use]

@@ -37,6 +37,7 @@ use std::sync::Arc;
 pub mod chain;
 pub mod cli;
 pub mod commands;
+pub mod crawler;
 #[cfg(feature = "full-node")]
 pub mod full_node;
 pub mod services;
@@ -64,6 +65,7 @@ fn inherit_network(network: &mut Option<String>, root_network: Option<&str>) -> 
 fn apply_network(cli: &mut Cli) -> Result<(), Error> {
     match &mut cli.action {
         RootCommands::Chain(args) => args.inherit_network(cli.network.as_deref()),
+        RootCommands::Crawler(args) => args.inherit_network(cli.network.as_deref()),
         #[cfg(feature = "full-node")]
         RootCommands::FullNode(args) => args.inherit_network(cli.network.as_deref()),
         _ => {
@@ -190,6 +192,9 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
         .current_level(level)
         .init()
         .map_err(|e| Error::other(format!("{e:?}")))?;
+    if let RootCommands::Crawler(args) = &cli.action {
+        return crawler::run(args).await;
+    }
     let host = cli
         .fullnode_host
         .unwrap_or(env::var("FULLNODE_HOST").unwrap_or("localhost".to_string()));
@@ -221,6 +226,7 @@ pub async fn run_cli_with(mut cli: Cli) -> Result<(), Error> {
         | RootCommands::Introducer(_)
         | RootCommands::Pool(_)
         | RootCommands::Simulator(_) => {}
+        RootCommands::Crawler(_) => {}
         RootCommands::Chain(args) => chain::run(args)?,
         #[cfg(feature = "full-node")]
         RootCommands::FullNode(args) => full_node::run(*args, _logger).await?,

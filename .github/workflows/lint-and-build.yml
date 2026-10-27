@@ -7,6 +7,66 @@ env:
   RUST_TEST_THREADS: 2
 
 jobs:
+  signature-profiles:
+    name: Product build (${{ matrix.profile }})
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: bls
+            crypto: ""
+            features: hint,timelord,desktop,vulkan
+          - profile: post-quantum
+            crypto: labrador
+            features: hint,timelord,desktop,vulkan,labrador
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-native-deps
+      - name: Build products and stack utilities
+        run: >-
+          cargo build --release --locked -p dg_xch_cli -p dg_xch_dev_tools
+          --no-default-features --features '${{ matrix.features }}'
+          --bin dgx --bin dg_xch_stack_init --bin dg_xch_stack_plot
+          --bin dg_xch_stack_check --bin dg_xch_stack_pool
+      - name: Build aggregation worker
+        if: matrix.profile == 'post-quantum'
+        run: cargo build --release --locked -p dg_xch_labrador --features backend --bin dg_xch_labrador_worker
+      - name: Test profile isolation and wallet and pool behavior
+        run: |
+          cargo test --locked -p dg_xch_core --lib branding::tests --features '${{ matrix.crypto }}'
+          cargo test --locked -p dg_xch_core --test clvm_runtime_gaps --test flag_ladder --test labrador --features '${{ matrix.crypto }}'
+          cargo test --locked -p dg_xch_gui -p dg_xch_farmer --lib --features '${{ matrix.crypto }}'
+          cargo test --locked -p dg_xch_wallet --lib --test standard_wallet --test falcon_wallet --test rpc_sync --features '${{ matrix.crypto }}'
+          cargo test --locked -p dg_xch_pool --lib --features '${{ matrix.crypto }}'
+          cargo test --locked -p dg_xch_dev_tools --test stack_profiles --features '${{ matrix.crypto }}'
+      - name: Test native wallet ZK proving and submission
+        if: matrix.profile == 'post-quantum'
+        timeout-minutes: 20
+        env:
+          DGX_LABRADOR_WORKER: ${{ github.workspace }}/target/release/dg_xch_labrador_worker
+        run: |
+          cargo test --locked -p dg_xch_core --features labrador --test labrador real_wallet_zk_proof -- --ignored --exact
+          cargo test --locked -p dg_xch_wallet --features labrador \
+          --test falcon_wallet --test rpc_sync -- --ignored --test-threads=1
+      - name: Package executable products
+        shell: bash
+        run: |
+          binaries=(dgx dg_xch_stack_init dg_xch_stack_plot dg_xch_stack_check dg_xch_stack_pool)
+          if [[ '${{ matrix.profile }}' == 'post-quantum' ]]; then
+            binaries+=(dg_xch_labrador_worker)
+          fi
+          tar -czf 'dgx-linux-${{ matrix.profile }}.tar.gz' -C target/release "${binaries[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dgx-linux-${{ matrix.profile }}
+          path: dgx-linux-${{ matrix.profile }}.tar.gz
+          if-no-files-found: error
   lint:
     name: Lint
     permissions:
@@ -61,9 +121,11 @@ jobs:
         run: git submodule update --init --recursive
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      # Fails the build on any RustSec advisory against the committed Cargo.lock (SSDF PW.7 / A03:2025).
+      # Audit both independently resolved dependency graphs without vulnerability suppressions.
       - name: Run cargo audit
-        run: cargo audit
+        run: |
+          cargo audit
+          cargo audit --file plotter/cuda/Cargo.lock
   native-desktop:
     name: Native Desktop
     permissions:
@@ -109,12 +171,18 @@ jobs:
       - uses: ./.github/actions/setup-native-deps
       - name: Build unified native desktop
         run: cargo build -p dg_xch_cli --no-default-features --features desktop,vulkan --locked
+      - name: Check post-quantum desktop feature wiring
+        run: cargo check -p dg_xch_cli --no-default-features --features desktop,vulkan,labrador --locked
       - name: Test launcher initialization
         run: cargo test -p dg_xch_cli --no-default-features --features desktop,vulkan --test setup_cli --locked
       - name: Test desktop and wallet
         run: cargo test -p dg_xch_gui -p dg_xch_wallet -p dg_xch_farmer --locked
+      - name: Test post-quantum desktop
+        run: cargo test -p dg_xch_gui --lib --features labrador --locked
       - name: Test pooling protocols and puzzle compatibility
         run: cargo test -p dg_xch_pool -p dg_xch_puzzles --locked
+      - name: Build post-quantum desktop for runtime checks
+        run: cargo build -p dg_xch_cli --no-default-features --features desktop,vulkan,labrador --locked
       - name: Render every page on Linux
         if: runner.os == 'Linux'
         run: timeout 60s xvfb-run -a target/debug/dgx gui --smoke-test
@@ -127,6 +195,42 @@ jobs:
       - name: Render every page on Windows
         if: runner.os == 'Windows'
         run: timeout 60s target/debug/dgx.exe gui --smoke-test
+      - name: Render both profiles on headless Wayland
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get install --yes weston
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --renderer=pixman --socket=wayland-test --idle-time=0 > "$RUNNER_TEMP/weston.log" 2>&1 &
+          compositor=$!
+          trap 'kill "$compositor"; rm -rf "$XDG_RUNTIME_DIR"' EXIT
+          for attempt in $(seq 1 50); do
+            test -S "$XDG_RUNTIME_DIR/wayland-test" && break
+            sleep 0.1
+          done
+          test -S "$XDG_RUNTIME_DIR/wayland-test"
+          unset DISPLAY WINIT_UNIX_BACKEND
+          export WAYLAND_DISPLAY=wayland-test WGPU_BACKEND=vulkan
+          timeout 60s target/debug/dgx gui --smoke-test
+          DGX_GUI_SMOKE_PROFILE=falcon timeout 60s target/debug/dgx gui --smoke-test
+      - name: Render Falcon pages on Linux
+        if: runner.os == 'Linux'
+        run: timeout 60s xvfb-run -a target/debug/dgx gui --smoke-test
+        env:
+          DGX_GUI_SMOKE_PROFILE: falcon
+          WINIT_UNIX_BACKEND: x11
+          WGPU_BACKEND: vulkan
+      - name: Render Falcon pages on macOS
+        if: runner.os == 'macOS'
+        run: python3 -c 'import subprocess; subprocess.run(["target/debug/dgx", "gui", "--smoke-test"], check=True, timeout=60)'
+        env:
+          DGX_GUI_SMOKE_PROFILE: falcon
+      - name: Render Falcon pages on Windows
+        if: runner.os == 'Windows'
+        run: timeout 60s target/debug/dgx.exe gui --smoke-test
+        env:
+          DGX_GUI_SMOKE_PROFILE: falcon
 
   rocksdb:
     name: RocksDB full node

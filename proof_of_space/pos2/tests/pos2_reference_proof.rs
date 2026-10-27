@@ -310,3 +310,30 @@ fn cuda_shared_pairing_and_scan_logic_recovers_reference_fragments() {
         assert_eq!(entries[0].xs.as_slice(), group);
     }
 }
+
+#[test]
+fn cpu_solver_recovers_reference_chain_with_small_memory_and_large_entry_ceiling() {
+    use dg_xch_pos2::{chainer::Chain, plotting::PlotLimits, solver::solve};
+    use std::sync::atomic::AtomicBool;
+    let v = validator();
+    let limits = PlotLimits {
+        memory_bytes: 64 * 1024 * 1024,
+        max_entries: 310_000_000,
+        max_work: 10_000_000_000,
+    };
+    let proof = solve(
+        v.core().params(),
+        &Chain {
+            fragments: EXPECTED_FRAGMENTS,
+        },
+        challenge(),
+        limits,
+        &AtomicBool::new(false),
+    )
+    .expect("an entry ceiling must not force worst-case buffer reservations");
+    let xs: [u32; 128] = expand_bits(&proof, 18).unwrap().try_into().unwrap();
+    assert_eq!(
+        v.validate_full_proof(&xs, challenge()),
+        Some(EXPECTED_FRAGMENTS)
+    );
+}

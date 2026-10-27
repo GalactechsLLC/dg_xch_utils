@@ -26,7 +26,10 @@ pub fn run(
         }
     };
     let settings = if smoke {
-        Settings::default()
+        smoke_settings(
+            &paths,
+            &std::env::var("DGX_GUI_SMOKE_PROFILE").unwrap_or_else(|_| "bls".into()),
+        )?
     } else {
         paths.load()?
     };
@@ -60,4 +63,53 @@ pub fn run(
         return Err("native desktop closed before all pages rendered".into());
     }
     Ok(())
+}
+
+fn smoke_settings(paths: &AppPaths, profile: &str) -> Result<Settings, Box<dyn std::error::Error>> {
+    if !matches!(profile, "bls" | "falcon") {
+        return Err("DGX_GUI_SMOKE_PROFILE must be bls or falcon".into());
+    }
+    let mut settings = Settings::default();
+    if profile == "falcon" {
+        if !cfg!(feature = "falcon") {
+            return Err("Falcon smoke testing requires the falcon feature".into());
+        }
+        std::fs::create_dir_all(&paths.config)?;
+        let chain_path = paths.config.join("chain.json");
+        let chain = dg_xch_core::consensus::chain_definition::ChainDefinition::falcon_development(
+            "desktop-smoke-test".into(),
+        );
+        std::fs::write(&chain_path, serde_json::to_vec(&chain)?)?;
+        settings.custom_chain = true;
+        settings.chain_definition_path = chain_path.display().to_string();
+        settings.genesis_header_hash = "00".repeat(32);
+        settings.normalize_network()?;
+    }
+    Ok(settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smoke_profiles_select_the_requested_consensus() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = AppPaths {
+            config: root.path().join("config"),
+            data: root.path().join("data"),
+        };
+        let bls = smoke_settings(&paths, "bls").unwrap();
+        assert!(bls.constants().unwrap().signature_profile.is_bls());
+        assert_eq!(bls.constants().unwrap().bech32_prefix, "xch");
+        assert!(smoke_settings(&paths, "typo").is_err());
+        if cfg!(feature = "falcon") {
+            let falcon = smoke_settings(&paths, "falcon").unwrap();
+            falcon.validate().unwrap();
+            assert!(!falcon.constants().unwrap().signature_profile.is_bls());
+            assert_eq!(falcon.constants().unwrap().bech32_prefix, "dgx");
+        } else {
+            assert!(smoke_settings(&paths, "falcon").is_err());
+        }
+    }
 }

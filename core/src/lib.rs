@@ -1,4 +1,5 @@
 pub mod blockchain;
+pub mod branding;
 pub mod clvm;
 pub mod compute;
 pub mod config;
@@ -10,6 +11,7 @@ pub mod formatting;
 pub mod plots;
 pub mod pool;
 pub mod protocols;
+pub mod signatures;
 pub mod ssl;
 pub mod traits;
 pub mod utils;

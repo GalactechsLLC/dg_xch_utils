@@ -36,6 +36,7 @@ fn sp(cc_challenge: u8) -> SignagePoint {
 // guard) but bogus proof bytes — it reaches, and fails, verify_and_get_quality_string.
 fn declare(index: u8, cc_sp: u8, challenge_hash: Bytes32) -> DeclareProofOfSpace {
     DeclareProofOfSpace {
+        authorization: Default::default(),
         challenge_hash,
         challenge_chain_sp: Bytes32::from([cc_sp; 32]),
         signage_point_index: index,

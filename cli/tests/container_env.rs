@@ -55,7 +55,7 @@ fn environment_document_loading_and_explicit_file_override_work_for_introducer()
         "listen": "0.0.0.0:8445", "chain": "mainnet",
         "tls": {"certificate": "/unused/cert", "private_key": "/unused/key", "ca_certificate": "/unused/ca"},
         "peer_server_name": "localhost", "max_connections": 0,
-        "max_peers": 4096, "peer_ttl_seconds": 3600
+        "database_url":"postgres://unused", "peer_ttl_seconds": 3600
     }).to_string();
     // Validation follows deserialization, proving the complete document was loaded.
     let output = dgx()

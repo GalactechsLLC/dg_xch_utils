@@ -239,6 +239,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                         (None, None)
                                     };
                                     let request = DeclareProofOfSpace {
+                                        authorization: Default::default(),
                                         challenge_hash: response.challenge_hash,
                                         challenge_chain_sp: *challenge_chain_sp,
                                         signage_point_index: sp_index,
@@ -416,6 +417,7 @@ impl<T: Sync + Send + 'static> MessageHandler for RespondSignaturesHandle<T> {
                                         return Ok(());
                                     }
                                     let request = SignedValues {
+                                        authorization: Default::default(),
                                         quality_string: computed_quality_string,
                                         foliage_block_data_signature: foliage_agg_sig
                                             .to_signature()

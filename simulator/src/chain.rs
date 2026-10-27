@@ -1,5 +1,6 @@
 use crate::error::SimError;
 use crate::factory::{FarmedIters, build_genesis_full, build_genesis_unfinished, farm_genesis};
+use crate::plots::{PlotKeys, PlotSigning};
 use crate::pos2::PlotSet;
 use crate::timelord::prove_vdf;
 use dg_xch_core::blockchain::block_record::BlockRecord;
@@ -16,7 +17,6 @@ use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::subslot_bundle::SubSlotBundle;
 use dg_xch_core::blockchain::subslot_proofs::SubSlotProofs;
-use dg_xch_core::clvm::bls_bindings::sign;
 use dg_xch_core::consensus::block_generator::conditions_from_spend_bundle;
 use dg_xch_core::consensus::block_rewards::{calculate_base_farmer_reward, calculate_pool_reward};
 use dg_xch_core::consensus::constants::ConsensusConstants;
@@ -38,7 +38,7 @@ use dg_xch_core::consensus::vdf_info_computation::get_signage_point_vdf_info;
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_node::engine::{AddBlockOutcome, BlockDelta, Engine};
 use dg_xch_node::mempool::Mempool;
-use dg_xch_node::primitives::NativePrimitives;
+use dg_xch_node::primitives::{ConsensusPrimitives, NativePrimitives};
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use dg_xch_stores::traits::{BlockStore, CoinStore};
 use std::collections::HashMap;
@@ -58,13 +58,17 @@ struct CrossSlot {
     base: u128,
 }
 
+pub type AuthorizationFactory<P> =
+    Arc<dyn Fn(&FullBlock) -> Result<P, std::io::Error> + Send + Sync>;
+
 /// A running simulated chain: an engine, the plots it farms with, and the block records it has
 /// confirmed so far. `farm_next` produces and confirms one more block, so a test can grow a chain
 /// and then hand its blocks to a fresh node to sync.
-pub struct ChainBuilder<S> {
-    engine: Engine<S, NativePrimitives>,
+pub struct ChainBuilder<S, K = PlotKeys, P = NativePrimitives> {
+    engine: Engine<S, P>,
+    prepare_primitives: Option<AuthorizationFactory<P>>,
     constants: ConsensusConstants,
-    plots: PlotSet,
+    plots: PlotSet<K>,
     difficulty: u64,
     sub_slot_iters: u64,
     farmer_reward_puzzle_hash: Bytes32,
@@ -77,17 +81,27 @@ pub struct ChainBuilder<S> {
 }
 
 impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
-    pub fn new(
+    pub fn new(store: S, constants: ConsensusConstants, plots: PlotSet, reward: Bytes32) -> Self {
+        Self::new_with_primitives(store, NativePrimitives, constants, plots, reward)
+    }
+}
+
+impl<S: BlockStore + CoinStore + Sync, K: PlotSigning, P: ConsensusPrimitives + Sync>
+    ChainBuilder<S, K, P>
+{
+    pub fn new_with_primitives(
         store: S,
+        primitives: P,
         constants: ConsensusConstants,
-        plots: PlotSet,
+        plots: PlotSet<K>,
         farmer_reward_puzzle_hash: Bytes32,
     ) -> Self {
         let difficulty = constants.difficulty_starting;
         let sub_slot_iters = constants.sub_slot_iters_starting;
-        let engine = Engine::new(store, NativePrimitives, constants);
+        let engine = Engine::new(store, primitives, constants);
         Self {
             engine,
+            prepare_primitives: None,
             constants,
             plots,
             difficulty,
@@ -102,6 +116,11 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
         }
     }
 
+    /// Supply immutable per-block authorization alongside the shared producer output.
+    pub fn set_authorization_factory(&mut self, factory: AuthorizationFactory<P>) {
+        self.prepare_primitives = Some(factory);
+    }
+
     /// Every block confirmed so far, in height order — the corpus a fresh node syncs.
     #[must_use]
     pub fn blocks(&self) -> &[FullBlock] {
@@ -109,7 +128,7 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
     }
 
     #[must_use]
-    pub fn engine(&self) -> &Engine<S, NativePrimitives> {
+    pub fn engine(&self) -> &Engine<S, P> {
         &self.engine
     }
 
@@ -133,6 +152,9 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
         let header_hash = block
             .header_hash()
             .map_err(|e| SimError::Invariant(format!("header hash: {e}")))?;
+        if let Some(factory) = &self.prepare_primitives {
+            self.engine.replace_primitives(factory(&block)?);
+        }
         let (outcome, delta) = self
             .engine
             .add_block_with_delta(&block)
@@ -700,10 +722,7 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
             let pool_target_bytes = pool_target
                 .to_bytes(ChiaProtocolVersion::default())
                 .map_err(SimError::Io)?;
-            let pool_signature = dg_xch_core::blockchain::sized_bytes::Bytes96::parse(
-                &sign(&plot_keys.pool, &pool_target_bytes).to_bytes(),
-            )
-            .map_err(|e| SimError::Invariant(format!("pool sig: {e:?}")))?;
+            let pool_signature = plot_keys.sign_pool(&pool_target_bytes)?;
             let signer =
                 move |msg: Bytes32, _pk: &Bytes48| plot_keys.sign(msg).expect("plot signing");
             let (reward_claims, prev_tx_hash) = if is_tx {
@@ -791,9 +810,9 @@ impl<S: BlockStore + CoinStore + Sync> ChainBuilder<S> {
                 }
                 let pos = ProofOfSpace::v2(
                     pos_challenge,
-                    Some(plot.keys.pool_public_key),
+                    Some(plot.keys.pool_public_key()),
                     None,
-                    plot.keys.plot_public_key,
+                    plot.keys.plot_public_key(),
                     u16::try_from(plot_index).unwrap_or(u16::MAX),
                     0,
                     self.plots.strength,

@@ -1,13 +1,17 @@
-//! Embedded full-node storage. V1 keeps all indexes live and stages one atomic write batch.
+//! Embedded full-node storage with atomic write batches and deferred wallet indexes during sync.
 mod block;
 mod coin;
+#[cfg(feature = "coin-index")]
+mod indexes;
 
 use crate::{BatchHandle, StoreError};
 use ::rocksdb::{DB, Direction, IteratorMode, Options, Snapshot, WriteBatch, WriteOptions};
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
+#[cfg(feature = "coin-index")]
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -16,7 +20,7 @@ use std::time::Instant;
 use tokio::sync::{OwnedMutexGuard, Semaphore};
 
 const VERSION: ChiaProtocolVersion = ChiaProtocolVersion::Chia0_0_37;
-type Pending = BTreeMap<Vec<u8>, Option<Vec<u8>>>;
+type Pending = HashMap<Vec<u8>, Option<Vec<u8>>>;
 
 // One column family with distinct key prefixes avoids per-family memory budgets in v1.
 const COIN: u8 = b'c';
@@ -37,6 +41,8 @@ const SEGMENTS: u8 = b'e';
 const PEAK: &[u8] = b"!peak";
 const SCHEMA: &[u8] = b"!schema";
 const FEATURES: &[u8] = b"!features";
+#[cfg(feature = "coin-index")]
+const SERVICE_INDEXES: &[u8] = b"!service_indexes";
 
 pub struct RocksDbStore {
     db: Arc<DB>,
@@ -44,6 +50,8 @@ pub struct RocksDbStore {
     writer: Arc<tokio::sync::Mutex<()>>,
     workers: Arc<Semaphore>,
     near_tip: AtomicBool,
+    coin_workers: Arc<rayon::ThreadPool>,
+    telemetry: Arc<crate::telemetry::StoreTelemetry>,
 }
 
 pub(crate) struct RocksBatch {
@@ -54,6 +62,7 @@ pub(crate) struct RocksBatch {
     // Workers retain this Arc, so cancellation never releases the writer during database work.
     _writer: OwnedMutexGuard<()>,
     started: Instant,
+    _timing: crate::telemetry::OperationTimer,
 }
 
 #[derive(Default)]
@@ -141,6 +150,25 @@ impl View<'_> {
         }
     }
 
+    fn get_many(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, StoreError> {
+        let mut result = vec![None; keys.len()];
+        let mut missing = Vec::new();
+        for (i, key) in keys.iter().enumerate() {
+            if let Some(value) = self.pending.get(key) {
+                result[i] = value.clone();
+            } else {
+                missing.push((i, key));
+            }
+        }
+        if !missing.is_empty() {
+            let values = self.snapshot.multi_get(missing.iter().map(|(_, key)| key));
+            for ((i, _), value) in missing.into_iter().zip(values) {
+                result[i] = value?;
+            }
+        }
+        Ok(result)
+    }
+
     fn put(&mut self, key: Vec<u8>, value: Vec<u8>) {
         self.pending.insert(key, Some(value));
     }
@@ -168,11 +196,13 @@ impl View<'_> {
             .snapshot
             .iterator(IteratorMode::From(start, Direction::Forward))
             .peekable();
-        let mut staged = self
+        let mut staged: Vec<_> = self
             .pending
-            .range(start.to_vec()..)
-            .take_while(|(k, _)| k.starts_with(prefix))
-            .peekable();
+            .iter()
+            .filter(|(k, _)| k.as_slice() >= start && k.starts_with(prefix))
+            .collect();
+        staged.sort_unstable_by_key(|(k, _)| *k);
+        let mut staged = staged.into_iter().peekable();
         loop {
             let disk_key = match disk.peek() {
                 Some(Ok((k, _))) if k.starts_with(prefix) => Some(k.as_ref()),
@@ -228,10 +258,17 @@ impl RocksDbStore {
             let mut options = Options::default();
             options.create_if_missing(true);
             options.enable_statistics();
+            // Leave room for peers and background file opens even under a 1024-FD shell limit.
+            options.set_max_open_files(512);
+            let background_jobs = std::thread::available_parallelism()
+                .map_or(2, std::num::NonZeroUsize::get)
+                .div_ceil(4)
+                .clamp(2, 8);
+            options.increase_parallelism(background_jobs as i32);
             options.set_compression_type(::rocksdb::DBCompressionType::None);
             let db = DB::open(&options, &path)?;
-            // Service indexes are maintained from the first write. Refuse feature upgrades that
-            // would silently serve incomplete indexes; a fresh DB is the v1 upgrade path.
+            // Refuse feature upgrades that would silently omit historical hint data or indexes;
+            // deferred indexes retain the original feature tier and are rebuilt explicitly.
             let features = [u8::from(cfg!(feature = "coin-index")), u8::from(cfg!(feature = "hint"))];
             match db.get(SCHEMA)? {
                 Some(version) if version != b"1" => return Err(StoreError::Corrupt("unsupported rocksdb schema version".into())),
@@ -258,12 +295,24 @@ impl RocksDbStore {
             log::info!("rocksdb open path={} schema=1 coin_index={} hint={} wal=true sync=true elapsed_ms={}", path.display(), features[0], features[1], started.elapsed().as_millis());
             Ok((db, options))
         }).await.map_err(|e| StoreError::Batch(format!("rocksdb open worker: {e}")))??;
+        let coin_workers = rayon::ThreadPoolBuilder::new()
+            .num_threads(
+                std::thread::available_parallelism()
+                    .map_or(1, std::num::NonZeroUsize::get)
+                    .div_ceil(4)
+                    .clamp(1, 16),
+            )
+            .thread_name(|index| format!("dg-rocks-coin-{index}"))
+            .build()
+            .map_err(|e| StoreError::Batch(format!("rocksdb coin workers: {e}")))?;
         Ok(Self {
             db: Arc::new(db),
             options: Arc::new(options),
             writer: Arc::new(tokio::sync::Mutex::new(())),
             workers: Arc::new(Semaphore::new(8)),
             near_tip: AtomicBool::new(false),
+            coin_workers: Arc::new(coin_workers),
+            telemetry: crate::telemetry::StoreTelemetry::new(),
         })
     }
 
@@ -288,7 +337,7 @@ impl RocksDbStore {
                 pending: &mut pending,
             };
             let result = f(&view);
-            log::info!(
+            log::debug!(
                 "rocksdb read operation={operation} elapsed_us={} success={}",
                 started.elapsed().as_micros(),
                 result.is_ok()
@@ -350,7 +399,7 @@ impl RocksDbStore {
             if result.is_err() {
                 state.failed = true;
             }
-            log::info!(
+            log::debug!(
                 "rocksdb stage operation={operation} elapsed_us={} pending_keys={} success={}",
                 started.elapsed().as_micros(),
                 state.pending.len(),
@@ -364,7 +413,7 @@ impl RocksDbStore {
 
     fn log_properties(db: &DB, options: &Options) {
         use ::rocksdb::statistics::Ticker;
-        log::info!(
+        log::debug!(
             "rocksdb counters stall_us_total={} bytes_written_total={} bytes_read_total={} wal_bytes_written_total={} wal_syncs_total={} compaction_read_bytes_total={} compaction_write_bytes_total={} flush_write_bytes_total={} cache_hits_total={} cache_misses_total={}",
             options.get_ticker_count(Ticker::StallMicros),
             options.get_ticker_count(Ticker::BytesWritten),
@@ -378,7 +427,7 @@ impl RocksDbStore {
             options.get_ticker_count(Ticker::BlockCacheMiss)
         );
         let get = |name| db.property_int_value(name).ok().flatten().unwrap_or(0);
-        log::info!(
+        log::debug!(
             "rocksdb stats memtable_bytes={} block_cache_bytes={} pending_compaction_bytes={} live_sst_bytes={} running_compactions={} running_flushes={} write_stopped={} background_errors={}",
             get("rocksdb.cur-size-all-mem-tables"),
             get("rocksdb.block-cache-usage"),

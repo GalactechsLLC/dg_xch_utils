@@ -328,6 +328,7 @@ pub mod kernels {
     }
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // Shared kernel implementation carries separate buffers.
     fn match_table<const REPLICAS: usize>(
         configuration: [u32; 32],
         input: &[[u32; 4]],
@@ -376,8 +377,7 @@ pub mod kernels {
             if position < configuration[26]
                 || position >= configuration[28]
                 || position as usize >= input.len()
-                || number < 1
-                || number > 3
+                || !(1..=3).contains(&number)
                 || index.len() <= INFO_COUNT as usize
             {
                 errors.fetch_or(4, AtomicOrdering::Relaxed);

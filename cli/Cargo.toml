@@ -22,13 +22,14 @@ dg_xch_farmer = { path = "../farmer" }
 dg_xch_plotter = { path = "../plotter" }
 dg_xch_pos2 = { path = "../proof_of_space/pos2" }
 dg_xch_introducer = { path = "../introducer" }
+dg_xch_crawler = { path = "../crawler", version = "3.0.0" }
 dg_xch_pool = { path = "../pool" }
 dg_xch_timelord = { path = "../timelord", optional = true }
 dg_xch_vdf = { path = "../vdf", optional = true }
 dg_xch_wallet = { path = "../wallet" }
 serde = { version = "1.0.228", features = ["derive"] }
 async-trait = "0.1.89"
-bip39 = {version= "2.2.2", features=["rand"] }
+bip39 = {version= "3.0.0", features=["rand"] }
 blst = { version = "0.3.16", features = ["portable"] }
 clap = { version = "4.5.60", features = ["derive", "env"] }
 dashmap = "6.1.0"
@@ -43,21 +44,23 @@ dg_xch_serialize= {path = "../serialize", version="3.0.0"}
 dg_xch_servers = { path = "../servers", version = "3.0.0" }
 dg_full_node = { path = "../full-node", version = "3.0.0", default-features = false, optional = true }
 hex = "0.4.3"
-lazy_static = "1.5.0"
+lazy_static = "1.5.1"
 log = "0.4.29"
 num-traits = "0.2.19"
-rand = "0.10.0"
-serde_json = "1.0.149"
+rand = "0.10.3"
+serde_json = "1.0.154"
 serde_yaml = { package = "serde_norway", version = "0.9.42" }
-tokio = {version = "1.50.0", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
+tokio = {version = "1.54.1", features=["rt-multi-thread", "sync", "signal", "macros", "process", "time", "fs", "net"]}
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tikv-jemallocator = { version = "0.6", features = ["background_threads"], optional = true }
+tikv-jemallocator = { version = "0.7.0", features = ["background_threads"], optional = true }
 
 [target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
-tikv-jemallocator = { version = "0.6", optional = true }
+tikv-jemallocator = { version = "0.7.0", optional = true }
 
 [features]
+falcon = ["dg_xch_core/falcon", "dg_xch_farmer/falcon", "dg_xch_pool/falcon", "dg_full_node?/falcon", "dg_xch_timelord?/falcon", "dg_xch_wallet/falcon", "dg_xch_gui?/falcon", "dg_xch_plotter/falcon", "dg_xch_crawler/falcon", "dg_xch_introducer/falcon"]
+labrador = ["falcon", "dg_xch_core/labrador", "dg_full_node?/labrador", "dg_xch_wallet/labrador", "dg_xch_gui?/labrador", "dg_xch_farmer/labrador", "dg_xch_pool/labrador", "dg_xch_timelord?/labrador", "dg_xch_plotter/labrador", "dg_xch_crawler/labrador", "dg_xch_introducer/labrador"]
 default = ["hint", "desktop", "vulkan", "timelord"]
 desktop = ["dep:dg_xch_gui"]
 vulkan = ["dg_xch_farmer/vulkan", "dg_xch_plotter/vulkan", "dg_xch_pos2/vulkan"]

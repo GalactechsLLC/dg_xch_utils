@@ -814,6 +814,10 @@ impl<'a> Compiler<'a> {
                         }
                     }
                 }
+                if operator.bytes.as_ref() == b"falcon_verify" {
+                    args.insert(0, SExp::from(crate::clvm::falcon_ops::FALCON_VERIFY_OPCODE));
+                    return self.create_pair_sexp(args);
+                }
                 if self.flags & COMPAT_CHIA != 0 {
                     let opcode = match operator.bytes.as_ref() {
                         b"secp256k1_verify" => Some(0x13d61f00u32),

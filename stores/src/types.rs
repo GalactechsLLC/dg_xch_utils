@@ -1,5 +1,6 @@
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
-use sqlx::{SqliteConnection, TransactionManager};
+use sqlx::SqliteConnection;
+use sqlx_core::transaction::TransactionManager;
 use std::ops::{Deref, DerefMut};
 use tokio::sync::OwnedMutexGuard;
 
@@ -34,6 +35,12 @@ impl OwnedCoinChanges {
 
 pub enum PreparedCoinWindow {
     Native(Vec<OwnedCoinChanges>),
+    #[cfg(feature = "rocksdb")]
+    Rocksdb {
+        additions: Vec<(Bytes32, dg_xch_core::blockchain::coin_record::CoinRecord)>,
+        removals: Vec<(Bytes32, u32)>,
+        hints: Vec<(Bytes32, Bytes32)>,
+    },
     Sqlite {
         additions: Vec<(Bytes32, dg_xch_core::blockchain::coin_record::CoinRecord)>,
         removals: Vec<(Bytes32, u32)>,

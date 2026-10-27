@@ -86,6 +86,13 @@ where
             error!("No SignagePoint Source Data Included for Farmer which Requires it");
         }
         let mut pool_difficulties = vec![];
+        for (contract, pool) in self.shared_state.falcon_pool_states.read().await.iter() {
+            pool_difficulties.push(PoolDifficulty {
+                difficulty: pool.current_difficulty,
+                sub_slot_iters: self.constants.pool_sub_slot_iters,
+                pool_contract_puzzle_hash: *contract,
+            });
+        }
         debug!("Generating Pool Difficulties");
         for (p2_singleton_puzzle_hash, pool_dict) in self.pool_state.read().await.iter() {
             if let Some(config) = &pool_dict.pool_config {

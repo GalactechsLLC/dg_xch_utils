@@ -283,6 +283,7 @@ struct Window {
 /// is allowed to be sent. Outgoing budgets roll over the last `reset_seconds`, so a
 /// peer with differently aligned window boundaries cannot receive two full bursts in one window.
 pub struct RateLimiter {
+    signature_profile: crate::signatures::SignatureProfile,
     incoming: bool,
     reset_seconds: u64,
     percentage_of_limit: u32,
@@ -300,12 +301,20 @@ impl RateLimiter {
     #[must_use]
     pub fn with_params(incoming: bool, reset_seconds: u64, percentage_of_limit: u32) -> Self {
         Self {
+            signature_profile: Default::default(),
             incoming,
             reset_seconds: reset_seconds.max(1),
             percentage_of_limit,
             start: Instant::now(),
             inner: Mutex::new(Window::default()),
         }
+    }
+
+    /// The profile comes from local chain configuration, never a peer claim.
+    #[must_use]
+    pub fn with_signature_profile(mut self, profile: crate::signatures::SignatureProfile) -> Self {
+        self.signature_profile = profile;
+        self
     }
 
     /// Check one message against the composed limits for this connection. Returns `Some(reason)` when
@@ -329,7 +338,18 @@ impl RateLimiter {
         now: Instant,
     ) -> Option<String> {
         let both_v2 = peer_supports_v2(peer_caps);
-        let limit = composed_limit(msg_type, both_v2);
+        let mut limit = composed_limit(msg_type, both_v2);
+        if !self.signature_profile.is_bls()
+            && matches!(
+                msg_type,
+                ProtocolMessageTypes::SignedValues | ProtocolMessageTypes::RespondSignatures
+            )
+            && let Limit::Rl(ref mut settings) = limit
+        {
+            // Two padded Falcon signatures and public keys, bounded messages, and framing.
+            // Frequency and aggregate budgets remain unchanged.
+            settings.max_size = 8 * KIB;
+        }
         let proportion = f64::from(self.percentage_of_limit) / 100.0;
         let size = size as u64;
 

@@ -33,6 +33,7 @@ fn decode() -> RespondBlocks {
 // (`get_unfinished()`) and their proofs from the block, keep the foliage + transaction payload verbatim.
 fn to_unfinished(block: &FullBlock) -> UnfinishedBlock {
     UnfinishedBlock {
+        authorization: Default::default(),
         finished_sub_slots: block.finished_sub_slots.clone(),
         reward_chain_block: block.reward_chain_block.get_unfinished(),
         challenge_chain_sp_proof: block.challenge_chain_sp_proof.clone(),

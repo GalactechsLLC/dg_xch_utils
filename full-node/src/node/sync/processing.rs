@@ -168,11 +168,12 @@ pub(super) async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 's
                 chaser.confirmed_ref_generators(&next).await
             };
             let constants = pipe_constants;
+            let primitives = node.primitives.clone();
             pre_task = Some((
                 next_from,
                 tokio::task::spawn_blocking(move || {
                     dg_xch_node::sync::precompute_window_bodies_standalone(
-                        &NativePrimitives,
+                        &primitives,
                         &constants,
                         pipe_assume_valid,
                         &next,
@@ -211,14 +212,11 @@ pub(super) async fn block_processor<S: BlockStore + CoinStore + Send + Sync + 's
                 Ok(mut staged_window) => {
                     let input = staged_window.take_drain_input();
                     let constants = pipe_constants;
+                    let primitives = node.primitives.clone();
                     spawned = Some((
                         staged_window,
                         tokio::task::spawn_blocking(move || {
-                            dg_xch_node::sync::drain_staged_window(
-                                &NativePrimitives,
-                                &constants,
-                                input,
-                            )
+                            dg_xch_node::sync::drain_staged_window(&primitives, &constants, input)
                         }),
                     ));
                 }

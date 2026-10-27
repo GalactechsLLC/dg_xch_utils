@@ -7,6 +7,61 @@ use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_puzzles::pool_launch::PoolLaunch;
 use std::io::Error;
 
+#[cfg(feature = "falcon")]
+pub async fn fund_falcon_launch(
+    wallet: &crate::falcon::FalconWallet,
+    origin: Coin,
+    launch: PoolLaunch,
+    fee: u64,
+    height: u32,
+) -> Result<SpendBundle, Error> {
+    use crate::{
+        conditions::{Conditions, announcement_id},
+        signing::TransactionWallet,
+    };
+    let launcher = launch
+        .spends
+        .first()
+        .ok_or_else(|| Error::other("PlotNFT launch has no launcher spend"))?;
+    if launcher.coin.parent_coin_info != origin.name()
+        || launcher.coin.name() != launch.launcher_id
+        || launcher.coin.amount != 1
+        || launcher.coin.puzzle_hash != dg_xch_puzzles::programs::SINGLETON_LAUNCHER_TREE_HASH
+        || launch.spends.len() != 2
+        || launch.spends[1].coin.parent_coin_info != launcher.coin.name()
+    {
+        return Err(Error::other(
+            "Falcon PlotNFT launch is not bound to the funding coin",
+        ));
+    }
+    let change = origin
+        .amount
+        .checked_sub(1)
+        .and_then(|n| n.checked_sub(fee))
+        .ok_or_else(|| Error::other("insufficient PlotNFT funding"))?;
+    let puzzle = wallet.owner_puzzle(&origin.puzzle_hash).await?;
+    let mut conditions = Conditions::new()
+        .reserve_fee(fee)
+        .create_coin(launcher.coin.puzzle_hash, 1, None)
+        .assert_coin_announcement(announcement_id(
+            launcher.coin.name(),
+            launcher.solution.to_program()?.tree_hash().as_ref(),
+        ))
+        .assert_coin_announcement(announcement_id(launch.spends[1].coin.name(), &[]));
+    if change > 0 {
+        conditions = conditions.create_coin(origin.puzzle_hash, change, None);
+    }
+    let mut spends = vec![dg_xch_core::blockchain::coin_spend::CoinSpend {
+        coin: origin,
+        puzzle_reveal: puzzle.serialized()?,
+        solution: wallet
+            .conditions_solution(conditions.program())?
+            .serialized()?,
+    }];
+    spends.extend(launch.spends);
+    wallet.authorize(spends, height).await
+}
+
 pub async fn fund_launch(
     wallet: &MemoryWallet,
     origin: Coin,
@@ -186,6 +241,7 @@ mod tests {
                 .unwrap()
             };
             let claim = SpendBundle {
+                authorization: Default::default(),
                 coin_spends: claims,
                 ..SpendBundle::default()
             };

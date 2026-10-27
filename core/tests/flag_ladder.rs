@@ -201,3 +201,18 @@ fn a_flag_is_never_enabled_before_its_fork() {
     }
     eprintln!("  the hard-fork-1 to soft-fork-8 window is flag-free, as chia has it");
 }
+
+#[test]
+fn falcon_operator_activation_does_not_change_bls_consensus_flags() {
+    use dg_xch_core::{clvm::falcon_ops::ENABLE_FALCON_OPS, signatures::SignatureProfile};
+    let mut falcon = MAINNET;
+    falcon.signature_profile = SignatureProfile::FnDsa512V2;
+    for height in boundary_heights(&MAINNET) {
+        let bls = BlockGeneratorFlags::for_height(&MAINNET, height).clvm_flags;
+        assert_eq!(bls & ENABLE_FALCON_OPS, 0);
+        assert_eq!(
+            BlockGeneratorFlags::for_height(&falcon, height).clvm_flags,
+            bls | ENABLE_FALCON_OPS
+        );
+    }
+}

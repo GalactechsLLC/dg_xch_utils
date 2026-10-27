@@ -14,12 +14,70 @@ pub struct PoolConfig {
 }
 
 #[derive(Clone)]
-pub struct PlotNft {
+pub struct PlotNft<K = Bytes48> {
     pub launcher_id: Bytes32,
     pub genesis_challenge: Bytes32,
-    pub synthetic_public_key: Bytes48,
+    pub synthetic_public_key: K,
     pub pool: Option<PoolConfig>,
     pub exiting: bool,
+}
+
+/// The owner member authorizes the delegated puzzle. Pool restrictions, reward
+/// claims and singleton lineage are identical for the two signature profiles.
+pub trait PoolOwner: Clone {
+    fn validate(&self) -> Result<(), Error>;
+    fn atom(&self) -> Program<'static>;
+    fn member(&self) -> Result<Program<'static>, Error>;
+}
+
+impl PoolOwner for Bytes48 {
+    fn validate(&self) -> Result<(), Error> {
+        blst::min_pk::PublicKey::key_validate(self.as_ref())
+            .map(|_| ())
+            .map_err(|_| Error::other("invalid PlotNFT public key"))
+    }
+    fn atom(&self) -> Program<'static> {
+        (*self).into()
+    }
+    fn member(&self) -> Result<Program<'static>, Error> {
+        program(crate::programs::BLS_WITH_TAPROOT_MEMBER_SRC)
+            .map(|puzzle| puzzle.curry(&[self.atom()]).to_owned())
+    }
+}
+
+impl PoolOwner for dg_xch_core::signatures::falcon::FalconPublicKey {
+    fn validate(&self) -> Result<(), Error> {
+        if dg_xch_core::signatures::falcon::FnDsa512V2::valid_public_key(self) {
+            Ok(())
+        } else {
+            Err(Error::other(
+                "invalid or unsupported Falcon PlotNFT public key",
+            ))
+        }
+    }
+    fn atom(&self) -> Program<'static> {
+        Program::to(self.to_vec())
+    }
+    fn member(&self) -> Result<Program<'static>, Error> {
+        // MIPS supplies the delegated puzzle hash as the first environment item.
+        // Emit exactly (AGG_SIG_ME key delegated_hash ()); there is no BLS
+        // taproot/point-add branch and no unsigned hidden-puzzle alternative.
+        fn cons(a: SExp<'static>, b: SExp<'static>) -> SExp<'static> {
+            vec![SExp::from(4u8), a, b].into()
+        }
+        fn quote(value: SExp<'static>) -> SExp<'static> {
+            SExp::from(1u8).cons(value)
+        }
+        let nil = SExp::from(Vec::<u8>::new());
+        let condition = cons(
+            quote(50u8.into()),
+            cons(
+                quote(self.to_vec().into()),
+                cons(2u8.into(), quote(vec![nil.clone()].into())),
+            ),
+        );
+        Ok(Program::new(cons(condition, quote(nil))))
+    }
 }
 
 fn program(bytes: &[u8]) -> Result<Program<'static>, Error> {
@@ -85,7 +143,7 @@ pub fn reward_puzzle(launcher: Bytes32) -> Result<Program<'static>, Error> {
     )
 }
 
-impl PlotNft {
+impl<K: PoolOwner> PlotNft<K> {
     pub fn claim_reward(
         &self,
         singleton: Coin,
@@ -192,8 +250,7 @@ impl PlotNft {
     }
 
     fn user_member(&self) -> Result<Program<'static>, Error> {
-        program(crate::programs::BLS_WITH_TAPROOT_MEMBER_SRC)
-            .map(|puzzle| puzzle.curry(&[self.synthetic_public_key.into()]).to_owned())
+        self.synthetic_public_key.member()
     }
 
     fn user_restriction(&self) -> Result<Program<'static>, Error> {
@@ -271,7 +328,7 @@ impl PlotNft {
         fn memo(items: Vec<Program<'static>>) -> Program<'static> {
             Program::new(SExp::from("CHIP-0043").cons(list(items).sexp().to_owned()))
         }
-        let mut additional = vec![self.synthetic_public_key.into()];
+        let mut additional = vec![self.synthetic_public_key.atom()];
         let hint = if let Some(pool) = &self.pool {
             additional.extend([
                 pool.target.into(),
@@ -320,15 +377,14 @@ impl PlotNft {
     pub fn launch(
         origin: Coin,
         genesis_challenge: Bytes32,
-        synthetic_public_key: Bytes48,
+        synthetic_public_key: K,
         pool: Option<PoolConfig>,
         hint: Bytes32,
     ) -> Result<crate::pool_launch::PoolLaunch, Error> {
         if origin.amount == 0 {
             return Err(Error::other("PlotNFT launch needs a funding coin"));
         }
-        blst::min_pk::PublicKey::key_validate(synthetic_public_key.as_ref())
-            .map_err(|_| Error::other("invalid PlotNFT public key"))?;
+        synthetic_public_key.validate()?;
         if pool.as_ref().is_some_and(|pool| {
             pool.relative_lock_height == 0
                 || pool.relative_lock_height > 1000

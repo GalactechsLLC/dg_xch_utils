@@ -19,6 +19,8 @@ mod radix_kernels;
 mod resident;
 mod resident_kernels;
 
+// Shared CPU/device helpers include functions unused by this backend.
+#[allow(dead_code)]
 #[path = "../../../proof_of_space/pos2/src/device.rs"]
 mod device;
 use device::{Config, Record};
@@ -116,6 +118,7 @@ mod kernels {
     }
 
     #[kernel]
+    #[allow(clippy::too_many_arguments)] // Kernel ABI passes buffers and bounds separately.
     pub fn emit(
         config: Config,
         table: u32,
@@ -128,29 +131,29 @@ mod kernels {
     ) {
         let index = thread::index_1d();
         let position = index.get();
-        if let Some(slot) = output.get_mut(index) {
-            if position < total as usize {
-                let mut lower = 0usize;
-                let mut upper = length as usize;
-                while lower < upper {
-                    let middle = lower + (upper - lower) / 2;
-                    if offsets[middle + 1] <= position as u32 {
-                        lower = middle + 1;
-                    } else {
-                        upper = middle;
-                    }
+        if let Some(slot) = output.get_mut(index)
+            && position < total as usize
+        {
+            let mut lower = 0usize;
+            let mut upper = length as usize;
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2;
+                if offsets[middle + 1] <= position as u32 {
+                    lower = middle + 1;
+                } else {
+                    upper = middle;
                 }
-                *slot = device::scan(
-                    config,
-                    table,
-                    input,
-                    length as usize,
-                    lower,
-                    position as u32 - offsets[lower],
-                    max_work,
-                )
-                .0;
             }
+            *slot = device::scan(
+                config,
+                table,
+                input,
+                length as usize,
+                lower,
+                position as u32 - offsets[lower],
+                max_work,
+            )
+            .0;
         }
     }
 }
@@ -159,11 +162,13 @@ fn gpu_error(error: impl std::fmt::Display) -> Error {
     Error::other(format!("CUDA: {error}"))
 }
 
+type HashBuffers = (DeviceBuffer<[u32; 4]>, DeviceBuffer<[u32; 4]>);
+
 struct CudaHasher {
     context: std::sync::Arc<CudaContext>,
     module: kernels::LoadedModule,
     keys: [[u32; 4]; 2],
-    buffers: Option<(DeviceBuffer<[u32; 4]>, DeviceBuffer<[u32; 4]>)>,
+    buffers: Option<HashBuffers>,
 }
 
 impl CudaHasher {
@@ -495,6 +500,9 @@ impl PlotOutput {
 #[derive(Parser)]
 #[command(about = "Experimental native Rust CUDA PoS2 plotter; no CPU fallback")]
 struct Arguments {
+    /// Interpret ownership fields as Falcon public key IDs instead of BLS keys.
+    #[arg(long)]
+    falcon: bool,
     #[arg(
         env = "DGX_PLOTTER_OUTPUT",
         long,
@@ -656,16 +664,28 @@ fn main() -> Result<(), Error> {
         .as_deref()
         .ok_or_else(|| Error::other("output required"))?;
     let cancelled = AtomicBool::new(false);
-    let info = if args.full_gpu_tables {
-        dg_xch_plotter::create_with_engine(
-            &request,
-            output,
-            limits,
-            &cancelled,
-            |params, limits, cancelled| build(params, limits, cancelled, args.device),
-        )?
+    let profile = if args.falcon {
+        dg_xch_plotter::SignatureProfile::FnDsa512V2
     } else {
-        dg_xch_plotter::create_with_writer(&request, output, &cancelled, |params, output, memo| {
+        dg_xch_plotter::SignatureProfile::Bls12381Aug
+    };
+    let info = dg_xch_plotter::create_with_writer_for_profile(
+        &request,
+        profile,
+        output,
+        &cancelled,
+        |params, output, memo| {
+            if args.full_gpu_tables {
+                let plot = build(params, limits, &cancelled, args.device)?;
+                return dg_xch_plotter::format::write_plot(
+                    output,
+                    &plot,
+                    request.index,
+                    request.meta_group,
+                    memo,
+                    &cancelled,
+                );
+            }
             let mut engine = CudaHasher::new(&params, args.device)?;
             let plot = match full_resident::build_device(
                 engine.context.clone(),
@@ -689,8 +709,8 @@ fn main() -> Result<(), Error> {
                 limits.memory_bytes,
                 &cancelled,
             )
-        })?
-    };
+        },
+    )?;
     println!("{info:?}");
     Ok(())
 }

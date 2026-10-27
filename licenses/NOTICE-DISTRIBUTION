@@ -1,0 +1,44 @@
+DGX third-party software and corresponding source
+
+This distribution uses third-party libraries under their respective licenses;
+the application's Apache-2.0 license does not replace those licenses.
+DEPENDENCIES.json lists the resolved packages, versions, declared licenses and
+copied notice files. Original notices embedded in source files are retained in
+the accompanying corresponding-source.tar.gz archive.
+The exact pinned Portfu packages have an owner-confirmed Apache-2.0 grant
+recorded in NOTICE-PORTFU; the inventory distinguishes that grant from the
+upstream manifests' omitted license declarations.
+
+The DGX full-node and timelord use Rug and gmp-mpfr-sys under LGPL-3.0-or-later,
+including the bundled GMP library under its upstream terms. Their use is
+covered by the GNU Lesser General Public License. Copies of the GNU LGPL and
+GNU GPL are included under dependencies/rug-*/ and dependencies/gmp-mpfr-sys-*/.
+
+The archive at /usr/local/share/dgx/corresponding-source.tar.gz contains the
+application source, exact Cargo-vendored dependency source, build scripts,
+Cargo.lock and offline Cargo source configuration. It accompanies the binaries
+to support the corresponding-source and relinking option in LGPLv3 section
+4(d)(0). It also includes sources for MPL and CDDL dependencies if resolved.
+The optional CUDA executable has an additional source archive and notices
+under /usr/local/share/dgx/cuda and /usr/local/share/licenses/dgx/cuda.
+
+Extract the archive, inspect BUILD-TOOLCHAIN.json, and use the commands and
+system build prerequisites in Dockerfile (or docker/Dockerfile.cuda for CUDA).
+Cargo accepts --offline with the supplied vendor directory. For example:
+
+  cargo build --offline --locked --release -p dg_xch_cli --bin dgx \
+    --no-default-features --features hint,timelord
+
+Use the features and binaries from the Docker stage being rebuilt. Modify the
+vendored library sources to rebuild with your own library changes. When doing
+so, update the modified file entries in that crate's .cargo-checksum.json to
+the new SHA-256 values; the package checksum should remain unchanged. Run Cargo
+again to rebuild and relink the application. Rebuilt executables can replace
+the originals in a derived image; no DGX signing key or approval is required.
+Modification and reverse engineering to debug library modifications are not
+restricted by DGX. Redistribution must preserve the applicable third-party
+licenses and this corresponding-source access.
+
+Container base-system packages retain their distribution-provided notices in
+/usr/share/doc. CUDA toolkit components are subject to NVIDIA's own terms;
+the optional CUDA build does not relicense those components as Apache-2.0.

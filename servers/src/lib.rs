@@ -1,6 +1,8 @@
 pub mod app_config;
 pub mod chain_config;
+pub mod observability;
 pub mod transport;
+pub mod web_theme;
 pub mod websocket;
 
 fn _version() -> &'static str {
@@ -19,3 +21,6 @@ pub fn version() -> String {
 fn test_version() {
     println!("{}", version());
 }
+
+#[cfg(feature = "discovery-postgres")]
+pub mod discovery;

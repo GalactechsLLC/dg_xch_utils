@@ -6,6 +6,7 @@ const BIG_COST: u64 = 11_000_000_000 / 2;
 
 fn empty_bundle() -> SpendBundle {
     SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: Bytes96::from([0u8; 96]),
     }
@@ -38,10 +39,12 @@ fn within_a_peer_lane_highest_fee_per_cost_drains_first() {
     let mut q = TxQueue::new(256, 32, BIG_COST);
     let p = peer(0x11);
     let low = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: Bytes96::from([1u8; 96]),
     };
     let high = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: Bytes96::from([2u8; 96]),
     };

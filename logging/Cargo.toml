@@ -13,7 +13,7 @@ bus = "2.4.1"
 colored = { version = "3.1.1", optional = true}
 ctrlc = "3.5.2"
 log = { version = "0.4.29"}
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 serde = { version = "1.0.228", features = ["derive"] }
 time = { version = "0.3.47", features = ["local-offset", "serde","macros","parsing","formatting"]}
 

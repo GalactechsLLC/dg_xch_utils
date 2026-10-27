@@ -271,6 +271,7 @@ fn transaction_generator_and_ref_list_propagate() {
     };
     let program = SerializedProgram::from_bytes(&[0x80]);
     let tx = BlockTransactions {
+        authorization: Default::default(),
         program: program.clone(),
         block_refs: vec![3, 5, 8],
         additions: vec![created],

@@ -48,6 +48,9 @@ pub const MAX_BLOCKS_PER_REQUEST: u32 = 128;
 pub const MAX_IDS_PER_REQUEST: usize = 32_690;
 /// Request-body cap (1 MiB). An oversize body is refused with HTTP 413.
 pub const MAX_RPC_BODY_BYTES: usize = 1024 * 1024;
+/// Transaction JSON expands the binary witness (byte arrays can take four times
+/// their wire size). Keep this allowance scoped to authenticated transaction submission.
+pub const MAX_PUSH_TX_BODY_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const RPC_TRUST_STORE: &str = "rpc-clients";
 // UI_ACTUAL_SPACE_CONSTANT_FACTOR — the netspace estimate's plot-efficiency constant.
 const UI_ACTUAL_SPACE_CONSTANT_FACTOR: f64 = 0.762;
@@ -341,6 +344,17 @@ pub struct PortfuRpcTlsContext {
 /// remain usable. Protected routes select one of these named stores and require a matching cert:
 /// `chia-peers` for the Chia protocol and `rpc-clients` for administrative APIs.
 pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsContext, IoError> {
+    let server_name =
+        std::env::var("DGX_FULL_NODE_TLS_SERVER_NAME").unwrap_or_else(|_| "localhost".into());
+    build_portfu_rpc_tls_context_for_host(mode, &server_name)
+}
+
+/// Use the real service DNS name for TLS hostname verification in distributed deployments.
+pub fn build_portfu_rpc_tls_context_for_host(
+    mode: &RpcTlsMode,
+    server_name: &str,
+) -> Result<PortfuRpcTlsContext, IoError> {
+    rustls::pki_types::ServerName::try_from(server_name.to_owned()).map_err(IoError::other)?;
     let (rpc_ca, identity_key) = match mode {
         RpcTlsMode::PrivateCa { ssl_dir } => {
             let (ca_crt, ca_key) = resolve_private_ca(ssl_dir)?;
@@ -364,12 +378,12 @@ pub fn build_portfu_rpc_tls_context(mode: &RpcTlsMode) -> Result<PortfuRpcTlsCon
         ],
     };
     let (cert_bytes, key_bytes) =
-        generate_ca_signed_cert_data_for_host(&rpc_ca, &identity_key, "localhost")?;
+        generate_ca_signed_cert_data_for_host(&rpc_ca, &identity_key, server_name)?;
     let certs = load_certs_from_bytes(&cert_bytes)?;
     let node_id = Bytes32::new(hash_256(
         certs.first().map(AsRef::as_ref).unwrap_or_default(),
     ));
-    let tls_config = TlsConfig::new(TlsIdentity::new("localhost", cert_bytes, key_bytes))
+    let tls_config = TlsConfig::new(TlsIdentity::new(server_name, cert_bytes, key_bytes))
         .client_auth(client_auth)
         .versions(TlsVersionPolicy::Tls13Only);
     Ok(PortfuRpcTlsContext {

@@ -193,15 +193,17 @@ impl BlockStore for RocksDbStore {
     ) -> Result<(), StoreError> {
         let records = records.to_vec();
         self.mutate(batch, "records", move |view| {
-            log::info!("rocksdb records count={}", records.len());
+            log::debug!("rocksdb records count={}", records.len());
             write_records(view, &records)
         })
         .await
     }
     async fn begin(&self) -> Result<BatchHandle, StoreError> {
         let started = Instant::now();
+        let timer = self.telemetry.writer_wait.start();
         let guard = self.writer.clone().lock_owned().await;
-        log::info!(
+        drop(timer);
+        log::debug!(
             "rocksdb begin writer_wait_us={}",
             started.elapsed().as_micros()
         );
@@ -213,6 +215,7 @@ impl BlockStore for RocksDbStore {
                 in_flight: AtomicUsize::new(0),
                 _writer: guard,
                 started: Instant::now(),
+                _timing: self.telemetry.writer_hold.start(),
             })),
             _timing: None,
         })
@@ -234,7 +237,7 @@ impl BlockStore for RocksDbStore {
                 view.put(key(BODY, id), encoded);
                 view.delete(index(MISSING, r.height.to_be_bytes(), &id));
             }
-            log::info!(
+            log::debug!(
                 "rocksdb bodies count={} compressed_bytes={bytes}",
                 blocks.len()
             );
@@ -251,6 +254,7 @@ impl BlockStore for RocksDbStore {
             .await
             .map_err(|e| StoreError::Batch(e.to_string()))?;
         let near_tip = self.near_tip();
+        let telemetry = self.telemetry.clone();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             // Both the handle and state retain the writer until the blocking commit finishes.
@@ -258,7 +262,9 @@ impl BlockStore for RocksDbStore {
             let mut pending = state.state.lock().map_err(|_| StoreError::Batch("rocksdb batch mutex poisoned".into()))?;
             if pending.failed || state.in_flight.load(Ordering::SeqCst) != 0 { return Err(StoreError::Batch("cannot commit failed rocksdb batch".into())); }
             let mut writes = WriteBatch::default();
-            for (k, value) in &pending.pending {
+            let mut ordered: Vec<_> = pending.pending.iter().collect();
+            ordered.sort_unstable_by_key(|(k, _)| *k);
+            for (k, value) in ordered {
                 match value { Some(value) => writes.put(k, value), None => writes.delete(k) }
             }
             let bytes = writes.size_in_bytes();
@@ -266,14 +272,19 @@ impl BlockStore for RocksDbStore {
             let mut options = WriteOptions::default();
             options.set_sync(true);
             let result = state.db.write_opt(writes, &options).map_err(StoreError::from);
-            log::info!("rocksdb commit near_tip={near_tip} keys={} batch_bytes={bytes} commit_us={} writer_hold_us={} success={}", pending.pending.len(), started.elapsed().as_micros(), state.started.elapsed().as_micros(), result.is_ok());
+            let histogram = if near_tip { &telemetry.commit_near_tip } else { &telemetry.commit_catch_up };
+            histogram.record(started.elapsed().as_secs_f64());
+            log::debug!("rocksdb commit near_tip={near_tip} keys={} batch_bytes={bytes} commit_us={} writer_hold_us={} success={}", pending.pending.len(), started.elapsed().as_micros(), state.started.elapsed().as_micros(), result.is_ok());
             if result.is_ok() { pending.finished = true; }
-            Self::log_properties(&state.db, &state.options);
+            if log::log_enabled!(log::Level::Debug) { Self::log_properties(&state.db, &state.options); }
             result
         }).await.map_err(|e| StoreError::Batch(format!("rocksdb commit worker: {e}")))?
     }
     fn near_tip(&self) -> bool {
         self.near_tip.load(Ordering::Relaxed)
+    }
+    fn telemetry(&self) -> Option<Arc<crate::telemetry::StoreTelemetry>> {
+        Some(self.telemetry.clone())
     }
     fn set_near_tip(&self, near_tip: bool) {
         if self.near_tip.swap(near_tip, Ordering::Relaxed) != near_tip {
@@ -412,11 +423,13 @@ impl BlockStore for RocksDbStore {
         self.commit(batch).await
     }
     async fn build_indexes(&self) -> Result<(), StoreError> {
-        log::info!("rocksdb build_indexes policy=always_live");
+        #[cfg(feature = "coin-index")]
+        self.build_service_indexes().await?;
         Ok(())
     }
     async fn shed_service_indexes(&self) -> Result<(), StoreError> {
-        log::info!("rocksdb shed_service_indexes policy=always_live");
+        #[cfg(feature = "coin-index")]
+        self.defer_service_indexes().await?;
         Ok(())
     }
 }

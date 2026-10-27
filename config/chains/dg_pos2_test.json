@@ -1,0 +1,14 @@
+{
+  "network_id": "dg_pos2_test",
+  "genesis_seed": "dg_xch/dg_pos2_test/testnet11/pos2/v1",
+  "rewards": {
+    "genesis_pool": 18375000000000000000,
+    "genesis_farmer": 2625000000000000000,
+    "initial_pool": 1750000000000,
+    "initial_farmer": 250000000000,
+    "halving_interval": 5045760,
+    "max_halvings": 4
+  },
+  "base_network": "testnet11",
+  "pos2_activation_height": 0
+}

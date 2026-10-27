@@ -169,9 +169,17 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
             foliage_transaction_block: block.foliage_transaction_block,
             transactions_filter: dg_xch_core::blockchain::unsized_bytes::UnsizedBytes::default(),
         };
+        let primitives = match ChainPrimitives::unfinished(&block, &node.constants) {
+            Ok(primitives) => primitives,
+            Err(error) => {
+                node.producer.candidate_dropped("ub_authorization_fail");
+                warn!("unfinished block authorization failed: {error:?}");
+                continue;
+            }
+        };
         match validate_unfinished_header_block(
             &node.constants,
-            &dg_xch_node::header::PrimitiveVerifier(&dg_xch_node::NativePrimitives),
+            &dg_xch_node::header::PrimitiveVerifier(&primitives),
             &records,
             &header,
             ValidationState { ssi, difficulty },
@@ -243,6 +251,14 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
                         let slot = node.slot_state.lock().await;
                         slot.get_sub_slot(&rcb.pos_ss_cc_challenge_hash)
                             .and_then(|(eos, _, _)| eos.reward_chain.hash().ok())
+                            .or_else(|| {
+                                dg_xch_node::farmer::validated_slot_reward_hash(
+                                    rcb.pos_ss_cc_challenge_hash,
+                                    &block.finished_sub_slots,
+                                    prev.as_ref(),
+                                    &records,
+                                )
+                            })
                     } else {
                         None
                     };
@@ -253,7 +269,17 @@ pub(in crate::node) async fn process_ub_inbox<S: BlockStore + CoinStore + Send +
                         rcb.reward_chain_sp_vdf.as_ref(),
                         pos_sub_slot_rc_hash,
                     );
+                    let mut authorization = block.authorization.clone();
+                    if let Some(auth) = authorization.as_mut() {
+                        auth.transactions.clear();
+                        auth.labrador = None;
+                        auth.retain_references(&[
+                            rcb.challenge_chain_sp_signature,
+                            rcb.reward_chain_sp_signature,
+                        ]);
+                    }
                     rc_prev.map(|rc_prev| NewUnfinishedBlockTimelord {
+                        authorization,
                         reward_chain_block: block.reward_chain_block.clone(),
                         difficulty,
                         sub_slot_iters: ssi,
@@ -333,8 +359,10 @@ pub(in crate::node) async fn validate_ub_body<S: BlockStore + CoinStore + Send +
         Some(previous) if previous.is_transaction_block() => previous.height,
         Some(previous) => previous.prev_transaction_block_height,
     };
+    let primitives = ChainPrimitives::unfinished(block, &node.constants)
+        .map_err(|error| ("ub_authorization_fail", NodeError::from(error)))?;
     validate_unfinished_block_body(
-        &NativePrimitives,
+        &primitives,
         &node.constants,
         block,
         &refs,

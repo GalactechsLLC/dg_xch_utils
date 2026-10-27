@@ -70,6 +70,27 @@ pub fn select_fetch_source(
     selected
 }
 
+pub(super) fn validate_block_range(
+    blocks: &[FullBlock],
+    start: u32,
+    end: u32,
+) -> Result<(), SyncError> {
+    let expected = u64::from(end).checked_sub(u64::from(start)).map(|n| n + 1);
+    if expected != Some(blocks.len() as u64)
+        || !blocks
+            .iter()
+            .zip(start..=end)
+            .all(|(block, height)| block.height() == height)
+    {
+        return Err(SyncError::RangeMismatch {
+            start,
+            end,
+            got: blocks.len(),
+        });
+    }
+    Ok(())
+}
+
 /// Fetches block ranges through an outbound peer's `WsClient`.
 pub struct OutboundPeerSource {
     peer: Arc<OutboundPeer>,
@@ -109,56 +130,74 @@ impl BlockRangeSource for OutboundPeerSource {
         // `id: None` defers correlation-id minting to the connection. Wait for either RespondBlocks
         // or RejectBlocks (both echo the id); a reject resolves immediately instead of hanging the
         // worker until its request timeout.
-        let msg = ChiaMessage::new(
-            ProtocolMessageTypes::RequestBlocks,
-            self.version,
-            &RequestBlocks {
-                start_height: start,
-                end_height: end,
-                include_transaction_block: true,
-            },
-            None,
-        )?;
-        let version = self.version;
-        let reply = oneshot_message(
-            self.peer.client.connection.clone(),
-            msg,
-            None,
-            None,
-            Some(self.timeout_ms),
-        )
-        .await?;
-        let mut cursor = Cursor::new(reply.data.bytes.as_slice());
-        match reply.msg_type {
-            ProtocolMessageTypes::RespondBlocks => {
-                let resp = RespondBlocks::from_bytes(&mut cursor, version).map_err(|e| {
-                    SyncError::Io(std::io::Error::other(format!("decode RespondBlocks: {e}")))
-                })?;
-                // Verify the peer echoed the requested range — exactly `end - start + 1` blocks,
-                // ascending and contiguous — before handing them on. A mismatch is treated as a reject.
-                let expected_len = (end.saturating_sub(start).saturating_add(1)) as usize;
-                let covers_range = resp.blocks.len() == expected_len
-                    && resp
-                        .blocks
-                        .iter()
-                        .zip(start..=end)
-                        .all(|(b, want)| b.height() == want);
-                if !covers_range {
-                    return Err(SyncError::RangeMismatch {
-                        start,
-                        end,
-                        got: resp.blocks.len(),
-                    });
-                }
-                Ok(resp.blocks)
-            }
-            // The peer cannot serve this range: a distinct, non-fatal reject so the worker
-            // reclaims for another peer.
-            _ => {
-                let _ = RejectBlocks::from_bytes(&mut cursor, version);
-                Err(SyncError::RangeRejected { start, end })
-            }
+        let request = async {
+            let msg = ChiaMessage::new(
+                ProtocolMessageTypes::RequestBlocks,
+                self.version,
+                &RequestBlocks {
+                    start_height: start,
+                    end_height: end,
+                    include_transaction_block: true,
+                },
+                None,
+            )?;
+            let version = self.version;
+            let reply = oneshot_message(
+                self.peer.client.connection.clone(),
+                msg,
+                None,
+                None,
+                Some(self.timeout_ms),
+            )
+            .await?;
+            decode_block_range_reply(&reply, version, start, end)
+        };
+        match tokio::time::timeout(Duration::from_millis(self.timeout_ms), request).await {
+            Ok(result) => result,
+            Err(_) => Err(SyncError::PeerStalled(self.peer_id())),
         }
+    }
+}
+
+fn decode_block_range_reply(
+    reply: &ChiaMessage,
+    version: ChiaProtocolVersion,
+    start: u32,
+    end: u32,
+) -> Result<Vec<FullBlock>, SyncError> {
+    let mut cursor = Cursor::new(reply.data.bytes.as_slice());
+    match reply.msg_type {
+        ProtocolMessageTypes::RespondBlocks => {
+            let resp = RespondBlocks::from_bytes(&mut cursor, version).map_err(|e| {
+                SyncError::Io(std::io::Error::other(format!("decode RespondBlocks: {e}")))
+            })?;
+            // Verify the peer echoed the requested range — exactly `end - start + 1` blocks,
+            // ascending and contiguous — before handing them on. A mismatch is treated as a reject.
+            if resp.start_height != start || resp.end_height != end {
+                return Err(SyncError::RangeMismatch {
+                    start,
+                    end,
+                    got: resp.blocks.len(),
+                });
+            }
+            validate_block_range(&resp.blocks, start, end)?;
+            Ok(resp.blocks)
+        }
+        // The peer cannot serve this range: a distinct, non-fatal reject so the worker
+        // reclaims for another peer.
+        ProtocolMessageTypes::RejectBlocks => {
+            let rejection = RejectBlocks::from_bytes(&mut cursor, version)?;
+            if rejection.start_height != start || rejection.end_height != end {
+                return Err(SyncError::Io(std::io::Error::other(
+                    "RejectBlocks echoed a different range",
+                )));
+            }
+            Err(SyncError::RangeRejected { start, end })
+        }
+        _ => Err(SyncError::Io(std::io::Error::other(format!(
+            "unexpected block-range response: {:?}",
+            reply.msg_type
+        )))),
     }
 }
 
@@ -257,4 +296,84 @@ pub async fn request_weight_proof(
     )
     .await?;
     Ok(resp.wp)
+}
+
+#[cfg(test)]
+mod range_reply_tests {
+    use super::*;
+
+    #[test]
+    fn reject_replies_must_decode_and_echo_the_requested_range() {
+        let version = ChiaProtocolVersion::default();
+        let reply = ChiaMessage::new(
+            ProtocolMessageTypes::RejectBlocks,
+            version,
+            &RejectBlocks {
+                start_height: 100,
+                end_height: 131,
+            },
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            decode_block_range_reply(&reply, version, 100, 131),
+            Err(SyncError::RangeRejected {
+                start: 100,
+                end: 131
+            })
+        ));
+        assert!(matches!(
+            decode_block_range_reply(&reply, version, 101, 132),
+            Err(SyncError::Io(_))
+        ));
+        let mut malformed = reply.clone();
+        malformed.data.bytes.clear();
+        assert!(matches!(
+            decode_block_range_reply(&malformed, version, 100, 131),
+            Err(SyncError::Io(_))
+        ));
+        let mut unexpected = reply;
+        unexpected.msg_type = ProtocolMessageTypes::RespondBlock;
+        assert!(matches!(
+            decode_block_range_reply(&unexpected, version, 100, 131),
+            Err(SyncError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn responses_must_echo_the_range_and_contain_every_requested_height() {
+        let version = ChiaProtocolVersion::default();
+        let block: FullBlock =
+            serde_json::from_str(include_str!("../../tests/fixtures/full_block_5000000.json"))
+                .unwrap();
+        let height = block.height();
+        for (start, end, blocks, valid) in [
+            (height, height, vec![block.clone()], true),
+            (height - 1, height, vec![block.clone()], false),
+            (height, height, vec![], false),
+            (
+                height,
+                height + 1,
+                vec![block.clone(), block.clone()],
+                false,
+            ),
+            (height + 1, height + 1, vec![block.clone()], false),
+        ] {
+            let reply = ChiaMessage::new(
+                ProtocolMessageTypes::RespondBlocks,
+                version,
+                &RespondBlocks {
+                    start_height: start,
+                    end_height: end,
+                    blocks,
+                },
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                decode_block_range_reply(&reply, version, height, height).is_ok(),
+                valid
+            );
+        }
+    }
 }

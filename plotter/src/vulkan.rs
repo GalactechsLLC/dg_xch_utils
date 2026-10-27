@@ -1,4 +1,4 @@
-use crate::{PlotInfo, PlotRequest, create_with_writer, format};
+use crate::{PlotInfo, PlotRequest, create_with_writer_for_profile, format};
 use dg_xch_pos2::compact::CompactPlot;
 use dg_xch_pos2::params::ProofParams;
 use dg_xch_pos2::plotting::PlotLimits;
@@ -71,14 +71,38 @@ pub fn create(
     cancelled: &AtomicBool,
     ordinal: usize,
 ) -> Result<PlotInfo, Error> {
-    create_with_writer(request, destination, cancelled, |params, output, memo| {
-        Plot::build(params, ordinal, limits, cancelled)?.write(
-            output,
-            request.index,
-            request.meta_group,
-            memo,
-            limits.memory_bytes,
-            cancelled,
-        )
-    })
+    create_for_profile(
+        request,
+        crate::SignatureProfile::Bls12381Aug,
+        destination,
+        limits,
+        cancelled,
+        ordinal,
+    )
+}
+
+pub fn create_for_profile(
+    request: &PlotRequest,
+    profile: crate::SignatureProfile,
+    destination: &Path,
+    limits: PlotLimits,
+    cancelled: &AtomicBool,
+    ordinal: usize,
+) -> Result<PlotInfo, Error> {
+    create_with_writer_for_profile(
+        request,
+        profile,
+        destination,
+        cancelled,
+        |params, output, memo| {
+            Plot::build(params, ordinal, limits, cancelled)?.write(
+                output,
+                request.index,
+                request.meta_group,
+                memo,
+                limits.memory_bytes,
+                cancelled,
+            )
+        },
+    )
 }

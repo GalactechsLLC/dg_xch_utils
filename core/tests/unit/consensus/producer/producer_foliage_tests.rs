@@ -413,6 +413,7 @@ fn transaction_block_fee_and_removals_flow_into_info() {
         amount: 900,
     };
     let tx = BlockTransactions {
+        authorization: Default::default(),
         program: crate::clvm::program::SerializedProgram::from_bytes(&[0x80]),
         block_refs: Vec::new(),
         additions: vec![created],

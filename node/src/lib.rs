@@ -1,7 +1,10 @@
 pub mod cache;
+pub mod chain_primitives;
 pub mod compact_vdf;
 pub mod engine;
 pub mod error;
+#[cfg(feature = "falcon")]
+pub mod falcon;
 pub mod farmer;
 pub mod fee_estimator;
 pub mod header;
@@ -12,6 +15,7 @@ pub mod sync;
 pub mod unfinished;
 
 pub use cache::{BLOCK_RECORD_WINDOW, BlockRecordCache};
+pub use chain_primitives::ChainPrimitives;
 pub use dg_xch_vdf::memo::metrics as vdf_cache_metrics;
 pub use engine::{
     AddBlockOutcome, BlockDelta, Engine, PrecomputedBody, ReorgReport,

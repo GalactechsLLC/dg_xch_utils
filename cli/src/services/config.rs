@@ -5,7 +5,7 @@ use std::path::Path;
 pub(crate) const ENV_HELP: &str =
     "Supply the complete configuration through --config <file> or an environment variable:
 DGX_FARMER_CONFIG: YAML (JSON also accepted)
-DGX_INTRODUCER_CONFIG, DGX_TIMELORD_CONFIG, DGX_POOL_CONFIG: JSON
+DGX_CRAWLER_CONFIG, DGX_INTRODUCER_CONFIG, DGX_TIMELORD_CONFIG, DGX_POOL_CONFIG: JSON
 The environment variable contains the document itself, not a file path.
 An explicit --config file takes precedence over the environment variable.";
 

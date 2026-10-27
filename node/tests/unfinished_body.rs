@@ -20,6 +20,7 @@ const PREV_TX: u32 = 5_000_000;
 fn unfinished_5000004() -> UnfinishedBlock {
     let fb: FullBlock = load_full_block(HEIGHT);
     UnfinishedBlock {
+        authorization: Default::default(),
         finished_sub_slots: fb.finished_sub_slots.clone(),
         reward_chain_block: fb.reward_chain_block.get_unfinished(),
         challenge_chain_sp_proof: fb.challenge_chain_sp_proof.clone(),

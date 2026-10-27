@@ -71,6 +71,7 @@ fn bundle_with_conditions(coins: &[Coin], conditions: Vec<SExp<'static>>) -> Spe
         })
         .collect();
     SpendBundle {
+        authorization: Default::default(),
         coin_spends,
         aggregated_signature: Bytes96::from(infinity),
     }
@@ -160,6 +161,7 @@ async fn admit_with_cost(
 
 fn declare(index: u8, cc_sp: u8, challenge_hash: Bytes32) -> DeclareProofOfSpace {
     DeclareProofOfSpace {
+        authorization: Default::default(),
         challenge_hash,
         challenge_chain_sp: Bytes32::from([cc_sp; 32]),
         signage_point_index: index,

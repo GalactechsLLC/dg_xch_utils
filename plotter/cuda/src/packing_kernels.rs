@@ -73,6 +73,7 @@ pub mod kernels {
     }
 
     #[kernel]
+    #[allow(clippy::too_many_arguments)] // Kernel ABI passes buffers and bounds separately.
     pub fn packing_chunks(
         entries: &[[u32; 4]],
         count: u32,
@@ -95,8 +96,8 @@ pub mod kernels {
         let descriptor = descriptors[descriptor_index];
         let first = descriptor[0] as usize;
         let values = descriptor[1] as usize;
-        let delta_words = (values + 3) / 4;
-        let stub_words = (values * STUB_BITS as usize + 31) / 32;
+        let delta_words = values.div_ceil(4);
+        let stub_words = (values * STUB_BITS as usize).div_ceil(32);
         let total_words = delta_words + stub_words;
         let chunk = first_chunk + descriptor_index as u32;
         if chunk as usize >= CHUNKS
