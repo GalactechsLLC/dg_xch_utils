@@ -96,8 +96,12 @@ const VECTORS: &[(&str, &str, Option<&str>)] = &[
     ("any_none", "(any (q . ()) (q . ()))", Some("()")),
     ("all_mixed", "(all (q . ()) (q . 1))", Some("()")),
     ("all_true", "(all (q . 1) (q . 2))", Some("1")),
-    // softfork burns its declared cost and yields nil
-    ("softfork", "(softfork (q . 121))", Some("()")),
+    // A recognized softfork executes its body and discards the result.
+    (
+        "softfork",
+        "(softfork (q . 160) (q . 0) (q . (q . 42)) (q . ()))",
+        Some("()"),
+    ),
 ];
 
 // Semantic failures: the VM must reject these, and the exact error text is the regression pin.

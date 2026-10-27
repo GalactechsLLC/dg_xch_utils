@@ -1,5 +1,6 @@
 use clap::Parser;
 use dg_xch_core::consensus::chain_definition::ChainSelection;
+use dg_xch_dev_tools::stack_profile::StackProfile;
 use dg_xch_plotter::{PlotRequest, PoolBinding, read_metadata};
 use dg_xch_pos2::plotting::PlotLimits;
 use dg_xch_servers::chain_config::{ensure_selection, read_selection};
@@ -13,6 +14,9 @@ use std::sync::atomic::AtomicBool;
 struct Args {
     #[arg(long)]
     root: PathBuf,
+    /// Require this chain profile before reading keys or creating plots.
+    #[arg(long, value_enum, default_value = "bls")]
+    chain_profile: StackProfile,
     #[arg(long)]
     pooling: bool,
     #[arg(long)]
@@ -47,6 +51,7 @@ fn public_key(value: &str) -> Result<[u8; 48], Error> {
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();
+    args.chain_profile.ensure_supported()?;
     let selection = read_selection(&args.root.join("common/chain.json"))?;
     if !matches!(&selection, ChainSelection::Custom(definition) if definition.consensus.as_ref().is_some_and(|parameters| parameters.development))
     {
@@ -55,6 +60,9 @@ fn main() -> Result<(), Error> {
         ));
     }
     let constants = selection.constants().map_err(Error::other)?;
+    if !args.chain_profile.matches(&constants) {
+        return Err(Error::other("stack profile differs from chain"));
+    }
     if args.count == 0
         || args.farmers.is_empty()
         || args
@@ -96,6 +104,15 @@ fn main() -> Result<(), Error> {
     };
     let cancelled = AtomicBool::new(false);
     for farmer in &args.farmers {
+        if !constants.signature_profile.is_bls() {
+            #[cfg(feature = "falcon")]
+            {
+                prepare_falcon(&args, farmer, &constants, limits, &cancelled)?;
+                continue;
+            }
+            #[cfg(not(feature = "falcon"))]
+            return Err(Error::other("Falcon support is not compiled"));
+        }
         let mut bytes = Vec::new();
         let filename = if args.pooling {
             "pool-plot-keys.json"
@@ -170,6 +187,109 @@ fn main() -> Result<(), Error> {
             let info = dg_xch_plotter::create(&request, &output, limits, &cancelled)?;
             println!("Created {} ({} bytes)", output.display(), info.file_bytes);
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "falcon")]
+fn prepare_falcon(
+    args: &Args,
+    farmer: &str,
+    constants: &dg_xch_core::consensus::constants::ConsensusConstants,
+    limits: PlotLimits,
+    cancelled: &AtomicBool,
+) -> Result<(), Error> {
+    use dg_xch_core::{
+        blockchain::proof_of_space::calculate_plot_id_v2,
+        signatures::{SignatureSigner, falcon_block::public_key_id, falcon_keys::FalconKeyring},
+    };
+    use dg_xch_pos2::{compact::CompactPlot, params::ProofParams};
+    let contract = if args.pooling {
+        let mut bytes = Vec::new();
+        std::fs::File::open(
+            args.root
+                .join(format!("farmer-{farmer}/pool-plot-keys.json")),
+        )?
+        .take(4097)
+        .read_to_end(&mut bytes)?;
+        if bytes.len() > 4096 {
+            return Err(Error::other("Falcon pool plot configuration exceeds 4 KiB"));
+        }
+        let pool: dg_xch_core::protocols::pool_falcon::PoolConfig =
+            serde_json::from_slice(&bytes).map_err(Error::other)?;
+        if dg_xch_puzzles::pool_v2::reward_puzzle(pool.launcher_id)?.tree_hash()
+            != pool.contract_puzzle_hash
+        {
+            return Err(Error::other(
+                "Falcon plot contract does not match PlotNFT launcher",
+            ));
+        }
+        Some(pool.contract_puzzle_hash)
+    } else {
+        None
+    };
+    let keys = FalconKeyring::load(&args.root.join(format!("farmer-{farmer}/falcon-keys.bin")))?;
+    if usize::from(args.count) > keys.plots.len() {
+        return Err(Error::other("plot count exceeds keyring size"));
+    }
+    let directory = args.plots_root.join(farmer);
+    std::fs::create_dir_all(&directory)?;
+    for (index, pair) in keys.plots.iter().take(usize::from(args.count)).enumerate() {
+        let index = index as u16;
+        let pool = contract
+            .is_none()
+            .then(|| public_key_id(&pair.pool.public_key()));
+        let plot = public_key_id(&pair.plot.public_key());
+        let id = calculate_plot_id_v2(args.strength, plot, pool, contract, index, 0);
+        let mut memo = b"DGXFAL02".to_vec();
+        memo.resize(32, 0);
+        if let Some(contract) = contract {
+            memo.extend_from_slice(contract.as_ref());
+        }
+        if let Some(pool) = pool {
+            memo.extend_from_slice(pool.as_ref());
+        }
+        memo.extend_from_slice(plot.as_ref());
+        let output = directory.join(format!(
+            "pos2-k{}-s{}-{index}.plot",
+            constants.plot_size_v2, args.strength
+        ));
+        if output.try_exists()? {
+            let existing = read_metadata(&output)?;
+            if existing.info.signature_profile != constants.signature_profile
+                || existing.info.plot_id != id.const_bytes()
+                || existing.info.k != constants.plot_size_v2
+                || existing.memo.as_slice() != memo
+            {
+                return Err(Error::other("existing Falcon plot does not match identity"));
+            }
+            continue;
+        }
+        let params = ProofParams::new(
+            id,
+            constants.plot_size_v2,
+            args.strength,
+            constants.is_testnet,
+        )?;
+        let native = CompactPlot::build(params, limits, cancelled)?;
+        let temporary = output.with_extension("plot.partial");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create_new(true)
+            .open(&temporary)?;
+        let result =
+            dg_xch_plotter::format::write_compact(&mut file, &native, index, 0, &memo, cancelled);
+        if let Err(error) = result {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+        file.sync_all()?;
+        read_metadata(&temporary)?;
+        // Hard-link publication refuses to overwrite a concurrently created plot.
+        std::fs::hard_link(&temporary, &output)?;
+        std::fs::remove_file(&temporary)?;
+        println!("Created Falcon plot {}", output.display());
     }
     Ok(())
 }

@@ -1,5 +1,6 @@
 pub mod ban;
 pub mod error;
+pub mod explorer;
 pub mod farmer;
 pub mod full_node;
 pub mod harvester;
@@ -7,13 +8,16 @@ pub mod introducer;
 pub mod outbound_limiter;
 pub mod peer_peak;
 pub mod pool;
+pub mod pool_falcon;
 pub mod pool_v2;
+pub mod pool_web;
 pub mod rate_limits;
 pub mod rate_limits_v3;
 pub mod shared;
 pub mod simulator;
 pub mod timelord;
 pub mod wallet;
+pub mod wallet_sync;
 
 use crate::blockchain::sized_bytes::Bytes32;
 use crate::blockchain::unsized_bytes::UnsizedBytes;
@@ -27,7 +31,7 @@ use futures_util::stream::{FusedStream, SplitSink, SplitStream};
 use futures_util::{Sink, Stream, StreamExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::{Cursor, Error, ErrorKind};
@@ -969,8 +973,16 @@ impl Sink<Message> for WebsocketMsgStream {
     }
 }
 
+/// Shared send budget and negotiated capabilities for every request path on one link.
+#[derive(Clone)]
+pub struct OutboundPolicy {
+    pub limiter: Arc<outbound_limiter::OutboundLimiter>,
+    pub capabilities: Arc<RwLock<shared::Capabilities>>,
+}
+
 pub struct WebsocketConnection {
     write: SplitSink<WebsocketMsgStream, Message>,
+    outbound_policy: Option<OutboundPolicy>,
     message_handlers: Arc<RwLock<HashMap<Uuid, Arc<ChiaMessageHandler>>>>,
     /// Correlation table for request/reply on this connection; shared with the [`ReadStream`] that
     /// routes replies back to their waiters (see [`PendingRequests`]).
@@ -1013,6 +1025,7 @@ impl WebsocketConnection {
         let v3 = Arc::new(rate_limits_v3::V3Link::default());
         let websocket = WebsocketConnection {
             write,
+            outbound_policy: None,
             message_handlers: message_handlers.clone(),
             pending: pending.clone(),
             v3: v3.clone(),
@@ -1036,6 +1049,23 @@ impl WebsocketConnection {
     pub fn v3(&self) -> Arc<rate_limits_v3::V3Link> {
         self.v3.clone()
     }
+    pub fn set_outbound_policy(
+        &mut self,
+        limiter: Option<Arc<outbound_limiter::OutboundLimiter>>,
+        capabilities: Arc<RwLock<shared::Capabilities>>,
+    ) {
+        self.outbound_policy = limiter.map(|limiter| OutboundPolicy {
+            limiter,
+            capabilities,
+        });
+    }
+
+    /// Clone before awaiting admission so throttling never holds the connection lock.
+    #[must_use]
+    pub fn outbound_policy(&self) -> Option<OutboundPolicy> {
+        self.outbound_policy.clone()
+    }
+
     pub async fn send(&mut self, msg: Message) -> Result<(), Error> {
         timeout_send(&mut self.write, msg, SEND_TIMEOUT).await
     }
@@ -1354,7 +1384,13 @@ impl ReadStream {
                                                 }
                                             }
                                             if !matched{
-                                                error!("No Matches for Message: {msg_arc:?}");
+                                                error!(
+                                                    "No Matches for Message: msg_type={:?} id={:?} payload_bytes={} peer_id={}",
+                                                    msg_arc.msg_type,
+                                                    msg_arc.id,
+                                                    msg_arc.data.as_slice().len(),
+                                                    self.peer_id,
+                                                );
                                             }
                                             debug!("Processed Message: {:?}", msg_arc.msg_type);
                                         }
@@ -1363,8 +1399,11 @@ impl ReadStream {
                                         }
                                     }
                                 }
+                                // Tungstenite handles Ping replies at the transport layer.
+                                // Heartbeats are control frames, not Chia protocol messages.
+                                Message::Ping(_) | Message::Pong(_) => {},
                                 Message::Close(e) => {
-                                    info!(
+                                    debug!(
                                         "websocket close connection={} peer_id={} frame={e:?}",
                                         self.connection_label,
                                         self.peer_id
@@ -1420,7 +1459,7 @@ impl ReadStream {
                     }
                 }
                 _ = await_termination() => {
-                    info!("Got Termination Signal for WS");
+                    debug!("Got Termination Signal for WS");
                     return;
                 }
                 () = async {

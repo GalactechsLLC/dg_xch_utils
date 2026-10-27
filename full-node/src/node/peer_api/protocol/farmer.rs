@@ -8,7 +8,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
     ) -> Option<RequestSignedValues> {
         // S1 — a declare arrived AT ALL (distinguishes never-received from received-then-dropped).
         self.producer.declare_received();
-        info!(
+        debug!(
             "declare_proof_of_space received event={} peer={} sp_index={} challenge={} cc_sp={}",
             "producer.declare.received",
             peer,
@@ -19,10 +19,9 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         // `full_node_api.declare_proof_of_space` — declare validation is tip-context; a
         // syncing node has no consistent slot state to check against, so it drops the message.
         if !self.production_ready().await {
-            // Promoted trace!->info! for bring-up: at default level the operator must
-            // see this wall.
+            // Tip-context drops are routine while syncing; retain details at debug level.
             self.producer.validated("not_synced");
-            info!(
+            debug!(
                 "declare dropped: node not synced (tip-context validation impossible) event={} peer={}",
                 "producer.declare.not_synced", peer
             );
@@ -73,7 +72,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
                     declare: declare.clone(),
                     quality_string,
                 });
-                info!(
+                debug!(
                     "accepted proof of space, held as candidate event={} peer={} qs={}",
                     "producer.declare.accepted", peer, quality_string
                 );
@@ -92,7 +91,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             other => {
                 let result = other.result_label();
                 self.producer.validated(result);
-                info!(
+                debug!(
                     "declare rejected at validate_declared_proof event={} peer={} result={} sp_index={} challenge={}",
                     "producer.declare.rejected",
                     peer,
@@ -140,11 +139,38 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             );
             return;
         };
-        if !dg_xch_core::consensus::producer::verify_plot_signature(
-            &plot_pk,
-            fbd_hash,
-            &signed.foliage_block_data_signature,
-        ) {
+        let valid_signature = if self.constants.signature_profile.is_bls() {
+            signed.authorization.is_none()
+                && dg_xch_core::consensus::producer::verify_plot_signature(
+                    &plot_pk,
+                    fbd_hash,
+                    &signed.foliage_block_data_signature,
+                )
+        } else {
+            signed.authorization.as_ref().is_some_and(|auth| {
+                auth.verify_messages(
+                    self.constants.genesis_challenge,
+                    &[
+                        (
+                            plot_pk,
+                            fbd_hash.const_bytes().to_vec(),
+                            signed.foliage_block_data_signature,
+                        ),
+                        (
+                            plot_pk,
+                            candidate
+                                .foliage
+                                .foliage_transaction_block_hash
+                                .unwrap_or_default()
+                                .const_bytes()
+                                .to_vec(),
+                            signed.foliage_transaction_block_signature,
+                        ),
+                    ],
+                )
+            })
+        };
+        if !valid_signature {
             // Stays warn! — an invalid foliage signature is a plot collision, genuinely alarming.
             self.producer.candidate_dropped("sig_verify_fail");
             warn!(
@@ -160,6 +186,26 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
             signed.foliage_block_data_signature,
             signed.foliage_transaction_block_signature,
         );
+        if !self.constants.signature_profile.is_bls() {
+            let (Some(auth), Some(signed_auth)) = (
+                candidate.authorization.as_mut(),
+                signed.authorization.as_ref(),
+            ) else {
+                return;
+            };
+            auth.header.extend(
+                signed_auth
+                    .header
+                    .iter()
+                    .filter(|proof| {
+                        proof.reference(auth.genesis) == signed.foliage_block_data_signature
+                            || candidate.foliage.foliage_transaction_block_signature
+                                == Some(proof.reference(auth.genesis))
+                    })
+                    .cloned(),
+            );
+            auth.canonicalize();
+        }
         // The add-unfinished-block latency guard: drop the block
         // if it would be infused before the current finished head (block.total_iters < peak.total_iters).
         if let Ok(Some((peak_hash, _))) = self.store.get_peak().await
@@ -194,7 +240,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
                 farmed.pop_front();
             }
         }
-        info!(
+        debug!(
             "farmed unfinished block: signatures spliced, propagating event={} height={} qs={} partial={:?}",
             "producer.signed.spliced", height, signed.quality_string, partial
         );

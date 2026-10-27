@@ -124,6 +124,7 @@ fn h(tag: u8) -> Bytes32 {
 #[must_use]
 pub fn bundle(sig_tag: u8) -> SpendBundle {
     SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: Bytes96::from([sig_tag; 96]),
     }
@@ -181,6 +182,7 @@ pub fn conditioned_bundle(coin: &Coin, conditions: &[ConditionWithArgs]) -> Spen
     let mut infinity = [0_u8; 96];
     infinity[0] = 0xc0;
     SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![CoinSpend {
             coin: *coin,
             puzzle_reveal: puzzle.serialized().expect("puzzle serializes"),

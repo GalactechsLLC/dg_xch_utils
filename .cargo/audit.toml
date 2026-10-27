@@ -1,11 +1,3 @@
-# cargo-audit (RustSec) configuration for the `cargo audit` CI gate.
-#
-# Re-reviewed 2026-09-19. Informational advisories remain visible.
+# No vulnerability suppressions: security advisories must be resolved.
 [advisories]
-ignore = [
-    # rsa "Marvin Attack" timing sidechannel. `rsa` is used ONLY in core/src/ssl.rs for offline,
-    # startup-time CA/leaf cert GENERATION and PKCS#1v1.5 SIGNING — there is no attacker-facing RSA
-    # decryption/signing oracle whose timing an attacker can measure (TLS crypto is rustls/ring, not
-    # `rsa`). No fixed `rsa` version exists yet. Bump `rsa` and drop this ID once a fix ships.
-    "RUSTSEC-2023-0071",
-]
+ignore = []

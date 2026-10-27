@@ -4,6 +4,7 @@ use super::*;
 
 mod fetch;
 mod processing;
+mod progress;
 mod recovery;
 
 use fetch::{fetch_scheduler, prefetch_config_for};
@@ -11,7 +12,11 @@ use processing::{block_processor, peak_announcer};
 use recovery::{follow_head, handle_recovery};
 
 #[cfg(test)]
-pub(super) use fetch::{follow_fill_claimed, prefetch_config};
+pub(super) use recovery::follow_head as test_follow_head;
+
+#[cfg(test)]
+pub(super) use fetch::follow_fill_claimed;
+pub(super) use fetch::prefetch_config;
 #[cfg(test)]
 pub(super) use processing::{FollowStepTimer, await_reset, emit_confirmed_peak};
 pub(crate) async fn reap_wallet_subscriptions_once<
@@ -129,7 +134,7 @@ fn unix_secs() -> u64 {
 /// Recovery orchestration itself never moves.
 pub(super) enum RecoveryRequest {
     /// The window `[from, to]` returned the unknown-parent orphan — mainnet reorged at/below our tip. The
-    /// driver runs the recovery ladder (`sync_backtrack` → deep-fork `bulk_sync`), then rebases to the
+    /// driver runs the recovery ladder (`sync_backtrack` → weight-proof fork resolution), then rebases to the
     /// (possibly rewound) peak + 1.
     Orphan {
         from: u32,
@@ -175,7 +180,7 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
     // bounded reorder queue and the recovery/announce channels. The FETCH producer
     // (fetch_scheduler) fills the queue to its byte budget across peers; the CONFIRM consumer
     // (block_processor) drains it in height order and runs the frozen validation core; this driver is
-    // the thin orchestrator that runs gossip + the bulk/anchor/fast-sync bands, services the peer-free
+    // the thin orchestrator that runs gossip + weight-proof fork anchoring, services the peer-free
     // consumer's recovery requests, and rebases the queue to keep the head invariant. A slow confirm no longer gates
     // the next fetch and a slow fetch no longer gates the confirm — the whole point of the refactor.
     let queue = Arc::new(BlockQueue::new(
@@ -186,6 +191,10 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
     let (recovery_tx, mut recovery_rx) = mpsc::channel::<RecoveryRequest>(RECOVERY_CHANNEL_CAP);
     let (peak_tx, peak_rx) = mpsc::channel::<ConfirmedPeak>(PEAK_CHANNEL_CAP);
     let mut pipeline_tasks = tokio::task::JoinSet::new();
+    pipeline_tasks.spawn(progress::report_sync_progress(
+        node.clone(),
+        registry.clone(),
+    ));
     pipeline_tasks.spawn(block_processor(
         node.clone(),
         queue.clone(),
@@ -237,7 +246,7 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
             handle_recovery(&node, &registry, &queue, &mut follow_rotation, req).await;
         }
         // Reconcile the queue head with the engine peak when the consumer is idle: a driver-side path
-        // (bulk/anchor/fast-sync/infusion/tip_follower) may have advanced or rewound the peak outside the
+        // (fork recovery/explicit anchor/infusion/tip_follower) may have advanced or rewound the peak outside the
         // consumer, so the queue must rebase to `peak + 1`. Skipped while a confirm is in flight
         // (`follow_inflight_since != 0`) — the consumer's `low_water` legitimately leads the not-yet-
         // advanced peak across its drain→confirm window, and a rebase then would drop the live window.
@@ -338,12 +347,8 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
                 info!("fetch scheduler restarted after stall reclaim");
             }
         }
-        // Far-behind from a near-empty store: tip-follow (FOLLOW_BATCH/step) can never converge on a ~6.9M
-        // tip. Drive the weight-proof bulk sync to the recent chain, then fall through to tip-follow.
-        // `--genesis-sync` disables this entirely: the historical chain is validated block by block from 0.
-        // `--sync-from H`: with no confirmed peak yet, establish the mid-chain anchor first
-        // (candidates for the span below H), then fall through to the follow loop which starts
-        // at the span's base instead of 0. Retries every tick until a peer serves the proof+span.
+        // Only an explicit --sync-from starts with a mid-chain checkpoint. Ordinary
+        // empty databases are filled from genesis by the detached batch pipeline.
         if node.config.sync_from > 0 && peak.is_none() && !node.sync_from_anchored().await {
             match node.anchor_at(&registry, node.config.sync_from).await {
                 Ok(true) => {}
@@ -354,26 +359,7 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
                 }
             }
         }
-        if !node.config.genesis_sync
-            && node.config.sync_from == 0
-            && wants_long_sync(local, claimed)
-        {
-            if wants_fast_sync(local, claimed) {
-                // Near-empty-store sub-band: the recent-chain jump (unchanged from-zero landing).
-                match node.bulk_sync(&registry).await {
-                    Ok(Some((_, h))) => {
-                        info!("fast-sync landed at recent-chain peak height={}", h);
-                        // Band-exit seam: the sync_range confirm path bypassed
-                        // the per-block follow side effects, so fire peak-post-processing ONCE now
-                        // — mempool revalidation + NewPeak/NewPeakTimelord/NewPeakWallet.
-                        node.finish_sync_transition(&registry, &inbound_peers).await;
-                    }
-                    // No tip/peer yet, or the proof/download failed — retry next tick.
-                    Ok(None) => {}
-                    Err(e) => warn!("fast-sync failed, retrying next tick error={}", e),
-                }
-                continue;
-            }
+        if needs_long_sync_anchor(&node.config, peak.map(|(_, h)| h), claimed) {
             // Mid-chain deep gap: validate the weight proof and resolve the
             // fork point ONCE per landing — including the reorg-across-the-gap reland when the
             // fork point is below our peak. Once anchored, fall through: gossip keeps running
@@ -435,7 +421,7 @@ pub(crate) async fn sync_driver<S: BlockStore + CoinStore + Send + Sync + 'stati
         // The block-follow producer/consumer is fully detached: the fetch_scheduler keeps the queue
         // filled (FOLLOW band) and the block_processor drains + confirms it, both on their own tasks.
         // The near-tip band stays with the event-driven tip_follower and the far-behind band with the
-        // bulk/anchor/fast-sync arms above; this loop is now pure orchestration + gossip.
+        // fork recovery and explicit anchor arms above; this loop is now pure orchestration + gossip.
     }
     // Drain-on-shutdown: the run flag is already clear, so the sub-tasks are winding down on their own
     // idle backstops; abort makes the teardown prompt and leaks no task past the driver.

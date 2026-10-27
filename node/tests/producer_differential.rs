@@ -119,6 +119,7 @@ fn block_transactions_from(
         .collect();
     let spend_removals: Vec<Coin> = removals.iter().map(|c| c.coin).collect();
     Some(BlockTransactions {
+        authorization: Default::default(),
         program,
         block_refs: full.transactions_generator_ref_list.clone(),
         additions: spend_additions,
@@ -229,6 +230,7 @@ fn expected_unfinished(full: &FullBlock) -> UnfinishedBlock {
     let mut foliage = full.foliage;
     foliage.reward_block_hash = unfinished_reward_block_hash(full);
     UnfinishedBlock {
+        authorization: Default::default(),
         finished_sub_slots: full.finished_sub_slots.clone(),
         reward_chain_block: full.reward_chain_block.get_unfinished(),
         challenge_chain_sp_proof: full.challenge_chain_sp_proof.clone(),

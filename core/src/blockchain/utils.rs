@@ -2,9 +2,7 @@ use crate::blockchain::coin::Coin;
 use crate::blockchain::condition_opcode::ConditionOpcode;
 use crate::blockchain::condition_with_args::{ConditionWithArgs, Message};
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48};
-use crate::clvm::condition_utils::{
-    agg_sig_additional_data_for_opcode, conditions_for_solution, created_outputs_for_conditions,
-};
+use crate::clvm::condition_utils::agg_sig_additional_data_for_opcode;
 use crate::clvm::program::Program;
 use crate::consensus::constants::ConsensusConstants;
 use crate::errors::ClvmError;
@@ -19,8 +17,34 @@ pub fn additions_for_solution(
     solution: &Program,
     max_cost: u64,
 ) -> Result<Vec<Coin>, ClvmError> {
-    let (map, _cost) = conditions_for_solution(puzzle_reveal, solution, max_cost)?;
-    Ok(created_outputs_for_conditions(&map, coin_name))
+    additions_for_solution_with_flags(coin_name, puzzle_reveal, solution, max_cost, 0)
+}
+
+pub fn additions_for_solution_with_flags(
+    coin_name: Bytes32,
+    puzzle_reveal: &Program,
+    solution: &Program,
+    max_cost: u64,
+    flags: u32,
+) -> Result<Vec<Coin>, ClvmError> {
+    let (_, output) = puzzle_reveal.run(max_cost, flags, solution)?;
+    let mut coins = Vec::new();
+    for condition in output.sexp().ref_list() {
+        if condition
+            .ref_list()
+            .first()
+            .is_some_and(|op| ConditionOpcode::from(*op) == ConditionOpcode::CreateCoin)
+            && let ConditionWithArgs::CreateCoin(puzzle_hash, amount, _) =
+                ConditionWithArgs::try_from(condition)?
+        {
+            coins.push(Coin {
+                parent_coin_info: coin_name,
+                puzzle_hash,
+                amount,
+            });
+        }
+    }
+    Ok(coins)
 }
 
 pub fn fee_for_solution(
@@ -28,14 +52,16 @@ pub fn fee_for_solution(
     solution: &Program,
     max_cost: u64,
 ) -> Result<BigInt, ClvmError> {
-    let (conditions, _cost) = conditions_for_solution(puzzle_reveal, solution, max_cost)?;
+    let (_, output) = puzzle_reveal.run_with_cost(max_cost, solution)?;
     let mut total: BigInt = 0.into();
-    for condition in conditions {
-        match condition {
-            ConditionWithArgs::ReserveFee(fee) => {
-                total += fee;
-            }
-            _ => continue,
+    for condition in output.sexp().ref_list() {
+        if condition
+            .ref_list()
+            .first()
+            .is_some_and(|op| ConditionOpcode::from(*op) == ConditionOpcode::ReserveFee)
+            && let ConditionWithArgs::ReserveFee(fee) = ConditionWithArgs::try_from(condition)?
+        {
+            total += fee;
         }
     }
     Ok(total)

@@ -1,6 +1,6 @@
 use super::Parameters;
 use cudarc::driver::{
-    CudaDevice, CudaFunction, CudaSlice, DevicePtr, DeviceSlice, LaunchAsync, LaunchConfig, sys,
+    CudaContext, CudaFunction, CudaSlice, CudaStream, DevicePtr, LaunchConfig, PushKernelArg, sys,
 };
 use parking_lot::Mutex;
 use std::ffi::OsStr;
@@ -36,7 +36,8 @@ const KERNEL_NAMES: [&str; 22] = [
 ];
 
 pub struct Device {
-    device: Arc<CudaDevice>,
+    device: Arc<CudaContext>,
+    stream: Arc<CudaStream>,
     launch_lock: Mutex<()>,
     functions: Vec<CudaFunction>,
     dense_threads: u32,
@@ -57,7 +58,8 @@ pub struct Memory {
 }
 
 struct MemoryPool {
-    device: Arc<CudaDevice>,
+    device: Arc<CudaContext>,
+    stream: Arc<CudaStream>,
     handle: sys::CUmemoryPool,
 }
 
@@ -73,7 +75,8 @@ struct ProfileSummary {
 }
 
 struct Profile {
-    device: Arc<CudaDevice>,
+    device: Arc<CudaContext>,
+    stream: Arc<CudaStream>,
     events: Vec<sys::CUevent>,
     summary: Mutex<ProfileSummary>,
 }
@@ -88,9 +91,10 @@ struct ProfileTimer<'profile> {
 }
 
 impl Profile {
-    fn new(device: &Arc<CudaDevice>) -> Result<Self, Error> {
+    fn new(device: &Arc<CudaContext>) -> Result<Self, Error> {
         let mut profile = Self {
             device: device.clone(),
+            stream: device.default_stream(),
             events: Vec::with_capacity(PROFILE_BATCH_CAPACITY * 2),
             summary: Mutex::new(ProfileSummary {
                 kernels: [KernelTiming::default(); KERNEL_NAMES.len() * 8],
@@ -118,7 +122,7 @@ impl Profile {
         unsafe {
             cudarc::driver::result::event::record(
                 self.events[slot * 2 + usize::from(finished)],
-                *self.device.cu_stream(),
+                self.stream.cu_stream(),
             )
             .map_err(Error::other)
         }
@@ -197,7 +201,7 @@ unsafe impl Send for MemoryPool {}
 unsafe impl Sync for MemoryPool {}
 
 impl MemoryPool {
-    fn new(device: &Arc<CudaDevice>) -> Result<Option<Arc<Self>>, Error> {
+    fn new(device: &Arc<CudaContext>) -> Result<Option<Arc<Self>>, Error> {
         if device
             .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MEMORY_POOLS_SUPPORTED)
             .map_err(Error::other)?
@@ -210,32 +214,34 @@ impl MemoryPool {
             handleTypes: sys::CUmemAllocationHandleType::CU_MEM_HANDLE_TYPE_NONE,
             location: sys::CUmemLocation {
                 type_: sys::CUmemLocationType::CU_MEM_LOCATION_TYPE_DEVICE,
-                id: *device.cu_device(),
+                id: device.cu_device(),
             },
-            ..Default::default()
+            win32SecurityAttributes: std::ptr::null_mut(),
+            maxSize: 0,
+            usage: 0,
+            reserved: [0; 54],
         };
         let mut handle = std::ptr::null_mut();
         unsafe {
-            sys::lib()
-                .cuMemPoolCreate(&mut handle, &properties)
+            sys::cuMemPoolCreate(&mut handle, &properties)
                 .result()
                 .map_err(Error::other)?;
         }
         let pool = Arc::new(Self {
             device: device.clone(),
+            stream: device.default_stream(),
             handle,
         });
         let (_, total_bytes) = cudarc::driver::result::mem_get_info().map_err(Error::other)?;
         let mut retained_bytes = MAXIMUM_RETAINED_BYTES.min(total_bytes as u64 / 4 * 3);
         unsafe {
-            sys::lib()
-                .cuMemPoolSetAttribute(
-                    handle,
-                    sys::CUmemPool_attribute::CU_MEMPOOL_ATTR_RELEASE_THRESHOLD,
-                    std::ptr::from_mut(&mut retained_bytes).cast(),
-                )
-                .result()
-                .map_err(Error::other)?;
+            sys::cuMemPoolSetAttribute(
+                handle,
+                sys::CUmemPool_attribute::CU_MEMPOOL_ATTR_RELEASE_THRESHOLD,
+                std::ptr::from_mut(&mut retained_bytes).cast(),
+            )
+            .result()
+            .map_err(Error::other)?;
         }
         log::debug!(
             "GigaHorse CUDA private memory pool release threshold: {} MiB",
@@ -256,12 +262,11 @@ impl MemoryPool {
             })?;
         let mut address = 0;
         unsafe {
-            sys::lib()
-                .cuMemAllocFromPoolAsync(&mut address, bytes, self.handle, *self.device.cu_stream())
+            sys::cuMemAllocFromPoolAsync(&mut address, bytes, self.handle, self.stream.cu_stream())
                 .result()
                 .map_err(Error::other)?;
             Ok(Memory {
-                data: self.device.upgrade_device_ptr(address, words),
+                data: self.stream.upgrade_device_ptr(address, words),
                 _pool: Some(self.clone()),
             })
         }
@@ -278,10 +283,10 @@ impl Drop for MemoryPool {
             log::warn!("GigaHorse CUDA memory pool cleanup synchronization failed: {error}");
         }
         unsafe {
-            if let Err(error) = sys::lib().cuMemPoolTrimTo(self.handle, 0).result() {
+            if let Err(error) = sys::cuMemPoolTrimTo(self.handle, 0).result() {
                 log::warn!("GigaHorse CUDA memory pool trim failed: {error}");
             }
-            if let Err(error) = sys::lib().cuMemPoolDestroy(self.handle).result() {
+            if let Err(error) = sys::cuMemPoolDestroy(self.handle).result() {
                 log::warn!("GigaHorse CUDA memory pool destruction failed: {error}");
             }
         }
@@ -290,7 +295,8 @@ impl Drop for MemoryPool {
 
 impl super::Buffer for Memory {
     fn address(&self) -> u64 {
-        *self.data.device_ptr()
+        // All buffers and raw-pointer kernels use this same default stream.
+        self.data.device_ptr(self.data.stream()).0
     }
 }
 
@@ -302,7 +308,12 @@ impl Device {
             parse_grouped_partition_scatter(std::env::var_os("GH_CUDA_GROUPED_F2").as_deref())?;
         let partition_override =
             parse_partition_second(std::env::var_os("GH_CUDA_DIRECT_F2").as_deref())?;
-        let device = CudaDevice::new(ordinal).map_err(Error::other)?;
+        let device = CudaContext::new(ordinal).map_err(Error::other)?;
+        // This backend owns a single default stream and synchronizes every launch
+        // batch. Kernel arguments contain raw addresses, so cross-stream event
+        // tracking would not describe their accesses and is unnecessary here.
+        unsafe { device.disable_event_tracking() };
+        let stream = device.default_stream();
         let major = device
             .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)
             .map_err(Error::other)?;
@@ -329,16 +340,10 @@ impl Device {
             },
         )
         .map_err(Error::other)?;
-        device
-            .load_ptx(ptx, "gigahorse", &KERNEL_NAMES)
-            .map_err(Error::other)?;
+        let module = device.load_module(ptx).map_err(Error::other)?;
         let functions = KERNEL_NAMES
             .iter()
-            .map(|name| {
-                device
-                    .get_func("gigahorse", name)
-                    .ok_or_else(|| Error::other(format!("missing GigaHorse CUDA kernel {name}")))
-            })
+            .map(|name| module.load_function(name).map_err(Error::other))
             .collect::<Result<Vec<_>, _>>()?;
         let maximum_threads = device
             .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK)
@@ -447,6 +452,7 @@ impl Device {
         };
         Ok(Self {
             device,
+            stream,
             launch_lock: Mutex::new(()),
             functions,
             dense_threads,
@@ -640,7 +646,7 @@ impl super::Device for Device {
         if let Some(pool) = &self.pool {
             return pool.allocate(words.max(1));
         }
-        unsafe { self.device.alloc(words.max(1)) }
+        unsafe { self.stream.alloc(words.max(1)) }
             .map(|data| Memory { data, _pool: None })
             .map_err(Error::other)
     }
@@ -651,8 +657,8 @@ impl super::Device for Device {
         if words.len() > buffer.data.len() {
             return Err(Error::other("GigaHorse CUDA upload out of bounds"));
         }
-        unsafe { cudarc::driver::result::memcpy_htod_sync(*buffer.data.device_ptr(), words) }
-            .map_err(Error::other)
+        let (address, _record) = buffer.data.device_ptr(&self.stream);
+        unsafe { cudarc::driver::result::memcpy_htod_sync(address, words) }.map_err(Error::other)
     }
 
     fn download(&self, buffer: &Memory, words: usize) -> Result<Vec<u32>, Error> {
@@ -664,8 +670,8 @@ impl super::Device for Device {
         if words == 0 {
             return Ok(Vec::new());
         }
-        self.device
-            .dtoh_sync_copy(&buffer.data.slice(..words))
+        self.stream
+            .clone_dtoh(&buffer.data.slice(..words))
             .map_err(Error::other)
     }
 
@@ -717,30 +723,28 @@ impl super::Device for Device {
                         profile.record(slot, false)?;
                     }
                     unsafe {
-                        self.functions[function]
-                            .clone()
-                            .launch(
-                                LaunchConfig {
-                                    grid_dim: (*groups as u32, 1, 1),
-                                    block_dim: (
-                                        if operation == 3 {
-                                            self.dense_threads
-                                        } else if operation == 20 {
-                                            self.local_csr_threads
-                                        } else if operation == 1 || operation == 18 {
-                                            self.generation_threads
-                                        } else if operation == 17 || operation == 19 {
-                                            self.partition_threads
-                                        } else {
-                                            128
-                                        },
-                                        1,
-                                        1,
-                                    ),
-                                    shared_mem_bytes: 0,
-                                },
-                                (*parameters,),
-                            )
+                        self.stream
+                            .launch_builder(&self.functions[function])
+                            .arg(parameters)
+                            .launch(LaunchConfig {
+                                grid_dim: (*groups as u32, 1, 1),
+                                block_dim: (
+                                    if operation == 3 {
+                                        self.dense_threads
+                                    } else if operation == 20 {
+                                        self.local_csr_threads
+                                    } else if operation == 1 || operation == 18 {
+                                        self.generation_threads
+                                    } else if operation == 17 || operation == 19 {
+                                        self.partition_threads
+                                    } else {
+                                        128
+                                    },
+                                    1,
+                                    1,
+                                ),
+                                shared_mem_bytes: 0,
+                            })
                             .map_err(Error::other)?;
                     }
                     if let Some(profile) = &self.profile {

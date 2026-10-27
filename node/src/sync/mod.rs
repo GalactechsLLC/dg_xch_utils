@@ -1,3 +1,4 @@
+mod fetch_health;
 mod headers;
 pub mod peer_manager;
 pub mod prefetch;

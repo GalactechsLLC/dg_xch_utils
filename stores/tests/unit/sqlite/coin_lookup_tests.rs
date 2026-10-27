@@ -27,8 +27,9 @@ async fn batched_lookup_uses_primary_key_with_and_without_statistics() {
         for size in [1, 17, COIN_LOOKUP_BATCH] {
             let names = vec![Bytes32::from([7; 32]); size];
             let query = coin_lookup_query(&names);
-            let sql = format!("EXPLAIN QUERY PLAN {}", query.sql());
-            let mut explain = sqlx::query(&sql);
+            let sql = format!("EXPLAIN QUERY PLAN {}", query.sql().as_str());
+            // The builder emits fixed SQL and bind placeholders, never interpolated values.
+            let mut explain = sqlx::query(sqlx::AssertSqlSafe(sql));
             for (ordinal, name) in names.iter().enumerate() {
                 explain = explain.bind(ordinal as i64).bind(*name);
             }

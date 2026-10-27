@@ -67,20 +67,25 @@ fn initialization_is_persistent_repeatable_and_non_destructive() {
 }
 
 #[test]
-fn services_require_initialization_but_help_does_not() {
+fn profile_services_require_initialization_but_configured_services_and_help_do_not() {
     let directory = tempfile::tempdir().unwrap();
     assert!(invoke(directory.path(), &["--help"]).status.success());
-    for service in [
-        "gui",
-        "farmer",
-        "plotter",
-        "timelord",
-        "introducer",
-        "simulator",
-    ] {
+    for service in ["gui", "simulator"] {
         let output = invoke(directory.path(), &[service]);
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("run dgx init first"));
+    }
+    for service in ["farmer", "introducer", "pool", "plotter", "timelord"] {
+        let output = invoke(directory.path(), &[service]);
+        assert!(!output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("run dgx init first"));
+        if service != "timelord" || cfg!(feature = "timelord") {
+            assert!(
+                invoke(directory.path(), &[service, "--help"])
+                    .status
+                    .success()
+            );
+        }
     }
     #[cfg(feature = "full-node")]
     {

@@ -25,6 +25,11 @@ use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 pub struct Config {
     #[serde(default)]
     pub chain: ChainSelection,
+    /// HTTP monitoring address. Defaults differ by mode; disable_metrics turns it off.
+    #[serde(default)]
+    pub metrics_listen: Option<std::net::SocketAddr>,
+    #[serde(default)]
+    pub disable_metrics: bool,
     pub fullnode_host: String,
     pub fullnode_port: u16,
     pub server_name: String,
@@ -44,6 +49,12 @@ fn default_worker_memory_bytes() -> u64 {
 
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
+        if self.metrics_listen.is_some_and(|listen| listen.port() == 0) {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "timelord metrics port must be nonzero",
+            ));
+        }
         self.chain.constants().map_err(Error::other)?;
         ServerName::try_from(self.server_name.clone()).map_err(Error::other)?;
         if self.fullnode_host.is_empty()
@@ -102,11 +113,29 @@ pub(crate) async fn connect(
     let response = tokio::time::timeout(Duration::from_secs(10), socket.next())
         .await
         .map_err(|_| Error::new(ErrorKind::TimedOut, "timelord handshake timed out"))?;
-    let Some(Ok(Message::Binary(bytes))) = response else {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "full node did not return a handshake",
-        ));
+    let bytes = match response {
+        Some(Ok(Message::Binary(bytes))) => bytes,
+        Some(Ok(Message::Close(frame))) => {
+            return Err(Error::new(
+                ErrorKind::ConnectionAborted,
+                format!(
+                    "full node closed connection before handshake ({frame:?}); verify the node trusts the timelord's network"
+                ),
+            ));
+        }
+        Some(Err(error)) => return Err(Error::other(error)),
+        None => {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "full node disconnected before handshake",
+            ));
+        }
+        Some(Ok(_)) => {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "full node returned a non-binary frame before handshake",
+            ));
+        }
     };
     let message: ChiaMessage = decode_exact(&bytes)?;
     let greeting: Handshake = decode_exact(message.data.as_slice())?;
@@ -122,7 +151,11 @@ pub(crate) async fn connect(
     Ok(socket)
 }
 
-async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), Error> {
+async fn session(
+    config: &Config,
+    tls: Arc<rustls::ClientConfig>,
+    metrics: Arc<crate::monitoring::State>,
+) -> Result<(), Error> {
     let bits = usize::try_from(
         config
             .chain
@@ -131,7 +164,11 @@ async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), 
             .discriminant_size_bits,
     )
     .map_err(Error::other)?;
+    metrics
+        .attempts
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut socket = connect(config, tls).await?;
+    let _connection = metrics.connect();
     eprintln!("Authenticated full node; compact-proof mode");
     let mut generation = 0u64;
     let mut workers: JoinSet<Result<(RequestCompactProofOfTime, ProofResult), Error>> =
@@ -150,14 +187,16 @@ async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), 
             Some(completed) = workers.join_next(), if !workers.is_empty() => {
                 match completed {
                     Ok(Ok((request, result))) if result.generation == generation => {
+                        metrics.completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if result.info != request.new_proof_of_time {
                             eprintln!("Discarded compact proof with unexpected VDF output");
                             continue;
                         }
                         let response = RespondCompactProofOfTime { vdf_info: result.info, vdf_proof: result.proof, header_hash: request.header_hash, height: request.height, field_vdf: request.field_vdf };
                         tokio::time::timeout(Duration::from_secs(5), socket.send(encode(ProtocolMessageTypes::RespondCompactProofOfTime, &response, None)?)).await.map_err(|_| Error::new(ErrorKind::TimedOut, "compact response send timed out"))?.map_err(Error::other)?;
+                        metrics.outputs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
-                    Ok(Err(error)) => eprintln!("Compact proof failed: {error}"),
+                    Ok(Err(error)) => { metrics.failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed); eprintln!("Compact proof failed: {error}"); },
                     Err(error) if !error.is_cancelled() => return Err(Error::other(error)),
                     _ => {}
                 }
@@ -185,7 +224,8 @@ async fn session(config: &Config, tls: Arc<rustls::ClientConfig>) -> Result<(), 
                                 let work = ProofRequest { generation, challenge: request.new_proof_of_time.challenge, input: ClassgroupElement::get_default_element(), iterations: request.new_proof_of_time.number_of_iterations, discriminant_bits: bits };
                                 work.validate()?;
                                 let timeout = Duration::from_secs(config.job_timeout_seconds);
-                                workers.spawn(async move { Ok((request, run_isolated(work, timeout).await?)) });
+                                let job = metrics.job();
+                                workers.spawn(async move { let _job = job; Ok((request, run_isolated(work, timeout).await?)) });
                             }
                             ProtocolMessageTypes::RequestCompactProofOfTime | ProtocolMessageTypes::NewUnfinishedBlockTimelord | ProtocolMessageTypes::NewGenesisTimelord => {}
                             _ => return Err(Error::new(ErrorKind::InvalidData, "unexpected timelord protocol message")),
@@ -207,16 +247,34 @@ pub async fn serve(config: Config) -> Result<(), Error> {
     config.validate()?;
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let tls = config.tls.client()?;
-    loop {
-        tokio::select! {
-            result = shutdown_signal() => return result,
-            result = session(&config, tls.clone()) => {
-                if let Err(error) = result { eprintln!("Timelord disconnected: {error}"); }
+    let metrics = Arc::new(crate::monitoring::State::default());
+    let snapshot = metrics.snapshot("compact");
+    let listen = if config.disable_metrics {
+        None
+    } else {
+        Some(
+            config
+                .metrics_listen
+                .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], 8583))),
+        )
+    };
+    dg_xch_servers::observability::run_with(
+        async {
+            loop {
+                tokio::select! {
+                    result = shutdown_signal() => return result,
+                    result = session(&config, tls.clone(), metrics.clone()) => {
+                        if let Err(error) = result { eprintln!("Timelord disconnected: {error}"); }
+                    }
+                }
+                tokio::select! {
+                    result = shutdown_signal() => return result,
+                    _ = tokio::time::sleep(Duration::from_secs(config.reconnect_seconds)) => {}
+                }
             }
-        }
-        tokio::select! {
-            result = shutdown_signal() => return result,
-            _ = tokio::time::sleep(Duration::from_secs(config.reconnect_seconds)) => {}
-        }
-    }
+        },
+        listen,
+        snapshot,
+    )
+    .await
 }

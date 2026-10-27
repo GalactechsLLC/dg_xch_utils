@@ -4,9 +4,10 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::consensus::block_generator::{
     CoinSpendContext, ConditionValidationContext, additions_for_conditions,
-    conditions_from_spend_bundle, validate_block_aggregate_signature, validate_block_conditions,
+    conditions_from_spend_bundle, validate_block_authorization, validate_block_conditions,
 };
 use dg_xch_core::consensus::constants::{ConsensusConstants, TESTNET_11};
+use dg_xch_core::signatures::AuthorizationWitness;
 use dg_xch_core::utils::hash_256;
 use std::collections::{HashMap, HashSet};
 use std::io::Error;
@@ -118,12 +119,32 @@ impl CoinsetSimulator {
         }
         validate_block_conditions(&conditions, &context)
             .map_err(|e| Error::other(format!("{e:?}")))?;
-        validate_block_aggregate_signature(
-            &conditions,
-            &bundle.aggregated_signature,
-            &self.constants,
-        )
-        .map_err(|e| Error::other(format!("{e:?}")))?;
+        let authorization = if self.constants.signature_profile.is_bls() {
+            if !bundle.authorization.is_none() {
+                return Err(Error::other("unexpected Falcon authorization on BLS chain"));
+            }
+            AuthorizationWitness::BlsAggregate(&bundle.aggregated_signature)
+        } else {
+            let auth = bundle
+                .authorization
+                .as_ref()
+                .ok_or_else(|| Error::other("missing Falcon authorization"))?;
+            if auth.genesis != self.constants.genesis_challenge
+                || !auth.header.is_empty()
+                || bundle.aggregated_signature
+                    != dg_xch_core::signatures::falcon_condition::transaction_reference(
+                        self.constants.genesis_challenge,
+                        &conditions.falcon_signatures,
+                    )
+            {
+                return Err(Error::other(
+                    "Falcon authorization does not match chain and execution",
+                ));
+            }
+            auth.transaction_witness()?
+        };
+        validate_block_authorization(&conditions, &authorization, &self.constants)
+            .map_err(|e| Error::other(format!("{e:?}")))?;
         for coin in &additions {
             self.insert_coin(*coin);
         }
@@ -152,6 +173,7 @@ mod tests {
         let puzzle = Program::to(1);
         let coin = simulator.new_coin(puzzle.tree_hash(), 10);
         let bundle = |solution: &str| SpendBundle {
+            authorization: Default::default(),
             coin_spends: vec![CoinSpend {
                 coin,
                 puzzle_reveal: puzzle.serialized().unwrap(),

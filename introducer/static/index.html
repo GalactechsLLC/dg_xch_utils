@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#3f8c61">
+<title>Chia introducer · Druid Garden</title>
+<link rel="icon" href="/logo.jpg"><link rel="stylesheet" href="/site.css"><link rel="stylesheet" href="/dashboard.css"><script src="/theme.js" defer></script><script src="/dashboard.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="https://druid.garden/">Druid Garden</a><nav class="utilities" aria-label="Dashboard"><button id="theme" type="button" aria-label="Toggle color theme" aria-pressed="false">☀ / ☾</button></nav></header>
+<main id="main">
+<section class="hero decorated"><div><span class="eyebrow">CHIA PEER DISCOVERY</span><h1>Introducer</h1><p>Helping Chia nodes find reachable peers.</p></div></section>
+<div class="status-line"><span id="status" role="status">Loading service observations…</span><span id="updated" class="muted"></span></div>
+<section class="stats-grid" aria-label="Introducer statistics">
+<article class="stat"><span>Known peers</span><strong id="peers">—</strong><small id="families">IPv4 / IPv6</small></article>
+<article class="stat"><span>Peer requests</span><strong id="requests">—</strong><small>Valid discovery requests since startup</small></article>
+<article class="stat"><span>Peers shared</span><strong id="shared">—</strong><small>Endpoint entries sent since startup</small></article>
+<article class="stat"><span>Service uptime</span><strong id="uptime">—</strong><small id="network">Network</small></article>
+</section>
+<section class="split">
+<article class="panel"><h2>Discovery activity</h2><dl>
+<div><dt>TCP connections</dt><dd id="connections">—</dd></div>
+<div><dt>Valid handshakes</dt><dd id="handshakes">—</dd></div>
+<div><dt>Peer responses sent</dt><dd id="responses">—</dd></div>
+<div><dt>Registrations / refreshes</dt><dd id="registrations">—</dd></div>
+<div><dt>Expired verifications</dt><dd id="expired">—</dd></div>
+<div><dt>Session errors</dt><dd id="session-errors">—</dd></div>
+<div><dt>Session timeouts</dt><dd id="session-timeouts">—</dd></div>
+</dl></article>
+<article class="panel"><h2>Verification and capacity</h2><dl>
+<div><dt>Active sessions</dt><dd id="active">—</dd></div>
+<div><dt>Verification probes</dt><dd id="probes">—</dd></div>
+<div><dt>Successful probes</dt><dd id="probe-success">—</dd></div>
+<div><dt>Failed / timed out probes</dt><dd id="probe-failures">—</dd></div>
+<div><dt>Connection rejections</dt><dd id="rejections">—</dd></div>
+<div><dt>IPs under cooldown</dt><dd id="cooldowns">—</dd></div>
+<div><dt>Pending verification</dt><dd id="pending">—</dd></div>
+<div><dt>Verification lifetime</dt><dd id="ttl">—</dd></div>
+</dl></article>
+</section>
+<article class="panel"><h2>About these observations</h2><p class="muted">The introducer queues advertised endpoints for background verification and retries failures before sharing them. Verified peers have completed a successful Chia handshake within the configured lifetime; this does not guarantee they are currently online or synced. Known peers describe the discovery backend; only peers with an unexpired introducer verification are advertised.</p><p class="muted">Activity totals reset when the service restarts. Individual endpoints are not published on this dashboard. <a href="/api/stats">JSON statistics</a> · <a href="/metrics">Prometheus metrics</a></p></article>
+</main>
+<footer><a class="brand" href="https://druid.garden/">Druid Garden</a><span>dg_xch_introducer · peer discovery · refreshes every 15 seconds</span></footer>
+</body></html>

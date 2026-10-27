@@ -1,0 +1,361 @@
+/* Copyright 2019 The Sora Project Authors (https://github.com/sora-xor/sora-font)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+
+This license is copied below, and is also available with a FAQ at: https://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded, 
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+ */
+@font-face {
+  font-family: 'Sora';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/sora-0.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Sora';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(/sora-1.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Sora';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(/sora-2.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Sora';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(/sora-3.ttf) format('truetype');
+}
+
+/* Copyright 2018 The Manrope Project Authors (https://github.com/googlefonts/manrope)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded, 
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+ */
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/manrope-0.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(/manrope-1.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(/manrope-2.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(/manrope-3.ttf) format('truetype');
+}
+
+/* Copyright 2023 The Playwrite Project Authors (https://github.com/TypeTogether/Playwrite)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://openfontlicense.org
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded, 
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+ */
+@font-face {
+  font-family: 'Playwrite VN';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/playwrite-0.ttf) format('truetype');
+}
+
+:root{color-scheme:light;--bg:#87db94;--surface:#fefefe;--text:#25302a;--muted:#4b5a50;--line:#d8e0d6;--accent:#347352;--soft:#f1fff3;--error:#b82448;--shadow:0 18px 40px #20342814;font:16px/1.55 "Sora","SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(150deg,var(--surface),var(--bg));color:var(--text);letter-spacing:.01em;-webkit-font-smoothing:antialiased}body.dark{color-scheme:dark;--bg:#0f1713;--surface:#17221b;--text:#e6eee8;--muted:#b4c4b9;--line:#314336;--accent:#8ccca1;--soft:#203328;--error:#ff9eaa;--shadow:0 18px 40px #0006;background:linear-gradient(155deg,var(--bg),#111715 55%,var(--surface))}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}h1,h2,h3{line-height:1.25;letter-spacing:-.01em}h1{font-size:1.8rem;margin:0}h2{font-size:1.15rem;margin:0 0 1rem}h3{font-size:1rem}p{overflow-wrap:anywhere}.muted,#subtitle{color:var(--muted)}.site-header{display:flex;justify-content:space-between;align-items:center;gap:2rem;padding:.9em 1.25em;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:100;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(12px)}.brand{font:bold 1.9rem "Playwrite VN","Cormorant Garamond",serif;color:#2a5c43;white-space:nowrap}.dark .brand{color:var(--text)}.header-nav{max-width:850px;flex:1;display:flex;flex-direction:column;align-items:flex-end;gap:.5rem}.utilities{display:flex;align-items:center;gap:1rem;font-size:.85rem}.utilities button{padding:.2rem .5rem;background:transparent;color:var(--text)}nav{display:flex;align-items:center;flex-wrap:wrap;gap:.35rem}#main-nav>a,.nav-group>summary{padding:.35rem .5rem;font-size:.9rem;cursor:pointer;color:var(--text)}#main-nav a[aria-current],#main-nav a:hover,.nav-group[open]>summary{color:var(--accent);background:var(--soft);border-radius:8px}.nav-group{position:relative}.nav-group>div{position:absolute;right:0;top:100%;min-width:210px;display:grid;padding:.5rem;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);z-index:110}.nav-group a{padding:.55rem .75rem;color:var(--text)}#menu-toggle{display:none}.unified-search{display:flex;gap:.5rem;width:min(100%,700px);position:relative}.unified-search input{flex:1;min-width:0;font-size:.85rem}.unified-search button{font-size:.85rem}.unified-search p{position:absolute;right:0;top:100%;margin:0;background:var(--surface);padding:.5rem;border:1px solid var(--line);border-radius:8px;color:var(--error)}main{width:100%;max-width:1460px;margin:0 auto;padding:1.5rem 1.25rem 2rem;min-height:calc(100vh - 245px)}.hero{display:flex;justify-content:space-between;align-items:center;gap:1rem;border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:.9rem 1rem;margin-bottom:1rem}.hero p{margin:.25rem 0 0;font-size:.9rem;overflow-wrap:anywhere}.hero .actions{margin:0;flex-shrink:0}.hero.decorated{justify-content:center;text-align:center;background:radial-gradient(120% 120% at 10% 20%,#ffffff2e,transparent),linear-gradient(135deg,#183328,#2a5c43);color:#d0e6d8;border:0;border-radius:0 0 28px 28px;padding:1.8rem 3rem}.hero.decorated p{color:inherit}.panel,.stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:1rem;box-shadow:var(--shadow);margin:1rem 0}.panel>.panel{box-shadow:none}.row,.actions,.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem}.actions{margin:1rem 0}.toolbar{margin-bottom:1rem}.row input{flex:1;min-width:160px}label{display:block;font-size:.85rem;font-weight:500;margin:.5rem 0 .3rem}input,select,textarea,button{font:inherit;border:1px solid var(--line);border-radius:10px;padding:.55rem .75rem;color:var(--text);background:var(--surface);max-width:100%}input:not([type=checkbox]):not([type=range]),select,textarea{width:100%}input[type=checkbox]{accent-color:var(--accent)}textarea{min-height:110px;resize:vertical;font:13px/1.5 ui-monospace,monospace}button,.button{cursor:pointer;background:#347352;color:white;font-weight:600;border:1px solid #347352;border-radius:10px;padding:.5rem .8rem;text-decoration:none}button:hover,.button:hover{filter:brightness(1.08);text-decoration:none}button.secondary,.button.secondary,.pagination button{background:transparent;color:var(--text);border-color:var(--line)}button:disabled{opacity:.5;cursor:default}.copy-button{background:transparent;color:var(--accent);border-color:var(--line);padding:.2rem .45rem;font-size:.7rem;flex-shrink:0}.grid,.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1rem}.grid>.panel,.grid>.stat,.stats-grid>.stat{margin:0}.stat{position:relative;overflow:hidden;padding:1rem 1.25rem}.stat>span{font-size:.8rem;color:var(--muted)}.stat strong{display:block;font-size:1.5rem;margin-top:.3rem}.stat-icon{position:absolute;right:1rem;bottom:.8rem;font-size:2rem;color:var(--accent);opacity:.35}.detail-grid{display:grid;grid-template-columns:minmax(280px,1fr) minmax(0,1.5fr);gap:1rem}.detail-grid>.panel{margin:0}.filter-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem;align-items:end}.filter-form label{margin:0}.filter-form button{align-self:end}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.85rem}th,td{padding:.65rem .75rem;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}th{background:var(--soft);font-size:.75rem;font-weight:600;letter-spacing:.03em;text-transform:uppercase}tbody tr:hover{background:var(--soft)}.hash{font:12px ui-monospace,monospace}.hash-cell{display:flex;align-items:center;gap:.5rem}.hash-cell a,.hash-cell code{max-width:clamp(10rem,28vw,24rem);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hash-cell code{color:var(--text)}.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:.15rem .5rem;font-size:.75rem}.badge.ok{background:var(--soft);color:var(--accent)}.badge.warn{color:#a87125}.pagination{justify-content:center;padding:.65rem;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.pagination span{font-size:.85rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;font:13px/1.6 ui-monospace,monospace;padding:1rem;background:var(--soft);border-radius:10px}code{overflow-wrap:anywhere}dl{margin:0}dl>div{display:grid;grid-template-columns:minmax(100px,35%) minmax(0,1fr);gap:1rem;padding:.55rem 0;border-bottom:1px solid var(--line)}dt{font-size:.8rem;color:var(--muted)}dd{margin:0;font-size:.9rem;overflow-wrap:anywhere}dd .hash-cell{flex-wrap:wrap}details.accordion{margin:1rem 0;border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden}details.accordion>summary{padding:1rem;cursor:pointer;font-weight:600}details.accordion>div{padding:0 1rem 1rem}.tabs{display:flex;gap:.25rem;overflow-x:auto;border-bottom:1px solid var(--line);margin:1rem 0}.tabs button{background:transparent;border:0;color:var(--muted);border-radius:0;padding:.8rem 1rem;white-space:nowrap}.tabs button[aria-selected=true]{border-bottom:3px solid var(--accent);color:var(--accent)}.empty{padding:1.5rem;text-align:center;color:var(--muted)}.error{color:var(--error)}#status:empty{display:none}#status{padding:.6rem 0;min-height:1.6rem}.legal{max-width:850px;margin:auto}.legal h2{margin-top:2rem}.key-row,.wallet-row{display:flex;justify-content:space-between;align-items:center;gap:1rem;border-bottom:1px solid var(--line);padding:1rem 0}.key-row p,.wallet-row p{margin:.2rem 0;font-size:.8rem;color:var(--muted)}.pricing-card{text-align:center;padding:1.5rem}.pricing-card.featured{border:2px solid var(--accent)}.price{font-size:2rem;font-weight:700}.pricing-card ul{text-align:left;line-height:2;padding-left:1.2rem}.split{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:1.5rem}.graph-svg{width:100%;height:auto;display:block;min-height:200px;border:1px solid var(--line);border-radius:12px;background:var(--soft);touch-action:none;user-select:none}.graph-svg .edge{stroke:#9aa6a0;stroke-width:1.5}.graph-svg .node{cursor:pointer}.graph-svg .node text{fill:white;pointer-events:none;font:10px ui-monospace,monospace}.graph-svg .spent{stroke:#ef9e76;stroke-width:3;stroke-dasharray:4 2}.graph-svg .node:focus{outline:none}.graph-svg .node:focus circle{stroke:var(--text);stroke-width:4}.graph-toolbar{font-size:.8rem}.graph-toolbar label{display:flex;align-items:center;gap:.4rem}.graph-toolbar select{width:auto}.graph-toolbar input[type=range]{width:80px}.summary-row{cursor:pointer}.summary-row[aria-expanded=true]{background:var(--soft)}.detail-row td{white-space:normal}.detail-row .panel{box-shadow:none}.qr{width:260px;max-width:100%;display:block;margin:1rem auto;background:white;border:12px solid white;border-radius:12px}.download-card{display:flex;flex-direction:column;gap:.6rem}.download-card .button{align-self:flex-start}.download-card dd{font-size:.8rem}.skip{position:absolute;left:-10000px}.skip:focus{left:1rem;top:1rem;background:var(--surface);padding:1rem;z-index:200}.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}footer{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1.5rem;border-top:1px solid var(--line);background:color-mix(in srgb,var(--surface) 90%,transparent);font-size:.8rem}footer nav{gap:1rem}:focus-visible{outline:3px solid var(--accent);outline-offset:3px}[hidden]{display:none!important}@media(min-width:1440px){main{max-width:1600px}}@media(min-width:1920px){main{max-width:1840px}}@media(max-width:900px){.site-header{flex-wrap:wrap;gap:.75rem}.brand{font-size:1.7rem}.header-nav{max-width:none}.detail-grid,.split{grid-template-columns:1fr}.hero{align-items:flex-start}.hero .actions{flex-wrap:wrap}}@media(max-width:768px){.site-header{padding:.75rem 1rem}.brand{width:100%}.header-nav{width:100%;align-items:stretch}.utilities{justify-content:flex-end}#menu-toggle{display:block}#main-nav{display:none;align-items:stretch}#main-nav.open{display:flex;flex-direction:column}.nav-group>div{position:static;border:0;box-shadow:none}.unified-search{width:100%}main{padding:1rem .75rem}.hero{flex-direction:column}.hero.decorated{padding:1.4rem 1rem}h1{font-size:1.5rem}.stats-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem}.stat{padding:.75rem}.stat strong{font-size:1.2rem}footer{flex-direction:column;align-items:flex-start}dl>div{gap:.5rem}th,td{padding:.55rem}.filter-form{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+.usage-chart{width:100%;max-height:240px;color:var(--accent);background:var(--soft);border-radius:10px}
+
+h1,h2,h3{font-family:"Manrope","Sora",sans-serif}footer{flex-direction:column;justify-content:center;text-align:center;background:linear-gradient(135deg,#2a5c43,#3f8c61);color:#e7f3ec}footer a{color:inherit}.dark footer{background:linear-gradient(135deg,var(--bg),var(--surface));color:var(--muted)}
+
+.hero{position:relative}.hero-sprout{display:none;position:absolute;width:4rem;bottom:-2px;pointer-events:none}.hero.decorated .hero-sprout{display:block}.hero-sprout.left{left:20px}.hero-sprout.right{right:20px;transform:scaleX(-1)}.hero.decorated>div{z-index:1}@media(max-width:650px){.hero-sprout{width:2.5rem}}
+.stat strong{overflow-wrap:anywhere;line-height:1.3;font-size:clamp(1rem,1.65vw,1.5rem)}#menu-close{display:none}#menu-backdrop{position:fixed;inset:0;background:#0006;z-index:90}@media(max-width:768px){#main-nav.open{position:fixed;top:0;right:0;width:260px;height:100dvh;overflow-y:auto;background:var(--surface);border-left:1px solid var(--line);padding:1rem;box-shadow:-2px 0 15px #0004;z-index:110;gap:.5rem}#main-nav.open #menu-close{display:block;align-self:flex-end}.menu-open{overflow:hidden}}
+
+.utilities>a,.utilities>#signout{position:relative;display:flex;align-items:center;justify-content:center;padding:.25rem;border:0;background:transparent;color:var(--text)}.utilities svg{width:1.5rem;height:1.5rem;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}.utilities .badge{position:absolute;top:-7px;right:-8px;background:var(--accent);color:var(--surface);font-size:.65rem;min-width:1.1rem;text-align:center}.nav-group>summary>a{padding:0;color:inherit}
+
+.contact-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:1.5rem;align-items:start}.contact-message{white-space:pre-wrap}@media(max-width:768px){.contact-layout{grid-template-columns:1fr}}
+
+.checkout-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:1.5rem;align-items:start}@media(max-width:768px){.checkout-layout{grid-template-columns:1fr}}

@@ -50,11 +50,32 @@ jobs:
           cargo test -p dg_xch_pos2 -p dg_xch_plotter --features vulkan --locked
           cargo test -p dg_xch_wallet -p dg_xch_farmer -p dg_xch_timelord -p dg_xch_introducer --locked
           cargo test -p dg_xch_farmer --features vulkan --locked
+      - name: Test Falcon authorization and BLS compatibility
+        run: cargo test -p dg_xch_core --features falcon --test falcon --test authorization --locked
+      - name: Test Falcon wallets, CATs, NFTs, and shared BLS asset builders
+        run: cargo test -p dg_xch_wallet --features falcon --lib --test falcon_wallet --test standard_wallet --locked
+      - name: Test LaBRADOR profile isolation and authorization wire format
+        run: cargo test -p dg_xch_core --features labrador --test labrador --locked
+      - name: Test real LaBRADOR aggregation and rejection paths
+        if: env.RUN_EXTENDED_TESTS == 'true'
+        env:
+          DGX_LABRADOR_WORKER: ${{ github.workspace }}/target/release/dg_xch_labrador_worker
+        run: |
+          cargo build -p dg_xch_labrador --features backend --release --locked
+          cargo test -p dg_xch_core --features labrador --test labrador --locked -- --include-ignored --test-threads=1
+          cargo test -p dg_xch_wallet --features labrador --test falcon_wallet --locked -- --include-ignored --test-threads=1
+      - name: Test native Falcon chain
+        if: env.RUN_EXTENDED_TESTS == 'true'
+        env:
+          DGX_FALCON_TEST_BLOCKS: 105
+          RAYON_NUM_THREADS: 2
+        run: cargo test -p dg_xch_simulator --release --features falcon --test falcon_chain --locked -- --ignored
       - name: Test chain initialization
         env:
           RAYON_NUM_THREADS: 2
         run: |
           cargo test -p dg_xch_dev_tools --bin dg_xch_stack_init --locked
+          cargo test -p dg_xch_dev_tools --test stack_profiles --locked
           cargo test -p dg_xch_cli --test setup_cli --test regular_worker --locked
       - name: Test native bootstrap on CPU
         if: env.RUN_EXTENDED_TESTS == 'true'
@@ -67,4 +88,33 @@ jobs:
           RAYON_NUM_THREADS: 2
         run: cargo test -p dg_xch_plotter --release --test compact --locked -- --include-ignored
       - name: Validate Compose topology
-        run: docker compose -f compose.yaml config --quiet
+        run: |
+          docker compose -f compose.yaml config --quiet
+          docker compose -f compose.falcon.yaml --profile check config --quiet
+          docker compose -f compose.labrador.yaml --profile check config --quiet
+          docker compose -f compose.labrador-zk.yaml --profile check config --quiet
+
+  crawler-observatory:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15-alpine3.24
+        env:
+          POSTGRES_PASSWORD: crawler-test
+          POSTGRES_DB: crawler_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DGX_TEST_POSTGRES_URL: postgres://postgres:crawler-test@localhost:5432/crawler_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-native-deps
+      - name: Test crawler, migrations, scheduling, and telemetry
+        run: cargo test -p dg_xch_crawler --locked -- --include-ignored

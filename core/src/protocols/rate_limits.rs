@@ -19,9 +19,9 @@
 use crate::blockchain::sized_bytes::Bytes32;
 use crate::protocols::ProtocolMessageTypes;
 use crate::protocols::shared::{Capabilities, Capability};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const MIB: u64 = 1024 * 1024;
 const KIB: u64 = 1024;
@@ -275,12 +275,15 @@ struct Window {
     sizes: HashMap<u8, u64>,
     non_tx_count: u32,
     non_tx_size: u64,
+    outgoing: VecDeque<(Instant, u8, u64, bool)>,
 }
 
 /// A per-connection rate limiter. `incoming` limiters commit their counters
 /// unconditionally (the bytes were already received); outgoing limiters commit only when the message
-/// is allowed to be sent.
+/// is allowed to be sent. Outgoing budgets roll over the last `reset_seconds`, so a
+/// peer with differently aligned window boundaries cannot receive two full bursts in one window.
 pub struct RateLimiter {
+    signature_profile: crate::signatures::SignatureProfile,
     incoming: bool,
     reset_seconds: u64,
     percentage_of_limit: u32,
@@ -298,12 +301,20 @@ impl RateLimiter {
     #[must_use]
     pub fn with_params(incoming: bool, reset_seconds: u64, percentage_of_limit: u32) -> Self {
         Self {
+            signature_profile: Default::default(),
             incoming,
             reset_seconds: reset_seconds.max(1),
             percentage_of_limit,
             start: Instant::now(),
             inner: Mutex::new(Window::default()),
         }
+    }
+
+    /// The profile comes from local chain configuration, never a peer claim.
+    #[must_use]
+    pub fn with_signature_profile(mut self, profile: crate::signatures::SignatureProfile) -> Self {
+        self.signature_profile = profile;
+        self
     }
 
     /// Check one message against the composed limits for this connection. Returns `Some(reason)` when
@@ -316,8 +327,29 @@ impl RateLimiter {
         size: usize,
         peer_caps: &Capabilities,
     ) -> Option<String> {
+        self.process_and_check_at(msg_type, size, peer_caps, Instant::now())
+    }
+
+    fn process_and_check_at(
+        &self,
+        msg_type: ProtocolMessageTypes,
+        size: usize,
+        peer_caps: &Capabilities,
+        now: Instant,
+    ) -> Option<String> {
         let both_v2 = peer_supports_v2(peer_caps);
-        let limit = composed_limit(msg_type, both_v2);
+        let mut limit = composed_limit(msg_type, both_v2);
+        if !self.signature_profile.is_bls()
+            && matches!(
+                msg_type,
+                ProtocolMessageTypes::SignedValues | ProtocolMessageTypes::RespondSignatures
+            )
+            && let Limit::Rl(ref mut settings) = limit
+        {
+            // Two padded Falcon signatures and public keys, bounded messages, and framing.
+            // Frequency and aggregate budgets remain unchanged.
+            settings.max_size = 8 * KIB;
+        }
         let proportion = f64::from(self.percentage_of_limit) / 100.0;
         let size = size as u64;
 
@@ -326,13 +358,30 @@ impl RateLimiter {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        let slot = self.start.elapsed().as_secs() / self.reset_seconds;
-        if slot != w.slot {
-            w.slot = slot;
-            w.counts.clear();
-            w.sizes.clear();
-            w.non_tx_count = 0;
-            w.non_tx_size = 0;
+        if self.incoming {
+            let slot = now.duration_since(self.start).as_secs() / self.reset_seconds;
+            if slot != w.slot {
+                w.slot = slot;
+                w.counts.clear();
+                w.sizes.clear();
+                w.non_tx_count = 0;
+                w.non_tx_size = 0;
+            }
+        } else {
+            let window = Duration::from_secs(self.reset_seconds);
+            while w
+                .outgoing
+                .front()
+                .is_some_and(|(at, _, _, _)| now.duration_since(*at) >= window)
+            {
+                let (_, key, size, aggregate) = w.outgoing.pop_front().expect("front exists");
+                *w.counts.get_mut(&key).expect("charged type") -= 1;
+                *w.sizes.get_mut(&key).expect("charged size") -= size;
+                if aggregate {
+                    w.non_tx_count -= 1;
+                    w.non_tx_size -= size;
+                }
+            }
         }
 
         let key = msg_type as u8;
@@ -387,11 +436,15 @@ impl RateLimiter {
         // For INCOMING messages the counters advance unconditionally (the bytes are already
         // received), so a peer that keeps violating keeps climbing the window. For OUTGOING, only
         // advance when we actually send (allowed).
-        if self.incoming || allowed {
+        if self.incoming || (allowed && matches!(limit, Limit::Rl(_))) {
             w.counts.insert(key, new_count);
             w.sizes.insert(key, new_size);
             w.non_tx_count = new_non_tx_count;
             w.non_tx_size = new_non_tx_size;
+            if !self.incoming {
+                let aggregate = matches!(limit, Limit::Rl(settings) if settings.aggregate_limit);
+                w.outgoing.push_back((now, key, size, aggregate));
+            }
         }
         violation
     }

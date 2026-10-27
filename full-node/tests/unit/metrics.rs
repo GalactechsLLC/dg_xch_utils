@@ -134,6 +134,53 @@ fn index_maintenance_is_named_instead_of_claiming_confirmation_progress() {
     assert!(verdict.body.contains("index maintenance"));
 }
 
+#[tokio::test]
+async fn liveness_samples_sqlite_maintenance_and_restores_stall_detection() {
+    use super::MetricsSources;
+    use dg_xch_stores::{BlockStore, SqliteStore};
+    use std::sync::{Arc, atomic::Ordering};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(
+        SqliteStore::open(&dir.path().join("chain.db"))
+            .await
+            .unwrap(),
+    );
+    let telemetry = store.telemetry().unwrap();
+    let sources = MetricsSources {
+        store,
+        metrics: Default::default(),
+        claimed_peak: Arc::new(100.into()),
+        registry: Arc::new(dg_xch_p2p::PeerRegistry::new(Default::default())),
+        sync_from: 0,
+        inbound_peers: Default::default(),
+        net: Default::default(),
+        mempool: Arc::new(tokio::sync::Mutex::new(dg_xch_node::Mempool::new(
+            &dg_xch_core::consensus::constants::MAINNET,
+        ))),
+        sp_current_index: Default::default(),
+        signage_points_total: Default::default(),
+        health: HealthState::new_at(BOOT),
+        producer: Default::default(),
+        follow_inflight_since: Default::default(),
+    };
+
+    telemetry.schema_active.store(1, Ordering::Relaxed);
+    let (status, body) = sources.health_check().await;
+    assert_eq!(status, "200 OK");
+    assert!(body.contains("index maintenance"), "{body}");
+
+    // Exercise the real liveness sampler, with peers supplied to model the stalled node
+    // without opening network connections. Clearing maintenance must restore stall checks.
+    for (active, expected) in [(1, "200 OK"), (0, "503 Service Unavailable")] {
+        telemetry.schema_active.store(active, Ordering::Relaxed);
+        let mut snapshot = sources.sample_liveness().await;
+        snapshot.outbound_peers = 2;
+        let verdict = sources.health.verdict(&snapshot, BOOT + STALL_SECS * 10, 0);
+        assert_eq!(verdict.status, expected);
+    }
+}
+
 // A /debug/heap request against a process without ACTIVE jemalloc profiling
 // must fail loud with the exact activation env var — never resolve to an empty profile. This
 // holds in BOTH unprofiled environments: a prof-less build (macOS dev / non-`profiling`

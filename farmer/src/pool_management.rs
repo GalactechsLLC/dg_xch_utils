@@ -16,10 +16,28 @@ use std::io::Error;
 use std::sync::Arc;
 
 #[derive(Clone)]
+pub struct PoolSettingsConfig {
+    pub launcher_id: dg_xch_core::blockchain::sized_bytes::Bytes32,
+    pub pool_url: String,
+}
+#[derive(Clone)]
+pub struct PoolFarmerSettings {
+    pub payout_instructions: String,
+    pub current_difficulty: u64,
+    pub current_points: u64,
+}
+#[derive(Clone)]
+pub enum PoolIdentity {
+    Bls(PoolWalletConfig, GetFarmerResponse),
+    #[cfg(feature = "falcon")]
+    Falcon(dg_xch_core::protocols::pool_falcon::PoolConfig),
+}
+#[derive(Clone)]
 pub struct PoolSettings {
-    pub config: PoolWalletConfig,
+    pub config: PoolSettingsConfig,
     pub info: GetPoolInfoResponse,
-    pub farmer: GetFarmerResponse,
+    pub farmer: PoolFarmerSettings,
+    pub identity: PoolIdentity,
 }
 
 pub async fn read_settings<Client: PoolClient + Send + Sync>(
@@ -54,21 +72,28 @@ pub async fn read_settings<Client: PoolClient + Send + Sync>(
     .await
     .map_err(|error| Error::other(format!("{error:?}")))?;
     Ok(PoolSettings {
-        config: config.clone(),
+        config: PoolSettingsConfig {
+            launcher_id: config.launcher_id,
+            pool_url: config.pool_url.clone(),
+        },
         info,
-        farmer,
+        farmer: PoolFarmerSettings {
+            payout_instructions: farmer.payout_instructions.clone(),
+            current_difficulty: farmer.current_difficulty,
+            current_points: farmer.current_points,
+        },
+        identity: PoolIdentity::Bls(config.clone(), farmer),
     })
 }
 
 fn changed_payload(
     current: &PoolSettings,
-    expected: &GetFarmerResponse,
+    expected: &PoolFarmerSettings,
     payout: &str,
     difficulty: u64,
 ) -> Result<PutFarmerPayload, Error> {
     if current.farmer.payout_instructions != expected.payout_instructions
         || current.farmer.current_difficulty != expected.current_difficulty
-        || current.farmer.authentication_public_key != expected.authentication_public_key
     {
         return Err(Error::other(
             "pool settings changed since you loaded them; reload before saving",
@@ -105,12 +130,27 @@ pub async fn update_settings<Client: PoolClient + Send + Sync>(
     payout: &str,
     difficulty: u64,
 ) -> Result<PoolSettings, Error> {
-    if owner_key.sk_to_pk().to_bytes() != expected.config.owner_public_key.bytes() {
+    let (config, previous) = match &expected.identity {
+        PoolIdentity::Bls(config, previous) => (config, previous),
+        #[cfg(feature = "falcon")]
+        PoolIdentity::Falcon(_) => {
+            return Err(Error::other("BLS credentials cannot change a Falcon pool"));
+        }
+    };
+    if owner_key.sk_to_pk().to_bytes() != config.owner_public_key.bytes() {
         return Err(Error::other(
             "pool owner key does not match the configured owner",
         ));
     }
-    let current = read_settings(client.clone(), &expected.config, authentication_key).await?;
+    let current = read_settings(client.clone(), config, authentication_key).await?;
+    #[allow(irrefutable_let_patterns)]
+    if let PoolIdentity::Bls(_, current_farmer) = &current.identity
+        && current_farmer.authentication_public_key != previous.authentication_public_key
+    {
+        return Err(Error::other(
+            "pool authentication key changed; reload settings",
+        ));
+    }
     let payload = changed_payload(&current, &expected.farmer, payout, difficulty)?;
     if payload.payout_instructions.is_none() && payload.suggested_difficulty.is_none() {
         return Ok(current);
@@ -136,7 +176,130 @@ pub async fn update_settings<Client: PoolClient + Send + Sync>(
             "pool did not accept every requested change; reload to see its current values",
         ));
     }
-    read_settings(client, &expected.config, authentication_key).await
+    read_settings(client, config, authentication_key).await
+}
+
+#[cfg(feature = "falcon")]
+pub async fn read_falcon_settings(
+    client: &dg_xch_clients::api::pool::DefaultPoolClient,
+    config: &dg_xch_core::protocols::pool_falcon::PoolConfig,
+    key: &dg_xch_core::signatures::falcon::FalconSigner,
+    constants: &dg_xch_core::consensus::constants::ConsensusConstants,
+) -> Result<PoolSettings, Error> {
+    use dg_xch_core::protocols::pool_falcon as wire;
+    if constants.signature_profile.is_bls() {
+        return Err(Error::other("Falcon pool requires Falcon consensus"));
+    }
+    let info = client
+        .get_pool_info(&config.pool_url)
+        .await
+        .map_err(|e| Error::other(e.error_message))?;
+    if info.protocol_version != 3
+        || info.target_puzzle_hash != config.target_puzzle_hash
+        || info.minimum_difficulty == 0
+    {
+        return Err(Error::other("Falcon pool profile or target mismatch"));
+    }
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(Error::other)?
+        .as_secs();
+    let request = wire::sign(
+        key,
+        constants.genesis_challenge,
+        config.target_puzzle_hash,
+        "get_farmer",
+        wire::FarmerQuery {
+            launcher_id: config.launcher_id,
+            timestamp,
+        },
+    )?;
+    let farmer: wire::FarmerInfo = client
+        .falcon_request(&config.pool_url, "farmer/info", request)
+        .await
+        .map_err(|e| Error::other(e.error_message))?;
+    if farmer.launcher_id != config.launcher_id
+        || farmer.contract_puzzle_hash != config.contract_puzzle_hash
+        || farmer.current_difficulty < info.minimum_difficulty
+    {
+        return Err(Error::other(
+            "pool returned inconsistent Falcon farmer settings",
+        ));
+    }
+    Ok(PoolSettings {
+        config: PoolSettingsConfig {
+            launcher_id: config.launcher_id,
+            pool_url: config.pool_url.clone(),
+        },
+        info,
+        farmer: PoolFarmerSettings {
+            payout_instructions: farmer.payout_puzzle_hash.to_string(),
+            current_difficulty: farmer.current_difficulty,
+            current_points: farmer.current_points,
+        },
+        identity: PoolIdentity::Falcon(config.clone()),
+    })
+}
+
+#[cfg(feature = "falcon")]
+pub async fn update_falcon_settings(
+    client: &dg_xch_clients::api::pool::DefaultPoolClient,
+    expected: &PoolSettings,
+    key: &dg_xch_core::signatures::falcon::FalconSigner,
+    constants: &dg_xch_core::consensus::constants::ConsensusConstants,
+    payout: &str,
+    difficulty: u64,
+) -> Result<PoolSettings, Error> {
+    use dg_xch_core::protocols::pool_falcon as wire;
+    let PoolIdentity::Falcon(config) = &expected.identity else {
+        return Err(Error::other("Falcon credentials cannot change a BLS pool"));
+    };
+    let current = read_falcon_settings(client, config, key, constants).await?;
+    if current.farmer.payout_instructions != expected.farmer.payout_instructions
+        || current.farmer.current_difficulty != expected.farmer.current_difficulty
+    {
+        return Err(Error::other(
+            "pool settings changed since loading; reload before saving",
+        ));
+    }
+    if difficulty < current.info.minimum_difficulty {
+        return Err(Error::other("difficulty is below pool minimum"));
+    }
+    let (payout, _) = dg_xch_keys::convert_address(payout, constants.bech32_prefix)?;
+    if hex::encode(payout.bytes()) == current.farmer.payout_instructions
+        && difficulty == current.farmer.current_difficulty
+    {
+        return Ok(current);
+    }
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(Error::other)?
+        .as_secs();
+    let request = wire::sign(
+        key,
+        constants.genesis_challenge,
+        config.target_puzzle_hash,
+        "update_farmer",
+        wire::FarmerUpdate {
+            launcher_id: config.launcher_id,
+            payout_puzzle_hash: payout,
+            timestamp,
+            suggested_difficulty: Some(difficulty),
+        },
+    )?;
+    let result: wire::FarmerInfo = client
+        .falcon_request(&config.pool_url, "farmer/update", request)
+        .await
+        .map_err(|e| Error::other(e.error_message))?;
+    if result.launcher_id != config.launcher_id
+        || result.payout_puzzle_hash != payout
+        || result.current_difficulty != difficulty
+    {
+        return Err(Error::other(
+            "pool did not accept requested settings; reload current values",
+        ));
+    }
+    read_falcon_settings(client, config, key, constants).await
 }
 
 #[cfg(test)]

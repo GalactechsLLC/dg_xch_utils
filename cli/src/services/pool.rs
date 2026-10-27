@@ -3,10 +3,10 @@ use std::io::Error;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about, after_help = super::config::ENV_HELP)]
 struct Args {
     #[arg(long)]
-    config: PathBuf,
+    config: Option<PathBuf>,
 }
 
 pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
@@ -21,7 +21,11 @@ pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
         .current_level(level)
         .init()
         .map_err(|error| Error::other(format!("{error:?}")))?;
-    let bytes = dg_xch_pool::config::read_bounded(&args.config)?;
-    let config = serde_json::from_slice(&bytes).map_err(Error::other)?;
+    let config = super::config::load(
+        "POOL",
+        args.config.as_deref(),
+        super::config::Format::Json,
+        1024 * 1024,
+    )?;
     dg_xch_pool::config::serve(config).await
 }

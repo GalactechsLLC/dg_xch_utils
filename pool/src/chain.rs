@@ -135,6 +135,7 @@ impl NodeChain {
             )?
         };
         let bundle = SpendBundle {
+            authorization: Default::default(),
             coin_spends: spends,
             ..SpendBundle::default()
         };
@@ -220,6 +221,18 @@ impl NodeChain {
 
     async fn v2_membership(&self, launcher: Bytes32, key: Bytes48) -> Result<Membership, Error> {
         let definition = self.v2_definition(launcher, key);
+        self.portable_singleton(&definition).await?;
+        Ok(Membership {
+            owner_public_key: key,
+            contract_puzzle_hash: dg_xch_puzzles::pool_v2::reward_puzzle(launcher)?.tree_hash(),
+        })
+    }
+
+    pub(crate) async fn portable_singleton<K: dg_xch_puzzles::pool_v2::PoolOwner + Sync>(
+        &self,
+        definition: &dg_xch_puzzles::pool_v2::PlotNft<K>,
+    ) -> Result<(CoinRecord, dg_xch_core::blockchain::coin_spend::CoinSpend), Error> {
+        let launcher = definition.launcher_id;
         let hash = definition.puzzle()?.tree_hash();
         let records = self
             .client
@@ -255,7 +268,7 @@ impl NodeChain {
         {
             return Err(Error::other("invalid v2 PlotNFT parent spend"));
         }
-        let puzzle = parent.puzzle_reveal.to_program()?;
+        let puzzle = parent.puzzle_reveal.to_program()?.to_owned();
         let (module, arguments) = puzzle.uncurry()?;
         let arguments = arguments.as_list();
         if module.tree_hash()
@@ -271,15 +284,24 @@ impl NodeChain {
         {
             return Err(Error::other("invalid v2 PlotNFT singleton lineage"));
         }
-        Ok(Membership {
-            owner_public_key: key,
-            contract_puzzle_hash: dg_xch_puzzles::pool_v2::reward_puzzle(launcher)?.tree_hash(),
-        })
+        Ok((*record, parent))
     }
 }
 
 #[async_trait]
 impl PoolChain for NodeChain {
+    fn currency_code(&self) -> String {
+        self.constants.bech32_prefix.to_ascii_uppercase()
+    }
+    fn profile_label(&self) -> &'static str {
+        dg_xch_core::branding::consensus_label(&self.constants)
+    }
+    fn genesis(&self) -> Bytes32 {
+        self.constants.genesis_challenge
+    }
+    fn signature_profile(&self) -> dg_xch_core::signatures::SignatureProfile {
+        self.constants.signature_profile
+    }
     async fn membership(
         &self,
         version: PoolVersion,
@@ -290,6 +312,9 @@ impl PoolChain for NodeChain {
         match version {
             PoolVersion::V1 => self.v1_membership(launcher).await,
             PoolVersion::V2 => self.v2_membership(launcher, authentication_key).await,
+            PoolVersion::Falcon => Err(Error::other(
+                "Falcon membership requires a Falcon public key",
+            )),
         }
     }
 
@@ -299,21 +324,116 @@ impl PoolChain for NodeChain {
         farmer: &Farmer,
         now: u64,
     ) -> Result<Bytes32, Error> {
+        self.check_partial(payload, farmer.contract_puzzle_hash, farmer.difficulty, now)
+            .await
+    }
+
+    async fn falcon_membership(
+        &self,
+        launcher: Bytes32,
+        key: dg_xch_core::protocols::pool_falcon::PublicKey,
+    ) -> Result<Membership<dg_xch_core::protocols::pool_falcon::PublicKey>, Error> {
         self.check_network().await?;
+        let definition = self.falcon_definition(launcher, &key)?;
+        self.portable_singleton(&definition).await?;
+        Ok(Membership {
+            owner_public_key: key,
+            contract_puzzle_hash: dg_xch_puzzles::pool_v2::reward_puzzle(launcher)?.tree_hash(),
+        })
+    }
+
+    async fn falcon_partial(
+        &self,
+        payload: &PostPartialPayload,
+        farmer: &Farmer<dg_xch_core::protocols::pool_falcon::PublicKey>,
+        now: u64,
+    ) -> Result<Bytes32, Error> {
+        if self.constants.signature_profile.is_bls() {
+            return Err(Error::other("Falcon partial on BLS chain"));
+        }
+        self.check_partial(payload, farmer.contract_puzzle_hash, farmer.difficulty, now)
+            .await
+    }
+}
+
+impl NodeChain {
+    pub fn falcon_definition(
+        &self,
+        launcher: Bytes32,
+        key: &dg_xch_core::protocols::pool_falcon::PublicKey,
+    ) -> Result<
+        dg_xch_puzzles::pool_v2::PlotNft<dg_xch_core::signatures::falcon::FalconPublicKey>,
+        Error,
+    > {
+        use dg_xch_puzzles::pool_v2::PoolOwner;
+        if self.constants.signature_profile.is_bls() {
+            return Err(Error::other("Falcon PlotNFT on BLS chain"));
+        }
+        key.0.validate()?;
+        Ok(dg_xch_puzzles::pool_v2::PlotNft {
+            launcher_id: launcher,
+            genesis_challenge: self.constants.genesis_challenge,
+            synthetic_public_key: key.0,
+            exiting: false,
+            pool: Some(dg_xch_puzzles::pool_v2::PoolConfig {
+                target: self.target,
+                relative_lock_height: self.relative_lock_height,
+                memoization: self.pool_memoization.clone(),
+            }),
+        })
+    }
+
+    pub async fn falcon_claim_spends(
+        &self,
+        farmer: &Farmer<dg_xch_core::protocols::pool_falcon::PublicKey>,
+        reward: &CoinRecord,
+    ) -> Result<Vec<dg_xch_core::blockchain::coin_spend::CoinSpend>, Error> {
+        self.check_network().await?;
+        let definition = self.falcon_definition(farmer.launcher_id, &farmer.owner_public_key)?;
+        let height = u32::from_be_bytes(
+            reward.coin.parent_coin_info[28..32]
+                .try_into()
+                .map_err(Error::other)?,
+        );
+        if !reward.coinbase
+            || reward.spent
+            || height == 0
+            || reward.coin.amount != self.constants.rewards.pool_reward(height)
+            || reward.coin.puzzle_hash != farmer.contract_puzzle_hash
+        {
+            return Err(Error::other("coin is not an unspent Falcon pool reward"));
+        }
+        let (singleton, parent) = self.portable_singleton(&definition).await?;
+        definition.claim_reward(singleton.coin, &parent, reward.coin, height)
+    }
+
+    async fn check_partial(
+        &self,
+        payload: &PostPartialPayload,
+        contract_puzzle_hash: Bytes32,
+        difficulty: u64,
+        now: u64,
+    ) -> Result<Bytes32, Error> {
+        self.check_network().await?;
+        let started = std::time::Instant::now();
+        let signage = wait_for_signage(
+            || {
+                self.client.get_recent_signage_point_or_eos(
+                    (!payload.end_of_sub_slot).then_some(&payload.sp_hash),
+                    payload.end_of_sub_slot.then_some(&payload.sp_hash),
+                )
+            },
+            Duration::from_secs(u64::from(self.partial_time_limit.min(10))),
+        )
+        .await?;
+        // Refresh the height after waiting; a fork activation must not be checked at an old peak.
         let state = self
             .client
             .get_blockchain_state()
             .await
             .map_err(Error::from)?;
         let peak = state.peak.ok_or_else(|| Error::other("node has no peak"))?;
-        let signage = self
-            .client
-            .get_recent_signage_point_or_eos(
-                (!payload.end_of_sub_slot).then_some(&payload.sp_hash),
-                payload.end_of_sub_slot.then_some(&payload.sp_hash),
-            )
-            .await
-            .map_err(Error::from)?;
+        let now = now.saturating_add(started.elapsed().as_secs());
         verify_partial(
             payload,
             &PartialContext {
@@ -328,11 +448,114 @@ impl PoolChain for NodeChain {
                 } else {
                     peak.prev_transaction_block_height
                 },
-                contract_puzzle_hash: farmer.contract_puzzle_hash,
-                difficulty: farmer.difficulty,
+                contract_puzzle_hash,
+                difficulty,
                 now,
                 time_limit: self.partial_time_limit,
             },
         )
+    }
+}
+
+// A farmer can receive a signage point before the pool's node receives its gossip or block.
+// Retry only that precise cache miss, with a deadline covering even a stalled RPC request.
+async fn wait_for_signage<T, F, Fut>(mut fetch: F, budget: Duration) -> Result<T, Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, dg_xch_clients::rpc::ChiaRpcError>>,
+{
+    let deadline = tokio::time::Instant::now() + budget;
+    let timeout = || {
+        Error::new(
+            std::io::ErrorKind::TimedOut,
+            "node did not receive partial signage before the deadline",
+        )
+    };
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(timeout());
+        }
+        match tokio::time::timeout_at(deadline, fetch())
+            .await
+            .map_err(|_| timeout())?
+        {
+            Ok(signage) => return Ok(signage),
+            Err(error)
+                if error.error.as_deref().is_some_and(|message| {
+                    (message.starts_with("Did not find sp ")
+                        || message.starts_with("Did not find eos "))
+                        && message.ends_with(" in cache")
+                }) =>
+            {
+                tokio::time::sleep_until(std::cmp::min(
+                    deadline,
+                    tokio::time::Instant::now() + Duration::from_millis(250),
+                ))
+                .await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod recent_signage_tests {
+    use super::*;
+    use dg_xch_clients::rpc::ChiaRpcError;
+    #[tokio::test]
+    async fn propagation_wait_retries_cache_misses_only_and_bounds_stalled_requests() {
+        let mut calls = 0;
+        let result = wait_for_signage(
+            || {
+                calls += 1;
+                let result = if calls == 1 {
+                    Err(ChiaRpcError {
+                        success: false,
+                        error: Some("Did not find eos test in cache".into()),
+                    })
+                } else {
+                    Ok(7)
+                };
+                std::future::ready(result)
+            },
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, 7);
+        assert_eq!(calls, 2);
+        calls = 0;
+        assert!(
+            wait_for_signage(
+                || {
+                    calls += 1;
+                    std::future::ready(Err::<u8, _>(ChiaRpcError {
+                        success: false,
+                        error: Some("invalid proof".into()),
+                    }))
+                },
+                Duration::from_secs(2)
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(calls, 1);
+        let result = wait_for_signage(
+            std::future::pending::<Result<u8, ChiaRpcError>>,
+            Duration::from_millis(20),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        let result = wait_for_signage(
+            || {
+                std::future::ready(Err::<u8, _>(ChiaRpcError {
+                    success: false,
+                    error: Some("Did not find sp unknown in cache".into()),
+                }))
+            },
+            Duration::from_millis(20),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
     }
 }

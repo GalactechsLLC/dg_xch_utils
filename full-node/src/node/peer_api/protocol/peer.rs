@@ -47,7 +47,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         // `full_node.new_peak`: record this peer's claim FIRST (sync_store.peer_has_block), weight
         // included — WEIGHT is the fork-choice ordering key, and the newest announcement REPLACES the
         // peer's previous claim (which is also how an over-claim is withdrawn). Outbound connections
-        // key by the minted per-connection guard (the dispatch peer id there is our own cert hash);
+        // key by the minted per-connection guard, independently of the remote certificate;
         // the shared inbound api keys by the real inbound peer id.
         let (key, inbound) = match &self.claim_guard {
             Some(guard) => (guard.key(), false),
@@ -185,8 +185,7 @@ impl<S: BlockStore + CoinStore + Send + Sync + 'static> StoreApi<S> {
         };
         // Record the origin (peer id + remote host) BEFORE queueing so the announce drain, which may
         // run concurrently with the validator worker's admission, can exclude the peer this bundle
-        // arrived from. The host is what makes an OUTBOUND
-        // origin excludable — its dispatch peer id is our shared client-cert hash. A bundle that
+        // arrived from. The host also allows matching an outbound registry endpoint. A bundle that
         // later fails admission produces no announcement, so its origin
         // is never consumed and simply ages out (bounded — see record_tx_origin).
         record_tx_origin(

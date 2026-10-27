@@ -9,6 +9,7 @@ From the repository root:
 ```sh
 cargo install --path cli --locked
 dgx init
+export DGX_INTRODUCER_DATABASE_URL=postgres://user:password@postgres:5432/discovery
 dgx introducer --config /home/user/.dgx/config/introducer.json
 ```
 
@@ -26,7 +27,6 @@ Create that JSON file with your certificate paths:
   "peer_server_name": "localhost",
   "allow_private_addresses": false,
   "max_connections": 64,
-  "max_peers": 4096,
   "peer_ttl_seconds": 3600
 }
 ```
@@ -43,7 +43,7 @@ Replace the example hostname with your reachable service. Nodes register at star
 
 ## Behavior
 
-Registrations are kept in memory and expire. Replies contain at most 100 peers, with one endpoint retained per source IP. Multiple nodes behind one NAT need another discovery arrangement. Private addresses are rejected by default.
+Discovery and verification jobs are stored in PostgreSQL and isolated by network. Background workers verify advertised endpoints and retry failures; responses contain at most 100 endpoints with unexpired verification. The catalog is unlimited and supports multiple ports per IP. Private addresses are rejected by default.
 
 The service bounds connections, probes, and messages, but a public deployment still needs network-level abuse protection. For embedding, use the configuration and service APIs in `src/lib.rs`.
 

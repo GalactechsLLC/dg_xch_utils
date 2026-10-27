@@ -1,0 +1,16 @@
+FN-DSA Rust implementation
+
+Packages: fn-dsa, fn-dsa-comm, fn-dsa-kgen, fn-dsa-sign, fn-dsa-vrfy
+Version: 0.4.0 for all five packages
+Author declared by the packages: Thomas Pornin
+Source: https://github.com/pornin/rust-fn-dsa
+Published source revision: dc1832bc755a2803c82b7d43a0a32af25dce5c42
+License: Unlicense
+
+The complete upstream license is included as LICENSE-FN-DSA. Its text was
+retrieved from the repository root at the exact revision recorded in the
+five published crates' .cargo_vcs_info.json files. The individual registry
+archives declare Unlicense but do not include that root license file.
+
+Source license:
+https://github.com/pornin/rust-fn-dsa/blob/dc1832bc755a2803c82b7d43a0a32af25dce5c42/LICENSE

@@ -12,6 +12,7 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::chain_definition::ChainDefinition;
 
 pub mod backend;
+mod monitoring;
 pub mod regular;
 pub mod scheduler;
 pub mod service;

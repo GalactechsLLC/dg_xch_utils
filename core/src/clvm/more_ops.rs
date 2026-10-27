@@ -393,11 +393,7 @@ pub fn op_div_impl(arena: &Arena, args: NodePtr, mempool: bool) -> Result<(u64, 
                 arena.debug_fmt(args)
             )))?
         }
-        let (mut q, r) = a0.div_mod_floor(&a1);
-        // this is to preserve a buggy behavior from the initial implementation of this operator.
-        if q == SExpNumber::I128(-1) && !r.is_zero() {
-            q += SExpNumber::I128(1);
-        }
+        let q = a0.div_mod_floor(&a1).0;
         trace_arith(arena, "div", args, &q);
         malloc_number(cost, &q)
     }
@@ -919,12 +915,13 @@ pub fn op_all<D: Dialect>(
     }
 }
 
-pub fn op_softfork<D: Dialect>(
+/// Validate the declared guard cost. Guard execution belongs to ClvmRuntime.
+pub(crate) fn softfork_cost<D: Dialect>(
     arena: &Arena,
     args: NodePtr,
     max_cost: u64,
     dialect: &D,
-) -> Result<(u64, OpOut), ClvmError> {
+) -> Result<u64, ClvmError> {
     match arena.next(args) {
         Some((first, _rest)) => {
             let cost_bytes = int_atom(arena, first, "softfork")?;
@@ -949,7 +946,7 @@ pub fn op_softfork<D: Dialect>(
                 let cost: u64 = TryFrom::try_from(&n).map_err(|e| {
                     ClvmError::Unsupported(format!("Failed to convert Atom to Int: {e:?}"))
                 })?;
-                Ok((cost, OpOut::Same(NodePtr::NIL)))
+                Ok(cost)
             } else {
                 Err(ClvmError::Unsupported(format!(
                     "Cost must be > 0, found {n}"

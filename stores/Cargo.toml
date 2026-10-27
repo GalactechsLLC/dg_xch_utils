@@ -15,17 +15,20 @@ dg_xch_core = { path = "../core", version = "3.0.0", default-features = false, f
 dg_xch_serialize = { path = "../serialize", version = "3.0.0" }
 async-trait = "0.1.89"
 log = "0.4.28"
-sqlx = { version = "=0.8.6", features = ["macros", "runtime-tokio", "tls-rustls-aws-lc-rs", "sqlite"] }
-tokio = { version = "1.50.0", features = ["rt-multi-thread", "sync", "macros"] }
-memmap2 = { version = "0.9", optional = true }
-zstd = "0.13.2"
-libsqlite3-sys = "0.30.1"
+sqlx = { version = "0.9.0", features = ["macros", "runtime-tokio", "tls-rustls-aws-lc-rs", "sqlite"] }
+sqlx-core = { version = "0.9.0", default-features = false }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "sync", "macros"] }
+memmap2 = { version = "0.9.12", optional = true }
+rocksdb = { version = "0.25", optional = true, default-features = false, features = ["bindgen-runtime"] }
+rayon = { version = "1.12.0", optional = true }
+zstd = "0.14.3"
+libsqlite3-sys = "0.37.0"
 
  [dev-dependencies]
 tempfile = "3"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "time"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time"] }
 
 [features]
 default = []
@@ -36,3 +39,4 @@ hint = ["coin-index"]
 postgres = ["sqlx/postgres", "dg_xch_core/postgres"]
 # The embedded libbitcoin-style backend (the Pi profile): mmap logs + slot-table indexes.
 mmap = ["dep:memmap2"]
+rocksdb = ["dep:rocksdb", "dep:rayon"]

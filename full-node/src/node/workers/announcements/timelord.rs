@@ -114,6 +114,7 @@ pub(in crate::node) async fn build_new_peak_timelord<S: BlockStore + Send + Sync
     // the peak FullBlock — it reads only signage_point_index, the prev-block hash, finished_sub_slots
     // and total_iters, all preserved by RewardChainBlock::get_unfinished and the shared foliage.
     let unfinished_peak = UnfinishedBlock {
+        authorization: peak_block.authorization.clone(),
         finished_sub_slots: peak_block.finished_sub_slots.clone(),
         reward_chain_block: peak_block.reward_chain_block.get_unfinished(),
         challenge_chain_sp_proof: peak_block.challenge_chain_sp_proof.clone(),
@@ -208,7 +209,7 @@ pub(in crate::node) async fn send_new_peak_timelord<
         );
         let _ = peer.send(msg).await;
     }
-    info!(
+    debug!(
         "new peak announced to timelord peers event={} height={} timelords={}",
         "producer.peak.timelord_broadcast",
         new_peak.reward_chain_block.height,
@@ -221,9 +222,5 @@ pub(in crate::node) async fn send_new_peak_timelord<
 // Fire-and-forget like the peak announcement: a peer that misses one can still pull the bundle
 // after any other node re-announces it.
 //
-// Origin-exclusion id space: inbound peers are keyed by their client-cert hash, so an
-// inbound-sourced transaction never echoes to its origin. OUTBOUND connections all share one
-// local dispatch id (OUR client-cert hash — clients/src/websocket/mod.rs:205), so an
-// outbound-sourced transaction may still echo to its origin: a benign redundancy (the origin
-// holds the item, the cost/fee consistency check passes, the announce is ignored) pending
-// per-connection identity plumbing on the dial path.
+// Origin exclusion uses the remote certificate identity for inbound links and the
+// dialed remote host for outbound registry entries (see broadcast_transactions).

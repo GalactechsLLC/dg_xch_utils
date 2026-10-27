@@ -17,6 +17,7 @@ use dg_xch_core::constants::{CHIA_CA_CRT, CHIA_CA_KEY};
 use dg_xch_core::ssl::{
     generate_ca_signed_cert_data, load_certs_from_bytes, load_ssl_cert_and_key, make_ca_cert_data,
 };
+use dg_xch_dev_tools::stack_profile::StackProfile;
 use dg_xch_farmer::farmer::config::{
     Config, FarmingInfo, HarvesterConfig, Pos2Backend, Pos2HarvesterConfig,
 };
@@ -168,6 +169,12 @@ fn ensure_service(root: &Path, expected: &serde_json::Value) -> Result<(), Error
 struct Args {
     #[arg(long)]
     root: PathBuf,
+    /// Require this chain profile; unsupported profiles fail before creating files.
+    #[arg(long, value_enum, default_value = "bls")]
+    chain_profile: StackProfile,
+    /// Run every farmer with the CPU backend, including the amd/nvidia identities.
+    #[arg(long)]
+    cpu_farmers: bool,
 }
 
 fn identity(root: &Path, prefix: &str, issuer: &[u8], issuer_key: &[u8]) -> Result<(), Error> {
@@ -288,6 +295,17 @@ fn create_farmer(
         issuer,
         issuer_key,
     )?;
+    if !chain
+        .constants()
+        .map_err(Error::other)?
+        .signature_profile
+        .is_bls()
+    {
+        #[cfg(feature = "falcon")]
+        return create_falcon_farmer(root, chain, existing, backend);
+        #[cfg(not(feature = "falcon"))]
+        return Err(Error::other("Falcon support is not compiled"));
+    }
     let master_path = root.join("dev-master-key.hex");
     let master_bytes = read_existing(&master_path, true, 64)?;
     if master_bytes.is_none()
@@ -322,12 +340,17 @@ fn create_farmer(
         fullnode_ws_port: 8444,
         fullnode_rpc_host: "localhost".to_owned(),
         fullnode_rpc_port: 8444,
+        signage_point_timeout_seconds: Config::<()>::default().signage_point_timeout_seconds,
+        falcon_key_file: None,
+        #[cfg(feature = "falcon")]
+        runtime_falcon_keys: None,
         farmer_info: vec![FarmingInfo {
             farmer_secret_key: Bytes32::from(farmer.to_bytes()),
             pool_secret_key: Some(Bytes32::from(pool.to_bytes())),
             ..FarmingInfo::default()
         }],
         pool_info: Vec::new(),
+        falcon_pools: Vec::new(),
         pool_ca_certificates: Vec::new(),
         payout_address: encode_puzzle_hash(&payout, "dgx")?,
         harvester_configs: HarvesterConfig {
@@ -378,6 +401,83 @@ fn create_farmer(
     dg_xch_farmer::utils::ensure_farmer_tls(&root.join("ssl"))
 }
 
+#[cfg(feature = "falcon")]
+fn create_falcon_farmer(
+    root: &Path,
+    chain: &ChainDefinition,
+    existing: Option<Config>,
+    backend: Pos2Backend,
+) -> Result<(), Error> {
+    use dg_xch_core::signatures::{SignatureSigner, falcon_keys::FalconKeyring, falcon_wallet};
+    let path = root.join("falcon-keys.bin");
+    let keys = if path.try_exists()? {
+        FalconKeyring::load(&path)?
+    } else {
+        if existing.is_some() || root.join("plot-keys.json").try_exists()? {
+            return Err(Error::other(
+                "Falcon keys missing; restore the existing farmer identity",
+            ));
+        }
+        // Leave room for the 26 k28 plots used by each 25 GB cluster farmer.
+        let keys = FalconKeyring::generate(32)?;
+        write_new(&path, &keys.encode())?;
+        keys
+    };
+    let payout = falcon_wallet::puzzle(&keys.wallet.public_key()).tree_hash();
+    let config: Config = Config {
+        selected_network: chain.network_id.clone(),
+        chain_definition: Some(chain.clone()),
+        ssl_root_path: Some("/service/ssl".to_owned()),
+        fullnode_ws_host: "localhost".to_owned(),
+        fullnode_ws_port: 8444,
+        fullnode_rpc_host: "localhost".to_owned(),
+        fullnode_rpc_port: 8444,
+        falcon_key_file: Some(PathBuf::from("/service/falcon-keys.bin")),
+        runtime_falcon_keys: None,
+        payout_address: encode_puzzle_hash(&payout, "dgx")?,
+        harvester_configs: HarvesterConfig {
+            plot_directories: vec!["/plots".to_owned()],
+            druid_garden: None,
+            bladebit: None,
+            gigahorse: None,
+            custom_config: None,
+            pos2: Some(Pos2HarvesterConfig {
+                backend,
+                max_proofs_per_signage_point: Some(1),
+                cuda_helper: (backend == Pos2Backend::Cuda)
+                    .then(|| PathBuf::from("/usr/local/bin/dg_xch_plotter_cuda")),
+                ..Pos2HarvesterConfig::default()
+            }),
+        },
+        metrics: None,
+        ..Config::default()
+    };
+    config.validate_keys()?;
+    if let Some(existing) = existing {
+        if existing.payout_address != config.payout_address
+            || existing.falcon_key_file != config.falcon_key_file
+            || !existing.farmer_info.is_empty()
+            || !existing.pool_info.is_empty()
+        {
+            return Err(Error::other(
+                "existing Falcon farmer configuration differs from its identity",
+            ));
+        }
+    } else {
+        write_new(
+            &root.join("config.yaml"),
+            serde_yaml::to_string(&config)
+                .map_err(Error::other)?
+                .as_bytes(),
+        )?;
+    }
+    ensure_json(
+        &root.join("plot-keys.json"),
+        &serde_json::json!({"signature_profile":"fn_dsa512_v2", "payout_address":config.payout_address, "plot_count":keys.plots.len()}),
+    )?;
+    dg_xch_farmer::utils::ensure_farmer_tls(&root.join("ssl"))
+}
+
 fn service_identity(root: &Path, roots: &[u8]) -> Result<serde_json::Value, Error> {
     identity(
         &root.join("tls"),
@@ -393,7 +493,28 @@ fn service_identity(root: &Path, roots: &[u8]) -> Result<serde_json::Value, Erro
     }))
 }
 
+#[cfg(test)]
 fn initialize(root: &Path) -> Result<(), Error> {
+    initialize_profile(root, StackProfile::Bls, false)
+}
+
+fn read_development_selection(path: &Path) -> Result<ChainSelection, Error> {
+    read_selection(path).map_err(|error| {
+        Error::other(format!("cannot reuse the existing development chain: {error}; FN-DSA v2 requires fresh development volumes, keys and plots; preserve the old data separately"))
+    })
+}
+
+fn initialize_profile(root: &Path, profile: StackProfile, cpu_farmers: bool) -> Result<(), Error> {
+    let existing_chain = root.join("common/chain.json");
+    if read_existing(&existing_chain, false, 64 * 1024)?.is_some()
+        && !profile.matches(
+            &read_development_selection(&existing_chain)?
+                .constants()
+                .map_err(Error::other)?,
+        )
+    {
+        return Err(Error::other("stack profile differs from existing chain"));
+    }
     if !root.try_exists()? {
         std::fs::create_dir_all(root)?;
     }
@@ -424,7 +545,7 @@ fn initialize(root: &Path) -> Result<(), Error> {
     }
     let chain_path = root.join("common/chain.json");
     let chain: ChainDefinition = if read_existing(&chain_path, false, 64 * 1024)?.is_some() {
-        match read_selection(&chain_path)? {
+        match read_development_selection(&chain_path)? {
             ChainSelection::Custom(chain)
                 if chain
                     .consensus
@@ -440,14 +561,33 @@ fn initialize(root: &Path) -> Result<(), Error> {
             }
         }
     } else {
-        let chain = ChainDefinition::development(format!(
-            "dg_xch/compose/{}",
-            hex::encode(rand::random::<[u8; 32]>())
-        ));
+        let seed = format!("dg_xch/compose/{}", hex::encode(rand::random::<[u8; 32]>()));
+        let chain = match profile {
+            StackProfile::Bls => ChainDefinition::development(seed),
+            StackProfile::Falcon => ChainDefinition::falcon_development(seed),
+            StackProfile::Labrador | StackProfile::LabradorZk => {
+                let mut chain = ChainDefinition::falcon_development(seed);
+                chain.network_id = if profile == StackProfile::LabradorZk {
+                    "dgx-labrador-zk-dev-v2"
+                } else {
+                    "dgx-labrador-dev-v2"
+                }
+                .into();
+                chain.falcon_aggregation = Some(if profile == StackProfile::LabradorZk {
+                    dg_xch_core::signatures::labrador::LabradorProfile::Packed11ZkV2
+                } else {
+                    dg_xch_core::signatures::labrador::LabradorProfile::Packed11V2
+                });
+                chain
+            }
+        };
         ensure_selection(&chain_path, &ChainSelection::Custom(chain.clone()))?;
         chain
     };
-    chain.constants().map_err(Error::other)?;
+    let constants = chain.constants().map_err(Error::other)?;
+    if !profile.matches(&constants) {
+        return Err(Error::other("stack profile differs from existing chain"));
+    }
     let mut roots = Vec::new();
     for (node, farmer, backend) in [
         ("node-cpu", "farmer-cpu", Pos2Backend::Cpu),
@@ -456,6 +596,11 @@ fn initialize(root: &Path) -> Result<(), Error> {
     ] {
         let (certificate, key) = node_ca(&root.join(node))?;
         let key = Zeroizing::new(key);
+        let backend = if cpu_farmers {
+            Pos2Backend::Cpu
+        } else {
+            backend
+        };
         create_farmer(&root.join(farmer), &chain, &certificate, &key, backend)?;
         roots.extend_from_slice(&certificate);
         let config_root = root.join(node).join("config");
@@ -470,7 +615,7 @@ fn initialize(root: &Path) -> Result<(), Error> {
     let introducer = root.join("introducer");
     {
         let tls = service_identity(&introducer, &roots)?;
-        let config = serde_json::json!({ "listen": "0.0.0.0:8445", "chain": chain, "tls": tls, "peer_server_name": "localhost", "allow_private_addresses": true, "max_connections": 32, "max_peers": 128, "peer_ttl_seconds": 3600 });
+        let config = serde_json::json!({ "listen": "0.0.0.0:8445", "chain": chain, "tls": tls, "peer_server_name": "localhost", "allow_private_addresses": true, "max_connections": 32, "peer_ttl_seconds": 3600 });
         ensure_service(&introducer, &config)?;
     }
     let timelord = root.join("timelord");
@@ -479,7 +624,7 @@ fn initialize(root: &Path) -> Result<(), Error> {
             &timelord,
             &std::fs::read(root.join("node-cpu/ssl/ca/private_ca.crt"))?,
         )?;
-        let config = serde_json::json!({ "chain": chain, "fullnode_host": "localhost", "fullnode_port": 8444, "server_name": "localhost", "tls": tls, "max_iterations": 1048576, "job_timeout_seconds": 300, "reconnect_seconds": 5, "max_iterations_per_second": 27 });
+        let config = serde_json::json!({ "chain": chain, "fullnode_host": "localhost", "fullnode_port": 8444, "server_name": "localhost", "tls": tls, "max_iterations": 1048576, "job_timeout_seconds": 300, "reconnect_seconds": 5, "max_iterations_per_second": if constants.signature_profile.is_bls() {27} else {8} });
         ensure_service(&timelord, &config)?;
     }
     for service in [
@@ -502,7 +647,9 @@ fn initialize(root: &Path) -> Result<(), Error> {
 }
 
 fn main() -> Result<(), Error> {
-    initialize(&Args::parse().root)?;
+    let args = Args::parse();
+    args.chain_profile.ensure_supported()?;
+    initialize_profile(&args.root, args.chain_profile, args.cpu_farmers)?;
     eprintln!(
         "Disposable test-stack identities are ready. Generate matching PoS2 plots before starting the farmers. Never use these development keys for real funds."
     );
@@ -513,6 +660,32 @@ fn main() -> Result<(), Error> {
 mod tests {
     use super::*;
     use std::sync::OnceLock;
+
+    #[cfg(feature = "falcon")]
+    #[test]
+    fn cpu_only_falcon_stack_has_distinct_farmer_identities_and_is_idempotent() {
+        let directory = tempfile::tempdir().unwrap();
+        initialize_profile(directory.path(), StackProfile::Falcon, true).unwrap();
+        let mut payouts = std::collections::HashSet::new();
+        let mut identities = Vec::new();
+        for farmer in ["cpu", "nvidia", "amd"] {
+            let root = directory.path().join(format!("farmer-{farmer}"));
+            let config: Config =
+                serde_yaml::from_slice(&std::fs::read(root.join("config.yaml")).unwrap()).unwrap();
+            assert_eq!(
+                config.harvester_configs.pos2.unwrap().backend,
+                Pos2Backend::Cpu
+            );
+            assert!(config.farmer_info.is_empty());
+            assert!(payouts.insert(config.payout_address));
+            let path = root.join("falcon-keys.bin");
+            identities.push((path.clone(), std::fs::read(path).unwrap()));
+        }
+        initialize_profile(directory.path(), StackProfile::Falcon, true).unwrap();
+        for (path, expected) in identities {
+            assert_eq!(std::fs::read(path).unwrap(), expected);
+        }
+    }
 
     fn issuer() -> &'static (Vec<u8>, Vec<u8>) {
         static ISSUER: OnceLock<(Vec<u8>, Vec<u8>)> = OnceLock::new();

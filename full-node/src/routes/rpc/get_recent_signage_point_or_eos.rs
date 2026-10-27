@@ -24,7 +24,7 @@ pub async fn route(
                     .lock()
                     .await;
                 let signage_point = slots
-                    .get_signage_point(sp_hash)
+                    .get_recent_signage_point(sp_hash)
                     .ok_or_else(|| sp_not_in_cache(sp_hash))?;
                 let received = slots
                     .received_time(sp_hash)
@@ -44,8 +44,8 @@ pub async fn route(
                     .lock()
                     .await;
                 let eos = slots
-                    .get_sub_slot(challenge_hash)
-                    .map(|(eos, _, _)| eos.clone())
+                    .get_recent_eos(challenge_hash)
+                    .cloned()
                     .ok_or_else(|| eos_not_in_cache(challenge_hash))?;
                 let received = slots
                     .received_time(challenge_hash)

@@ -25,6 +25,8 @@ pub struct BackendHandle<S> {
 /// enum and every portfu construct dispatches through it.
 pub enum ActiveNode {
     Sqlite(BackendHandle<SqliteStore>),
+    #[cfg(feature = "rocksdb")]
+    Rocksdb(BackendHandle<dg_xch_stores::RocksDbStore>),
     #[cfg(feature = "postgres")]
     Postgres(BackendHandle<dg_xch_stores::PostgresStore>),
     #[cfg(feature = "mmap")]
@@ -35,6 +37,8 @@ macro_rules! with_backend {
     ($self:expr, $h:ident => $body:expr) => {
         match $self {
             ActiveNode::Sqlite($h) => $body,
+            #[cfg(feature = "rocksdb")]
+            ActiveNode::Rocksdb($h) => $body,
             #[cfg(feature = "postgres")]
             ActiveNode::Postgres($h) => $body,
             #[cfg(feature = "mmap")]
@@ -48,6 +52,8 @@ impl ActiveNode {
     pub fn backend_name(&self) -> &'static str {
         match self {
             ActiveNode::Sqlite(_) => "sqlite",
+            #[cfg(feature = "rocksdb")]
+            ActiveNode::Rocksdb(_) => "rocksdb",
             #[cfg(feature = "postgres")]
             ActiveNode::Postgres(_) => "postgres",
             #[cfg(feature = "mmap")]
@@ -196,6 +202,46 @@ pub async fn run(
     config: Config,
     logger: Arc<DruidGardenLogger>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    log::info!(
+        "full node starting version={} network={} listen={}",
+        env!("CARGO_PKG_VERSION"),
+        config.network_id,
+        config.listen
+    );
+    match &config.backend {
+        Backend::Sqlite(path) => log::info!(
+            "storage backend=sqlite path={:?} sqlite_bulk_cache_mb={}",
+            path,
+            config.performance.sqlite_writer_cache_mb.unwrap_or(256)
+        ),
+        Backend::Rocksdb(path) => log::info!("storage backend=rocksdb path={path:?}"),
+        Backend::Mmap(path) => log::info!("storage backend=mmap path={path:?}"),
+        Backend::Postgres(_) => log::info!("storage backend=postgres"),
+    }
+    let introducer = config.introducer.as_ref().map_or_else(
+        || "disabled".to_string(),
+        |(host, port)| format!("{host}:{port}"),
+    );
+    let manual_peers: Vec<_> = config
+        .manual_peers
+        .iter()
+        .map(|(host, port)| format!("{host}:{port}"))
+        .collect();
+    log::info!(
+        "peer configuration introducer={} manual_peers={:?} trusted_peers={} trusted_cidrs={} outbound_target={} total_peer_limit={}",
+        introducer,
+        manual_peers,
+        config.trusted_peers.len(),
+        config.trusted_cidrs.len(),
+        config.p2p.target_outbound,
+        config.p2p.target_peer_count
+    );
+    match &config.rpc_tls {
+        crate::config::RpcTlsMode::PrivateCa { ssl_dir } => {
+            log::info!("RPC security tls=private-ca ssl_dir={ssl_dir:?}")
+        }
+        crate::config::RpcTlsMode::Local => log::info!("RPC security access=local"),
+    }
     config.bind_chain_identity()?;
     let server_bind = config.listen;
     if config.rpc != server_bind {
@@ -214,6 +260,7 @@ pub async fn run(
     macro_rules! activate {
         ($variant:ident, $node:expr) => {{
             let node = $node;
+            node.log_startup_state().await?;
             node.attach_rpc_live(node_id);
             let services = node.start_services().await?;
             let sources = Arc::new(node.metrics_sources(&services));
@@ -248,6 +295,25 @@ pub async fn run(
             )
             .into());
         }
+        #[cfg(feature = "rocksdb")]
+        Backend::Rocksdb(directory) => {
+            let store = Arc::new(
+                dg_xch_stores::RocksDbStore::open(&directory)
+                    .await
+                    .map_err(|error| {
+                        std::io::Error::other(format!("open rocksdb store: {error}"))
+                    })?,
+            );
+            activate!(Rocksdb, Arc::new(FullNode::boot_with_store(config, store)?))
+        }
+        #[cfg(not(feature = "rocksdb"))]
+        Backend::Rocksdb(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "rocksdb:// --db requires a binary built with --features rocksdb",
+            )
+            .into());
+        }
         #[cfg(feature = "mmap")]
         Backend::Mmap(directory) => {
             let store = Arc::new(
@@ -273,8 +339,9 @@ pub async fn run(
     let host = server_bind.ip().to_string();
     let port = server_bind.port();
     log::info!(
-        "portfu server hosting Chia peers/RPC/metrics/health/sockets/tasks backend={} bind={host}:{port}",
-        active.backend_name()
+        "node services starting backend={} listen={host}:{port} node_id={} endpoints=peers,rpc,metrics,health",
+        active.backend_name(),
+        node_id
     );
     let active = Arc::new(active);
     let services = Arc::new(services);

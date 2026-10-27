@@ -19,11 +19,11 @@ struct Cli {
 
 #[derive(clap::Args)]
 struct Resources {
-    #[arg(long, default_value_t = 512)]
+    #[arg(env = "DGX_PLOTTER_MEMORY_MIB", long, default_value_t = 512)]
     memory_mib: u64,
-    #[arg(long, default_value_t = 4_194_304)]
+    #[arg(env = "DGX_PLOTTER_MAX_ENTRIES", long, default_value_t = 4_194_304)]
     max_entries: usize,
-    #[arg(long, default_value_t = 1_000_000_000)]
+    #[arg(env = "DGX_PLOTTER_MAX_WORK", long, default_value_t = 1_000_000_000)]
     max_work: u64,
 }
 
@@ -35,9 +35,9 @@ enum Backend {
 
 #[derive(clap::Args)]
 struct Engine {
-    #[arg(long, value_enum, default_value = "cpu")]
+    #[arg(env = "DGX_PLOTTER_BACKEND", long, value_enum, default_value = "cpu")]
     backend: Backend,
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_PLOTTER_DEVICE", long, default_value_t = 0)]
     device: usize,
 }
 
@@ -167,9 +167,9 @@ enum Command {
     )]
     ProvePlot {
         path: PathBuf,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_CHALLENGE", long)]
         challenge: String,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_TESTNET", long)]
         testnet: bool,
         #[command(flatten)]
         resources: Resources,
@@ -177,29 +177,41 @@ enum Command {
         engine: Engine,
     },
     Create {
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_OUTPUT", long)]
         output: PathBuf,
-        #[arg(long)]
-        farmer_key: String,
         #[arg(
+            env = "DGX_PLOTTER_FARMER_KEY",
             long,
-            required_unless_present = "contract",
+            required_unless_present = "falcon_key_file",
+            conflicts_with = "falcon_key_file"
+        )]
+        farmer_key: Option<String>,
+        /// Read an existing owner-only Falcon keyring; only public IDs enter the plot.
+        #[arg(long, conflicts_with_all = ["farmer_key", "pool_key"])]
+        falcon_key_file: Option<PathBuf>,
+        /// Select a plot key pair from the Falcon keyring.
+        #[arg(long, requires = "falcon_key_file", conflicts_with_all = ["farmer_key", "pool_key"])]
+        plot_key_index: Option<usize>,
+        #[arg(
+            env = "DGX_PLOTTER_POOL_KEY",
+            long,
+            required_unless_present_any = ["contract", "falcon_key_file"],
             conflicts_with = "contract"
         )]
         pool_key: Option<String>,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_CONTRACT", long)]
         contract: Option<String>,
-        #[arg(long, default_value_t = 28)]
+        #[arg(env = "DGX_PLOTTER_K", long, default_value_t = 28)]
         k: u8,
-        #[arg(long, default_value_t = 2)]
+        #[arg(env = "DGX_PLOTTER_STRENGTH", long, default_value_t = 2)]
         strength: u8,
-        #[arg(long, default_value_t = 0)]
+        #[arg(env = "DGX_PLOTTER_INDEX", long, default_value_t = 0)]
         index: u16,
-        #[arg(long, default_value_t = 0)]
+        #[arg(env = "DGX_PLOTTER_META_GROUP", long, default_value_t = 0)]
         meta_group: u8,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_TESTNET", long)]
         testnet: bool,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_EXPERIMENTAL_SIZE", long)]
         experimental_size: bool,
         #[command(flatten)]
         resources: Resources,
@@ -213,15 +225,15 @@ enum Command {
         about = "Build native tables in memory, search a challenge and prove using retained witnesses"
     )]
     SelfTest {
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_PLOT_ID", long)]
         plot_id: String,
-        #[arg(long, default_value_t = 18)]
+        #[arg(env = "DGX_PLOTTER_K", long, default_value_t = 18)]
         k: u8,
-        #[arg(long, default_value_t = 2)]
+        #[arg(env = "DGX_PLOTTER_STRENGTH", long, default_value_t = 2)]
         strength: u8,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_CHALLENGE", long)]
         challenge: String,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_TESTNET", long)]
         testnet: bool,
         #[command(flatten)]
         resources: Resources,
@@ -230,17 +242,17 @@ enum Command {
     },
     #[command(about = "Verify proof validity natively; does not check block eligibility")]
     Verify {
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_PLOT_ID", long)]
         plot_id: String,
-        #[arg(long, default_value_t = 28)]
+        #[arg(env = "DGX_PLOTTER_K", long, default_value_t = 28)]
         k: u8,
-        #[arg(long, default_value_t = 2)]
+        #[arg(env = "DGX_PLOTTER_STRENGTH", long, default_value_t = 2)]
         strength: u8,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_CHALLENGE", long)]
         challenge: String,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_PROOF", long)]
         proof: String,
-        #[arg(long)]
+        #[arg(env = "DGX_PLOTTER_TESTNET", long)]
         testnet: bool,
     },
 }
@@ -316,6 +328,8 @@ pub fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
         Command::Create {
             output,
             farmer_key,
+            falcon_key_file,
+            plot_key_index,
             pool_key,
             contract,
             k,
@@ -333,6 +347,47 @@ pub fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
                     "non-k28 plots require --experimental-size",
                 ));
             }
+            if let Some(path) = falcon_key_file {
+                #[cfg(not(feature = "falcon"))]
+                {
+                    let _ = (path, plot_key_index);
+                    return Err(Error::other("Falcon plotting requires the falcon feature"));
+                }
+                #[cfg(feature = "falcon")]
+                {
+                    use dg_xch_core::signatures::{
+                        SignatureSigner, falcon_block::public_key_id, falcon_keys::FalconKeyring,
+                    };
+                    let keys = FalconKeyring::load(&path)?;
+                    let pair = keys.plots.get(plot_key_index.unwrap_or(0)).ok_or_else(|| {
+                        Error::other("plot key index exceeds Falcon keyring size")
+                    })?;
+                    let pool = match contract {
+                        Some(hash) => PoolBinding::Contract(bytes(&hash)?),
+                        None => PoolBinding::PublicKey(
+                            public_key_id(&pair.pool.public_key()).const_bytes(),
+                        ),
+                    };
+                    let request = dg_xch_plotter::falcon::FalconPlotRequest {
+                        plot_public_key_id: public_key_id(&pair.plot.public_key()).const_bytes(),
+                        pool,
+                        k,
+                        strength,
+                        index,
+                        meta_group,
+                        testnet,
+                    };
+                    let info = dg_xch_plotter::falcon::create_with_engine(
+                        &request,
+                        &output,
+                        resources.limits()?,
+                        &cancelled,
+                        |params, limits, cancelled| engine.compact(params, limits, cancelled),
+                    )?;
+                    println!("{info:?}");
+                    return Ok(());
+                }
+            }
             let pool = match (pool_key, contract) {
                 (Some(key), None) => PoolBinding::PublicKey(bytes(&key)?),
                 (None, Some(hash)) => PoolBinding::Contract(bytes(&hash)?),
@@ -348,7 +403,9 @@ pub fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
             );
             let info = engine.create(
                 &PlotRequest {
-                    farmer_public_key: bytes(&farmer_key)?,
+                    farmer_public_key: bytes(
+                        &farmer_key.ok_or_else(|| Error::other("missing farmer public key"))?,
+                    )?,
                     pool,
                     k,
                     strength,
@@ -416,4 +473,43 @@ pub fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn falcon_plotting_selects_existing_keys_and_rejects_mixed_signature_arguments() {
+        let base = ["plotter", "create", "--output", "farm.plot"];
+        let parse =
+            |extra: &[&str]| Cli::try_parse_from(base.into_iter().chain(extra.iter().copied()));
+        assert!(parse(&["--falcon-key-file", "keys.bin"]).is_ok());
+        assert!(
+            parse(&[
+                "--falcon-key-file",
+                "keys.bin",
+                "--plot-key-index",
+                "2",
+                "--contract",
+                "00"
+            ])
+            .is_ok()
+        );
+        assert!(parse(&["--farmer-key", "public", "--pool-key", "public"]).is_ok());
+        assert!(parse(&["--falcon-key-file", "keys.bin", "--farmer-key", "public"]).is_err());
+        assert!(parse(&["--falcon-key-file", "keys.bin", "--pool-key", "public"]).is_err());
+        assert!(
+            parse(&[
+                "--plot-key-index",
+                "2",
+                "--farmer-key",
+                "public",
+                "--pool-key",
+                "public"
+            ])
+            .is_err()
+        );
+        assert!(parse(&[]).is_err());
+    }
 }

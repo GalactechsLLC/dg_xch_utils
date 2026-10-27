@@ -1,8 +1,8 @@
 //! Fetch-pipeline readahead: keep K follow windows of block bodies fetched-or-in-flight ahead of
 //! the validator, striped across distinct peers, so the follow loop never idles on the network
 //! between windows. Up to `depth` adjacent windows are dispatched to different peers, the validator
-//! [`WindowReadahead::take`]s them back in height order, and the depth adapts — grow while the
-//! validator measurably waits on the network, shrink when the pipe runs ahead — capped by a
+//! [`WindowReadahead::take`]s them back in height order, and the depth grows while the
+//! validator measurably waits on the network — capped by a
 //! resident-bytes budget and a per-peer window cap.
 //!
 //! The readahead holds fetched bodies in RAM only — it never touches the store, and confirm order
@@ -132,6 +132,7 @@ pub struct WindowReadahead {
     // Round-robin cursor over the source list so the same peer is not always the head server.
     rotation: usize,
     metrics: Arc<SyncMetrics>,
+    health: Arc<super::fetch_health::FetchHealth>,
 }
 
 /// The depth actually admissible under the resident-bytes budget: `depth`, reduced so that
@@ -182,6 +183,7 @@ impl WindowReadahead {
             request_timeout,
             rotation: 0,
             metrics,
+            health: Arc::new(super::fetch_health::FetchHealth::default()),
         }
     }
 
@@ -221,8 +223,34 @@ impl WindowReadahead {
     fn peer_window_count(&self, peer_id: u64) -> usize {
         self.inflight
             .iter()
-            .filter(|w| w.peer_id == peer_id)
+            .filter(|w| w.peer_id == peer_id && !w.handle.is_finished())
             .count()
+    }
+
+    /// Pick a direct-fetch peer using the same cooldowns as speculative fetches.
+    pub fn select_source(
+        &self,
+        sources: &[Arc<dyn BlockRangeSource>],
+        rotation: usize,
+        end: u32,
+    ) -> Option<usize> {
+        super::source::select_fetch_source(sources, rotation, end, |source| {
+            self.health
+                .eligible(source.peer_id())
+                .then(|| self.peer_window_count(source.peer_id()))
+        })
+    }
+
+    /// Bound and account for a direct request, including websocket lock acquisition.
+    pub async fn fetch_from(
+        &self,
+        source: &dyn BlockRangeSource,
+        start: u32,
+        end: u32,
+    ) -> Result<Vec<FullBlock>, SyncError> {
+        self.health
+            .fetch(source, start, end, self.request_timeout)
+            .await
     }
 
     /// Top the pipeline up: dispatch adjacent windows of `batch` heights (the last one capped at
@@ -237,6 +265,7 @@ impl WindowReadahead {
         claimed: u32,
         batch: u32,
     ) {
+        self.health.retain(sources);
         while self.inflight.front().is_some_and(|w| w.to < next_from) {
             if let Some(w) = self.inflight.pop_front() {
                 w.handle.abort();
@@ -257,20 +286,18 @@ impl WindowReadahead {
             let to = claimed.min(from.saturating_add(batch.saturating_sub(1)));
             let chosen = super::source::select_fetch_source(sources, self.rotation, to, |source| {
                 let count = self.peer_window_count(source.peer_id());
-                (count < self.cfg.per_peer).then_some(count)
+                (count < self.cfg.per_peer && self.health.eligible(source.peer_id()))
+                    .then_some(count)
             });
             let Some(idx) = chosen else { break };
             let src = sources[idx].clone();
             self.rotation = (idx + 1) % sources.len();
             let peer_id = src.peer_id();
             let timeout = self.request_timeout;
+            let health = self.health.clone();
             log::debug!("readahead.fetch peer={} from={} to={}", peer_id, from, to);
-            let handle = tokio::spawn(async move {
-                match tokio::time::timeout(timeout, src.fetch_range(from, to)).await {
-                    Ok(r) => r,
-                    Err(_) => Err(SyncError::PeerStalled(peer_id)),
-                }
-            });
+            let handle =
+                tokio::spawn(async move { health.fetch(src.as_ref(), from, to, timeout).await });
             self.inflight.push_back(Inflight {
                 from,
                 to,
@@ -298,7 +325,9 @@ impl WindowReadahead {
             .front()
             .is_some_and(|w| w.from == from && w.to == to);
         if !head_matches {
-            if !self.inflight.is_empty() {
+            // A failed head may need several direct attempts. Preserve non-overlapping tail
+            // windows while that gap is retried; queue generation changes abort explicitly.
+            if self.inflight.front().is_some_and(|head| head.from <= to) {
                 self.abort_all();
             }
             self.metrics

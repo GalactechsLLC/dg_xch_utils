@@ -19,6 +19,8 @@ mod radix_kernels;
 mod resident;
 mod resident_kernels;
 
+// Shared CPU/device helpers include functions unused by this backend.
+#[allow(dead_code)]
 #[path = "../../../proof_of_space/pos2/src/device.rs"]
 mod device;
 use device::{Config, Record};
@@ -116,6 +118,7 @@ mod kernels {
     }
 
     #[kernel]
+    #[allow(clippy::too_many_arguments)] // Kernel ABI passes buffers and bounds separately.
     pub fn emit(
         config: Config,
         table: u32,
@@ -128,29 +131,29 @@ mod kernels {
     ) {
         let index = thread::index_1d();
         let position = index.get();
-        if let Some(slot) = output.get_mut(index) {
-            if position < total as usize {
-                let mut lower = 0usize;
-                let mut upper = length as usize;
-                while lower < upper {
-                    let middle = lower + (upper - lower) / 2;
-                    if offsets[middle + 1] <= position as u32 {
-                        lower = middle + 1;
-                    } else {
-                        upper = middle;
-                    }
+        if let Some(slot) = output.get_mut(index)
+            && position < total as usize
+        {
+            let mut lower = 0usize;
+            let mut upper = length as usize;
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2;
+                if offsets[middle + 1] <= position as u32 {
+                    lower = middle + 1;
+                } else {
+                    upper = middle;
                 }
-                *slot = device::scan(
-                    config,
-                    table,
-                    input,
-                    length as usize,
-                    lower,
-                    position as u32 - offsets[lower],
-                    max_work,
-                )
-                .0;
             }
+            *slot = device::scan(
+                config,
+                table,
+                input,
+                length as usize,
+                lower,
+                position as u32 - offsets[lower],
+                max_work,
+            )
+            .0;
         }
     }
 }
@@ -159,11 +162,13 @@ fn gpu_error(error: impl std::fmt::Display) -> Error {
     Error::other(format!("CUDA: {error}"))
 }
 
+type HashBuffers = (DeviceBuffer<[u32; 4]>, DeviceBuffer<[u32; 4]>);
+
 struct CudaHasher {
     context: std::sync::Arc<CudaContext>,
     module: kernels::LoadedModule,
     keys: [[u32; 4]; 2],
-    buffers: Option<(DeviceBuffer<[u32; 4]>, DeviceBuffer<[u32; 4]>)>,
+    buffers: Option<HashBuffers>,
 }
 
 impl CudaHasher {
@@ -495,49 +500,54 @@ impl PlotOutput {
 #[derive(Parser)]
 #[command(about = "Experimental native Rust CUDA PoS2 plotter; no CPU fallback")]
 struct Arguments {
+    /// Interpret ownership fields as Falcon public key IDs instead of BLS keys.
+    #[arg(long)]
+    falcon: bool,
     #[arg(
+        env = "DGX_PLOTTER_OUTPUT",
         long,
         required_unless_present_any = ["prove_plot", "probe_device"],
         conflicts_with = "prove_plot"
     )]
     output: Option<PathBuf>,
-    #[arg(long, required_unless_present_any = ["prove_plot", "probe_device"])]
+    #[arg(env = "DGX_PLOTTER_FARMER_KEY", long, required_unless_present_any = ["prove_plot", "probe_device"])]
     farmer_key: Option<String>,
-    #[arg(long, conflicts_with_all = ["output", "prove_plot", "farmer_key", "pool_key", "contract", "challenge"])]
+    #[arg(env = "DGX_PLOTTER_PROBE_DEVICE", long, conflicts_with_all = ["output", "prove_plot", "farmer_key", "pool_key", "contract", "challenge"])]
     probe_device: bool,
-    #[arg(long, requires = "challenge")]
+    #[arg(env = "DGX_PLOTTER_PROVE_PLOT", long, requires = "challenge")]
     prove_plot: Option<PathBuf>,
-    #[arg(long, requires = "prove_plot")]
+    #[arg(env = "DGX_PLOTTER_CHALLENGE", long, requires = "prove_plot")]
     challenge: Option<String>,
-    #[arg(long, requires = "prove_plot")]
+    #[arg(env = "DGX_PLOTTER_QUALITY", long, requires = "prove_plot")]
     quality: Option<String>,
     #[arg(
+        env = "DGX_PLOTTER_POOL_KEY",
         long,
         required_unless_present_any = ["contract", "prove_plot", "probe_device"],
         conflicts_with = "contract"
     )]
     pool_key: Option<String>,
-    #[arg(long)]
+    #[arg(env = "DGX_PLOTTER_CONTRACT", long)]
     contract: Option<String>,
-    #[arg(long, default_value_t = 18)]
+    #[arg(env = "DGX_PLOTTER_K", long, default_value_t = 18)]
     k: u8,
-    #[arg(long, default_value_t = 2)]
+    #[arg(env = "DGX_PLOTTER_STRENGTH", long, default_value_t = 2)]
     strength: u8,
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_PLOTTER_INDEX", long, default_value_t = 0)]
     index: u16,
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_PLOTTER_META_GROUP", long, default_value_t = 0)]
     meta_group: u8,
-    #[arg(long, default_value_t = 0)]
+    #[arg(env = "DGX_PLOTTER_DEVICE", long, default_value_t = 0)]
     device: usize,
-    #[arg(long)]
+    #[arg(env = "DGX_PLOTTER_TESTNET", long)]
     testnet: bool,
-    #[arg(long)]
+    #[arg(env = "DGX_PLOTTER_FULL_GPU_TABLES", long)]
     full_gpu_tables: bool,
-    #[arg(long, default_value_t = 512)]
+    #[arg(env = "DGX_PLOTTER_MEMORY_MIB", long, default_value_t = 512)]
     memory_mib: u64,
-    #[arg(long, default_value_t = 4_194_304)]
+    #[arg(env = "DGX_PLOTTER_MAX_ENTRIES", long, default_value_t = 4_194_304)]
     max_entries: usize,
-    #[arg(long, default_value_t = 1_000_000_000)]
+    #[arg(env = "DGX_PLOTTER_MAX_WORK", long, default_value_t = 1_000_000_000)]
     max_work: u64,
 }
 
@@ -654,16 +664,28 @@ fn main() -> Result<(), Error> {
         .as_deref()
         .ok_or_else(|| Error::other("output required"))?;
     let cancelled = AtomicBool::new(false);
-    let info = if args.full_gpu_tables {
-        dg_xch_plotter::create_with_engine(
-            &request,
-            output,
-            limits,
-            &cancelled,
-            |params, limits, cancelled| build(params, limits, cancelled, args.device),
-        )?
+    let profile = if args.falcon {
+        dg_xch_plotter::SignatureProfile::FnDsa512V2
     } else {
-        dg_xch_plotter::create_with_writer(&request, output, &cancelled, |params, output, memo| {
+        dg_xch_plotter::SignatureProfile::Bls12381Aug
+    };
+    let info = dg_xch_plotter::create_with_writer_for_profile(
+        &request,
+        profile,
+        output,
+        &cancelled,
+        |params, output, memo| {
+            if args.full_gpu_tables {
+                let plot = build(params, limits, &cancelled, args.device)?;
+                return dg_xch_plotter::format::write_plot(
+                    output,
+                    &plot,
+                    request.index,
+                    request.meta_group,
+                    memo,
+                    &cancelled,
+                );
+            }
             let mut engine = CudaHasher::new(&params, args.device)?;
             let plot = match full_resident::build_device(
                 engine.context.clone(),
@@ -687,8 +709,8 @@ fn main() -> Result<(), Error> {
                 limits.memory_bytes,
                 &cancelled,
             )
-        })?
-    };
+        },
+    )?;
     println!("{info:?}");
     Ok(())
 }

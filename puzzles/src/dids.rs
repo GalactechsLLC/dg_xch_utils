@@ -190,6 +190,19 @@ pub fn launch_did(
     parent: Bytes32,
     inner: &Program<'_>,
 ) -> Result<(Vec<SExp<'static>>, Vec<CoinSpend>), Error> {
+    launch_did_with_solution(
+        parent,
+        inner,
+        crate::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions,
+    )
+}
+
+/// Singleton issuance is shared; the owner controls how its conditions are solved.
+pub fn launch_did_with_solution(
+    parent: Bytes32,
+    inner: &Program<'_>,
+    solve: impl FnOnce(Vec<SExp<'static>>) -> Result<Program<'static>, Error>,
+) -> Result<(Vec<SExp<'static>>, Vec<CoinSpend>), Error> {
     let launcher = Coin {
         parent_coin_info: parent,
         puzzle_hash: programs::SINGLETON_LAUNCHER_TREE_HASH,
@@ -230,7 +243,7 @@ pub fn launch_did(
         SExp::from(1),
         SExp::from(vec![SExp::from(inner.tree_hash())]),
     ])];
-    let solution = crate::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(outputs)?;
+    let solution = solve(outputs)?;
     Ok((
         conditions,
         vec![

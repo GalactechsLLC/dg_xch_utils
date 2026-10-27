@@ -223,8 +223,9 @@ pub(in crate::node) async fn update_slot_state_on_peak<
         next_diff,
         false,
     );
-    // The advancing peak also obsoletes cached unfinished blocks at or below it.
-    node.unfinished.lock().await.prune_below(rec.height);
+    // Candidates with later infusion points can still be reparented onto this
+    // peak, even when they were prepared at its height.
+    node.unfinished.lock().await.prune_on_peak(rec.total_iters);
     let (peak_height, last_tx_height) = farmer_heights(Some(&rec));
     let mut announces = node.sp_announce.lock().await;
     let mut farmer_announces = node.sp_farmer_announce.lock().await;
@@ -235,6 +236,7 @@ pub(in crate::node) async fn update_slot_state_on_peak<
         if let Some(fa) =
             farmer_announce_for_eos(eos, next_diff, next_ssi, peak_height, last_tx_height)
         {
+            state.set_latest_farmer_signage_point(fa.clone());
             farmer_announces.push(fa);
         }
     }
@@ -245,6 +247,7 @@ pub(in crate::node) async fn update_slot_state_on_peak<
         if let Some(fa) =
             farmer_announce_for_sp(sp, *index, next_diff, next_ssi, peak_height, last_tx_height)
         {
+            state.set_latest_farmer_signage_point(fa.clone());
             farmer_announces.push(fa);
         }
     }
@@ -327,7 +330,7 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
                         sp.challenge_chain_vdf.output.hash(),
                         sp.reward_chain_vdf.output.hash(),
                     ) {
-                        info!(
+                        debug!(
                             "finished signage point index={} cc={} rc={}",
                             sp.index_from_challenge, cc, rc
                         );
@@ -343,6 +346,7 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
                         peak_height,
                         last_tx_height,
                     ) {
+                        state.set_latest_farmer_signage_point(fa.clone());
                         farmer_announces.push(fa);
                     }
                 }
@@ -359,9 +363,9 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
                     )
                     .is_some()
                 {
-                    // The "finished sub slot" INFO line, keyed by the challenge-chain hash.
+                    // Keep routine sub-slot details at debug level.
                     if let Ok(cc) = eos.end_of_slot_bundle.challenge_chain.hash() {
-                        info!("finished sub slot cc={}", cc);
+                        debug!("finished sub slot cc={}", cc);
                     }
                     if let Some(a) = announce_for_eos(&eos.end_of_slot_bundle) {
                         announces.push(a);
@@ -373,6 +377,7 @@ pub(in crate::node) async fn process_sp_inbox<S: BlockStore + CoinStore + Send +
                         peak_height,
                         last_tx_height,
                     ) {
+                        state.set_latest_farmer_signage_point(fa.clone());
                         farmer_announces.push(fa);
                     }
                 }

@@ -101,6 +101,8 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
             .map(|w| w.p2_singleton_puzzle_hash)
             .collect::<Vec<Bytes32>>();
         let farming_keys = Arc::new(FarmingKeys {
+            #[cfg(feature = "falcon")]
+            falcon: config.falcon_keys()?,
             farmer_public_keys,
             pool_public_keys,
             pool_contract_hashes,
@@ -531,6 +533,7 @@ impl<T: Send + Sync + 'static, C: Send + Sync + Clone + 'static>
         }
         response_handle
             .handle_signature(RespondSignatures {
+                authorization: Default::default(),
                 plot_identifier: request_signatures.plot_identifier,
                 challenge_hash: request_signatures.challenge_hash,
                 sp_hash: request_signatures.sp_hash,
@@ -744,6 +747,9 @@ async fn load_plots(
     metrics: Arc<RwLock<Option<FarmerMetrics>>>,
 ) -> Result<HashMap<PathInfo, Arc<PlotInfo>>, Error> {
     debug!("Started Loading Plots");
+    if plot_paths.is_empty() {
+        return Ok(HashMap::new());
+    }
     if farmer_public_keys.is_empty() {
         error!("No Public Keys Available");
         return Err(Error::new(
@@ -995,4 +1001,35 @@ async fn load_headers(
         memo.pool_contract_puzzle_hash,
         memo.pool_public_key,
     ))
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn pos2_only_harvester_does_not_require_classic_bls_keys() {
+        let result = load_plots(
+            Vec::new(),
+            &[],
+            &[],
+            &[],
+            Vec::new(),
+            Arc::new(DecompressorPool::new(1, 1)),
+            Arc::new(RwLock::new(None)),
+        )
+        .await;
+        assert!(result.unwrap().is_empty());
+        let result = load_plots(
+            vec![PathBuf::from("classic.plot")],
+            &[],
+            &[],
+            &[],
+            Vec::new(),
+            Arc::new(DecompressorPool::new(1, 1)),
+            Arc::new(RwLock::new(None)),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::NotFound);
+    }
 }

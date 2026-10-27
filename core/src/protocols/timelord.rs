@@ -41,6 +41,12 @@ pub struct NewUnfinishedBlockTimelord {
     pub foliage: Foliage,                               //Min Version 0.0.34
     pub sub_epoch_summary: Option<SubEpochSummary>,     //Min Version 0.0.34
     pub rc_prev: Bytes32,                               //Min Version 0.0.34
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::extension::AuthorizationExtension::is_none"
+    )]
+    #[chia_skip_sexp]
+    pub authorization: crate::signatures::extension::AuthorizationExtension,
 }
 
 #[derive(ChiaSerial, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]

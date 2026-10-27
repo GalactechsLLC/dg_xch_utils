@@ -6,8 +6,8 @@ where
 {
     // Build the per-connection handler factory for OUTBOUND peer links: each dial gets a fresh
     // full_node_handlers_client map sharing this node's store/mempool/claimed-peak/claimed-tip, so a peer's
-    // NewPeak updates the sync target and RequestBlock/RequestBlocks are served — while gossip is
-    // graceful-ignored and the client never re-handshakes. This closes the live "No Matches" gap.
+    // NewPeak updates the sync target and RequestBlock/RequestBlocks are served — while peer addresses are
+    // added to the shared address book and the client never re-handshakes. This closes the live "No Matches" gap.
     // `pub` so integration tests can stand up the PRODUCTION outbound handler stack (StoreApi
     // gates + client dispatch) against a mock peer — the announce-pull tests dial with exactly
     // the map a live outbound slot gets.
@@ -18,6 +18,7 @@ where
         let peak_book = self.peak_book.clone();
         let new_peak_signal = self.new_peak_signal.clone();
         let known_peers = self.known_peers.clone();
+        let peer_addresses = self.peer_addresses.clone();
         let constants = self.constants;
         let tx_requested = self.tx_requested.clone();
         let slot_state = self.slot_state.clone();
@@ -59,11 +60,12 @@ where
                 peak_book: peak_book.clone(),
                 // One factory invocation = one outbound dial: mint this connection's claim key. Its
                 // Drop (with the connection's handler map) retracts the claim — the
-                // sync_store.peer_disconnected for the outbound side, where the dispatch peer id
-                // cannot distinguish connections (it is our own cert hash).
+                // sync_store.peer_disconnected for the outbound side. Keep claims connection-scoped
+                // even when multiple service endpoints present the same remote certificate.
                 claim_guard: Some(Arc::new(peak_book.outbound_guard())),
                 new_peak_signal: new_peak_signal.clone(),
                 known_peers: known_peers.clone(),
+                peer_addresses: peer_addresses.clone(),
                 tx_requested: tx_requested.clone(),
                 slot_state: slot_state.clone(),
                 sp_inbox: sp_inbox.clone(),

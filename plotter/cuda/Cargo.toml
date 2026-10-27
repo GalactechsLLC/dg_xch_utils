@@ -3,6 +3,7 @@ name = "dg_xch_plotter_cuda"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "Apache-2.0"
 
 [workspace]
 
@@ -13,7 +14,7 @@ cuda-core = "=0.3.1"
 dg_xch_plotter = { path = ".." }
 dg_xch_pos2 = { path = "../../proof_of_space/pos2", features = ["resident"] }
 bytemuck = "1.25"
-clap = { version = "4.5.60", features = ["derive"] }
+clap = { version = "4.5.60", features = ["derive", "env"] }
 hex = "0.4.3"
 
 [dev-dependencies]

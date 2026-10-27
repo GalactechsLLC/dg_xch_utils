@@ -96,6 +96,135 @@ async fn rollback_to_on(
 
 #[async_trait]
 impl CoinStore for PostgresStore {
+    fn supports_explorer_queries(&self) -> bool {
+        cfg!(feature = "coin-index")
+    }
+
+    fn supports_wallet_sync(&self) -> bool {
+        cfg!(feature = "hint")
+    }
+
+    #[cfg(feature = "hint")]
+    async fn wallet_coin_records(
+        &self,
+        request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, StoreError> {
+        let mut query = crate::wallet_sync::query::<sqlx::Postgres>(request, height)?;
+        // Keep cancellation bounded on the server as well as at the RPC deadline.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SET LOCAL statement_timeout='5s'")
+            .execute(&mut *tx)
+            .await?;
+        let rows = query.build().persistent(false).fetch_all(&mut *tx).await?;
+        let records = rows
+            .iter()
+            .map(row_to_coin_record)
+            .collect::<Result<_, _>>()?;
+        tx.commit().await?;
+        Ok(crate::wallet_sync::response(request, height, records))
+    }
+
+    #[cfg(feature = "coin-index")]
+    async fn coin_page(
+        &self,
+        request: &dg_xch_core::protocols::explorer::CoinPageRequest,
+        height: u32,
+    ) -> Result<Vec<CoinRecord>, StoreError> {
+        request
+            .validate()
+            .map_err(|error| StoreError::Corrupt(error.into()))?;
+        let mut q = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, timestamp FROM coin_record WHERE ",
+        );
+        let (column, ids) = if request.parent_ids.is_empty() {
+            ("puzzle_hash", &request.puzzle_hashes)
+        } else {
+            ("coin_parent", &request.parent_ids)
+        };
+        q.push(column).push(" IN (");
+        {
+            let mut hashes = q.separated(",");
+            for hash in ids {
+                hashes.push_bind(*hash);
+            }
+        }
+        q.push(") AND confirmed_index <= ")
+            .push_bind(i64::from(height));
+        if let Some(spent) = request.spent {
+            if spent {
+                q.push(" AND spent_index > 0 AND spent_index <= ")
+                    .push_bind(i64::from(height));
+            } else {
+                q.push(" AND (spent_index = 0 OR spent_index > ")
+                    .push_bind(i64::from(height))
+                    .push(")");
+            }
+        }
+        q.push(" ORDER BY confirmed_index DESC, coin_name DESC LIMIT ")
+            .push_bind(i64::from(request.limit))
+            .push(" OFFSET ")
+            .push_bind(i64::from(request.offset));
+        let rows = q.build().fetch_all(&self.pool).await?;
+        rows.iter()
+            .map(|row| {
+                let mut record = row_to_coin_record(row)?;
+                if record.spent_block_index > height {
+                    record.spent_block_index = 0;
+                    record.spent = false;
+                }
+                Ok(record)
+            })
+            .collect()
+    }
+    #[cfg(feature = "coin-index")]
+    async fn coin_summary(
+        &self,
+        ph: &Bytes32,
+        height: u32,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinSummary, StoreError> {
+        let started = std::time::Instant::now();
+        let mut total = crate::explorer::Summary::default();
+        let mut cursor: Option<Bytes32> = None;
+        // A stable read transaction prevents mixing state across keyset batches.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SET LOCAL statement_timeout='5s'")
+            .execute(&mut *tx)
+            .await?;
+        loop {
+            crate::explorer::work_deadline(started)?;
+            let mut q = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                "SELECT coin_name, confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, timestamp FROM coin_record WHERE puzzle_hash=",
+            );
+            q.push_bind(*ph)
+                .push(" AND confirmed_index <= ")
+                .push_bind(i64::from(height));
+            if let Some(cursor) = cursor {
+                q.push(" AND coin_name > ").push_bind(cursor);
+            }
+            q.push(" ORDER BY coin_name LIMIT 1000");
+            let rows = q.build().fetch_all(&mut *tx).await?;
+            for row in &rows {
+                total.add(&row_to_coin_record(row)?, height)?;
+            }
+            if let Some(row) = rows.last() {
+                cursor = Some(sqlx::Row::try_get(row, "coin_name")?);
+            }
+            if rows.len() < 1000 {
+                break;
+            }
+        }
+        crate::explorer::work_deadline(started)?;
+        tx.commit().await?;
+        Ok(total.finish())
+    }
+
     async fn get_coin_record(&self, coin_name: &Bytes32) -> Result<Option<CoinRecord>, StoreError> {
         let row = sqlx::query(SELECT_COIN)
             .bind(*coin_name)
@@ -108,20 +237,21 @@ impl CoinStore for PostgresStore {
         if names.is_empty() {
             return Ok(Vec::new());
         }
-        let placeholders = (1..=names.len())
-            .map(|i| format!("${i}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
+        let mut query = sqlx::QueryBuilder::new(
             "SELECT confirmed_index, spent_index, coinbase, puzzle_hash, coin_parent, amount, \
-             timestamp FROM coin_record WHERE coin_name IN ({placeholders})"
+             timestamp FROM coin_record WHERE coin_name IN (",
         );
-        // Variable-arity IN list — same non-persistent rule as apply_block_on.
-        let mut query = sqlx::query(&sql).persistent(false);
+        let mut placeholders = query.separated(",");
         for name in names {
-            query = query.bind(*name);
+            placeholders.push_bind(*name);
         }
-        let rows = query.fetch_all(&self.pool).await?;
+        placeholders.push_unseparated(")");
+        // Variable-arity IN list — same non-persistent rule as apply_block_on.
+        let rows = query
+            .build()
+            .persistent(false)
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter().map(row_to_coin_record).collect()
     }
 
@@ -247,7 +377,8 @@ impl CoinStore for PostgresStore {
                 break;
             }
             let remaining = i64::try_from(max_items - out.len()).unwrap_or(i64::MAX);
-            let rows = sqlx::query(&sql)
+            // spent_clause is selected from fixed literals; request values are bound.
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(*ph)
                 .bind(i64::from(min_height))
                 .bind(remaining)
@@ -300,7 +431,8 @@ impl CoinStore for PostgresStore {
         let min_amount = amount_be(filters.min_amount);
         let mut merged = std::collections::HashMap::new();
         for ph in puzzle_hashes {
-            let rows = sqlx::query(&sql)
+            // height_filter is a fixed match-arm literal; request values are bound.
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(*ph)
                 .bind(i64::from(min_height))
                 .bind(min_amount.clone())
@@ -314,7 +446,8 @@ impl CoinStore for PostgresStore {
             merge_coin_states_bounded(&mut merged, states, max_items + 1);
             #[cfg(feature = "hint")]
             if filters.include_hinted {
-                let rows = sqlx::query(&hint_sql)
+                // Same literal-only height_filter as the direct puzzle-hash query.
+                let rows = sqlx::query(sqlx::AssertSqlSafe(hint_sql.as_str()))
                     .bind(*ph)
                     .bind(i64::from(min_height))
                     .bind(min_amount.clone())

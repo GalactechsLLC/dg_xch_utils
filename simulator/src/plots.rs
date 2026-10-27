@@ -89,6 +89,49 @@ impl PlotKeys {
     }
 }
 
+/// Key bindings and individual signing used by the shared real-PoS chain builder.
+/// Falcon implementations return deterministic references backed by detached proofs.
+pub trait PlotSigning: Clone + Send + Sync + std::fmt::Debug {
+    fn plot_public_key(&self) -> Bytes48;
+    fn pool_public_key(&self) -> Bytes48;
+    fn sign(&self, message: Bytes32) -> Result<Bytes96, Error>;
+    fn sign_pool(&self, message: &[u8]) -> Result<Bytes96, Error>;
+    fn memo(&self) -> Vec<u8>;
+    fn plot_id(&self, strength: u8, index: u16, group: u8) -> Bytes32 {
+        calculate_plot_id_v2(
+            strength,
+            self.plot_public_key(),
+            Some(self.pool_public_key()),
+            None,
+            index,
+            group,
+        )
+    }
+}
+
+impl PlotSigning for PlotKeys {
+    fn plot_public_key(&self) -> Bytes48 {
+        self.plot_public_key
+    }
+    fn pool_public_key(&self) -> Bytes48 {
+        self.pool_public_key
+    }
+    fn sign(&self, message: Bytes32) -> Result<Bytes96, Error> {
+        self.sign(message)
+    }
+    fn sign_pool(&self, message: &[u8]) -> Result<Bytes96, Error> {
+        Ok(Bytes96::const_new(
+            dg_xch_core::clvm::bls_bindings::sign(&self.pool, message).to_bytes(),
+        ))
+    }
+    fn memo(&self) -> Vec<u8> {
+        let mut memo = self.pool_public_key.const_bytes().to_vec();
+        memo.extend_from_slice(&self.farmer.sk_to_pk().to_bytes());
+        memo.extend_from_slice(&self.master.to_bytes());
+        memo
+    }
+}
+
 #[cfg(test)]
 #[path = "../tests/unit/plots/tests.rs"]
 mod tests;

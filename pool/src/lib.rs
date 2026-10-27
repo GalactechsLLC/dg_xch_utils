@@ -11,8 +11,10 @@
 
 pub mod accounting;
 pub mod authentication;
+mod browser;
 pub mod chain;
 pub mod config;
+pub mod falcon;
 pub mod http;
 pub mod payout;
 pub mod service;

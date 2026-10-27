@@ -40,6 +40,75 @@ pub struct FullnodeClient {
 }
 
 impl FullnodeClient {
+    /// Discover versioned optional RPC contracts; only HTTP 404/405 mean discovery is unsupported.
+    pub async fn get_rpc_capabilities(
+        &self,
+    ) -> Result<Option<dg_xch_core::protocols::wallet_sync::RpcCapabilities>, ChiaRpcError> {
+        crate::rpc::post_optional(
+            &self.client,
+            &(self.url_function)(&self.host, self.port, "get_rpc_capabilities"),
+            &serde_json::Map::new(),
+            &self.additional_headers,
+        )
+        .await
+    }
+
+    /// Read one ordered page of puzzle-hash and hinted coins at the requested chain checkpoint.
+    pub async fn get_wallet_coin_records(
+        &self,
+        request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, ChiaRpcError> {
+        request.validate().map_err(|error| ChiaRpcError {
+            success: false,
+            error: Some(error),
+        })?;
+        self.explorer_query("get_wallet_coin_records", request)
+            .await
+    }
+
+    /// Read a bounded, checkpoint-pinned explorer page from a service-tier node.
+    pub async fn get_coin_records_page(
+        &self,
+        request: &dg_xch_core::protocols::explorer::CoinPageRequest,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinPageResponse, crate::rpc::ChiaRpcError> {
+        request
+            .validate()
+            .map_err(|error| crate::rpc::ChiaRpcError {
+                success: false,
+                error: Some(error.into()),
+            })?;
+        self.explorer_query("get_coin_records_page", request).await
+    }
+    /// Exact decimal address totals at the requested node checkpoint.
+    pub async fn get_coin_summary(
+        &self,
+        request: &dg_xch_core::protocols::explorer::CoinSummaryRequest,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinSummaryResponse, crate::rpc::ChiaRpcError>
+    {
+        self.explorer_query("get_coin_summary", request).await
+    }
+    async fn explorer_query<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        request: &impl serde::Serialize,
+    ) -> Result<T, crate::rpc::ChiaRpcError> {
+        let value = serde_json::to_value(request).map_err(|error| crate::rpc::ChiaRpcError {
+            success: false,
+            error: Some(error.to_string()),
+        })?;
+        let data = value.as_object().ok_or_else(|| crate::rpc::ChiaRpcError {
+            success: false,
+            error: Some("Invalid explorer request".into()),
+        })?;
+        crate::rpc::post(
+            &self.client,
+            &(self.url_function)(&self.host, self.port, method),
+            data,
+            &self.additional_headers,
+        )
+        .await
+    }
+
     pub async fn get_node_details(&self) -> Result<serde_json::Value, Error> {
         let response: serde_json::Value = crate::rpc::post(
             &self.client,

@@ -38,7 +38,7 @@ pub(in crate::node) async fn broadcast_ub_announcements<
     }
     let peers = registry.live_peers().await;
     if peers.is_empty() {
-        info!(
+        debug!(
             "unfinished block(s) validated but no full-node peer to announce to event={} pending={}",
             "producer.ub.no_full_node_peer",
             announces.len()
@@ -78,7 +78,7 @@ pub(in crate::node) async fn broadcast_ub_announcements<
         }
         // S7 — one broadcast (to all full-node peers) per validated partial.
         node.producer.ub_broadcast("full_node");
-        info!(
+        debug!(
             "unfinished block announced to full-node peers event={} partial={} peer_type={} peers={}",
             "producer.ub.broadcast",
             ann.unfinished_reward_hash,
@@ -162,7 +162,7 @@ pub(in crate::node) async fn process_compact_vdf_inbox<
             );
             continue;
         }
-        info!(
+        debug!(
             "replaced compact vdf proof height={} field={}",
             resp.height, resp.field_vdf
         );
@@ -377,7 +377,7 @@ pub(in crate::node) async fn broadcast_ub_timelord_announcements<
                 .is_ok()
         {
             let n = STRANDED_SINCE_LOG.swap(0, Ordering::Relaxed);
-            info!(
+            debug!(
                 "unfinished blocks ready but no timelord peer connected (expected on a \
                  network-infused node; see fullnode_producer_candidates_dropped_total) event={} stranded_since_last_log={}",
                 "producer.ub.no_timelord_peer", n
@@ -404,7 +404,7 @@ pub(in crate::node) async fn broadcast_ub_timelord_announcements<
         }
         // S7t — one broadcast (to all timelord peers) per ready partial.
         node.producer.ub_broadcast("timelord");
-        info!(
+        debug!(
             "unfinished block announced to timelord peers event={} partial={:?} peer_type={} timelords={}",
             "producer.ub.broadcast",
             ann.reward_chain_block.hash().ok(),

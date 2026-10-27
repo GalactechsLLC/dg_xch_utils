@@ -30,6 +30,7 @@ where
             claim_guard: None,
             new_peak_signal: self.new_peak_signal.clone(),
             known_peers: self.known_peers.clone(),
+            peer_addresses: self.peer_addresses.clone(),
             tx_requested: self.tx_requested.clone(),
             slot_state: self.slot_state.clone(),
             sp_inbox: self.sp_inbox.clone(),
@@ -83,6 +84,7 @@ where
         // Police inbound peers against the composed rate limits: a compliant peer
         // stays within budget, a flooding/oversize peer is closed and evicted at the read loop.
         server.rate_limited = true;
+        server.signature_profile = self.constants.signature_profile;
         server.inbound_limit = Arc::new(tokio::sync::Semaphore::new(
             self.config
                 .p2p

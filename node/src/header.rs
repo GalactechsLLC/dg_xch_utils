@@ -17,6 +17,13 @@ use std::collections::HashMap;
 pub struct PrimitiveVerifier<'a, P>(pub &'a P);
 
 impl<P: ConsensusPrimitives> HeaderValidationVerifier for PrimitiveVerifier<'_, P> {
+    fn signature_profile(&self) -> dg_xch_core::signatures::SignatureProfile {
+        self.0.signature_profile()
+    }
+
+    fn verify_bls_sig(&self, pk: &Bytes48, msg: &[u8], sig: &Bytes96, _tag: HeaderSigTag) -> bool {
+        self.0.verify_header_signature(pk, msg, sig)
+    }
     fn validate_vdf(
         &self,
         constants: &ConsensusConstants,
@@ -109,6 +116,9 @@ struct DeferredVdfVerifier<'a, P> {
 }
 
 impl<P: ConsensusPrimitives> HeaderValidationVerifier for DeferredVdfVerifier<'_, P> {
+    fn signature_profile(&self) -> dg_xch_core::signatures::SignatureProfile {
+        self.inner.signature_profile()
+    }
     fn validate_vdf(
         &self,
         _constants: &ConsensusConstants,
@@ -139,6 +149,10 @@ impl<P: ConsensusPrimitives> HeaderValidationVerifier for DeferredVdfVerifier<'_
     }
 
     fn verify_bls_sig(&self, pk: &Bytes48, msg: &[u8], sig: &Bytes96, tag: HeaderSigTag) -> bool {
+        // Detached contexts are per-block; verify them while that context is live.
+        if !self.signature_profile().is_bls() {
+            return self.inner.verify_bls_sig(pk, msg, sig, tag);
+        }
         self.sig_queue.borrow_mut().push(QueuedSig {
             pk: *pk,
             msg: msg.to_vec(),

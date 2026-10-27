@@ -2,12 +2,11 @@
 
 use super::*;
 
-/// Open the configured storage backend. Only the embedded SQLite backend is built today.
+/// Open the SQLite backend for `FullNode::boot`.
+/// Other backends use the server dispatch and `FullNode::boot_with_store`.
 ///
 /// # Errors
-/// Returns [`ErrorKind::Unsupported`] for a `postgres://` URL (the industrial backend is a
-/// `dg_xch_stores` concern not yet landed), or an I/O error if the SQLite database cannot be
-/// opened or migrated.
+/// Returns an unsupported-backend error or an I/O error when open/migration fails.
 pub async fn open_backend(backend: &Backend) -> Result<Arc<SqliteStore>, Error> {
     match backend {
         Backend::Sqlite(path) => {
@@ -16,12 +15,19 @@ pub async fn open_backend(backend: &Backend) -> Result<Arc<SqliteStore>, Error> 
                 .map_err(|e| Error::other(format!("open sqlite {}: {e}", path.display())))?;
             Ok(Arc::new(store))
         }
-        // The Postgres and mmap backends are constructed in main's dispatch (FullNode::boot_with_store);
+        // Other backends are constructed in server dispatch (FullNode::boot_with_store);
         // this SQLite-typed helper only serves FullNode::boot's embedded path.
         Backend::Postgres(url) => Err(Error::new(
             ErrorKind::Unsupported,
             format!(
                 "postgres backend ({url}) boots via FullNode::boot_with_store, not open_backend"
+            ),
+        )),
+        Backend::Rocksdb(dir) => Err(Error::new(
+            ErrorKind::Unsupported,
+            format!(
+                "rocksdb backend ({}) boots via FullNode::boot_with_store, not open_backend",
+                dir.display()
             ),
         )),
         Backend::Mmap(dir) => Err(Error::new(
@@ -80,7 +86,8 @@ where
         if let Some(workers) = config.performance.compute_workers {
             dg_xch_core::compute::configure(workers).map_err(Error::other)?;
         }
-        let mut engine = Engine::new(store.clone(), NativePrimitives, constants);
+        let primitives = ChainPrimitives::new(&constants)?;
+        let mut engine = Engine::new(store.clone(), primitives.clone(), constants);
         engine.set_coalesce_coin_writes(config.performance.coalesce_coin_writes);
         let mut chaser = Chaser::new(engine, SyncConfig::default());
         chaser.set_confirm_transaction_blocks(config.performance.confirm_transaction_blocks);
@@ -115,6 +122,7 @@ where
             synced.clone(),
             tx_announce.clone(),
         ));
+        let peer_addresses = Arc::new(Mutex::new(dg_xch_p2p::AddressBook::new(&config.p2p)));
         let node = Self {
             config,
             store,
@@ -130,12 +138,14 @@ where
             maintenance_tasks: Mutex::new(tokio::task::JoinSet::new()),
             constants,
             claimed_peak: claimed_peak.clone(),
+            primitives,
             peak_book: Arc::new(PeakBook::new(claimed_peak)),
             new_peak_signal: Arc::new(Notify::new()),
             validated_tip: Arc::new(RwLock::new(None)),
             long_sync_anchor: Arc::new(RwLock::new(None)),
             sync_from_anchor: Arc::new(RwLock::new(None)),
             known_peers: Arc::new(RwLock::new(Vec::new())),
+            peer_addresses,
             inbound_peers: Arc::new(RwLock::new(HashMap::new())),
             tx_announce,
             tx_requested,
@@ -175,6 +185,40 @@ where
         };
 
         Ok(node)
+    }
+
+    pub(crate) async fn log_startup_state(&self) -> Result<(), Error> {
+        let prefetch = sync::prefetch_config(
+            self.config.p2p.target_outbound,
+            self.config.prefetch_memory_mb,
+            self.config.prefetch_max_inflight,
+        );
+        info!(
+            "resource configuration compute_workers={} prefetch_memory_mb={} prefetch_max_inflight={} validation_window_mb={}",
+            dg_xch_core::compute::worker_count(),
+            prefetch.byte_budget / (1024 * 1024),
+            prefetch.max_inflight,
+            self.config.performance.validation_window_mb,
+        );
+        let peak = self.store.get_peak().await.map_err(Error::other)?;
+        let (mode, next_height) = match peak {
+            Some((_, height)) => ("resume", height.saturating_add(1)),
+            None if self.config.sync_from > 0 => ("checkpoint", self.config.sync_from),
+            None => ("genesis", 0),
+        };
+        let height = peak.map_or_else(|| "none".to_string(), |(_, height)| height.to_string());
+        info!(
+            "initial chain state peak={} next_height={} sync={} fork_anchoring={} outbound_peers=0",
+            height,
+            next_height,
+            mode,
+            if self.config.genesis_sync {
+                "disabled"
+            } else {
+                "enabled"
+            },
+        );
+        Ok(())
     }
 
     pub async fn run_tx_validator(self: Arc<Self>) {
@@ -242,6 +286,20 @@ where
                     .map_or(self.config.listen.port(), |address| address.port()),
             },
         );
+        supervisor.book = self.peer_addresses.clone();
+        if let Some(address) = self.config.advertise {
+            supervisor
+                .book
+                .lock()
+                .await
+                .add_self(&address.ip().to_string(), address.port());
+        }
+        if !self.config.listen.ip().is_unspecified() {
+            supervisor.book.lock().await.add_self(
+                &self.config.listen.ip().to_string(),
+                self.config.listen.port(),
+            );
+        }
         supervisor.set_handlers(self.outbound_handler_factory());
         {
             let hook_node = self.clone();

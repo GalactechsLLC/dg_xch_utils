@@ -501,3 +501,41 @@ async fn escalation_waits_for_writer_and_does_not_wait_for_pinned_reader() {
         0
     );
 }
+
+#[test]
+fn drained_idle_wal_backs_off_but_new_writes_are_not_delayed() {
+    let now = Instant::now();
+    let mut schedule = Schedule::new(now);
+    schedule.observe(now, outcome(100, 100));
+    assert_eq!(
+        schedule.reason(now + BULK_INTERVAL, 0, 4120, 100_000, true),
+        None
+    );
+    assert_eq!(
+        schedule.reason(now + IDLE_PROBE_INTERVAL, 0, 4120, 100_000, true),
+        Some("interval")
+    );
+    assert_eq!(
+        schedule.reason(now + RETRY_INTERVAL, 1, 4120, 100_000, true),
+        Some("interval")
+    );
+}
+
+#[tokio::test]
+async fn commits_leave_checkpointing_to_background_worker() {
+    let (_directory, store) = open_probe(16 * 1024).await;
+    let automatic: i64 = sqlx::query_scalar("PRAGMA wal_autocheckpoint")
+        .fetch_one(&mut *store.writer.lock().await)
+        .await
+        .unwrap();
+    assert_eq!(automatic, 0);
+    write_probe(&store, 256 * 1024).await;
+    wait_for_pass(&store, 0).await;
+    assert!(
+        store
+            .telemetry
+            .wal_frames_checkpointed_total
+            .load(Ordering::Relaxed)
+            > 0
+    );
+}

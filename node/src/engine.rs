@@ -34,6 +34,7 @@ use dg_xch_core::consensus::full_block_to_block_record::header_block_to_sub_bloc
 use dg_xch_core::consensus::make_sub_epoch_summary::make_sub_epoch_summary;
 use dg_xch_core::consensus::pot_iterations::is_overflow_block;
 use dg_xch_core::errors::ChiaError;
+use dg_xch_core::signatures::AuthorizationWitness;
 use dg_xch_core::traits::SizedBytes;
 use dg_xch_core::utils::hash_256;
 use dg_xch_stores::types::BlockStatus;
@@ -130,7 +131,7 @@ fn generator_refs_digest(refs: &[GeneratorReference]) -> Bytes32 {
 /// construction site, no drift.
 ///
 /// # Errors
-/// As `ConsensusPrimitives::run_block_generator` / `verify_block_aggregate_signature`.
+/// As `ConsensusPrimitives::run_block_generator` / `verify_block_authorization`.
 pub fn run_body_expensive<P: ConsensusPrimitives>(
     primitives: &P,
     constants: &ConsensusConstants,
@@ -138,6 +139,8 @@ pub fn run_body_expensive<P: ConsensusPrimitives>(
     generator_refs: &[GeneratorReference],
     verify_sig: bool,
 ) -> Result<(SpendBundleConditions, bool), NodeError> {
+    let bound = primitives.for_block(block, constants)?;
+    let primitives = bound.as_ref().unwrap_or(primitives);
     let Some(generator) = block.transactions_generator.clone() else {
         return Err(NodeError::Invalid("no generator to precompute".into()));
     };
@@ -157,7 +160,11 @@ pub fn run_body_expensive<P: ConsensusPrimitives>(
     let conds = primitives.run_block_generator(&input)?;
     let mut verified = false;
     if verify_sig {
-        primitives.verify_block_aggregate_signature(&conds, &ti.aggregated_signature, constants)?;
+        primitives.verify_block_authorization(
+            &conds,
+            &AuthorizationWitness::BlsAggregate(&ti.aggregated_signature),
+            constants,
+        )?;
         verified = true;
     }
     Ok((conds, verified))
@@ -211,7 +218,11 @@ pub fn validate_unfinished_block_body<P: ConsensusPrimitives>(
             return Err(ChiaError::InvalidBlockCost.into());
         }
         let empty = SpendBundleConditions::default();
-        primitives.verify_block_aggregate_signature(&empty, &ti.aggregated_signature, constants)?;
+        primitives.verify_block_authorization(
+            &empty,
+            &AuthorizationWitness::BlsAggregate(&ti.aggregated_signature),
+            constants,
+        )?;
         return Ok(None);
     };
     // TOO_MANY_GENERATOR_REFS: generator back-reference lists are banned past SF9, checked
@@ -256,7 +267,11 @@ pub fn validate_unfinished_block_body<P: ConsensusPrimitives>(
         return Err(ChiaError::TooManySpends.into());
     }
     // The signature set is aggregate-verified here as well.
-    primitives.verify_block_aggregate_signature(&conds, &ti.aggregated_signature, constants)?;
+    primitives.verify_block_authorization(
+        &conds,
+        &AuthorizationWitness::BlsAggregate(&ti.aggregated_signature),
+        constants,
+    )?;
     Ok(Some(conds))
 }
 
@@ -1169,6 +1184,11 @@ where
         }
     }
 
+    /// Replace a per-block immutable authorization context between validations.
+    pub fn replace_primitives(&mut self, primitives: P) {
+        self.primitives = primitives;
+    }
+
     #[must_use]
     pub fn primitives(&self) -> &P {
         &self.primitives
@@ -1211,6 +1231,16 @@ where
         vdf_sink: Option<&crate::header::HeaderSink>,
         pre: Option<PrecomputedBody>,
     ) -> Result<Option<BlockDelta>, NodeError> {
+        if let Some(bound) = self.primitives.for_block(block, &self.constants)? {
+            self.primitives = bound;
+        }
+        if self.primitives.signature_profile() != self.constants.signature_profile
+            || !self.primitives.check_block_context(block)
+        {
+            return Err(NodeError::Invalid(
+                "wrong signature profile or missing block authorization context".into(),
+            ));
+        }
         let pre = pre.filter(|body| body.matches(block, &self.constants));
         let header_hash = block.header_hash()?;
         if !self
@@ -1613,9 +1643,9 @@ where
                 }
                 if block.height() >= self.assume_valid {
                     let empty = SpendBundleConditions::default();
-                    self.primitives.verify_block_aggregate_signature(
+                    self.primitives.verify_block_authorization(
                         &empty,
-                        &ti.aggregated_signature,
+                        &AuthorizationWitness::BlsAggregate(&ti.aggregated_signature),
                         &self.constants,
                     )?;
                 }
@@ -1685,9 +1715,9 @@ where
         if block.height() >= self.assume_valid {
             // Seam: BLS aggregate verify — skipped only when the precompute already ran it.
             if !sig_already_verified {
-                self.primitives.verify_block_aggregate_signature(
+                self.primitives.verify_block_authorization(
                     &conds,
-                    &ti.aggregated_signature,
+                    &AuthorizationWitness::BlsAggregate(&ti.aggregated_signature),
                     &self.constants,
                 )?;
             }

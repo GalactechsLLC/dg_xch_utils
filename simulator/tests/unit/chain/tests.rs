@@ -434,6 +434,7 @@ async fn a_transaction_block_spends_a_reward_coin() {
     let mut infinity = [0u8; 96];
     infinity[0] = 0xc0;
     let bundle = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![CoinSpend {
             coin: spendable,
             puzzle_reveal: puzzle.serialized().expect("puzzle"),

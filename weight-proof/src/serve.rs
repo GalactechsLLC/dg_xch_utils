@@ -12,7 +12,7 @@ use dg_xch_core::consensus::constants::ConsensusConstants;
 use dg_xch_core::consensus::vdf_info_computation::get_signage_point_vdf_info;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use dg_xch_stores::{BlockStore, StoreError};
-use log::{debug, info};
+use log::debug;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::io::Cursor;
@@ -221,7 +221,7 @@ where
         st: &mut ServeState,
         tip_rec: &BlockRecord,
     ) -> Result<WeightProof, ServeError> {
-        info!(
+        debug!(
             "create weight proof tip={} height={}",
             tip_rec.header_hash, tip_rec.height
         );
@@ -430,7 +430,7 @@ where
         }
         recent_chain.push_front(headers[at(curr_height)].clone());
 
-        info!(
+        debug!(
             "recent chain start={} end={}",
             recent_chain
                 .front()

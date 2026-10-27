@@ -313,6 +313,7 @@ fn with_sigs_equals_signer_path_for_the_same_four_signatures() {
         amount: 900,
     };
     let tx = BlockTransactions {
+        authorization: Default::default(),
         program: crate::clvm::program::SerializedProgram::from_bytes(&[0x80]),
         block_refs: Vec::new(),
         additions: vec![created],

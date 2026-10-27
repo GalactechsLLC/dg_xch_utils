@@ -63,9 +63,9 @@ To enable the reward worker, replace `payouts: null` with:
 
 The file holds a 32-byte standard-wallet secret key in hex whose puzzle hash matches `target_puzzle_hash`, not a mnemonic or raw master key. Use owner-only permissions (`0600` on Unix).
 
-Accounting uses integer mojos. Rewards are divided by unpaid accepted points at the recorded claim cutoff, after explicit fees; this is neither PPS nor PPLNS. Signed payouts are journaled before broadcast. Back up the database and key, and do not change chain/target/fee settings on an existing database.
+Accounting uses integer mojos. Rewards are divided by unpaid accepted points at the recorded claim cutoff, after explicit fees. The worker reserves a points snapshot when it journals a claim. Rewards sharing a cutoff reuse that snapshot; later-arriving partials remain eligible for the next round. This is neither PPS nor PPLNS. Signed payouts are journaled before broadcast. Back up the database and key, and do not change chain/target/fee settings on an existing database.
 
-The worker currently bounds scans to 1,000 farmers and 1,000 reward records. There is no archival or administrative recovery command.
+The worker scans farmers and reward records in pages of 128, retaining the full journal for reconciliation. There is no archival or administrative recovery command.
 
 ## APIs and protocol versions
 

@@ -8,6 +8,7 @@ use dg_xch_core::utils::hash_256;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use std::io::Error;
 
+#[derive(Clone)]
 pub struct PoolLaunch {
     pub launcher_id: Bytes32,
     pub contract_puzzle_hash: Bytes32,

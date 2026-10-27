@@ -5,7 +5,7 @@ use crate::store::{Farmer, PoolStore, PoolVersion};
 use crate::verification::verify_partial_signature;
 use async_trait::async_trait;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
-use dg_xch_core::protocols::{pool::*, pool_v2};
+use dg_xch_core::protocols::{pool::*, pool_falcon, pool_v2};
 use dg_xch_core::utils::hash_256;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use std::io::Error;
@@ -13,13 +13,44 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, Semaphore};
 
-pub struct Membership {
-    pub owner_public_key: Bytes48,
+pub struct Membership<K = Bytes48> {
+    pub owner_public_key: K,
     pub contract_puzzle_hash: Bytes32,
 }
 
 #[async_trait]
 pub trait PoolChain: Send + Sync {
+    fn genesis(&self) -> Bytes32 {
+        Bytes32::default()
+    }
+    fn signature_profile(&self) -> dg_xch_core::signatures::SignatureProfile {
+        Default::default()
+    }
+    fn currency_code(&self) -> String {
+        "XCH".into()
+    }
+    fn profile_label(&self) -> &'static str {
+        dg_xch_core::branding::chain_profile_label(self.signature_profile(), None)
+    }
+    async fn falcon_membership(
+        &self,
+        _launcher: Bytes32,
+        _key: pool_falcon::PublicKey,
+    ) -> Result<Membership<pool_falcon::PublicKey>, Error> {
+        Err(Error::other(
+            "Falcon membership is unavailable on this backend",
+        ))
+    }
+    async fn falcon_partial(
+        &self,
+        _payload: &PostPartialPayload,
+        _farmer: &Farmer<pool_falcon::PublicKey>,
+        _now: u64,
+    ) -> Result<Bytes32, Error> {
+        Err(Error::other(
+            "Falcon partials are unavailable on this backend",
+        ))
+    }
     async fn membership(
         &self,
         version: PoolVersion,
@@ -44,21 +75,21 @@ pub struct PoolService {
     pub requests: Semaphore,
 }
 
-fn failure(code: PoolErrorCode, message: impl Into<String>) -> PoolError {
+pub(crate) fn failure(code: PoolErrorCode, message: impl Into<String>) -> PoolError {
     PoolError {
         error_code: code as u8,
         error_message: message.into(),
     }
 }
 
-fn storage_error(_: Error) -> PoolError {
+pub(crate) fn storage_error(_: Error) -> PoolError {
     failure(
         PoolErrorCode::ServerException,
         "pool storage operation failed",
     )
 }
 
-fn now() -> Result<u64, PoolError> {
+pub(crate) fn now() -> Result<u64, PoolError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
@@ -99,6 +130,12 @@ impl PoolService {
     }
 
     fn version(&self, version: PoolVersion) -> Result<(), PoolError> {
+        if version == PoolVersion::Falcon || !self.chain.signature_profile().is_bls() {
+            return Err(failure(
+                PoolErrorCode::RequestFailed,
+                "this operation requires the BLS pool protocol",
+            ));
+        }
         if version == PoolVersion::V2 && !self.enable_v2 {
             return Err(failure(
                 PoolErrorCode::RequestFailed,
@@ -408,43 +445,94 @@ impl PoolService {
             request.aggregate_signature,
         )
         .map_err(|error| failure(PoolErrorCode::InvalidSignature, error.to_string()))?;
-        let membership = self
-            .chain
-            .membership(
-                farmer.version,
-                farmer.launcher_id,
-                farmer.authentication_public_key,
-            )
-            .await
-            .map_err(|error| failure(PoolErrorCode::InvalidSingleton, error.to_string()))?;
-        if membership.contract_puzzle_hash != farmer.contract_puzzle_hash
-            || membership.owner_public_key != farmer.owner_public_key
-        {
-            return Err(failure(
-                PoolErrorCode::InvalidSingleton,
-                "farmer is no longer a member of this pool",
-            ));
+        let started = std::time::Instant::now();
+        let outcome = async {
+            let membership = self
+                .chain
+                .membership(
+                    farmer.version,
+                    farmer.launcher_id,
+                    farmer.authentication_public_key,
+                )
+                .await
+                .map_err(|error| failure(PoolErrorCode::InvalidSingleton, error.to_string()))?;
+            if membership.contract_puzzle_hash != farmer.contract_puzzle_hash
+                || membership.owner_public_key != farmer.owner_public_key
+            {
+                return Err(failure(
+                    PoolErrorCode::InvalidSingleton,
+                    "farmer is no longer a member of this pool",
+                ));
+            }
+            let now = now()?;
+            let id = self
+                .chain
+                .partial(&request.payload, &farmer, now)
+                .await
+                .map_err(|error| failure(PoolErrorCode::InvalidProof, error.to_string()))?;
+            self.store
+                .lock()
+                .await
+                .credit_partial(id, &farmer, now)
+                .await
+                .map_err(|_| {
+                    failure(
+                        PoolErrorCode::InvalidProof,
+                        "duplicate partial or changed farmer settings",
+                    )
+                })?;
+            Ok((
+                PostPartialResponse {
+                    new_difficulty: farmer.difficulty,
+                },
+                id,
+            ))
         }
-        let now = now()?;
-        let id = self
-            .chain
-            .partial(&request.payload, &farmer, now)
-            .await
-            .map_err(|error| failure(PoolErrorCode::InvalidProof, error.to_string()))?;
-        self.store
+        .await;
+        self.record_partial_outcome(&request.payload, farmer.difficulty, started, &outcome)
+            .await;
+        outcome.map(|(response, _)| response)
+    }
+
+    pub(crate) async fn record_partial_outcome(
+        &self,
+        payload: &PostPartialPayload,
+        difficulty: u64,
+        started: std::time::Instant,
+        outcome: &Result<(PostPartialResponse, Bytes32), PoolError>,
+    ) {
+        let status = match outcome {
+            Ok(_) => "accepted",
+            Err(error) if error.error_message.starts_with("duplicate partial") => "duplicate",
+            Err(_) => "invalid",
+        };
+        let received = match now() {
+            Ok(now) => now,
+            Err(error) => {
+                log::warn!(
+                    "Failed to timestamp pool partial diagnostics: {}",
+                    error.error_message
+                );
+                return;
+            }
+        };
+        if let Err(error) = self
+            .store
             .lock()
             .await
-            .credit_partial(id, &farmer, now)
+            .record_partial_event(
+                payload.launcher_id,
+                received,
+                status,
+                payload.harvester_id,
+                if outcome.is_ok() { difficulty } else { 0 },
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                outcome.as_ref().ok().map(|(_, id)| *id),
+            )
             .await
-            .map_err(|_| {
-                failure(
-                    PoolErrorCode::InvalidProof,
-                    "duplicate partial or changed farmer settings",
-                )
-            })?;
-        Ok(PostPartialResponse {
-            new_difficulty: farmer.difficulty,
-        })
+        {
+            log::warn!("Failed to record pool partial diagnostics: {error}");
+        }
     }
 
     pub async fn partial_v1(

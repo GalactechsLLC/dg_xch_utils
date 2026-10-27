@@ -29,6 +29,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
+#[cfg(feature = "falcon")]
+#[path = "stack_pool/falcon.rs"]
+mod falcon;
+
 #[derive(Clone, Copy, ValueEnum)]
 enum Action {
     Prepare,
@@ -46,6 +50,20 @@ struct Args {
     action: Action,
     #[arg(long, default_value_t = 1800)]
     timeout_seconds: u64,
+    #[arg(long, default_value = "localhost")]
+    node_host: String,
+    #[arg(long, default_value_t = 8444)]
+    node_port: u16,
+    /// Connect to this address while verifying node_host as the TLS server name.
+    #[arg(long)]
+    node_address: Option<std::net::IpAddr>,
+    #[arg(long, default_value = "https://localhost:8448")]
+    pool_url: String,
+    #[arg(long, value_delimiter = ',', default_value = "cpu,amd")]
+    farmers: Vec<String>,
+    /// Public pool name, stored in the generated pool configuration.
+    #[arg(long, env = "DGX_POOL_NAME", default_value = dg_xch_core::branding::DEFAULT_POOL_NAME)]
+    pool_name: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -204,7 +222,7 @@ async fn prepare(
         trusted_genesis_header_hash: genesis.header_hash,
         listen: "0.0.0.0:8448".parse().map_err(Error::other)?,
         database: "/service/pool.sqlite".into(),
-        name: "Compose reference pool".into(),
+        name: args.pool_name.clone(),
         description: "Disposable integration test".into(),
         target_puzzle_hash: target,
         relative_lock_height: 100,
@@ -516,6 +534,9 @@ async fn register(args: &Args) -> Result<(), Error> {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let args = Args::parse();
+    if args.pool_name.trim().is_empty() || args.pool_name.len() > 128 {
+        return Err(Error::other("pool name must contain 1..128 bytes"));
+    }
     let selection = read_selection(&args.root.join("common/chain.json"))?;
     if !matches!(&selection, ChainSelection::Custom(definition) if definition.consensus.as_ref().is_some_and(|parameters| parameters.development))
     {
@@ -526,7 +547,47 @@ async fn main() -> Result<(), Error> {
     if args.timeout_seconds == 0 || args.timeout_seconds > 7200 {
         return Err(Error::other("invalid setup timeout"));
     }
-    let client = FullnodeClient::new_verified("localhost", 8444, 10, Some(ssl(&args.root)), &None)?;
+    if args.node_port == 0
+        || args.farmers.is_empty()
+        || args
+            .farmers
+            .iter()
+            .any(|f| !matches!(f.as_str(), "cpu" | "nvidia" | "amd"))
+    {
+        return Err(Error::other(
+            "invalid pool setup endpoints or farmer selection",
+        ));
+    }
+    let mut client = FullnodeClient::new_verified(
+        &args.node_host,
+        args.node_port,
+        10,
+        Some(ssl(&args.root)),
+        &None,
+    )?;
+    if let Some(address) = args.node_address {
+        client.client = dg_xch_clients::rpc::get_client_builder(&Some(ssl(&args.root)), 10)?
+            .no_proxy()
+            .resolve(
+                &args.node_host,
+                std::net::SocketAddr::new(address, args.node_port),
+            )
+            .build()
+            .map_err(Error::other)?;
+    }
+    if !selection
+        .constants()
+        .map_err(Error::other)?
+        .signature_profile
+        .is_bls()
+    {
+        #[cfg(feature = "falcon")]
+        return falcon::run(&args, selection, &client).await;
+        #[cfg(not(feature = "falcon"))]
+        return Err(Error::other(
+            "Falcon pool setup requires the falcon feature",
+        ));
+    }
     match args.action {
         Action::Prepare => prepare(&args, selection, &client).await,
         Action::Register => register(&args).await,

@@ -47,10 +47,8 @@ pub(in crate::node) fn is_tx_rebroadcast_origin(
 }
 
 // A tx's origin peer is excluded from the NewTransaction re-broadcast. Inbound origins are
-// excluded by their exact cert-hash id; the residual is the OUTBOUND origin — every outbound
-// dial shares our own client-cert hash as its dispatch id, so it cannot be identified that way.
-// The exclusion records the origin's
-// remote HOST too and excludes an outbound peer whose dialed host matches.
+// excluded by their exact certificate hash; outbound registry entries are currently matched
+// by the dialed remote host.
 #[cfg(test)]
 #[path = "../../../../tests/unit/node/workers/announcements.rs"]
 mod tx_origin_exclusion_tests;
@@ -97,9 +95,7 @@ pub(in crate::node) async fn broadcast_transactions<
             continue;
         };
         for peer in &outbound {
-            // Exclude the origin outbound peer by its dialed remote host — an outbound dial's
-            // dispatch id is our own shared cert hash, so host is its only distinct identity
-            // (the origin exclusion).
+            // Match the outbound registry endpoint to the captured remote host.
             if is_tx_rebroadcast_origin(origin, None, peer.endpoint.0.parse::<IpAddr>().ok()) {
                 continue;
             }

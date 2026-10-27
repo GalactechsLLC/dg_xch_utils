@@ -120,6 +120,9 @@ fn api_trust(
         claim_guard: None,
         new_peak_signal: Arc::new(Notify::new()),
         known_peers: Arc::new(RwLock::new(Vec::new())),
+        peer_addresses: Arc::new(Mutex::new(dg_xch_p2p::AddressBook::new(
+            &dg_xch_p2p::P2pSettings::default(),
+        ))),
         tx_requested: Arc::new(Mutex::new(HashMap::new())),
         slot_state: Arc::new(Mutex::new(SlotState::new(MAINNET))),
         sp_inbox: Arc::new(Mutex::new(Vec::new())),
@@ -1513,6 +1516,7 @@ async fn on_transaction_gives_trusted_peer_high_priority() {
     let api = api_trust(store, wallet, policy, default_sem());
 
     let bundle = |b: u8| SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: dg_xch_core::blockchain::sized_bytes::Bytes96::from([b; 96]),
     };
@@ -1613,6 +1617,7 @@ async fn on_transaction_gives_localhost_peer_high_priority() {
     let wallet = Arc::new(WalletNotifier::with_trust(policy.clone()));
     let api = api_trust(store, wallet, policy, default_sem());
     let bundle = |b: u8| SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: dg_xch_core::blockchain::sized_bytes::Bytes96::from([b; 96]),
     };
