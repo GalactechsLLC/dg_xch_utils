@@ -1,6 +1,7 @@
 mod classic;
 mod compat;
 pub mod conditions;
+mod defconst;
 mod functions;
 mod lowering;
 mod optimize;
@@ -26,7 +27,7 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Error, ErrorKind};
 use std::mem::take;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::vec::IntoIter;
 
 pub struct UnparsedCondition<'a> {
@@ -70,6 +71,11 @@ pub struct Compiler<'a> {
     pub functions: RwLock<Vec<Function<'a>>>,
     pub inline_functions: RwLock<Vec<Function<'a>>>,
     pub constants: RwLock<Vec<Constant<'a>>>,
+    defconsts: RwLock<Vec<Constant<'a>>>,
+    // Every top level declaration, so a defconst can be evaluated against the functions it uses
+    declarations: RwLock<Vec<Vec<Token<'a>>>>,
+    // Inside (com ...) nil stays (q), the chia compiler does not optimize quoted code
+    com_depth: AtomicUsize,
     // Retain byte atoms by identity: numbers with the same bytes have a different size score.
     byte_atoms: Mutex<HashMap<usize, Arc<Vec<u8>>>>,
     pub declaration_order: RwLock<Vec<Cow<'a, [u8]>>>,
@@ -162,6 +168,7 @@ impl<'a> Compiler<'a> {
                     })?;
             }
         }
+        self.evaluate_defconsts()?;
         if self.compiler_version.load(Ordering::Relaxed) >= 21 {
             let mut functions = self.functions.read().clone();
             functions.extend(self.inline_functions.read().clone());
@@ -497,11 +504,15 @@ impl<'a> Compiler<'a> {
             .find(|v| v.t_type != TokenType::Comment)
             .ok_or(Error::new(ErrorKind::UnexpectedEof, "Expected Expression"))?;
         if operator.t_type == TokenType::EndCons {
-            return Ok(if self.compiler_version.load(Ordering::Relaxed) == 21 {
-                QUOTE_SEXP.clone().cons(NULL_SEXP)
-            } else {
-                NULL_SEXP.clone()
-            });
+            return Ok(
+                if self.compiler_version.load(Ordering::Relaxed) == 21
+                    || self.com_depth.load(Ordering::Relaxed) > 0
+                {
+                    QUOTE_SEXP.clone().cons(NULL_SEXP)
+                } else {
+                    NULL_SEXP.clone()
+                },
+            );
         }
         if operator.t_type != TokenType::Expression {
             return Err(Error::new(ErrorKind::InvalidData, "Expected Operator"));
@@ -577,7 +588,8 @@ impl<'a> Compiler<'a> {
             return Ok(value);
         }
         if matches!(operator.bytes.as_ref(), b"q" | b"quote")
-            || (self.compiler_version.load(Ordering::Relaxed) == 0
+            || ((self.compiler_version.load(Ordering::Relaxed) == 0
+                || self.flags & COMPAT_CHIA != 0)
                 && parse_value(operator.bytes.as_ref())? == QUOTE_SEXP)
         {
             let is_list = operator.bytes.as_ref() != b"quote"
@@ -612,6 +624,12 @@ impl<'a> Compiler<'a> {
             } else {
                 QUOTE_SEXP.clone().cons(value)
             });
+        }
+        if operator.bytes.as_ref() == b"com"
+            && self.flags & COMPAT_CHIA != 0
+            && self.compiler_version.load(Ordering::Relaxed) >= 21
+        {
+            return self.process_com(token_stream, function_args, mapped_args, env_depth);
         }
         if operator.bytes.as_ref() == b"assign" {
             return self.process_assign(token_stream, function_args, mapped_args, env_depth);
@@ -1025,7 +1043,9 @@ impl<'a> Compiler<'a> {
         mapped_args: &[SExp<'a>],
         env_depth: usize,
     ) -> Result<SExp<'a>, Error> {
-        if token.bytes.as_ref() == b"@" && self.compiler_version.load(Ordering::Relaxed) == 0 {
+        if token.bytes.as_ref() == b"@"
+            && (self.compiler_version.load(Ordering::Relaxed) == 0 || self.flags & COMPAT_CHIA != 0)
+        {
             return Ok(self.get_path(&(num_bigint::BigInt::from(1u8) << env_depth)));
         }
         if let Some(index) = function_args.iter().position(|v| v.bytes == token.bytes) {
@@ -1109,6 +1129,7 @@ impl<'a> Compiler<'a> {
                 value = self.byte_atom(atom.as_ref().to_vec());
             }
             if value == NULL_SEXP
+                && self.com_depth.load(Ordering::Relaxed) == 0
                 && (self.compiler_version.load(Ordering::Relaxed) == 0
                     || (self.compiler_version.load(Ordering::Relaxed) != 21
                         && self.flags & NESTED_ASSIGN == 0))
