@@ -1,4 +1,5 @@
 use crate::clvm::compile::tokenizer::{Token, TokenType};
+use crate::clvm::compile::utils::parse_value;
 use crate::clvm::compile::{COMPAT_CHIA, Compiler, Constant, QUOTE_SEXP};
 use crate::clvm::runtime::ClvmRuntime;
 use crate::clvm::sexp::SExp;
@@ -163,12 +164,13 @@ impl<'a> Compiler<'a> {
             .map(|function| (function.name.bytes.clone(), function.function_body.clone()))
             .collect();
         let mut seen: HashSet<Cow<'a, [u8]>> = HashSet::new();
-        let mut pending: Vec<Cow<'a, [u8]>> = tokens.iter().map(|t| t.bytes.clone()).collect();
+        let mut pending: Vec<Cow<'a, [u8]>> =
+            unquoted_tokens(tokens).map(|t| t.bytes.clone()).collect();
         while let Some(name) = pending.pop() {
             if seen.insert(name.clone())
                 && let Some(body) = bodies.get(&name)
             {
-                pending.extend(body.iter().map(|t| t.bytes.clone()));
+                pending.extend(unquoted_tokens(body).map(|t| t.bytes.clone()));
             }
         }
         seen
@@ -181,11 +183,13 @@ impl<'a> Compiler<'a> {
             .iter()
             .map(|function| (function.name.bytes.clone(), function.function_body.clone()))
             .collect();
-        let in_functions = self
-            .functions
-            .read()
-            .iter()
-            .any(|function| function.function_body.iter().any(|t| t.bytes == name.bytes));
+        let reachable = self.reachable_names(&self.body.lock());
+        let in_functions = self.functions.read().iter().any(|function| {
+            // Compile-time-only helpers must not force constants into the runtime table.
+            // A reachable regular function may use the constant through inline helpers.
+            reachable.contains(&function.name.bytes)
+                && count_uses(&function.function_body, &name.bytes, &inline, &mut vec![]) != Some(0)
+        });
         if in_functions {
             return Placement::Tabled;
         }
@@ -247,6 +251,45 @@ fn count_uses<'a>(
         operator_position = false;
     }
     Some(count)
+}
+
+// Keep expression structure, but exclude comments and the contents of literal quotes.
+// Quoted names are data, not dependencies of a compile-time constant.
+fn unquoted_tokens<'t, 'a>(tokens: &'t [Token<'a>]) -> impl Iterator<Item = &'t Token<'a>> {
+    let mut depth = 0usize;
+    let mut quoted_depth = None;
+    let mut operator_position = false;
+    tokens.iter().filter(move |token| {
+        if token.t_type == TokenType::Comment {
+            return false;
+        }
+        match token.t_type {
+            TokenType::StartCons => {
+                depth += 1;
+                operator_position = true;
+            }
+            TokenType::EndCons => {
+                if quoted_depth == Some(depth) {
+                    quoted_depth = None;
+                }
+                depth = depth.saturating_sub(1);
+                operator_position = false;
+            }
+            TokenType::Expression => {
+                if quoted_depth.is_none()
+                    && operator_position
+                    && (matches!(token.bytes.as_ref(), b"q" | b"quote")
+                        || parse_value(token.bytes.as_ref()).is_ok_and(|value| value == QUOTE_SEXP))
+                {
+                    quoted_depth = Some(depth);
+                }
+                operator_position = false;
+            }
+            TokenType::DotCons => operator_position = false,
+            TokenType::Comment => unreachable!(),
+        }
+        quoted_depth.is_none()
+    })
 }
 
 fn write_tokens(out: &mut String, tokens: &[Token<'_>]) {

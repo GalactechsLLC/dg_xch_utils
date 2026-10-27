@@ -38,5 +38,107 @@
   {
     "source": "(mod (X) (include *standard-cl-25*) (defconst A 3) (defconst B (* A 2)) (+ X B))",
     "hex": "ff10ff02ffff010680"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-21*) (defconst C 10) (defun-inline addc (N) (+ N C)) (defun f (N) (addc N)) (f X))",
+    "hex": "ff02ffff01ff02ff02ffff04ff02ffff04ff05ff80808080ffff04ffff01ff10ff05ffff010a80ff018080",
+    "env": "(5)",
+    "result": "15"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-21*) (defconst C 10) (defun-inline addc (N) (+ N C)) (defun-inline forward (N) (addc N)) (defun f (N) (forward N)) (f X))",
+    "hex": "ff02ffff01ff02ff02ffff04ff02ffff04ff05ff80808080ffff04ffff01ff10ff05ffff010a80ff018080",
+    "env": "(5)",
+    "result": "15"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-23*) (defconst C 10) (defun-inline addc (N) (+ N C)) (defun f (N) (addc N)) (f X))",
+    "hex": "ff02ffff01ff02ff06ffff04ff02ffff04ff05ff80808080ffff04ffff01ff0aff10ff05ff0480ff018080",
+    "env": "(5)",
+    "result": "15"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-23*) (defconst C 10) (defun-inline addc (N) (+ N C)) (defun-inline forward (N) (addc N)) (defun f (N) (forward N)) (f X))",
+    "hex": "ff02ffff01ff02ff06ffff04ff02ffff04ff05ff80808080ffff04ffff01ff0aff10ff05ff0480ff018080",
+    "env": "(5)",
+    "result": "15"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-25*) (defconst C 10) (defun-inline addc (N) (+ N C)) (defun f (N) (addc N)) (f X))",
+    "hex": "ff02ffff01ff02ff06ffff04ff02ffff04ff05ff80808080ffff04ffff01ff0aff10ff05ff0480ff018080",
+    "env": "(5)",
+    "result": "15"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-25*) (defconst C 10) (defun-inline addc (N) (+ N C)) (defun-inline forward (N) (addc N)) (defun f (N) (forward N)) (f X))",
+    "hex": "ff02ffff01ff02ff06ffff04ff02ffff04ff05ff80808080ffff04ffff01ff0aff10ff05ff0480ff018080",
+    "env": "(5)",
+    "result": "15"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defconst C 10) (defun-inline addc (N) (+ N C)) (defun f (N) (addc N)) (f X))",
+    "hex": "ff02ffff01ff02ff06ffff04ff02ffff04ff05ff80808080ffff04ffff01ff0aff10ff05ff0480ff018080",
+    "env": "(5)",
+    "result": "15"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defconst C 10) (defun-inline addc (N) (+ N C)) (defun-inline forward (N) (addc N)) (defun f (N) (forward N)) (f X))",
+    "hex": "ff02ffff01ff02ff06ffff04ff02ffff04ff05ff80808080ffff04ffff01ff0aff10ff05ff0480ff018080",
+    "env": "(5)",
+    "result": "15"
+  },
+  {
+    "source": "(mod () (include *standard-cl-21*) (defconst A (q . B)) (defconst B (q . A)) (c A B))",
+    "hex": "ff01ff4241",
+    "env": "()",
+    "result": "(66 . 65)"
+  },
+  {
+    "source": "(mod () (include *standard-cl-26*) (defconst A (q . B)) (defconst B (q . A)) (c A B))",
+    "hex": "ff01ff4241",
+    "env": "()",
+    "result": "(66 . 65)"
+  },
+  {
+    "source": "(mod () (include *standard-cl-21*) (defconst A (quote B)) (defconst B (quote A)) (c A B))",
+    "hex": "ff01ff4241",
+    "env": "()",
+    "result": "(66 . 65)"
+  },
+  {
+    "source": "(mod () (include *standard-cl-26*) (defconst A (quote B)) (defconst B (quote A)) (c A B))",
+    "hex": "ff01ff4241",
+    "env": "()",
+    "result": "(66 . 65)"
+  },
+  {
+    "source": "(mod () (include *standard-cl-21*) (defconst A (1 . B)) (defconst B (1 . A)) (c A B))",
+    "hex": "ff01ff4241",
+    "env": "()",
+    "result": "(66 . 65)"
+  },
+  {
+    "source": "(mod () (include *standard-cl-26*) (defconst A (1 . B)) (defconst B (1 . A)) (c A B))",
+    "hex": "ff01ff4241",
+    "env": "()",
+    "result": "(66 . 65)"
+  },
+  {
+    "source": "(mod () (include *standard-cl-26*) (defun literal () (q . B)) (defconst A (literal)) (defconst B A) (c A B))",
+    "hex": "ff01ff4242",
+    "env": "()",
+    "result": "(66 . 66)"
+  },
+  {
+    "source": "(mod () (include *standard-cl-26*) (defconst B (+ A 2)) (defconst A 3) B)",
+    "hex": "ff0105",
+    "env": "()",
+    "result": "5"
+  },
+  {
+    "source": "(mod (X) (include *standard-cl-26*) (defconst C 10) (c (q . (C (C))) (+ X C)))",
+    "hex": "ff02ffff01ff04ffff01ff43ffff438080ffff10ff05ff028080ffff04ffff010aff018080",
+    "env": "(5)",
+    "result": "((67 (67)) . 15)"
   }
 ]

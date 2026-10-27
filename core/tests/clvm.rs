@@ -2637,11 +2637,38 @@ fn test_defconst_and_com_reference_bytes() {
                 if got != expected {
                     failures.push(format!("{source}\n  got      {got}\n  expected {expected}"));
                 }
+                if let (Some(env), Some(result)) = (case["env"].as_str(), case["result"].as_str()) {
+                    use dg_xch_core::clvm::assemble::assemble_text;
+                    match program.run(1_000_000_000, 0, &assemble_text(env).unwrap()) {
+                        Ok((_, actual)) if actual == assemble_text(result).unwrap() => {}
+                        other => failures.push(format!(
+                            "{source}\n  execution: {other:?}\n  expected {result}"
+                        )),
+                    }
+                }
             }
             Err(e) => failures.push(format!("{source}\n  error: {e}")),
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn test_defconst_dependency_cycles() {
+    use dg_xch_core::clvm::compile::Compiler;
+    use std::borrow::Cow;
+
+    for source in [
+        "(mod () (include *standard-cl-26*) (defconst A (+ B 1)) (defconst B (+ A 1)) A)",
+        "(mod () (include *standard-cl-26*) (defun get-b () B) (defconst A (get-b)) (defconst B A) A)",
+    ] {
+        let compiler = Compiler::new(Cow::Borrowed(source.as_bytes()), COMPAT_CHIA, 0, &[]);
+        let error = compiler.compile().unwrap_err();
+        assert!(
+            error.to_string().contains("Dependency cycle in defconst"),
+            "{source}: {error}"
+        );
+    }
 }
 
 #[test]
