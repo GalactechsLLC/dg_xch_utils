@@ -1420,6 +1420,7 @@ fn easy_coin_spend(parent: Bytes32, amount: u64, conditions: Vec<ConditionWithAr
 fn spend_bundle_conditions_parse_and_charge_byte_cost() {
     let target = Bytes32::new([9; 32]);
     let bundle = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![easy_coin_spend(
             Bytes32::new([1; 32]),
             1000,
@@ -1441,6 +1442,7 @@ fn spend_bundle_rejects_wrong_puzzle_reveal() {
     let mut spend = easy_coin_spend(Bytes32::new([1; 32]), 1000, vec![]);
     spend.coin.puzzle_hash = Bytes32::new([0xEE; 32]);
     let bundle = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![spend],
         aggregated_signature: dg_xch_core::blockchain::sized_bytes::Bytes96::default(),
     };
@@ -1454,6 +1456,7 @@ fn spend_bundle_rejects_wrong_puzzle_reveal() {
 fn spend_bundle_rejects_double_spend() {
     let spend = easy_coin_spend(Bytes32::new([1; 32]), 1000, vec![]);
     let bundle = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![spend.clone(), spend],
         aggregated_signature: dg_xch_core::blockchain::sized_bytes::Bytes96::default(),
     };

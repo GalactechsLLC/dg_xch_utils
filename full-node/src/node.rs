@@ -89,7 +89,7 @@ use dg_xch_node::sync::source::{
 use dg_xch_node::sync::{WpForkPoint, wp_fork_point};
 use dg_xch_node::unfinished::UnfinishedCache;
 use dg_xch_node::{
-    BlockRecordCache, Chaser, ConfirmedDelta, Engine, Mempool, NativePrimitives, NodeError,
+    BlockRecordCache, ChainPrimitives, Chaser, ConfirmedDelta, Engine, Mempool, NodeError,
     ReorgWalletDelta, SyncConfig, SyncError, SyncMetrics, validate_unfinished_block_body,
 };
 #[cfg(test)]
@@ -220,6 +220,7 @@ pub struct FullNode<S = SqliteStore> {
     index_maintenance: Arc<runtime::IndexMaintenance>,
     maintenance_tasks: Mutex<tokio::task::JoinSet<()>>,
     constants: ConsensusConstants,
+    primitives: ChainPrimitives,
     claimed_peak: Arc<AtomicU32>,
     // The per-peer peak-claim book (`sync_store`): per-connection claims, heaviest-claim selection,
     // disconnect retraction, and the bad-peak quarantine. Publishes the heaviest claim's height into
@@ -319,7 +320,7 @@ pub struct FullNode<S = SqliteStore> {
     // 4,413,681) window after window, and without this every window re-pulled them from the
     // peer. Bounded at SEED_REF_CACHE_CAP entries × the 1 MiB generator ceiling.
     seed_ref_cache: Mutex<VecDeque<(u32, dg_xch_core::clvm::program::SerializedProgram)>>,
-    chaser: Mutex<Chaser<Arc<S>, NativePrimitives>>,
+    chaser: Mutex<Chaser<Arc<S>, ChainPrimitives>>,
     // The consensus-walk record window (record_window.rs): the in-memory record cache
     // equivalent, serving difficulty_records_map without per-call store walks. Arc-shared with
     // the inbound StoreApi so the on-connect TIMELORD greeting can build a NewPeakTimelord.

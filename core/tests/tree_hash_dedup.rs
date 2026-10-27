@@ -124,6 +124,7 @@ fn spend_bundle_reveal_dedup_preserves_semantics() {
         solution: solution.clone(),
     };
     let bundle = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![
             mk_spend(1, reveal_hash),
             mk_spend(2, reveal_hash),
@@ -141,6 +142,7 @@ fn spend_bundle_reveal_dedup_preserves_semantics() {
 
     // Same bundle, one wrong puzzle hash: still WrongPuzzleHash.
     let bad = SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![
             mk_spend(1, reveal_hash),
             mk_spend(2, Bytes32::new([0xAB; 32])),

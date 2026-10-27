@@ -1,7 +1,5 @@
-use paste::paste;
-
 macro_rules! test_bytes {
-    ($($name: ident, $size: expr),*) => {
+    ($($name: ident, $size: expr, $bad:ident, $large:ident),*) => {
         $(
             #[test]
             #[allow(non_snake_case)]
@@ -25,11 +23,10 @@ macro_rules! test_bytes {
                 assert_eq!(bytes_str, bytes_ptr);
             }
 
-            paste! {
                 #[test]
                 #[should_panic]
                 #[allow(non_snake_case)]
-                fn [<test_bad_ $name>]() {
+                fn $bad() {
                     use std::str::FromStr;
                     use dg_xch_core::traits::SizedBytes;
                     use dg_xch_core::blockchain::sized_bytes::$name;
@@ -42,7 +39,7 @@ macro_rules! test_bytes {
                 #[test]
                 #[should_panic]
                 #[allow(non_snake_case)]
-                fn [<test_large_ $name>]() {
+                fn $large() {
                     use std::str::FromStr;
                     use dg_xch_core::traits::SizedBytes;
                     use dg_xch_core::blockchain::sized_bytes::$name;
@@ -51,14 +48,40 @@ macro_rules! test_bytes {
                     let bytes = $name::from_str(&test_bytes).unwrap().bytes();
                     assert_eq!(bytes.len(), $size);
                 }
-            }
 
         )*
     };
 }
 
 test_bytes!(
-    Bytes4, 4, Bytes8, 8, Bytes32, 32, Bytes48, 48, Bytes96, 96, Bytes100, 100, Bytes480, 480
+    Bytes4,
+    4,
+    test_bad_Bytes4,
+    test_large_Bytes4,
+    Bytes8,
+    8,
+    test_bad_Bytes8,
+    test_large_Bytes8,
+    Bytes32,
+    32,
+    test_bad_Bytes32,
+    test_large_Bytes32,
+    Bytes48,
+    48,
+    test_bad_Bytes48,
+    test_large_Bytes48,
+    Bytes96,
+    96,
+    test_bad_Bytes96,
+    test_large_Bytes96,
+    Bytes100,
+    100,
+    test_bad_Bytes100,
+    test_large_Bytes100,
+    Bytes480,
+    480,
+    test_bad_Bytes480,
+    test_large_Bytes480
 );
 
 #[test]

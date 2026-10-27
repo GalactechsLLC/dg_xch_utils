@@ -24,3 +24,42 @@ tarpaulin/
 *.profraw
 *.a
 *.lib
+
+# Default crawler runtime observations
+/crawler-data/
+
+# Local credentials and runtime data
+.env
+.env.*
+!.env.example
+!.env.sample
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+credentials.json
+falcon-keys.bin
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.plot
+config.yml
+/local-node/
+/wallet-data/
+/docker/plots/
+/.aws/
+/.ssh/
+
+# Local editor and agent working files
+.agents/
+.codex/
+.codebase-memory/
+AGENTS.md
+CLAUDE.md
+
+# Private research provenance is retained locally.
+/labrador/native/sources.private.json

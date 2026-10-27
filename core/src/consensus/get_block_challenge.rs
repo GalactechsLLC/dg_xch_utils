@@ -8,6 +8,37 @@ use crate::consensus::pot_iterations::is_overflow_block;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 
+/// Whether an earlier overflow block already included the final slot boundary.
+/// Matches Chia's `final_eos_is_already_included` for unfinished blocks.
+pub fn final_eos_is_already_included(
+    finished_sub_slots: usize,
+    prev_block_hash: Bytes32,
+    total_iters: u128,
+    sub_slot_iters: u64,
+    blocks: &HashMap<Bytes32, BlockRecord>,
+) -> Result<bool, Error> {
+    if finished_sub_slots > 0 {
+        return Ok(false);
+    }
+    let mut curr = blocks
+        .get(&prev_block_hash)
+        .ok_or_else(|| missing(prev_block_hash))?;
+    let nearby_overflow = |record: &BlockRecord| {
+        record.overflow
+            && total_iters
+                .checked_sub(record.total_iters)
+                .is_some_and(|delta| delta < u128::from(sub_slot_iters / 2))
+    };
+    let mut seen_overflow = nearby_overflow(curr);
+    while !curr.first_in_sub_slot() && curr.height != 0 {
+        seen_overflow |= nearby_overflow(curr);
+        curr = blocks
+            .get(&curr.prev_hash)
+            .ok_or_else(|| missing(curr.prev_hash))?;
+    }
+    Ok(curr.first_in_sub_slot() && seen_overflow)
+}
+
 pub fn get_block_challenge(
     constants: &ConsensusConstants,
     finished_sub_slots: &[crate::blockchain::subslot_bundle::SubSlotBundle],

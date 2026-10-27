@@ -64,6 +64,7 @@ fn simple_input(generator: SerializedProgram) -> BlockGeneratorInput {
 
 fn empty_conditions() -> SpendBundleConditions {
     SpendBundleConditions {
+        falcon_signatures: Vec::new(),
         spends: Vec::new(),
         reserve_fee: 0,
         height_absolute: 0,

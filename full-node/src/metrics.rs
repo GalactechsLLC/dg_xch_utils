@@ -627,6 +627,12 @@ impl<S: BlockStore + Send + Sync> MetricsSources<S> {
             peak_height,
             claimed_peak: u64::from(self.claimed_peak.load(Ordering::Relaxed)),
             outbound_peers: self.registry.outbound_count().await as u64,
+            // Liveness must see schema maintenance too: index builds hold the writer and
+            // can pause confirmations beyond the stall window while still making progress.
+            store: self.store.telemetry().map(|t| StoreSnapshot {
+                schema_active: t.schema_active.load(Ordering::Relaxed),
+                ..Default::default()
+            }),
             ..Default::default()
         }
     }

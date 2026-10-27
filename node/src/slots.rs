@@ -79,7 +79,12 @@ pub struct PeakSlotContext<'a> {
 }
 
 pub struct SlotState {
+    latest_farmer_sp: Option<dg_xch_core::protocols::farmer::NewSignagePoint>,
     received_times: HashMap<Bytes32, f64>,
+    // RPC history is separate from active consensus slots. Partials may arrive after a peak
+    // advances; eviction shares the first-seen timestamp budget and reorgs clear this history.
+    recent_eos: HashMap<Bytes32, EndOfSubSlotBundle>,
+    recent_sps: HashMap<Bytes32, SignagePoint>,
     peak_hash: Option<Bytes32>,
     constants: ConsensusConstants,
     finished_sub_slots: Vec<FinishedSubSlot>,
@@ -94,7 +99,10 @@ impl SlotState {
     #[must_use]
     pub fn new(constants: ConsensusConstants) -> Self {
         let mut state = Self {
+            latest_farmer_sp: None,
             received_times: HashMap::new(),
+            recent_eos: HashMap::new(),
+            recent_sps: HashMap::new(),
             peak_hash: None,
             constants,
             finished_sub_slots: Vec::new(),
@@ -110,12 +118,45 @@ impl SlotState {
     }
 
     pub fn initialize_genesis_sub_slot(&mut self) {
+        self.latest_farmer_sp = None;
         self.peak_hash = None;
         self.finished_sub_slots = vec![FinishedSubSlot {
             eos: None,
             sps: self.empty_sps(),
             start_total_iters: 0,
         }];
+    }
+
+    /// Keep the exact validated announcement, including its difficulty and source data.
+    pub fn set_latest_farmer_signage_point(
+        &mut self,
+        sp: dg_xch_core::protocols::farmer::NewSignagePoint,
+    ) {
+        if self.latest_farmer_signage_point().is_some_and(|old| {
+            old.challenge_hash == sp.challenge_hash
+                && old.peak_height == sp.peak_height
+                && old.signage_point_index > sp.signage_point_index
+        }) {
+            return;
+        }
+        self.latest_farmer_sp = Some(sp);
+    }
+
+    pub fn latest_farmer_signage_point(
+        &self,
+    ) -> Option<dg_xch_core::protocols::farmer::NewSignagePoint> {
+        let sp = self.latest_farmer_sp.as_ref()?;
+        let slot = self.finished_sub_slots.last()?;
+        let challenge = match &slot.eos {
+            Some(eos) => eos.challenge_chain.hash().ok()?,
+            None => self.constants.genesis_challenge,
+        };
+        if sp.challenge_hash != challenge
+            || self.get_signage_point(&sp.challenge_chain_sp).is_none()
+        {
+            return None;
+        }
+        Some(sp.clone())
     }
 
     pub fn peak_hash(&self) -> Option<Bytes32> {
@@ -141,8 +182,56 @@ impl SlotState {
                 .map(|(hash, _)| *hash)
         {
             self.received_times.remove(&oldest);
+            self.recent_eos.remove(&oldest);
+            self.recent_sps.remove(&oldest);
         }
         self.received_times.insert(hash, time.as_secs_f64());
+    }
+
+    fn remember_eos(&mut self, eos: &EndOfSubSlotBundle) {
+        if let Ok(hash) = eos.challenge_chain.hash() {
+            self.record_received(hash);
+            if self.received_times.contains_key(&hash) {
+                self.recent_eos.insert(hash, eos.clone());
+            }
+        }
+    }
+
+    /// Recent validated EOS, retained independently of the active consensus slot window.
+    pub fn get_recent_eos(&self, hash: &Bytes32) -> Option<&EndOfSubSlotBundle> {
+        self.recent_eos.get(hash)
+    }
+
+    /// Recent validated signage point, retained for pool partial verification.
+    pub fn get_recent_signage_point(&self, hash: &Bytes32) -> Option<SignagePoint> {
+        self.recent_sps
+            .get(hash)
+            .cloned()
+            .or_else(|| self.get_signage_point(hash))
+    }
+
+    fn extends_cached_peak(
+        &self,
+        peak: &BlockRecord,
+        blocks: &HashMap<Bytes32, BlockRecord>,
+    ) -> bool {
+        let Some(previous) = self.peak_hash else {
+            return true;
+        };
+        if previous == peak.header_hash {
+            return true;
+        }
+        let mut ancestor = peak.prev_hash;
+        for _ in 0..=blocks.len() {
+            if ancestor == previous {
+                return true;
+            }
+            let Some(record) = blocks.get(&ancestor) else {
+                return false;
+            };
+            ancestor = record.prev_hash;
+        }
+        false
     }
 
     // The finished sub-slot whose challenge-chain hash is `challenge_hash`, with its index and
@@ -618,7 +707,7 @@ impl SlotState {
         }
 
         let sps = self.empty_sps();
-        self.record_received(eos.challenge_chain.hash().ok()?);
+        self.remember_eos(eos);
         self.finished_sub_slots.push(FinishedSubSlot {
             eos: Some(eos.clone()),
             sps,
@@ -830,6 +919,9 @@ impl SlotState {
                 return false;
             };
             self.record_received(hash);
+            if self.received_times.contains_key(&hash) {
+                self.recent_sps.insert(hash, signage_point.clone());
+            }
             self.finished_sub_slots[slot_idx].sps[index as usize] = Some(signage_point.clone());
             return true;
         }
@@ -869,6 +961,25 @@ impl SlotState {
             ip_sub_slot,
             fork_block,
         } = ctx;
+        if fork_block.is_some() || !self.extends_cached_peak(peak, blocks) {
+            // Do not expose branch-specific proofs as non-reverted after a reorg. If a sync
+            // jump lacks enough ancestry to prove continuity, discard history conservatively.
+            let canonical_times = [sp_sub_slot, ip_sub_slot]
+                .into_iter()
+                .flatten()
+                .filter_map(|eos| eos.challenge_chain.hash().ok())
+                .filter_map(|hash| self.received_time(&hash).map(|time| (hash, time)))
+                .collect::<Vec<_>>();
+            self.recent_eos.clear();
+            self.recent_sps.clear();
+            self.received_times.clear();
+            self.received_times.extend(canonical_times);
+        }
+        // A follower may learn an EOS from a validated block without receiving its gossip.
+        // Remember that first observation too; repeated peaks never refresh its timestamp.
+        for eos in [sp_sub_slot, ip_sub_slot].into_iter().flatten() {
+            self.remember_eos(eos);
+        }
         if ip_sub_slot.is_none() {
             // Still in the chain's first sub-slot.
             self.initialize_genesis_sub_slot();
@@ -964,7 +1075,10 @@ impl SlotState {
     }
 
     pub fn clear_slots(&mut self) {
+        self.latest_farmer_sp = None;
         self.received_times.clear();
+        self.recent_eos.clear();
+        self.recent_sps.clear();
         self.finished_sub_slots.clear();
         self.future_eos.clear();
         self.future_sp.clear();

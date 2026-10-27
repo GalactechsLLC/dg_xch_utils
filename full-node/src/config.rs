@@ -5,22 +5,26 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-// Which storage backend the `--db` URL selects. SQLite is the embedded Pi-floor backend (the only one built
-// today); Postgres is the industrial scale-out backend, whose sqlx implementation is a dg_xch_stores concern
-// not yet landed — a `postgres://` URL is accepted here but rejected at open with a clear error.
+// Storage backend selected by --db; optional backends require their Cargo feature.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Backend {
     Sqlite(PathBuf),
     Postgres(String),
     Mmap(PathBuf),
+    Rocksdb(PathBuf),
 }
 
 impl Backend {
-    /// Parse a `--db` value: `sqlite://<path>` / `sqlite:<path>` → SQLite, `postgres://…` /
-    /// `postgresql://…` → Postgres, a bare path → SQLite.
+    /// Parse a `--db` value: SQLite files, RocksDB/mmap directories, or PostgreSQL URLs.
+    /// A bare path selects SQLite.
     #[must_use]
     pub fn parse(db: &str) -> Self {
-        if let Some(rest) = db.strip_prefix("mmap://") {
+        if let Some(rest) = db
+            .strip_prefix("rocksdb://")
+            .or_else(|| db.strip_prefix("rocksdb:"))
+        {
+            Backend::Rocksdb(PathBuf::from(rest))
+        } else if let Some(rest) = db.strip_prefix("mmap://") {
             Backend::Mmap(PathBuf::from(rest))
         } else if let Some(rest) = db.strip_prefix("sqlite://") {
             Backend::Sqlite(PathBuf::from(rest))
@@ -129,7 +133,7 @@ impl Config {
                 };
                 (PathBuf::from(marker), occupied)
             }
-            Backend::Mmap(path) => {
+            Backend::Mmap(path) | Backend::Rocksdb(path) => {
                 let occupied = match std::fs::read_dir(path) {
                     Ok(mut entries) => entries.next().transpose()?.is_some(),
                     Err(error) if error.kind() == ErrorKind::NotFound => false,
@@ -140,7 +144,7 @@ impl Config {
             Backend::Postgres(_) if custom => {
                 return Err(Error::new(
                     ErrorKind::Unsupported,
-                    "custom chains currently require SQLite or mmap storage for persisted chain identity",
+                    "custom chains currently require SQLite, RocksDB or mmap storage for persisted chain identity",
                 ));
             }
             Backend::Postgres(_) => return Ok(()),

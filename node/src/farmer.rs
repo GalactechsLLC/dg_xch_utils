@@ -105,6 +105,50 @@ pub fn validate_declared_proof_with_context(
     lookup_sp: impl Fn(&Bytes32) -> Option<SignagePoint>,
     sub_slot_present: impl Fn(&Bytes32) -> bool,
 ) -> DeclareVerdict {
+    if constants.signature_profile.is_bls() {
+        if !declare.authorization.is_none() {
+            return DeclareVerdict::InvalidProof;
+        }
+    } else {
+        let Some(auth) = declare.authorization.as_ref() else {
+            return DeclareVerdict::InvalidProof;
+        };
+        let key = declare.proof_of_space.plot_public_key;
+        let mut messages = vec![
+            (
+                key,
+                declare.challenge_chain_sp.const_bytes().to_vec(),
+                declare.challenge_chain_sp_signature,
+            ),
+            (
+                key,
+                declare.reward_chain_sp.const_bytes().to_vec(),
+                declare.reward_chain_sp_signature,
+            ),
+        ];
+        match (
+            declare.proof_of_space.pool_public_key,
+            declare.proof_of_space.pool_contract_puzzle_hash,
+            declare.pool_target,
+            declare.pool_signature,
+        ) {
+            (Some(pool), None, Some(target), Some(signature)) => {
+                use dg_xch_serialize::ChiaSerialize;
+                let Ok(message) = target.to_bytes(dg_xch_serialize::ChiaProtocolVersion::default())
+                else {
+                    return DeclareVerdict::InvalidProof;
+                };
+                messages.push((pool, message, signature));
+            }
+            // Portable plots commit the reward contract in their plot identity.
+            // Only the plot key signs the two signage-point messages.
+            (None, Some(_), None, None) => {}
+            _ => return DeclareVerdict::InvalidProof,
+        }
+        if !auth.verify_messages(constants.genesis_challenge, &messages) {
+            return DeclareVerdict::InvalidProof;
+        }
+    }
     // The proof must be for a signage point we have accepted.
     let Some(sp) = lookup_sp(&declare.challenge_chain_sp) else {
         return DeclareVerdict::UnknownSignagePoint;
@@ -195,6 +239,39 @@ pub fn timelord_rc_prev(
     } else {
         reward_chain_sp_vdf.map(|v| v.challenge)
     }
+}
+
+/// Recover an SP0 reward-chain hash when the ephemeral slot cache is cold.
+/// Call only after header validation. Follow this block's ancestry, never an
+/// unrelated fork's matching slot or the current peak by assumption.
+pub fn validated_slot_reward_hash<'a>(
+    challenge: Bytes32,
+    finished_sub_slots: &[SubSlotBundle],
+    mut previous: Option<&'a BlockRecord>,
+    records: &'a HashMap<Bytes32, BlockRecord>,
+) -> Option<Bytes32> {
+    for slot in finished_sub_slots.iter().rev() {
+        if slot.challenge_chain.hash().ok()? == challenge {
+            return slot.reward_chain.hash().ok();
+        }
+    }
+    // Bound traversal even if the supplied record map is corrupt.
+    for _ in 0..records.len() {
+        let record = previous?;
+        if let (Some(cc), Some(rc)) = (
+            &record.finished_challenge_slot_hashes,
+            &record.finished_reward_slot_hashes,
+        ) {
+            if cc.len() != rc.len() {
+                return None;
+            }
+            if let Some(index) = cc.iter().rposition(|hash| *hash == challenge) {
+                return Some(rc[index]);
+            }
+        }
+        previous = records.get(&record.prev_hash);
+    }
+    None
 }
 
 /// An accepted declaration, held until a block is assembled from it (or it ages out).
@@ -515,7 +592,7 @@ pub fn assemble_candidate(
         foliage_block_data_signature: g2_infinity(),
         foliage_transaction_block_signature: g2_infinity(),
     };
-    let block = create_unfinished_block_with_sigs(
+    let mut block = create_unfinished_block_with_sigs(
         constants,
         iters.infusion_point_total_iters,
         declare.signage_point_index,
@@ -535,13 +612,35 @@ pub fn assemble_candidate(
         prev.prev_block_hash,
         prev.prev_transaction_block_hash,
         pool_target,
-        declare.pool_signature,
+        if height == 0 && !constants.signature_profile.is_bls() {
+            None
+        } else {
+            declare.pool_signature
+        },
         farmer_reward_puzzle_hash,
         timestamp,
         b"",
         farmer_sigs,
     )
     .ok()?;
+
+    block.authorization = declare.authorization.clone();
+    if let Some(auth) = block.authorization.as_mut() {
+        let mut refs = vec![
+            declare.challenge_chain_sp_signature,
+            declare.reward_chain_sp_signature,
+        ];
+        refs.extend(block.foliage.foliage_block_data.pool_signature);
+        auth.retain_references(&refs);
+        if let Some(tx) = transactions {
+            let tx_auth = tx.authorization.as_ref()?;
+            if tx_auth.genesis != constants.genesis_challenge || !tx_auth.header.is_empty() {
+                return None;
+            }
+            auth.transactions.clone_from(&tx_auth.transactions);
+            auth.labrador.clone_from(&tx_auth.labrador);
+        }
+    }
 
     // RequestSignedValues carries the two foliage hashes the farmer signs.
     // foliage_transaction_block_hash is zeros for a non-transaction block.

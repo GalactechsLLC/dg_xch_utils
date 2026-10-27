@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 pub struct SpendBundleConditions {
     pub spends: Vec<Spend>,
+    #[cfg(feature = "bls")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub falcon_signatures: Vec<crate::signatures::falcon_condition::FalconCondition>,
     pub reserve_fee: u64,
     pub height_absolute: u32,
     pub seconds_absolute: u64,

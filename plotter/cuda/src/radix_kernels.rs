@@ -129,9 +129,9 @@ pub mod kernels {
         let first = chunk * PREFIX_ITEMS + local * 4;
         let base = bucket * blocks as usize;
         let mut values = [0u32; 4];
-        for offset in 0..4 {
+        for (offset, value) in values.iter_mut().enumerate() {
             if first + offset < blocks as usize {
-                values[offset] = unsafe { histogram.add(base + first + offset).read() };
+                *value = unsafe { histogram.add(base + first + offset).read() };
             }
         }
         let total = values[0]
@@ -140,11 +140,11 @@ pub mod kernels {
             .wrapping_add(values[3]);
         let inclusive = block_inclusive(total, shared);
         let mut prefix = inclusive.wrapping_sub(total);
-        for offset in 0..4 {
+        for (offset, value) in values.iter().enumerate() {
             if first + offset < blocks as usize {
                 unsafe { histogram.add(base + first + offset).write(prefix) };
             }
-            prefix = prefix.wrapping_add(values[offset]);
+            prefix = prefix.wrapping_add(*value);
         }
         if local == THREADS - 1 {
             unsafe { sums.add(bucket * chunks as usize + chunk).write(inclusive) };
@@ -193,6 +193,7 @@ pub mod kernels {
     }
 
     #[kernel]
+    #[allow(clippy::too_many_arguments)] // Kernel ABI passes buffers and bounds separately.
     pub fn radix_scatter(
         input: *const [u32; 4],
         output: *mut [u32; 4],
@@ -287,6 +288,7 @@ pub mod kernels {
     }
 
     #[kernel]
+    #[allow(clippy::too_many_arguments)] // Kernel ABI passes buffers and bounds separately.
     pub fn radix_scatter_coalesced(
         input: *const [u32; 4],
         output: *mut [u32; 4],

@@ -108,6 +108,7 @@ pub struct RewardBlockClaim {
 /// defaults documented in [`create_foliage`].
 #[derive(Clone, Debug)]
 pub struct BlockTransactions {
+    pub authorization: crate::signatures::extension::AuthorizationExtension,
     pub program: SerializedProgram,
     pub block_refs: Vec<u32>,
     pub additions: Vec<Coin>,
@@ -603,6 +604,7 @@ pub fn create_unfinished_block(
     };
 
     Ok(UnfinishedBlock {
+        authorization: Default::default(),
         finished_sub_slots,
         reward_chain_block,
         challenge_chain_sp_proof,
@@ -701,6 +703,7 @@ pub fn create_unfinished_block_with_sigs(
     };
 
     Ok(UnfinishedBlock {
+        authorization: Default::default(),
         finished_sub_slots,
         reward_chain_block,
         challenge_chain_sp_proof,
@@ -838,7 +841,23 @@ pub fn unfinished_block_to_full_block(
             new_foliage.foliage_transaction_block_signature = None;
         }
     }
+    let mut authorization = unfinished_block.authorization.clone();
+    if let Some(auth) = authorization.as_mut() {
+        let mut references = vec![
+            rcb_u.challenge_chain_sp_signature,
+            rcb_u.reward_chain_sp_signature,
+            new_foliage.foliage_block_data_signature,
+        ];
+        references.extend(new_foliage.foliage_transaction_block_signature);
+        references.extend(new_foliage.foliage_block_data.pool_signature);
+        auth.retain_references(&references);
+        if !keep_tx {
+            auth.transactions.clear();
+            auth.labrador = None;
+        }
+    }
     Ok(FullBlock {
+        authorization,
         finished_sub_slots,
         reward_chain_block,
         challenge_chain_sp_proof: unfinished_block.challenge_chain_sp_proof.clone(),
@@ -873,6 +892,12 @@ pub fn has_valid_pool_sig(constants: &ConsensusConstants, block: &FullBlock) -> 
     ) else {
         return false;
     };
+    if !constants.signature_profile.is_bls() {
+        return block.authorization.as_ref().is_some_and(|auth| {
+            auth.genesis == constants.genesis_challenge
+                && auth.verify_header(&pool_pk, &pool_target_bytes, &pool_sig)
+        });
+    }
     let pk: PublicKey = (&pool_pk).into();
     let Ok(sig) = Signature::try_from(&pool_sig) else {
         return false;

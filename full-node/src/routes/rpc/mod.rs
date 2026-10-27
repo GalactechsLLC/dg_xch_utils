@@ -84,7 +84,12 @@ mod get_block_spends;
 mod get_block_spends_with_conditions;
 mod get_blockchain_state;
 mod get_blocks;
+#[cfg(feature = "coin-index")]
+mod get_coin_page;
 mod get_coin_record_by_name;
+#[cfg(feature = "coin-index")]
+mod get_coin_summary;
+static EXPLORER_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 #[cfg(feature = "hint")]
 mod get_coin_records_by_hint;
 #[cfg(feature = "hint")]
@@ -106,8 +111,10 @@ mod get_node_details;
 mod get_puzzle_and_solution;
 mod get_recent_signage_point_or_eos;
 mod get_routes;
+mod get_rpc_capabilities;
 mod get_unfinished_block_headers;
 mod get_version;
+mod get_wallet_coin_records;
 mod healthz;
 mod push_tx;
 mod set_auto_farming;
@@ -187,8 +194,21 @@ where
     F: FnOnce(Arc<Node>, Vec<u8>) -> Fut,
     Fut: Future<Output = Result<Option<Map<String, Value>>, RpcError>>,
 {
+    serve_portfu_with_body_limit(node, request, MAX_RPC_BODY_BYTES, handler).await
+}
+
+async fn serve_portfu_with_body_limit<F, Fut>(
+    node: State<Node>,
+    request: &mut Request,
+    max_body_bytes: usize,
+    handler: F,
+) -> Result<Response, PortfuError>
+where
+    F: FnOnce(Arc<Node>, Vec<u8>) -> Fut,
+    Fut: Future<Output = Result<Option<Map<String, Value>>, RpcError>>,
+{
     let body = match request
-        .consume_body_bytes_limited(MAX_RPC_BODY_BYTES, RPC_BODY_READ_TIMEOUT)
+        .consume_body_bytes_limited(max_body_bytes, RPC_BODY_READ_TIMEOUT)
         .await
     {
         Ok(body) => body,
@@ -197,7 +217,7 @@ where
                 StatusCode::PAYLOAD_TOO_LARGE,
                 serde_json::json!({
                     "success": false,
-                    "error": format!("request body exceeds {MAX_RPC_BODY_BYTES} bytes"),
+                    "error": format!("request body exceeds {max_body_bytes} bytes"),
                 }),
             ));
         }
@@ -238,8 +258,14 @@ pub fn route_names() -> Vec<&'static str> {
         get_unfinished_block_headers::PATH,
         get_network_space::PATH,
         get_recent_signage_point_or_eos::PATH,
+        get_rpc_capabilities::PATH,
+        get_wallet_coin_records::PATH,
         get_coin_records_by_names::PATH,
         get_coin_record_by_name::PATH,
+        #[cfg(feature = "coin-index")]
+        get_coin_page::PATH,
+        #[cfg(feature = "coin-index")]
+        get_coin_summary::PATH,
         #[cfg(feature = "coin-index")]
         get_coin_records_by_parent_ids::PATH,
         #[cfg(feature = "coin-index")]

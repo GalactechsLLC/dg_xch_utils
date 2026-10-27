@@ -46,7 +46,7 @@ fn create_cold_wallet_with_output(
             "cold-wallet recovery phrases require an interactive terminal; output cannot be redirected",
         ));
     }
-    let mnemonic = Mnemonic::generate(24)
+    let mnemonic = Mnemonic::generate(bip39::WordCount::Words24)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
     let master_secret_key = key_from_mnemonic(&mnemonic)?;
     let master_public_key = master_secret_key.sk_to_pk();

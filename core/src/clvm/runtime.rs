@@ -1,6 +1,8 @@
 use crate::clvm::arena::{Arena, Checkpoint, NodeKind, NodePtr};
 use crate::clvm::dialect::{ChiaDialect, Dialect};
+use crate::clvm::more_ops::softfork_cost;
 use crate::clvm::sexp::SExp;
+use crate::clvm::utils::{CANONICAL_INTS, ENABLE_KECCAK_OPS_OUTSIDE_FORK, NO_UNKNOWN_OPS, split};
 use crate::errors::ClvmError;
 use log::debug;
 use std::time::Instant;
@@ -8,6 +10,7 @@ use std::time::Instant;
 const QUOTE_COST: u64 = 20;
 const APPLY_COST: u64 = 90;
 const OP_COST: u64 = 1;
+const GUARD_COST: u64 = 140;
 const TRAVERSE_BASE_COST: u64 = 40;
 const TRAVERSE_COST_PER_ZERO_BYTE: u64 = 4;
 const TRAVERSE_COST_PER_BIT: u64 = 4;
@@ -18,6 +21,13 @@ enum Operation {
     Cons,
     Eval,
     SwapEval,
+    ExitGuard,
+}
+
+struct SoftforkGuard {
+    expected_cost: u64,
+    checkpoint: Checkpoint,
+    extension: u32,
 }
 
 /// The CLVM evaluator over the compact node [`Arena`]: every eval intermediate lives in
@@ -32,6 +42,7 @@ pub struct ClvmRuntime {
     /// to when the operator returns a self-contained result.
     checkpoint_stack: Vec<Checkpoint>,
     max_cost: u64,
+    softfork_stack: Vec<SoftforkGuard>,
 }
 
 impl ClvmRuntime {
@@ -44,6 +55,7 @@ impl ClvmRuntime {
             op_stack: vec![],
             checkpoint_stack: vec![],
             max_cost,
+            softfork_stack: vec![],
         }
     }
 
@@ -91,14 +103,31 @@ impl ClvmRuntime {
         let mut current_cost: u64 = 0;
         let start = Instant::now();
         while let Some(op) = self.op_stack.pop() {
-            current_cost += match op {
-                Operation::Apply => self.apply_op(max_cost - current_cost)?,
+            let effective_max_cost = self
+                .softfork_stack
+                .last()
+                .map_or(max_cost, |guard| guard.expected_cost.min(max_cost));
+            let cost = match op {
+                Operation::Apply => {
+                    self.apply_op(current_cost, effective_max_cost - current_cost)?
+                }
+                Operation::ExitGuard => self.exit_guard(current_cost)?,
                 Operation::Cons => self.cons()?,
                 Operation::Eval => self.eval_op()?,
                 Operation::SwapEval => self.swap_eval_op()?,
             };
-            if current_cost > max_cost {
-                return Err(ClvmError::CostExceeded(current_cost, self.max_cost));
+            current_cost = current_cost
+                .checked_add(cost)
+                .ok_or_else(|| ClvmError::Overflow("CLVM cost".into()))?;
+            // Entry may have installed a tighter limit than the one used for this operation.
+            let effective_max_cost = self
+                .softfork_stack
+                .last()
+                .map_or(effective_max_cost, |guard| {
+                    guard.expected_cost.min(effective_max_cost)
+                });
+            if current_cost > effective_max_cost {
+                return Err(ClvmError::CostExceeded(current_cost, effective_max_cost));
             }
         }
         let duration = start.elapsed();
@@ -118,6 +147,7 @@ impl ClvmRuntime {
         self.value_stack.clear();
         self.op_stack.clear();
         self.checkpoint_stack.clear();
+        self.softfork_stack.clear();
         self.arena.reset();
     }
 
@@ -256,7 +286,90 @@ impl ClvmRuntime {
         self.eval_pair(program, args)
     }
 
-    fn apply_op(&mut self, max_cost: u64) -> Result<u64, ClvmError> {
+    fn softfork_arguments(&self, args: NodePtr) -> Result<(u32, NodePtr, NodePtr), ClvmError> {
+        if !self.arena.arg_count_is(args, 4) {
+            return Err(ClvmError::InvalidOperandArgs("softfork", 4));
+        }
+        let (_, rest) = split(&self.arena, args)?;
+        let (extension, rest) = split(&self.arena, rest)?;
+        let (program, rest) = split(&self.arena, rest)?;
+        let (environment, _) = split(&self.arena, rest)?;
+        let bytes = self.arena.atom(extension).ok_or_else(|| {
+            ClvmError::InvalidInput("softfork extension must be an integer".into())
+        })?;
+        let bytes = bytes.as_ref();
+        if bytes.first().is_some_and(|b| b & 0x80 != 0)
+            || ((self.dialect.flags() & CANONICAL_INTS) != 0
+                && bytes.first() == Some(&0)
+                && (bytes.len() < 2 || bytes[1] & 0x80 == 0))
+        {
+            return Err(ClvmError::InvalidInput(
+                "invalid softfork extension integer".into(),
+            ));
+        }
+        let mut extension = 0u32;
+        for byte in bytes {
+            extension = extension
+                .checked_mul(256)
+                .and_then(|n| n.checked_add(u32::from(*byte)))
+                .ok_or_else(|| ClvmError::InvalidInput("softfork extension exceeds u32".into()))?;
+        }
+        if extension > 1 {
+            return Err(ClvmError::InvalidInput("unknown softfork extension".into()));
+        }
+        Ok((extension, program, environment))
+    }
+
+    fn enter_guard(
+        &mut self,
+        args: NodePtr,
+        current_cost: u64,
+        max_cost: u64,
+    ) -> Result<u64, ClvmError> {
+        // Keep the existing cost validation, including CANONICAL_INTS. Recognized
+        // extensions execute here, since an ordinary operator cannot schedule evaluation.
+        let cost = softfork_cost(&self.arena, args, max_cost, &self.dialect)?;
+        let checkpoint = self
+            .checkpoint_stack
+            .pop()
+            .ok_or(ClvmError::ValueStackEmpty)?;
+        let (extension, program, environment) = match self.softfork_arguments(args) {
+            Ok(args) => args,
+            Err(_) if self.dialect.flags() & NO_UNKNOWN_OPS == 0 => {
+                self.arena.restore(checkpoint);
+                self.value_stack.push(NodePtr::NIL);
+                return Ok(cost);
+            }
+            Err(error) => return Err(error),
+        };
+        let expected_cost = current_cost
+            .checked_add(cost)
+            .ok_or_else(|| ClvmError::Overflow("softfork cost".into()))?;
+        self.softfork_stack.push(SoftforkGuard {
+            expected_cost,
+            checkpoint,
+            extension,
+        });
+        self.op_stack.push(Operation::ExitGuard);
+        self.eval_pair(program, environment)
+            .map(|cost| cost + GUARD_COST)
+    }
+
+    fn exit_guard(&mut self, current_cost: u64) -> Result<u64, ClvmError> {
+        let guard = self
+            .softfork_stack
+            .pop()
+            .ok_or(ClvmError::ValueStackEmpty)?;
+        if current_cost != guard.expected_cost {
+            return Err(ClvmError::InvalidInput("softfork cost mismatch".into()));
+        }
+        self.value_stack.pop().ok_or(ClvmError::ValueStackEmpty)?;
+        self.arena.restore(guard.checkpoint);
+        self.value_stack.push(NodePtr::NIL);
+        Ok(0)
+    }
+
+    fn apply_op(&mut self, current_cost: u64, max_cost: u64) -> Result<u64, ClvmError> {
         let operand_list = self.value_stack.pop().ok_or(ClvmError::ValueStackEmpty)?;
         let operator = self.value_stack.pop().ok_or(ClvmError::ValueStackEmpty)?;
         let is_apply = {
@@ -285,10 +398,26 @@ impl ClvmRuntime {
                     self.arena.display(operand_list),
                 ))
             }
+        } else if self
+            .arena
+            .atom(operator)
+            .is_some_and(|atom| atom.as_ref() == [36])
+        {
+            self.enter_guard(operand_list, current_cost, max_cost)
         } else {
-            let (cost, out) = self
-                .dialect
-                .op(&self.arena, operator, operand_list, max_cost)?;
+            // Only the innermost guard selects the extension operator set.
+            let flags = self.dialect.flags()
+                | if self
+                    .softfork_stack
+                    .last()
+                    .is_some_and(|guard| guard.extension == 1)
+                {
+                    ENABLE_KECCAK_OPS_OUTSIDE_FORK
+                } else {
+                    0
+                };
+            let (cost, out) =
+                ChiaDialect::new(flags).op(&self.arena, operator, operand_list, max_cost)?;
             // A self-contained description borrows nothing, so the operand evaluation's
             // allocations are unreachable and can be rewound before the result is written.
             if out.is_self_contained()

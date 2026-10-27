@@ -23,12 +23,20 @@ pub struct UnfinishedBlock {
     pub transactions_info: Option<TransactionsInfo>,
     pub transactions_generator: Option<SerializedProgram>,
     pub transactions_generator_ref_list: Vec<u32>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signatures::extension::AuthorizationExtension::is_none"
+    )]
+    #[chia_skip_sexp]
+    pub authorization: crate::signatures::extension::AuthorizationExtension,
 }
 
 impl UnfinishedBlock {
     pub fn hash(&self) -> Result<Bytes32, Error> {
+        let mut projection = self.clone();
+        projection.authorization = Default::default();
         Ok(Bytes32::from(hash_256(
-            self.to_bytes(ChiaProtocolVersion::default())?,
+            projection.to_bytes(ChiaProtocolVersion::default())?,
         )))
     }
 }

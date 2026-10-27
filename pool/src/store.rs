@@ -1,4 +1,8 @@
+mod accounts;
+mod dashboard;
 use crate::accounting::{Distribution, RewardShare, distribute};
+pub use accounts::{AccountFarmer, AccountSession};
+pub use dashboard::DashboardQuery;
 use dg_xch_core::blockchain::coin::Coin;
 use dg_xch_core::blockchain::sized_bytes::{Bytes32, Bytes48};
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
@@ -15,11 +19,11 @@ use std::time::Duration;
 pub use dg_xch_core::protocols::pool::PoolVersion;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Farmer {
+pub struct Farmer<K = Bytes48> {
     pub version: PoolVersion,
     pub launcher_id: Bytes32,
-    pub owner_public_key: Bytes48,
-    pub authentication_public_key: Bytes48,
+    pub owner_public_key: K,
+    pub authentication_public_key: K,
     pub contract_puzzle_hash: Bytes32,
     pub payout_puzzle_hash: Bytes32,
     pub difficulty: u64,
@@ -112,11 +116,24 @@ impl PoolStore {
             "CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), genesis TEXT NOT NULL, target TEXT NOT NULL, schema_version INTEGER NOT NULL)",
             "CREATE TABLE IF NOT EXISTS farmers (launcher TEXT PRIMARY KEY, data TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS partials (id TEXT PRIMARY KEY, launcher TEXT NOT NULL REFERENCES farmers(launcher), points TEXT NOT NULL, received INTEGER NOT NULL, batch TEXT)",
+            "CREATE TABLE IF NOT EXISTS partial_events (id INTEGER PRIMARY KEY AUTOINCREMENT, launcher TEXT NOT NULL REFERENCES farmers(launcher), received INTEGER NOT NULL, status TEXT NOT NULL, harvester TEXT NOT NULL, points TEXT NOT NULL, verification_ms INTEGER NOT NULL, partial_id TEXT)",
+            "CREATE INDEX IF NOT EXISTS partial_events_partial ON partial_events(partial_id)",
+            "CREATE INDEX IF NOT EXISTS partial_events_farmer ON partial_events(launcher, received DESC)",
+            "CREATE INDEX IF NOT EXISTS partials_farmer ON partials(launcher, received DESC)",
             "CREATE INDEX IF NOT EXISTS unpaid_partials ON partials(batch, received)",
             "CREATE TABLE IF NOT EXISTS batches (reward_coin TEXT PRIMARY KEY, snapshot TEXT NOT NULL, distribution TEXT NOT NULL, bundle TEXT, confirmed_height INTEGER)",
             "CREATE TABLE IF NOT EXISTS batch_requests (reward_coin TEXT PRIMARY KEY REFERENCES batches(reward_coin), parameters TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS reward_claims (id TEXT PRIMARY KEY, data TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS reward_rounds (cutoff INTEGER PRIMARY KEY, snapshot TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS tokens (hash TEXT PRIMARY KEY, launcher TEXT NOT NULL REFERENCES farmers(launcher), key TEXT NOT NULL, expires INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS falcon_updates (launcher TEXT PRIMARY KEY REFERENCES farmers(launcher), timestamp INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS web_accounts (id TEXT PRIMARY KEY, created INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS web_farmers (launcher TEXT PRIMARY KEY REFERENCES farmers(launcher), account TEXT NOT NULL REFERENCES web_accounts(id), name TEXT NOT NULL DEFAULT '')",
+            "CREATE INDEX IF NOT EXISTS web_farmers_account ON web_farmers(account)",
+            "CREATE TABLE IF NOT EXISTS web_proofs (nonce TEXT PRIMARY KEY, expires INTEGER NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS web_proofs_expiry ON web_proofs(expires)",
+            "CREATE TABLE IF NOT EXISTS web_tickets (hash TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES web_accounts(id), launcher TEXT NOT NULL, expires INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS web_sessions (hash TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES web_accounts(id), launcher TEXT NOT NULL, csrf TEXT NOT NULL, expires INTEGER NOT NULL)",
         ] {
             sqlx::query(statement)
                 .execute(&mut *transaction)
@@ -156,6 +173,13 @@ impl PoolStore {
     }
 
     pub async fn farmer(&mut self, launcher: Bytes32) -> Result<Option<Farmer>, Error> {
+        self.farmer_typed(launcher).await
+    }
+
+    pub async fn farmer_typed<K: serde::de::DeserializeOwned>(
+        &mut self,
+        launcher: Bytes32,
+    ) -> Result<Option<Farmer<K>>, Error> {
         sqlx::query("SELECT data FROM farmers WHERE launcher=?")
             .bind(launcher.to_string())
             .fetch_optional(&mut self.connection)
@@ -186,14 +210,17 @@ impl PoolStore {
         Ok(())
     }
 
-    pub async fn farmers(&mut self) -> Result<Vec<Farmer>, Error> {
-        let rows = sqlx::query("SELECT data FROM farmers ORDER BY launcher LIMIT 1001")
-            .fetch_all(&mut self.connection)
-            .await
-            .map_err(Error::other)?;
-        if rows.len() > 1000 {
-            return Err(Error::other("reference pool farmer capacity exceeded"));
-        }
+    /// Iterate stable identities without retaining the entire registry in memory.
+    pub async fn farmers_page<K: serde::de::DeserializeOwned>(
+        &mut self,
+        after: Option<Bytes32>,
+    ) -> Result<Vec<Farmer<K>>, Error> {
+        let rows =
+            sqlx::query("SELECT data FROM farmers WHERE launcher > ? ORDER BY launcher LIMIT 128")
+                .bind(after.map(|id| id.to_string()).unwrap_or_default())
+                .fetch_all(&mut self.connection)
+                .await
+                .map_err(Error::other)?;
         rows.into_iter()
             .map(|row| {
                 serde_json::from_str(&row.try_get::<String, _>("data").map_err(Error::other)?)
@@ -202,22 +229,27 @@ impl PoolStore {
             .collect()
     }
 
-    pub async fn claims(&mut self) -> Result<Vec<RewardClaim>, Error> {
-        let rows = sqlx::query("SELECT data FROM reward_claims ORDER BY id LIMIT 1001")
+    /// Keep every journal entry available for reconciliation, including reorgs.
+    pub async fn claims_page(&mut self, after: Option<Bytes32>) -> Result<Vec<RewardClaim>, Error> {
+        let rows = sqlx::query("SELECT data FROM reward_claims WHERE id > ? ORDER BY id LIMIT 128")
+            .bind(after.map(|id| id.to_string()).unwrap_or_default())
             .fetch_all(&mut self.connection)
             .await
             .map_err(Error::other)?;
-        if rows.len() > 1000 {
-            return Err(Error::other(
-                "reference pool reward journal capacity exceeded; archival support is required",
-            ));
-        }
         rows.into_iter()
             .map(|row| {
                 serde_json::from_str(&row.try_get::<String, _>("data").map_err(Error::other)?)
                     .map_err(Error::other)
             })
             .collect()
+    }
+
+    pub async fn has_claim(&mut self, reward: Bytes32) -> Result<bool, Error> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM reward_claims WHERE id=?)")
+            .bind(reward.to_string())
+            .fetch_one(&mut self.connection)
+            .await
+            .map_err(Error::other)
     }
 
     pub async fn save_claim(&mut self, claim: &RewardClaim) -> Result<(), Error> {
@@ -225,16 +257,23 @@ impl PoolStore {
         if data.len() > 1024 * 1024 {
             return Err(Error::other("reward claim exceeds size limit"));
         }
+        let mut transaction = self.connection.begin().await.map_err(Error::other)?;
+        Self::round_shares(
+            &mut transaction,
+            i64::try_from(claim.cutoff).map_err(Error::other)?,
+        )
+        .await?;
         sqlx::query("INSERT INTO reward_claims VALUES (?, ?)")
             .bind(claim.reward.name().to_string())
             .bind(data)
-            .execute(&mut self.connection)
+            .execute(&mut *transaction)
             .await
             .map_err(Error::other)?;
+        transaction.commit().await.map_err(Error::other)?;
         Ok(())
     }
 
-    pub async fn register(&mut self, farmer: &Farmer) -> Result<(), Error> {
+    pub async fn register<K: Serialize>(&mut self, farmer: &Farmer<K>) -> Result<(), Error> {
         if farmer.difficulty == 0 {
             return Err(Error::other("difficulty must be positive"));
         }
@@ -247,7 +286,11 @@ impl PoolStore {
         Ok(())
     }
 
-    pub async fn update(&mut self, expected: &Farmer, replacement: &Farmer) -> Result<(), Error> {
+    pub async fn update<K: Serialize + PartialEq>(
+        &mut self,
+        expected: &Farmer<K>,
+        replacement: &Farmer<K>,
+    ) -> Result<(), Error> {
         if replacement.launcher_id != expected.launcher_id
             || replacement.version != expected.version
             || replacement.owner_public_key != expected.owner_public_key
@@ -272,10 +315,52 @@ impl PoolStore {
         Ok(())
     }
 
-    pub async fn credit_partial(
+    pub async fn update_falcon_payout(
+        &mut self,
+        expected: &Farmer<dg_xch_core::protocols::pool_falcon::PublicKey>,
+        payout: Bytes32,
+        timestamp: u64,
+        difficulty: Option<u64>,
+    ) -> Result<Farmer<dg_xch_core::protocols::pool_falcon::PublicKey>, Error> {
+        if expected.version != PoolVersion::Falcon || payout == Bytes32::default() {
+            return Err(Error::other("invalid Falcon payout update"));
+        }
+        let timestamp = i64::try_from(timestamp).map_err(Error::other)?;
+        let mut replacement = expected.clone();
+        replacement.payout_puzzle_hash = payout;
+        if let Some(difficulty) = difficulty {
+            if difficulty == 0 {
+                return Err(Error::other("invalid Falcon difficulty"));
+            }
+            replacement.difficulty = difficulty;
+        }
+        let mut transaction = self.connection.begin().await.map_err(Error::other)?;
+        let fresh = sqlx::query("INSERT INTO falcon_updates(launcher,timestamp) VALUES (?,?) ON CONFLICT(launcher) DO UPDATE SET timestamp=excluded.timestamp WHERE falcon_updates.timestamp<excluded.timestamp")
+            .bind(expected.launcher_id.to_string()).bind(timestamp).execute(&mut *transaction).await.map_err(Error::other)?.rows_affected();
+        if fresh != 1 {
+            return Err(Error::other(
+                "replayed or out-of-order Falcon settings update",
+            ));
+        }
+        let changed = sqlx::query("UPDATE farmers SET data=? WHERE launcher=? AND data=?")
+            .bind(serde_json::to_string(&replacement).map_err(Error::other)?)
+            .bind(expected.launcher_id.to_string())
+            .bind(serde_json::to_string(expected).map_err(Error::other)?)
+            .execute(&mut *transaction)
+            .await
+            .map_err(Error::other)?
+            .rows_affected();
+        if changed != 1 {
+            return Err(Error::other("farmer settings changed during update"));
+        }
+        transaction.commit().await.map_err(Error::other)?;
+        Ok(replacement)
+    }
+
+    pub async fn credit_partial<K: Serialize>(
         &mut self,
         id: Bytes32,
-        farmer: &Farmer,
+        farmer: &Farmer<K>,
         received: u64,
     ) -> Result<(), Error> {
         let received = i64::try_from(received).map_err(Error::other)?;
@@ -307,9 +392,9 @@ impl PoolStore {
         })
     }
 
-    pub async fn has_unpaid_partials(&mut self, cutoff: u64) -> Result<bool, Error> {
+    pub async fn has_payout_shares(&mut self, cutoff: u64) -> Result<bool, Error> {
         let exists: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM partials WHERE batch IS NULL AND received<=?)",
+            "SELECT EXISTS(SELECT 1 FROM partials WHERE batch IS NULL AND received<=?1) OR EXISTS(SELECT 1 FROM reward_rounds WHERE cutoff=?1) OR EXISTS(SELECT 1 FROM batch_requests WHERE json_extract(parameters, '$[3]')=?1)",
         )
         .bind(i64::try_from(cutoff).map_err(Error::other)?)
         .fetch_one(&mut self.connection)
@@ -388,6 +473,81 @@ impl PoolStore {
         Ok(())
     }
 
+    async fn round_shares(
+        connection: &mut SqliteConnection,
+        cutoff: i64,
+    ) -> Result<Vec<RewardShare>, Error> {
+        if let Some(snapshot) =
+            sqlx::query_scalar::<_, String>("SELECT snapshot FROM reward_rounds WHERE cutoff=?")
+                .bind(cutoff)
+                .fetch_optional(&mut *connection)
+                .await
+                .map_err(Error::other)?
+        {
+            return serde_json::from_str(&snapshot).map_err(Error::other);
+        }
+        // Recover old unfinished rounds from the first durable payout snapshot.
+        // Signed historical batches are never changed.
+        let snapshot: Option<String> = sqlx::query_scalar(
+            "SELECT batches.snapshot FROM batches JOIN batch_requests USING(reward_coin) WHERE json_extract(batch_requests.parameters, '$[3]')=? ORDER BY batches.rowid LIMIT 1",
+        ).bind(cutoff).fetch_optional(&mut *connection).await.map_err(Error::other)?;
+        let new_round = snapshot.is_none();
+        let shares: Vec<RewardShare> = if let Some(snapshot) = snapshot {
+            serde_json::from_str(&snapshot).map_err(Error::other)?
+        } else {
+            let rows = sqlx::query("SELECT farmers.data, partials.points FROM partials JOIN farmers USING(launcher) WHERE batch IS NULL AND received<=? ORDER BY launcher, id")
+            .bind(cutoff).fetch_all(&mut *connection).await.map_err(Error::other)?;
+            let mut shares = std::collections::BTreeMap::<[u8; 32], RewardShare>::new();
+            for row in rows {
+                #[derive(Deserialize)]
+                struct AccountingIdentity {
+                    launcher_id: Bytes32,
+                    payout_puzzle_hash: Bytes32,
+                }
+                let farmer: AccountingIdentity =
+                    serde_json::from_str(&row.try_get::<String, _>("data").map_err(Error::other)?)
+                        .map_err(Error::other)?;
+                let points = row
+                    .try_get::<String, _>("points")
+                    .map_err(Error::other)?
+                    .parse::<u64>()
+                    .map_err(Error::other)?;
+                let share = shares
+                    .entry(farmer.launcher_id.bytes())
+                    .or_insert(RewardShare {
+                        launcher_id: farmer.launcher_id,
+                        payout_puzzle_hash: farmer.payout_puzzle_hash,
+                        points: 0,
+                    });
+                share.points = share
+                    .points
+                    .checked_add(points)
+                    .ok_or_else(|| Error::other("reward points overflow"))?;
+            }
+            shares.into_values().collect::<Vec<_>>()
+        };
+        if !shares.is_empty() {
+            sqlx::query("INSERT INTO reward_rounds(cutoff, snapshot) VALUES (?, ?)")
+                .bind(cutoff)
+                .bind(serde_json::to_string(&shares).map_err(Error::other)?)
+                .execute(&mut *connection)
+                .await
+                .map_err(Error::other)?;
+            if new_round {
+                // Reserve exactly the partials in this transaction's snapshot.
+                // Late partials stay unpaid for the next round. Other rewards
+                // at this cutoff reuse the snapshot, even after a restart.
+                sqlx::query("UPDATE partials SET batch=? WHERE batch IS NULL AND received<=?")
+                    .bind(format!("round:{cutoff}"))
+                    .bind(cutoff)
+                    .execute(&mut *connection)
+                    .await
+                    .map_err(Error::other)?;
+            }
+        }
+        Ok(shares)
+    }
+
     pub async fn prepare_distribution(
         &mut self,
         reward_coin: Bytes32,
@@ -424,31 +584,7 @@ impl PoolStore {
             )
             .map_err(Error::other);
         }
-        let rows = sqlx::query("SELECT farmers.data, partials.points FROM partials JOIN farmers USING(launcher) WHERE batch IS NULL AND received<=? ORDER BY launcher, id")
-            .bind(cutoff).fetch_all(&mut *transaction).await.map_err(Error::other)?;
-        let mut shares = std::collections::BTreeMap::<[u8; 32], RewardShare>::new();
-        for row in rows {
-            let farmer: Farmer =
-                serde_json::from_str(&row.try_get::<String, _>("data").map_err(Error::other)?)
-                    .map_err(Error::other)?;
-            let points = row
-                .try_get::<String, _>("points")
-                .map_err(Error::other)?
-                .parse::<u64>()
-                .map_err(Error::other)?;
-            let share = shares
-                .entry(farmer.launcher_id.bytes())
-                .or_insert(RewardShare {
-                    launcher_id: farmer.launcher_id,
-                    payout_puzzle_hash: farmer.payout_puzzle_hash,
-                    points: 0,
-                });
-            share.points = share
-                .points
-                .checked_add(points)
-                .ok_or_else(|| Error::other("reward points overflow"))?;
-        }
-        let shares: Vec<_> = shares.into_values().collect();
+        let shares = Self::round_shares(&mut transaction, cutoff).await?;
         let distribution = distribute(amount, fee_basis_points, transaction_fee, &shares)?;
         sqlx::query("INSERT INTO batches(reward_coin, snapshot, distribution) VALUES (?, ?, ?)")
             .bind(reward_coin.to_string())
@@ -460,12 +596,6 @@ impl PoolStore {
         sqlx::query("INSERT INTO batch_requests VALUES (?, ?)")
             .bind(reward_coin.to_string())
             .bind(parameters)
-            .execute(&mut *transaction)
-            .await
-            .map_err(Error::other)?;
-        sqlx::query("UPDATE partials SET batch=? WHERE batch IS NULL AND received<=?")
-            .bind(reward_coin.to_string())
-            .bind(cutoff)
             .execute(&mut *transaction)
             .await
             .map_err(Error::other)?;
@@ -600,6 +730,12 @@ mod tests {
             .unwrap();
         assert_eq!(distribution.payouts.len(), 3);
         assert_eq!(store.points(farmer(1).launcher_id).await.unwrap(), 0);
+        // Simulate the pre-round-table database: recover its durable batch
+        // snapshot without rewriting any already signed/distributed history.
+        sqlx::query("DELETE FROM reward_rounds")
+            .execute(&mut store.connection)
+            .await
+            .unwrap();
         drop(store);
         let mut store = PoolStore::open(&path, genesis, target).await.unwrap();
         assert_eq!(
@@ -618,12 +754,36 @@ mod tests {
         store.bind_configuration("original").await.unwrap();
         store.bind_configuration("original").await.unwrap();
         assert!(store.bind_configuration("changed").await.is_err());
-        assert!(
+        assert!(store.has_payout_shares(100).await.unwrap());
+        assert_eq!(
             store
                 .prepare_distribution([10; 32].into(), 100, 0, 1, 100)
                 .await
-                .is_err()
+                .unwrap(),
+            distribution
         );
+        // A late partial at the same timestamp is not silently consumed by a
+        // reused snapshot; it remains available for the next cutoff round.
+        store
+            .credit_partial([20; 32].into(), &farmer(1), 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .prepare_distribution([11; 32].into(), 100, 0, 1, 100)
+                .await
+                .unwrap(),
+            distribution
+        );
+        assert_eq!(store.points(farmer(1).launcher_id).await.unwrap(), 10);
+        let next = store
+            .prepare_distribution([12; 32].into(), 100, 0, 1, 101)
+            .await
+            .unwrap();
+        assert_eq!(next.payouts.len(), 1);
+        assert_eq!(next.payouts[0].puzzle_hash, farmer(1).payout_puzzle_hash);
+        assert_eq!(next.payouts[0].amount, 99);
+        assert!(!store.has_payout_shares(102).await.unwrap());
         assert!(
             PoolStore::open(&path, [3; 32].into(), target)
                 .await
@@ -634,6 +794,137 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn claim_rounds_reserve_shares_across_restart_and_out_of_order_confirmation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pool.sqlite");
+        let genesis = [1; 32].into();
+        let target = [2; 32].into();
+        let mut store = PoolStore::open(&path, genesis, target).await.unwrap();
+        let first = farmer(1);
+        let second = farmer(2);
+        store.register(&first).await.unwrap();
+        store.register(&second).await.unwrap();
+        store
+            .credit_partial([1; 32].into(), &first, 100)
+            .await
+            .unwrap();
+        let claim = |index: u8, cutoff| RewardClaim {
+            launcher_id: first.launcher_id,
+            reward: Coin {
+                parent_coin_info: [index; 32].into(),
+                puzzle_hash: target,
+                amount: 100,
+            },
+            payout_coin: Coin {
+                parent_coin_info: [index + 10; 32].into(),
+                puzzle_hash: target,
+                amount: 100,
+            },
+            cutoff,
+            bundle: SpendBundle::default(),
+        };
+        let a = claim(1, 100);
+        let b = claim(2, 100);
+        let c = claim(3, 101);
+        store.save_claim(&a).await.unwrap();
+        assert_eq!(store.points(first.launcher_id).await.unwrap(), 0);
+        // Arrives after the first claim, even though the clock still reads 100.
+        store
+            .credit_partial([2; 32].into(), &second, 100)
+            .await
+            .unwrap();
+        store.save_claim(&b).await.unwrap();
+        assert_eq!(store.points(second.launcher_id).await.unwrap(), 10);
+        store.save_claim(&c).await.unwrap();
+        drop(store);
+        let mut store = PoolStore::open(&path, genesis, target).await.unwrap();
+        // Confirm the later cutoff first: it cannot consume the earlier round.
+        for (claim, destination) in [
+            (&c, second.payout_puzzle_hash),
+            (&b, first.payout_puzzle_hash),
+            (&a, first.payout_puzzle_hash),
+        ] {
+            assert!(store.has_payout_shares(claim.cutoff).await.unwrap());
+            let distribution = store
+                .prepare_distribution(claim.payout_coin.name(), 100, 0, 1, claim.cutoff)
+                .await
+                .unwrap();
+            assert_eq!(distribution.payouts.len(), 1);
+            assert_eq!(distribution.payouts[0].puzzle_hash, destination);
+            assert_eq!(distribution.payouts[0].amount, 99);
+        }
+        assert_eq!(store.points(first.launcher_id).await.unwrap(), 0);
+        assert_eq!(store.points(second.launcher_id).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn reward_worker_pages_preserve_more_than_one_thousand_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pages.sqlite");
+        let genesis = [1; 32].into();
+        let target = [2; 32].into();
+        let mut store = PoolStore::open(&path, genesis, target).await.unwrap();
+        let mut expected_farmers = std::collections::BTreeSet::new();
+        let mut expected_claims = std::collections::BTreeSet::new();
+        for index in 0u64..1005 {
+            let mut farmer = farmer(1);
+            farmer.launcher_id = hash_256(index.to_be_bytes()).into();
+            store.register(&farmer).await.unwrap();
+            expected_farmers.insert(farmer.launcher_id.to_string());
+            let claim = RewardClaim {
+                launcher_id: farmer.launcher_id,
+                reward: Coin {
+                    parent_coin_info: farmer.launcher_id,
+                    puzzle_hash: target,
+                    amount: 100,
+                },
+                payout_coin: Coin {
+                    parent_coin_info: farmer.launcher_id,
+                    puzzle_hash: target,
+                    amount: 99,
+                },
+                cutoff: 100,
+                bundle: SpendBundle::default(),
+            };
+            store.save_claim(&claim).await.unwrap();
+            expected_claims.insert(claim.reward.name().to_string());
+        }
+        drop(store);
+        let mut store = PoolStore::open(&path, genesis, target).await.unwrap();
+        let mut cursor = None;
+        let mut farmers = Vec::new();
+        loop {
+            let page = store.farmers_page::<Bytes48>(cursor).await.unwrap();
+            assert!(page.len() <= 128);
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.last().map(|farmer| farmer.launcher_id);
+            farmers.extend(
+                page.into_iter()
+                    .map(|farmer| farmer.launcher_id.to_string()),
+            );
+        }
+        assert_eq!(farmers, expected_farmers.into_iter().collect::<Vec<_>>());
+        let mut cursor = None;
+        let mut claims = Vec::new();
+        loop {
+            let page = store.claims_page(cursor).await.unwrap();
+            assert!(page.len() <= 128);
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.last().map(|claim| claim.reward.name());
+            for claim in page {
+                assert!(store.has_claim(claim.reward.name()).await.unwrap());
+                claims.push(claim.reward.name().to_string());
+            }
+        }
+        assert_eq!(claims, expected_claims.into_iter().collect::<Vec<_>>());
+        assert!(!store.has_claim([0; 32].into()).await.unwrap());
     }
 
     #[tokio::test]

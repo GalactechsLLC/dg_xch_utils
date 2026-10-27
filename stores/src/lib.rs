@@ -1,20 +1,28 @@
 mod arc;
 pub mod error;
+#[cfg(feature = "coin-index")]
+mod explorer;
 #[cfg(feature = "mmap")]
 pub mod mmap;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 mod record_compat;
+#[cfg(feature = "rocksdb")]
+pub mod rocksdb;
 pub mod sqlite;
 pub mod telemetry;
 pub mod traits;
 pub mod types;
+#[cfg(feature = "hint")]
+mod wallet_sync;
 
 pub use error::StoreError;
 #[cfg(feature = "mmap")]
 pub use mmap::MmapStore;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresStore;
+#[cfg(feature = "rocksdb")]
+pub use rocksdb::RocksDbStore;
 pub use sqlite::SqliteStore;
 pub use telemetry::{DURATION_BUCKETS_SECS, HistogramSnapshot, StoreTelemetry};
 pub use traits::{BlockStore, CoinStore};

@@ -237,3 +237,75 @@ fn get_signage_point_none_for_unknown_challenge() {
     let state = SlotState::new(MAINNET);
     assert!(state.get_signage_point(&Bytes32::from([200; 32])).is_none());
 }
+
+#[test]
+fn rpc_history_survives_active_slot_changes_and_clears_on_reorg() {
+    use dg_xch_core::blockchain::block_record::BlockRecord;
+    use dg_xch_node::slots::PeakSlotContext;
+    let mut state = SlotState::new(MAINNET);
+    let first = empty_slot_eos(MAINNET.genesis_challenge, MAINNET.genesis_challenge);
+    let first_hash = first.challenge_chain.hash().unwrap();
+    state
+        .new_finished_sub_slot(&first, &HashMap::new(), None, 0, 0, true)
+        .unwrap();
+    let first_time = state.received_time(&first_hash).unwrap();
+    let second = empty_slot_eos(first_hash, first.reward_chain.hash().unwrap());
+    let second_hash = second.challenge_chain.hash().unwrap();
+    let mut peak: BlockRecord =
+        serde_json::from_str(include_str!("fixtures/block_record_4999999.json")).unwrap();
+    let context = || PeakSlotContext {
+        sp_sub_slot: None,
+        ip_sub_slot: Some(&second),
+        fork_block: None,
+    };
+    state.new_peak(
+        &peak,
+        context(),
+        &HashMap::new(),
+        MAINNET.sub_slot_iters_starting,
+        30,
+        true,
+    );
+    assert!(state.get_sub_slot(&first_hash).is_none());
+    assert_eq!(state.get_recent_eos(&first_hash), Some(&first));
+    assert_eq!(state.received_time(&first_hash), Some(first_time));
+    assert_eq!(state.get_recent_eos(&second_hash), Some(&second));
+    let second_time = state.received_time(&second_hash).unwrap();
+    state.new_peak(
+        &peak,
+        context(),
+        &HashMap::new(),
+        MAINNET.sub_slot_iters_starting,
+        30,
+        true,
+    );
+    assert_eq!(state.received_time(&second_hash), Some(second_time));
+    peak.prev_hash = peak.header_hash;
+    peak.header_hash = [31; 32].into();
+    peak.height += 1;
+    state.new_peak(
+        &peak,
+        context(),
+        &HashMap::new(),
+        MAINNET.sub_slot_iters_starting,
+        30,
+        true,
+    );
+    assert!(state.get_recent_eos(&first_hash).is_some());
+    peak.prev_hash = [32; 32].into();
+    peak.header_hash = [33; 32].into();
+    state.new_peak(
+        &peak,
+        context(),
+        &HashMap::new(),
+        MAINNET.sub_slot_iters_starting,
+        30,
+        true,
+    );
+    assert!(state.get_recent_eos(&first_hash).is_none());
+    assert!(state.received_time(&first_hash).is_none());
+    assert_eq!(state.get_recent_eos(&second_hash), Some(&second));
+    assert_eq!(state.received_time(&second_hash), Some(second_time));
+    state.clear_slots();
+    assert!(state.get_recent_eos(&second_hash).is_none());
+}

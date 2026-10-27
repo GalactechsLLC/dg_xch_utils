@@ -8,7 +8,8 @@ use dg_xch_core::blockchain::full_block::FullBlock;
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::clvm::program::SerializedProgram;
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
-use sqlx::{Connection, Row, TransactionManager};
+use sqlx::{Connection, Row};
+use sqlx_core::transaction::TransactionManager;
 use std::io::Cursor;
 use std::sync::atomic::Ordering;
 
@@ -824,6 +825,9 @@ impl BlockStore for SqliteStore {
         // ensure_reorg_indexes restores them before rollback queries if needed.
         let statements = [
             "DROP INDEX IF EXISTS coin_record_puzzle_hash",
+            "DROP INDEX IF EXISTS coin_record_history_page",
+            "DROP INDEX IF EXISTS coin_record_parent_page",
+            "DROP INDEX IF EXISTS coin_record_summary_cursor",
             "DROP INDEX IF EXISTS coin_record_coin_parent",
             "DROP INDEX IF EXISTS coin_record_unspent_by_ph",
             "DROP INDEX IF EXISTS coin_record_spent_index",

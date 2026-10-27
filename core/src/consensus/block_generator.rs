@@ -17,18 +17,18 @@ use crate::clvm::runtime::ClvmRuntime;
 use crate::clvm::sexp::{AtomBuf, PairBuf, SExp};
 use crate::clvm::tree_hash_cache::TreeHashCache;
 use crate::clvm::utils::{
-    CANONICAL_INTS, COST_CONDITIONS, DISABLE_OP, ENABLE_KECCAK_OPS_OUTSIDE_FORK, LIMITS,
-    NEW_COST_MODEL, RELAXED_BLS,
+    CANONICAL_INTS, COST_CONDITIONS, DISABLE_OP, DISABLE_PRINTS, ENABLE_KECCAK_OPS_OUTSIDE_FORK,
+    LIMITS, NEW_COST_MODEL, RELAXED_BLS,
 };
 use crate::consensus::constants::ConsensusConstants;
 use crate::consensus::generator_puzzles::ROM_BOOTSTRAP_GENERATOR_HEX;
 use crate::consensus::{AGG_SIG_COST, CREATE_COIN_COST};
-use crate::constants::AUG_SCHEME_DST;
 use crate::errors::{ChiaError, ClvmError};
+use crate::signatures::{
+    AuthorizationRules, AuthorizationWitness, SignatureRequirement, verify_authorization,
+};
 use crate::traits::SizedBytes;
 use crate::utils::hash_256;
-use blst::BLST_ERROR;
-use blst::min_pk::{PublicKey, Signature};
 use dg_xch_serialize::{ChiaProtocolVersion, ChiaSerialize};
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -54,11 +54,13 @@ impl BlockGeneratorFlags {
     /// fork 2, whose cost model subsumes it. Every transition is pinned in `flag_ladder.rs`.
     #[must_use]
     pub fn for_height(constants: &ConsensusConstants, height: u32) -> Self {
-        let mut clvm_flags = 0u32;
+        let mut clvm_flags = if constants.signature_profile.is_bls() {
+            0
+        } else {
+            crate::clvm::falcon_ops::ENABLE_FALCON_OPS
+        };
 
         if height >= constants.hard_fork2_height {
-            // ENABLE_SECP_OPS belongs here too; it is absent because the secp operators are not
-            // implemented, and a flag without its operators is absorbed by `op_unknown`.
             clvm_flags |=
                 ENABLE_KECCAK_OPS_OUTSIDE_FORK | COST_CONDITIONS | NEW_COST_MODEL | RELAXED_BLS;
         } else if height >= constants.soft_fork8_height {
@@ -305,7 +307,11 @@ pub fn execute_block_generator_result(
         .ok_or(ChiaError::BlockCostExceedsMax)?;
     let (cost, output) = if input.flags.simple_generator {
         generator
-            .run(cost_left, input.flags.clvm_flags, &Program::default())
+            .run(
+                cost_left,
+                input.flags.clvm_flags | DISABLE_PRINTS,
+                &Program::default(),
+            )
             .map_err(generator_run_error)?
     } else {
         // (ROM path: reveal hashes are computed inside the CLVM bootstrap, not here.)
@@ -318,7 +324,7 @@ pub fn execute_block_generator_result(
             generator.sexp().to_owned(),
             SExp::from(vec![generator_ref_atoms(input)]),
         ]));
-        rom.run(cost_left, input.flags.clvm_flags, &args)
+        rom.run(cost_left, input.flags.clvm_flags | DISABLE_PRINTS, &args)
             .map_err(generator_run_error)?
     };
     let cost = byte_cost
@@ -344,9 +350,14 @@ pub fn execute_block_generator_result(
     }
     .map_err(|error| {
         // Never discard the underlying ClvmError: the true cause — which spend /
-        // condition / cost — is logged at error level and mapped to the most faithful
+        // condition / cost — is logged and mapped to the most faithful
         // ChiaError code below.
-        log::error!(
+        log::log!(
+            if matches!(error, ClvmError::Unimplemented(60)) {
+                log::Level::Warn
+            } else {
+                log::Level::Error
+            },
             "execute_block_generator: condition extraction failed at height {} (simple_generator={}): {error:?}",
             input.height,
             input.flags.simple_generator
@@ -435,19 +446,73 @@ fn generator_ref_atoms(input: &BlockGeneratorInput) -> SExp<'static> {
     )
 }
 
+/// Compatibility entry point for the existing 96-byte BLS wire field.
 pub fn validate_block_aggregate_signature(
     conds: &SpendBundleConditions,
     aggregated_signature: &Bytes96,
     constants: &ConsensusConstants,
 ) -> Result<(), ChiaError> {
-    let mut keys = Vec::<Bytes48>::new();
-    let mut messages = Vec::<Message>::new();
-    // Bundle-level AGG_SIG_UNSAFE pairs come from the conditions set itself, not any
-    // spend, and sign their raw message with no coin or additional-data suffix.
+    validate_block_authorization(
+        conds,
+        &AuthorizationWitness::BlsAggregate(aggregated_signature),
+        constants,
+    )
+}
+
+/// Verify exactly the signature profile bound into the chain identity.
+pub fn validate_block_authorization(
+    conds: &SpendBundleConditions,
+    witness: &AuthorizationWitness<'_>,
+    constants: &ConsensusConstants,
+) -> Result<(), ChiaError> {
+    let bls = bls_requirements_for_conditions(conds, constants)?;
+    let (rules, requirements) = if constants.signature_profile.is_bls() {
+        if !conds.falcon_signatures.is_empty() {
+            return Err(ChiaError::BadAggregateSignature);
+        }
+        (AuthorizationRules::LEGACY_BLS, bls)
+    } else {
+        if !bls.is_empty() {
+            return Err(ChiaError::BadAggregateSignature);
+        }
+        let rules = if let Some(profile) = constants.falcon_aggregation
+            && matches!(witness, AuthorizationWitness::FalconLabrador(_))
+        {
+            AuthorizationRules::for_labrador_profile(constants.genesis_challenge, profile)
+        } else {
+            AuthorizationRules::for_mode(crate::signatures::AuthorizationMode::FalconDirect)
+        }
+        .map_err(|_| ChiaError::BadAggregateSignature)?;
+        (
+            rules,
+            conds
+                .falcon_signatures
+                .iter()
+                .map(|r| r.requirement())
+                .collect(),
+        )
+    };
+    verify_authorization(&rules, &requirements, witness)
+        .map_err(|_| ChiaError::BadAggregateSignature)
+}
+
+/// Derive every legacy BLS obligation, preserving duplicate key/message pairs.
+/// This adapter deliberately does not invent original condition indices from the
+/// grouped legacy condition representation. Falcon uses its own occurrence records.
+pub fn bls_requirements_for_conditions(
+    conds: &SpendBundleConditions,
+    constants: &ConsensusConstants,
+) -> Result<Vec<SignatureRequirement>, ChiaError> {
+    let mut requirements = Vec::new();
+    // AGG_SIG_UNSAFE signs the raw message without a coin or additional-data suffix.
     for (pk, msg) in &conds.agg_sig_unsafe {
-        keys.push(Bytes48::parse(pk.as_slice()).map_err(|_| ChiaError::InvalidCondition)?);
-        messages
-            .push(Message::new(msg.as_slice().to_vec()).map_err(|_| ChiaError::InvalidCondition)?);
+        let public_key = Bytes48::parse(pk.as_slice()).map_err(|_| ChiaError::InvalidCondition)?;
+        let message =
+            Message::new(msg.as_slice().to_vec()).map_err(|_| ChiaError::InvalidCondition)?;
+        requirements.push(SignatureRequirement::Bls {
+            public_key,
+            message: message.data().to_vec(),
+        });
     }
     for spend in &conds.spends {
         let coin = Coin {
@@ -455,87 +520,14 @@ pub fn validate_block_aggregate_signature(
             puzzle_hash: spend.puzzle_hash,
             amount: spend.coin_amount,
         };
-        for (_, pk, msg) in pkm_pairs_for_spend(spend, coin, constants)? {
-            keys.push(pk);
-            messages.push(msg);
+        for (_, public_key, message) in pkm_pairs_for_spend(spend, coin, constants)? {
+            requirements.push(SignatureRequirement::Bls {
+                public_key,
+                message: message.data().to_vec(),
+            });
         }
     }
-    if keys.is_empty() {
-        let mut infinity = [0_u8; 96];
-        infinity[0] = 0xc0;
-        return if aggregated_signature.as_ref() == infinity {
-            Ok(())
-        } else {
-            Err(ChiaError::BadAggregateSignature)
-        };
-    }
-    let signature: Signature = aggregated_signature
-        .try_into()
-        .map_err(|_| ChiaError::BadAggregateSignature)?;
-    if aggregate_verify_deduped(&keys, &messages, &signature) {
-        Ok(())
-    } else {
-        Err(ChiaError::BadAggregateSignature)
-    }
-}
-
-const DEDUP_MAX_DISTINCT_KEYS: usize = 64;
-
-fn aggregate_verify_deduped(keys: &[Bytes48], messages: &[Message], signature: &Signature) -> bool {
-    // AUG scheme: each pair verifies pk || msg with an empty aug.
-    let augmented = keys
-        .iter()
-        .zip(messages)
-        .map(|(key, msg)| {
-            let mut combined = Vec::with_capacity(48 + msg.data().len());
-            combined.extend_from_slice(key.as_ref());
-            combined.extend_from_slice(msg.data());
-            combined
-        })
-        .collect::<Vec<Vec<u8>>>();
-    let message_refs = augmented.iter().map(Vec::as_slice).collect::<Vec<&[u8]>>();
-
-    let mut distinct = HashSet::<Bytes48>::new();
-    for key in keys {
-        distinct.insert(*key);
-        if distinct.len() > DEDUP_MAX_DISTINCT_KEYS {
-            break;
-        }
-    }
-    if distinct.len() <= DEDUP_MAX_DISTINCT_KEYS && distinct.len() * 2 <= keys.len() {
-        // Dedup branch: uncompress + validate each DISTINCT key once, pairing skips the
-        // per-occurrence checks.
-        let mut validated = HashMap::<Bytes48, PublicKey>::with_capacity(distinct.len());
-        for key in &distinct {
-            let Ok(pk) = PublicKey::from_bytes(key.as_ref()) else {
-                return false;
-            };
-            if pk.validate().is_err() {
-                return false;
-            }
-            validated.insert(*key, pk);
-        }
-        let key_refs = keys
-            .iter()
-            .map(|key| &validated[key])
-            .collect::<Vec<&PublicKey>>();
-        matches!(
-            signature.aggregate_verify(true, &message_refs, AUG_SCHEME_DST, &key_refs, false),
-            BLST_ERROR::BLST_SUCCESS
-        )
-    } else {
-        // Per-occurrence conversion (`unwrap_or_default`, matching `From<Bytes48> for
-        // PublicKey`) and per-occurrence validation inside blst's workers.
-        let converted = keys
-            .iter()
-            .map(|key| PublicKey::from_bytes(key.as_ref()).unwrap_or_default())
-            .collect::<Vec<PublicKey>>();
-        let key_refs = converted.iter().collect::<Vec<&PublicKey>>();
-        matches!(
-            signature.aggregate_verify(true, &message_refs, AUG_SCHEME_DST, &key_refs, true),
-            BLST_ERROR::BLST_SUCCESS
-        )
-    }
+    Ok(requirements)
 }
 
 pub fn additions_for_conditions(
@@ -634,7 +626,11 @@ pub fn coin_spend_from_generator(
         .checked_sub(byte_cost)
         .ok_or(ChiaError::BlockCostExceedsMax)?;
     let (_cost, output) = generator
-        .run(cost_left, input.flags.clvm_flags, &Program::default())
+        .run(
+            cost_left,
+            input.flags.clvm_flags | DISABLE_PRINTS,
+            &Program::default(),
+        )
         .map_err(generator_run_error)?;
     let out_sexp = output.sexp();
     let all_spends = out_sexp
@@ -742,7 +738,11 @@ fn run_simple_generator_spends(
         .checked_sub(byte_cost)
         .ok_or(ChiaError::BlockCostExceedsMax)?;
     let (_cost, output) = generator
-        .run(cost_left, input.flags.clvm_flags, &Program::default())
+        .run(
+            cost_left,
+            input.flags.clvm_flags | DISABLE_PRINTS,
+            &Program::default(),
+        )
         .map_err(generator_run_error)?;
     let out_sexp = output.sexp();
     let all_spends = out_sexp
@@ -771,7 +771,11 @@ fn run_simple_generator_spends(
         let conditions = if with_conditions {
             // Trusted context (already-validated block): full budget.
             let (_spend_cost, cond_out) = puzzle_reveal
-                .run(cost_left, input.flags.clvm_flags, &solution)
+                .run(
+                    cost_left,
+                    input.flags.clvm_flags | DISABLE_PRINTS,
+                    &solution,
+                )
                 .map_err(generator_run_error)?;
             parse_raw_conditions(cond_out.sexp())?
         } else {
@@ -1208,7 +1212,7 @@ pub fn conditions_from_spend_bundle(
     constants: &ConsensusConstants,
 ) -> Result<SpendBundleConditions, ChiaError> {
     let flags = BlockGeneratorFlags::for_height(constants, height);
-    let clvm_flags = flags.clvm_flags | crate::clvm::utils::MEMPOOL_MODE;
+    let clvm_flags = flags.clvm_flags | crate::clvm::utils::MEMPOOL_MODE | DISABLE_PRINTS;
     let max_cost = constants.max_block_cost_clvm;
     const QUOTE_BYTES: usize = 2;
     let byte_cost = (spend_bundle_generator_length(&bundle.coin_spends) - QUOTE_BYTES) as u64
@@ -1221,6 +1225,7 @@ pub fn conditions_from_spend_bundle(
         before_height_absolute: None,
         before_seconds_absolute: None,
         agg_sig_unsafe: Vec::new(),
+        falcon_signatures: Vec::new(),
         cost: byte_cost,
         removal_amount: 0,
         addition_amount: 0,
@@ -1263,19 +1268,37 @@ pub fn conditions_from_spend_bundle(
             .cost
             .checked_add(puzzle_cost)
             .ok_or(ChiaError::BlockCostExceedsMax)?;
-        let conditions = puzzle_output
-            .sexp()
-            .try_into()
-            .map_err(map_condition_error)?;
-        let mut spend = spend_from_conditions(
-            coin_spend.coin,
-            conditions,
-            &mut conds,
-            constants,
-            &mut conditions_cost,
-            true,
-        )
-        .map_err(map_condition_error)?;
+        let mut spend = if constants.signature_profile.is_bls() {
+            let conditions = puzzle_output
+                .sexp()
+                .try_into()
+                .map_err(map_condition_error)?;
+            spend_from_conditions(
+                coin_spend.coin,
+                conditions,
+                &mut conds,
+                constants,
+                &mut conditions_cost,
+                true,
+            )
+            .map_err(map_condition_error)?
+        } else {
+            let mut arena = Arena::new();
+            let output = arena
+                .import(puzzle_output.sexp())
+                .map_err(map_condition_error)?;
+            parse_and_apply_spend_from_arena(
+                &arena,
+                output,
+                coin_spend.coin,
+                &mut conds,
+                constants,
+                &mut conditions_cost,
+                max_cost,
+                true,
+            )
+            .map_err(map_condition_error)?
+        };
         spend.execution_cost = puzzle_cost;
         for created_coin in &spend.create_coin {
             let coin = Coin {
@@ -1323,6 +1346,7 @@ fn conditions_from_generator_output(
         before_height_absolute: None,
         before_seconds_absolute: None,
         agg_sig_unsafe: Vec::new(),
+        falcon_signatures: Vec::new(),
         cost,
         removal_amount: 0,
         addition_amount: 0,
@@ -1331,7 +1355,7 @@ fn conditions_from_generator_output(
     let mut created = HashSet::<Bytes32>::new();
     let mut conditions_cost = 0_u64;
     let all_spends = output.first()?;
-    let mut runtime = ClvmRuntime::new(max_cost, clvm_flags);
+    let mut runtime = ClvmRuntime::new(max_cost, clvm_flags | DISABLE_PRINTS);
     for (spend_index, spend_sexp) in all_spends.ref_list().into_iter().enumerate() {
         let spend_parts = spend_sexp.ref_list();
         if spend_parts.len() < 4 {
@@ -1423,6 +1447,7 @@ fn conditions_from_processed_generator_output(
         before_height_absolute: None,
         before_seconds_absolute: None,
         agg_sig_unsafe: Vec::new(),
+        falcon_signatures: Vec::new(),
         cost,
         removal_amount: 0,
         addition_amount: 0,
@@ -1912,33 +1937,61 @@ fn parse_and_apply_spend_from_arena(
         .ok_or_else(|| ClvmError::Overflow("removal amount overflow".to_string()))?;
     let mut cursor = output;
     let mut condition_index = 0usize;
+    let falcon = !constants.signature_profile.is_bls();
     while let Some((cond_ptr, rest)) = arena.next(cursor) {
         cursor = rest;
-        let Some(condition) = arena_condition(arena, cond_ptr)? else {
-            continue;
-        };
-        apply_parsed_condition(
-            &mut spend,
-            conds,
-            coin,
-            condition,
-            condition_index,
-            constants,
-            extra_cost,
-            mempool,
-        )?;
-        // Each condition's cost is charged and the run bails the instant it would cross
-        // MAX_BLOCK_COST_CLVM, before the next condition is even parsed, so a create-coin /
-        // agg-sig flood cannot run to completion. Per-condition costs land in `*extra_cost`
-        // inside `apply_parsed_condition`.
+        if falcon
+            && let Some(requirement) = crate::signatures::falcon_condition::from_arena(
+                arena,
+                cond_ptr,
+                coin,
+                condition_index,
+                constants,
+            )?
+        {
+            if conds.falcon_signatures.len()
+                >= crate::signatures::falcon_block::MAX_TRANSACTION_SIGNATURES
+            {
+                return Err(ClvmError::InvalidSpendbundle(
+                    "too many Falcon signatures".into(),
+                ));
+            }
+            *extra_cost = extra_cost
+                .checked_add(crate::signatures::falcon_condition::FALCON_CONDITION_COST)
+                .ok_or_else(|| ClvmError::Overflow("Falcon signature cost overflow".into()))?;
+            conds.falcon_signatures.push(requirement);
+            spend.flags = 0;
+        } else {
+            let Some(condition) = arena_condition(arena, cond_ptr)? else {
+                if falcon {
+                    condition_index += 1;
+                }
+                continue;
+            };
+            apply_parsed_condition(
+                &mut spend,
+                conds,
+                coin,
+                condition,
+                condition_index,
+                constants,
+                extra_cost,
+                mempool,
+            )?;
+        }
         let running = conds
             .cost
             .checked_add(*extra_cost)
-            .ok_or_else(|| ClvmError::Overflow("block generator cost overflow".to_string()))?;
+            .ok_or_else(|| ClvmError::Overflow("block generator cost overflow".into()))?;
         if running > max_cost {
             return Err(ClvmError::CostExceeded(max_cost, running));
         }
         condition_index += 1;
+    }
+    if falcon && !arena.atom(cursor).is_some_and(|a| a.as_ref().is_empty()) {
+        return Err(ClvmError::InvalidSpendbundle(
+            "improper Falcon condition list".into(),
+        ));
     }
     finalize_spend(&mut spend, *extra_cost, condition_cost_start, mempool);
     Ok(spend)

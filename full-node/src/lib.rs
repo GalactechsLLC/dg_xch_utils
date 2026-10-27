@@ -18,7 +18,7 @@ pub use config::{Backend, Config, RpcTlsMode};
 pub use node::{FullNode, OutboundPeers, open_backend, outbound_on_connect};
 pub use rpc::{
     CoinQueryWindow, Node, NodeLive, PortfuRpcTlsContext, RpcError, RpcStore, SimControl,
-    build_portfu_rpc_tls_context,
+    build_portfu_rpc_tls_context, build_portfu_rpc_tls_context_for_host,
 };
 pub use trust::TrustPolicy;
 pub use tx_queue::TxQueue;

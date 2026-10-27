@@ -1516,6 +1516,7 @@ async fn on_transaction_gives_trusted_peer_high_priority() {
     let api = api_trust(store, wallet, policy, default_sem());
 
     let bundle = |b: u8| SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: dg_xch_core::blockchain::sized_bytes::Bytes96::from([b; 96]),
     };
@@ -1616,6 +1617,7 @@ async fn on_transaction_gives_localhost_peer_high_priority() {
     let wallet = Arc::new(WalletNotifier::with_trust(policy.clone()));
     let api = api_trust(store, wallet, policy, default_sem());
     let bundle = |b: u8| SpendBundle {
+        authorization: Default::default(),
         coin_spends: vec![],
         aggregated_signature: dg_xch_core::blockchain::sized_bytes::Bytes96::from([b; 96]),
     };

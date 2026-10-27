@@ -68,6 +68,8 @@ services:
   introducer:
     <<: *service
     entrypoint: [dgx, --config-dir, /service/app, introducer, --config, /service/config.json]
+    environment:
+      DGX_INTRODUCER_DATABASE_URL: ${DGX_INTRODUCER_DATABASE_URL:-}
     depends_on:
       init-stack:
         condition: service_completed_successfully

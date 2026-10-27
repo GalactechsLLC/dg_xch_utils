@@ -1269,6 +1269,7 @@ async fn signed_values_splices_farmer_sigs_and_queues_for_broadcast() {
         .expect("tx block");
     let quality_string = Bytes32::from([0x99u8; 32]);
     let signed = SignedValues {
+        authorization: Default::default(),
         quality_string,
         foliage_block_data_signature: sign(&sk, fbd_hash.as_ref()).into(),
         foliage_transaction_block_signature: sign(&sk, ftb_hash.as_ref()).into(),
@@ -1346,6 +1347,7 @@ async fn signed_values_splices_farmer_sigs_and_queues_for_broadcast() {
     // A bad fbd signature (wrong key) is rejected: nothing new queued.
     let wrong_sk = SecretKey::key_gen_v3(&[0xA5u8; 32], &[]).expect("sk2");
     let bad = SignedValues {
+        authorization: Default::default(),
         quality_string,
         foliage_block_data_signature: sign(&wrong_sk, fbd_hash.as_ref()).into(),
         foliage_transaction_block_signature: Bytes96::from([0u8; 96]),

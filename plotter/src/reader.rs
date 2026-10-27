@@ -239,20 +239,27 @@ impl<R: Read + Seek> PlotReader<R> {
         cancelled: &AtomicBool,
         engine: &mut impl HashEngine,
     ) -> Result<Vec<u8>, Error> {
-        for fragment in chain.fragments {
-            if self
-                .fragments_in_range(
-                    Range {
-                        start: fragment,
-                        end: fragment,
-                    },
-                    cancelled,
-                )?
-                .binary_search(&fragment)
-                .is_err()
-            {
-                return Err(invalid("proof fragment absent from plot"));
+        // Chain links often share a chunk. Validate them in chunk order so a
+        // proof reads and decompresses each required chunk only once.
+        let mut fragments = chain.fragments;
+        fragments.sort_unstable();
+        let mut remaining = fragments.as_slice();
+        let span_bits = u32::from(self.info.k) + 16;
+        while let Some(fragment) = remaining.first().copied() {
+            check_cancelled(cancelled)?;
+            let index = fragment >> span_bits;
+            let end = remaining.partition_point(|fragment| *fragment >> span_bits == index);
+            let chunk = self.chunk(
+                usize::try_from(index)
+                    .map_err(|_| invalid("fragment chunk exceeds address space"))?,
+                cancelled,
+            )?;
+            for fragment in &remaining[..end] {
+                if chunk.binary_search(fragment).is_err() {
+                    return Err(invalid("proof fragment absent from plot"));
+                }
             }
+            remaining = &remaining[end..];
         }
         solver::solve_with_engine(&self.params, chain, challenge, limits, cancelled, engine)
     }

@@ -12,6 +12,7 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const STALL_INTERVAL: Duration = Duration::from_secs(30);
 const ESCALATION_INTERVAL: Duration = Duration::from_secs(60);
 const IDLE_WAL_RECLAIM_BYTES: u64 = 128 * 1024 * 1024;
+const IDLE_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug)]
 struct CheckpointOutcome {
@@ -75,6 +76,16 @@ impl Schedule {
         }
         if self.retry && elapsed >= RETRY_INTERVAL {
             return Some("backlog");
+        }
+        // A drained, unchanged WAL needs no per-second fsync/probe. Keep a
+        // periodic fallback for writes from maintenance or external connections.
+        if writes == self.writes_at_pass
+            && self
+                .previous
+                .is_some_and(CheckpointOutcome::fully_checkpointed)
+            && elapsed < IDLE_PROBE_INTERVAL
+        {
+            return None;
         }
         let interval = if near_tip {
             RETRY_INTERVAL
@@ -164,13 +175,21 @@ pub(super) fn spawn_checkpointer(
                 .checkpoint_no_progress_seconds
                 .store(schedule.progress_age(now), Ordering::Relaxed);
             let writes = telemetry.cache_writes.load(Ordering::Relaxed);
-            let Some(reason) = schedule.reason(
+            let reclaim = schedule.may_reclaim_allocation(
                 now,
-                writes,
-                frame_bytes,
-                budget,
                 near_tip.load(Ordering::Relaxed),
-            ) else {
+                std::fs::metadata(&wal_path).map_or(0, |metadata| metadata.len()),
+            );
+            let Some(reason) = schedule
+                .reason(
+                    now,
+                    writes,
+                    frame_bytes,
+                    budget,
+                    near_tip.load(Ordering::Relaxed),
+                )
+                .or_else(|| reclaim.then_some("interval"))
+            else {
                 continue;
             };
             match reason {
@@ -225,9 +244,12 @@ async fn checkpoint_pass(
     } else {
         telemetry.checkpoint_truncate.start()
     };
-    let result = sqlx::query(&format!("PRAGMA wal_checkpoint({mode})"))
-        .fetch_one(&mut *conn)
-        .await;
+    let sql = match mode {
+        "PASSIVE" => "PRAGMA wal_checkpoint(PASSIVE)",
+        "TRUNCATE" => "PRAGMA wal_checkpoint(TRUNCATE)",
+        _ => unreachable!("checkpoint mode must be one of the internal modes"),
+    };
+    let result = sqlx::query(sql).fetch_one(&mut *conn).await;
     match result {
         Ok(row) => {
             telemetry.checkpoint.record(started.elapsed().as_secs_f64());

@@ -1,0 +1,17 @@
+Portfu licensing confirmation
+
+Repository: https://github.com/GalactechsLLC/portfu
+Revision: 8cebf34added647488756b15fbeae3c608ab75f5
+Packages: portfu 2.0.0, portfu_common 2.0.0, portfu_macros 2.0.0
+
+On 2026-10-23, the repository owner confirmed that Portfu is licensed under
+the Apache License, Version 2.0. This distribution applies that confirmation
+to the three packages at the exact revision listed above, whose Cargo
+manifests omit the license field. The full Apache-2.0 text accompanies this
+notice as LICENSE-APACHE-2.0 in the generated package notice directories;
+the same text is included in the root LICENSE of the source distribution.
+
+This confirmation supplements missing package metadata. It does not alter
+the pinned upstream source or the licenses of Portfu's dependencies, and
+does not assert an additional copyright attribution. Existing upstream
+copyright and attribution notices are retained in the source archive.

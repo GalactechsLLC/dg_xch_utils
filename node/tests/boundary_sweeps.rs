@@ -105,6 +105,7 @@ fn unfinished_on(prev: &BlockRecord) -> UnfinishedBlock {
     let mut foliage = full.foliage;
     foliage.prev_block_hash = prev.header_hash;
     UnfinishedBlock {
+        authorization: Default::default(),
         finished_sub_slots: Vec::new(),
         reward_chain_block,
         challenge_chain_sp_proof: None,

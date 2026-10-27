@@ -14,6 +14,53 @@ use dg_xch_core::protocols::wallet::CoinStateFilters;
 /// streamed range delete/update returning a count, never a materialized changed-coin set.
 #[async_trait]
 pub trait CoinStore {
+    /// Whether this backend implements the complete indexed explorer query surface.
+    fn supports_explorer_queries(&self) -> bool {
+        false
+    }
+
+    /// Whether this backend supports bounded, complete puzzle-hash and hint history pages.
+    fn supports_wallet_sync(&self) -> bool {
+        false
+    }
+
+    /// Return a unique coin-ID-ordered page, including spent coins, at the pinned height.
+    async fn wallet_coin_records(
+        &self,
+        _request: &dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest,
+        _height: u32,
+    ) -> Result<dg_xch_core::protocols::wallet_sync::WalletCoinRecordsResponse, StoreError> {
+        Err(StoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Backend does not support indexed wallet sync queries",
+        )))
+    }
+
+    /// Service-tier bounded history. Backends without query indexes fail explicitly.
+    #[cfg(feature = "coin-index")]
+    async fn coin_page(
+        &self,
+        _request: &dg_xch_core::protocols::explorer::CoinPageRequest,
+        _height: u32,
+    ) -> Result<Vec<CoinRecord>, StoreError> {
+        Err(StoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Backend does not support indexed explorer queries",
+        )))
+    }
+    /// Exact aggregates; never return a truncated balance when a work limit is reached.
+    #[cfg(feature = "coin-index")]
+    async fn coin_summary(
+        &self,
+        _ph: &Bytes32,
+        _height: u32,
+    ) -> Result<dg_xch_core::protocols::explorer::CoinSummary, StoreError> {
+        Err(StoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Backend does not support indexed explorer queries",
+        )))
+    }
+
     async fn prepare_coin_window(
         &self,
         changes: Vec<crate::types::OwnedCoinChanges>,
@@ -639,9 +686,9 @@ pub trait BlockStore {
     /// Returns [`StoreError::Backend`] if the commit fails.
     async fn commit(&self, batch: BatchHandle) -> Result<(), StoreError>;
 
-    /// Whether SQLite uses per-block commits and WAL reclamation near tip instead of
-    /// per-window commits and reusable WAL allocation during catch-up. Defaults to false;
-    /// PostgreSQL and mmap ignore this setting.
+    /// Whether the engine uses per-block commits near tip instead of per-window commits
+    /// during catch-up. SQLite also changes its cache and WAL reclamation policy;
+    /// RocksDB v1 changes commit granularity only. Defaults to false.
     fn near_tip(&self) -> bool {
         false
     }

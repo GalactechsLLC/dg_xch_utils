@@ -340,3 +340,39 @@ fn plot_filter_prefix_matches_bit_reference_for_all_i8_values() {
         }
     }
 }
+
+#[test]
+fn shared_proof_eligibility_enforces_activation_and_retirement_for_both_profiles() {
+    use crate::{consensus::constants::MAINNET, signatures::SignatureProfile};
+    let mut constants = MAINNET;
+    constants.hard_fork2_height = 1000;
+    constants.epoch_blocks = 100;
+    constants.plot_v1_phase_out_epoch_bits = 3;
+    let mut proof = ProofOfSpace::v2(
+        [0; 32].into(),
+        None,
+        Some([1; 32].into()),
+        [2; 48].into(),
+        0,
+        0,
+        2,
+        vec![0; 64].into(),
+    );
+    for profile in [SignatureProfile::Bls12381Aug, SignatureProfile::FnDsa512V2] {
+        constants.signature_profile = profile;
+        proof.version = 1;
+        assert!(!is_proof_eligible(&proof, 999, &constants));
+        assert!(is_proof_eligible(&proof, 1000, &constants));
+        proof.version = 0;
+        assert!(is_proof_eligible(&proof, 999, &constants));
+        assert!(!is_proof_eligible(&proof, 1700, &constants));
+        for height in [1000, 1200, 1500, 1699] {
+            assert_eq!(
+                is_proof_eligible(&proof, height, &constants),
+                !is_v1_phased_out(proof.proof.as_ref(), height, &constants)
+            );
+        }
+        proof.version = 2;
+        assert!(!is_proof_eligible(&proof, 0, &constants));
+    }
+}

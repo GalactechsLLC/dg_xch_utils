@@ -1,6 +1,8 @@
 use crate::config::Theme;
 use eframe::egui::{self, Color32, FontFamily, FontId, Stroke, TextStyle};
 
+pub const PRIMARY: Color32 = Color32::from_rgb(42, 120, 79);
+
 pub const GREEN: Color32 = Color32::from_rgb(63, 140, 97);
 
 pub fn install_fonts(context: &egui::Context) {
@@ -20,12 +22,12 @@ pub fn install_fonts(context: &egui::Context) {
 pub fn apply(context: &egui::Context, theme: Theme) {
     let dark = theme == Theme::Midnight;
     let background = if dark {
-        Color32::from_rgb(11, 15, 13)
+        Color32::from_rgb(20, 23, 25)
     } else {
-        Color32::from_rgb(135, 219, 148)
+        Color32::from_rgb(245, 247, 246)
     };
     let surface = if dark {
-        Color32::from_rgb(18, 25, 22)
+        Color32::from_rgb(29, 33, 35)
     } else {
         Color32::from_rgb(254, 254, 254)
     };
@@ -129,28 +131,4 @@ pub fn apply(context: &egui::Context, theme: Theme) {
         .text_styles
         .insert(TextStyle::Monospace, FontId::monospace(12.0));
     context.set_global_style(style);
-}
-
-pub fn paint_background(ui: &egui::Ui) {
-    if ui.visuals().dark_mode {
-        return;
-    }
-    let bounds = ui.max_rect().expand(28.0);
-    let start = Color32::from_rgb(254, 254, 254);
-    let end = Color32::from_rgb(135, 219, 148);
-    let horizontal = bounds.width() * 0.5;
-    let vertical = bounds.height() * 0.866_025_4;
-    let extent = horizontal + vertical;
-    let mut mesh = egui::Mesh::default();
-    for (position, fraction) in [
-        (bounds.left_top(), 0.0),
-        (bounds.right_top(), horizontal / extent),
-        (bounds.right_bottom(), 1.0),
-        (bounds.left_bottom(), vertical / extent),
-    ] {
-        mesh.colored_vertex(position, start.lerp_to_gamma(end, fraction));
-    }
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    ui.painter().add(egui::Shape::mesh(mesh));
 }

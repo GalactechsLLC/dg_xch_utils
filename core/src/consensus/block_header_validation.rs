@@ -5,7 +5,7 @@
 use crate::blockchain::block_record::BlockRecord;
 use crate::blockchain::class_group_element::ClassgroupElement;
 use crate::blockchain::header_block::HeaderBlock;
-use crate::blockchain::proof_of_space::{ProofOfSpace, is_proof_version_active, is_v1_phased_out};
+use crate::blockchain::proof_of_space::{ProofOfSpace, is_proof_eligible};
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use crate::blockchain::vdf_info::VdfInfo;
 use crate::blockchain::vdf_proof::VdfProof;
@@ -13,7 +13,9 @@ use crate::clvm::bls_bindings::verify_signature;
 use crate::consensus::constants::ConsensusConstants;
 use crate::consensus::deficit::calculate_deficit;
 use crate::consensus::difficulty_adjustment::can_finish_sub_and_full_epoch;
-use crate::consensus::get_block_challenge::{get_block_challenge, pre_sp_tx_block_height};
+use crate::consensus::get_block_challenge::{
+    final_eos_is_already_included, get_block_challenge, pre_sp_tx_block_height,
+};
 use crate::consensus::make_sub_epoch_summary::make_sub_epoch_summary;
 use crate::consensus::pot_iterations::{
     calculate_ip_iters, calculate_iterations_quality_for_proof, calculate_sp_interval_iters,
@@ -54,6 +56,9 @@ impl HeaderSigTag {
 }
 
 pub trait HeaderValidationVerifier {
+    fn signature_profile(&self) -> crate::signatures::SignatureProfile {
+        crate::signatures::SignatureProfile::Bls12381Aug
+    }
     // VDF validation (basic, non normalization-aware form).
     fn validate_vdf(
         &self,
@@ -80,6 +85,9 @@ pub trait HeaderValidationVerifier {
 }
 
 impl<T: HeaderValidationVerifier + ?Sized> HeaderValidationVerifier for &T {
+    fn signature_profile(&self) -> crate::signatures::SignatureProfile {
+        (*self).signature_profile()
+    }
     fn validate_vdf(
         &self,
         constants: &ConsensusConstants,
@@ -134,21 +142,7 @@ pub fn validate_pospace_and_get_required_iters(
     difficulty: u64,
     prev_transaction_block_height: u32,
 ) -> Result<Option<u64>, Error> {
-    if !is_proof_version_active(
-        proof_of_space.version,
-        prev_transaction_block_height,
-        constants,
-    ) {
-        return Ok(None);
-    }
-    // A v1 proof past the phase-out window is no longer a valid proof of space.
-    if proof_of_space.version == 0
-        && is_v1_phased_out(
-            proof_of_space.proof.as_ref(),
-            prev_transaction_block_height,
-            constants,
-        )
-    {
+    if !is_proof_eligible(proof_of_space, prev_transaction_block_height, constants) {
         return Ok(None);
     }
     let Some(q_str) =
@@ -189,6 +183,8 @@ impl UnfinishedParts<'_> {
 /// finished sub-slots, signage-point VDFs, proof of space,
 /// foliage signatures/bindings, and the pre-infusion difficulty context. The
 /// pre-infusion pipeline validates gossiped unfinished blocks through this before caching.
+/// Overflow candidates may omit the final EOS. As in Chia, slot-proof checks
+/// are deferred in that case; completed headers always validate all EOS proofs.
 ///
 /// # Errors
 /// Fail-closed: any violation is `Err` with the rejection name.
@@ -200,7 +196,7 @@ pub fn validate_unfinished_header_block(
     vs: ValidationState,
     check_sub_epoch_summary: bool,
 ) -> Result<u64, Error> {
-    validate_unfinished_parts(
+    validate_unfinished_parts_with_mode(
         constants,
         verifier,
         blocks,
@@ -214,6 +210,7 @@ pub fn validate_unfinished_header_block(
         },
         vs,
         check_sub_epoch_summary,
+        true,
     )
 }
 
@@ -228,6 +225,30 @@ pub fn validate_unfinished_parts(
     vs: ValidationState,
     check_sub_epoch_summary: bool,
 ) -> Result<u64, Error> {
+    validate_unfinished_parts_with_mode(
+        constants,
+        verifier,
+        blocks,
+        block,
+        vs,
+        check_sub_epoch_summary,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+fn validate_unfinished_parts_with_mode(
+    constants: &ConsensusConstants,
+    verifier: &impl HeaderValidationVerifier,
+    blocks: &HashMap<Bytes32, BlockRecord>,
+    block: &UnfinishedParts<'_>,
+    vs: ValidationState,
+    check_sub_epoch_summary: bool,
+    unfinished: bool,
+) -> Result<u64, Error> {
+    if constants.signature_profile != verifier.signature_profile() {
+        return Err(rejected("UNSUPPORTED_SIGNATURE_PROFILE"));
+    }
     let c = constants;
     let rcb = &block.reward_chain_block;
     let e = rejected;
@@ -243,7 +264,18 @@ pub fn validate_unfinished_parts(
         return Err(e("INVALID_PREV_BLOCK_HASH"));
     }
     let overflow = is_overflow_block(c, rcb.signage_point_index).map_err(|_| e("overflow"))?;
-    let finished_sub_slots_since_prev = block.finished_sub_slots.len();
+    let missing_final_slot = unfinished
+        && overflow
+        && (genesis_block
+            || !final_eos_is_already_included(
+                block.finished_sub_slots.len(),
+                block.prev_header_hash(),
+                rcb.total_iters,
+                vs.ssi,
+                blocks,
+            )?);
+    let finished_sub_slots_since_prev =
+        block.finished_sub_slots.len() + usize::from(missing_final_slot);
     let new_sub_slot = finished_sub_slots_since_prev > 0;
 
     let (mut can_finish_se, mut can_finish_epoch) = (false, false);
@@ -269,7 +301,7 @@ pub fn validate_unfinished_parts(
 
     // 2. finished slots crossed since prev_b
     let mut ses_hash: Option<Bytes32> = None;
-    if new_sub_slot {
+    if new_sub_slot && !missing_final_slot {
         for (n, sub_slot) in block.finished_sub_slots.iter().enumerate() {
             let cc = &sub_slot.challenge_chain;
             let rc = &sub_slot.reward_chain;
@@ -597,7 +629,7 @@ pub fn validate_unfinished_parts(
         blocks,
         genesis_block,
         overflow,
-        false,
+        missing_final_slot,
     )?;
     if challenge != rcb.pos_ss_cc_challenge_hash {
         return Err(e("INVALID_CC_CHALLENGE"));
@@ -671,6 +703,47 @@ pub fn validate_unfinished_parts(
 
     let sp_total_iters = total_iters - u128::from(ip_iters) + u128::from(sp_iters)
         - if overflow { u128::from(vs.ssi) } else { 0 };
+    // The SP precedes the missing boundary. Match Chia's placeholder slot for
+    // VDF input reconstruction only; it is never treated as a validated EOS.
+    let mut sp_slots = std::borrow::Cow::Borrowed(block.finished_sub_slots);
+    if missing_final_slot {
+        use crate::blockchain::{
+            challenge_chain_subslot::ChallengeChainSubSlot,
+            end_of_subslot_bundle::EndOfSubSlotBundle, reward_chain_subslot::RewardChainSubSlot,
+            subslot_proofs::SubSlotProofs,
+        };
+        let vdf = VdfInfo::new(
+            Bytes32::default(),
+            1,
+            ClassgroupElement::get_default_element(),
+        );
+        let proof = VdfProof {
+            witness_type: 0,
+            witness: Default::default(),
+            normalized_to_identity: false,
+        };
+        sp_slots.to_mut().push(EndOfSubSlotBundle {
+            challenge_chain: ChallengeChainSubSlot {
+                challenge_chain_end_of_slot_vdf: vdf,
+                infused_challenge_chain_sub_slot_hash: None,
+                subepoch_summary_hash: None,
+                new_sub_slot_iters: None,
+                new_difficulty: None,
+            },
+            infused_challenge_chain: None,
+            reward_chain: RewardChainSubSlot {
+                end_of_slot_vdf: vdf,
+                challenge_chain_sub_slot_hash: Bytes32::default(),
+                infused_challenge_chain_sub_slot_hash: None,
+                deficit: 0,
+            },
+            proofs: SubSlotProofs {
+                challenge_chain_slot_proof: proof.clone(),
+                infused_challenge_chain_slot_proof: None,
+                reward_chain_slot_proof: proof,
+            },
+        });
+    }
     let (
         cc_vdf_challenge,
         rc_vdf_challenge,
@@ -680,7 +753,7 @@ pub fn validate_unfinished_parts(
         rc_vdf_iters,
     ) = get_signage_point_vdf_info(
         c,
-        block.finished_sub_slots,
+        &sp_slots,
         overflow,
         prev_b,
         blocks,

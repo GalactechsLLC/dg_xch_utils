@@ -114,6 +114,7 @@ pub(in crate::node) async fn build_new_peak_timelord<S: BlockStore + Send + Sync
     // the peak FullBlock — it reads only signage_point_index, the prev-block hash, finished_sub_slots
     // and total_iters, all preserved by RewardChainBlock::get_unfinished and the shared foliage.
     let unfinished_peak = UnfinishedBlock {
+        authorization: peak_block.authorization.clone(),
         finished_sub_slots: peak_block.finished_sub_slots.clone(),
         reward_chain_block: peak_block.reward_chain_block.get_unfinished(),
         challenge_chain_sp_proof: peak_block.challenge_chain_sp_proof.clone(),

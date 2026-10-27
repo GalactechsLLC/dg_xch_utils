@@ -5,6 +5,8 @@ pub mod config;
 pub mod error;
 #[cfg(feature = "pos2")]
 pub mod factory;
+#[cfg(feature = "falcon")]
+pub mod falcon;
 pub mod plots;
 #[cfg(feature = "pos2")]
 pub mod pos2;

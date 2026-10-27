@@ -11,6 +11,7 @@ use dg_xch_core::consensus::block_rewards::RewardSchedule;
 use dg_xch_core::consensus::constants::SIMULATOR;
 use dg_xch_core::consensus::pot_iterations::{calculate_ip_iters, calculate_sp_iters};
 use dg_xch_core::consensus::vdf_info_computation::get_signage_point_vdf_info;
+use dg_xch_node::primitives::NativePrimitives;
 use dg_xch_pos::pos2::ProofParams;
 use dg_xch_pos::pos2::chainer::SearchLimits;
 use dg_xch_pos::pos2::plotting::{NativePlot, PlotLimits};
@@ -76,6 +77,7 @@ async fn declare(
         max_height: 0,
     };
     let declaration = DeclareProofOfSpace {
+        authorization: Default::default(),
         challenge_hash: node.constants.genesis_challenge,
         challenge_chain_sp: cc_sp,
         signage_point_index: index,
@@ -102,6 +104,7 @@ async fn declare(
         &api,
         Bytes32::default(),
         SignedValues {
+            authorization: Default::default(),
             quality_string: request.quality_string,
             foliage_block_data_signature: sign(plot_key, request.foliage_block_data_hash.as_ref())
                 .into(),
@@ -328,7 +331,7 @@ async fn native_pos2_genesis_and_successor_through_farmer_timelord_handlers() {
         .unwrap()
         .unwrap();
     let records = HashMap::from([(previous.header_hash, previous.clone())]);
-    let mut successor = None;
+    let mut successors = Vec::new();
     for index in 4..61u8 {
         let sp_iters =
             calculate_sp_iters(&constants, constants.sub_slot_iters_starting, index).unwrap();
@@ -378,11 +381,14 @@ async fn native_pos2_genesis_and_successor_through_farmer_timelord_handlers() {
                 .iter()
                 .any(|point| point.challenge_chain_sp == cc_hash)
         );
-        successor =
-            Some(declare(&node, &plot_key, &pool_key, proof, index, cc_hash, rc_hash).await);
-        break;
+        successors.push(declare(&node, &plot_key, &pool_key, proof, index, cc_hash, rc_hash).await);
+        if successors.len() == 2 {
+            break;
+        }
     }
-    let successor = successor.expect("bounded real-signage proof search");
+    assert_eq!(successors.len(), 2, "bounded real-signage proof search");
+    let later = successors.pop().unwrap();
+    let successor = successors.pop().unwrap();
     let rewards = &successor
         .transactions_info
         .as_ref()
@@ -394,6 +400,21 @@ async fn native_pos2_genesis_and_successor_through_farmer_timelord_handlers() {
     let block = infuse(&node, &successor, Some(&previous), &registry).await;
     assert_eq!(block.height(), 1);
     assert_eq!(block.prev_header_hash(), previous.header_hash);
+    assert!(
+        node.unfinished
+            .lock()
+            .await
+            .get_block(&later.reward_chain_block.hash().unwrap())
+            .is_some(),
+        "a later infusion candidate prepared at the same height survives peak advancement"
+    );
+    assert!(
+        node.unfinished
+            .lock()
+            .await
+            .get_block(&successor.reward_chain_block.hash().unwrap())
+            .is_none()
+    );
     assert!(
         block
             .transactions_info

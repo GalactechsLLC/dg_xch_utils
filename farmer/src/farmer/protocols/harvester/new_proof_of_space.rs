@@ -50,6 +50,12 @@ where
     pub constants: ConsensusConstants,
     pub config: Arc<RwLock<Config<C>>>,
     pub client: Arc<RwLock<Option<FarmerClient<T>>>>,
+    #[cfg(feature = "falcon")]
+    falcon_keys: Option<Arc<dg_xch_core::signatures::falcon_keys::FalconKeyring>>,
+    #[cfg(feature = "falcon")]
+    falcon_client: Arc<dg_xch_clients::api::pool::DefaultPoolClient>,
+    #[cfg(feature = "falcon")]
+    falcon_requests: Arc<tokio::sync::Semaphore>,
     phantom_data: PhantomData<S>,
 }
 
@@ -72,7 +78,17 @@ where
         let pool_client = Arc::new(P::from_configured_client(
             config.read().await.pool_client()?,
         )?);
+        #[cfg(feature = "falcon")]
+        let falcon_keys = config.read().await.falcon_keys()?;
+        #[cfg(feature = "falcon")]
+        let falcon_client = Arc::new(config.read().await.pool_client()?);
         let s = Self {
+            #[cfg(feature = "falcon")]
+            falcon_keys,
+            #[cfg(feature = "falcon")]
+            falcon_client,
+            #[cfg(feature = "falcon")]
+            falcon_requests: Arc::new(tokio::sync::Semaphore::new(16)),
             pool_client,
             shared_state: shared_state.clone(),
             harvester: harvester.clone(),
@@ -327,12 +343,142 @@ where
         Ok(())
     }
 
+    #[cfg(feature = "falcon")]
+    async fn handle_falcon_partial(
+        &self,
+        contract: &Bytes32,
+        quality: &Bytes32,
+        new_pos: NewProofOfSpace,
+    ) -> Result<(), Error> {
+        use dg_xch_core::protocols::pool_falcon as wire;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let Some(pool) = self
+            .config
+            .read()
+            .await
+            .falcon_pools
+            .iter()
+            .find(|p| p.contract_puzzle_hash == *contract)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let Some(state) = self
+            .shared_state
+            .falcon_pool_states
+            .read()
+            .await
+            .get(contract)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let required = calculate_iterations_quality_for_proof(
+            &self.constants,
+            &new_pos.proof,
+            *quality,
+            state.current_difficulty,
+            new_pos.sp_hash,
+        );
+        if required
+            >= calculate_sp_interval_iters(&self.constants, self.constants.pool_sub_slot_iters)?
+        {
+            return Ok(());
+        }
+        let keys = self
+            .falcon_keys
+            .as_ref()
+            .ok_or_else(|| Error::other("missing Falcon pooling keys"))?;
+        let plot = keys
+            .plot(new_pos.proof.plot_public_key)
+            .ok_or_else(|| Error::other("unknown Falcon partial plot key"))?;
+        let partial = wire::Partial {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(Error::other)?
+                .as_secs(),
+            partial: PostPartialPayload {
+                launcher_id: pool.launcher_id,
+                authentication_token: 0,
+                proof_of_space: new_pos.proof,
+                sp_hash: new_pos.sp_hash,
+                end_of_sub_slot: new_pos.signage_point_index == 0,
+                harvester_id: load_client_id::<C>(self.config.clone()).await?,
+            },
+        };
+        let owner = wire::sign(
+            &keys.wallet,
+            self.constants.genesis_challenge,
+            pool.target_puzzle_hash,
+            "partial_owner",
+            partial.clone(),
+        )?;
+        let plot_authorization = wire::sign(
+            &plot,
+            self.constants.genesis_challenge,
+            pool.target_puzzle_hash,
+            "partial_plot",
+            partial,
+        )?
+        .authorization;
+        let permit = self
+            .falcon_requests
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Error::other("Falcon partial request capacity exceeded"))?;
+        let client = self.falcon_client.clone();
+        let shared = self.shared_state.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            let response: Result<dg_xch_core::protocols::pool::PostPartialResponse, _> = client
+                .falcon_request(
+                    &pool.pool_url,
+                    "partial",
+                    wire::PartialRequest {
+                        owner,
+                        plot_authorization,
+                    },
+                )
+                .await;
+            match response {
+                Ok(response) if response.new_difficulty > 0 => {
+                    if let Some(current) = shared
+                        .falcon_pool_states
+                        .write()
+                        .await
+                        .get_mut(&pool.contract_puzzle_hash)
+                    {
+                        current.current_points = current
+                            .current_points
+                            .saturating_add(state.current_difficulty);
+                        current.current_difficulty = response.new_difficulty;
+                    }
+                    info!(
+                        "Falcon pool partial accepted: launcher={}, points={}",
+                        pool.launcher_id, state.current_difficulty
+                    );
+                }
+                Ok(_) => error!("Falcon pool returned zero difficulty"),
+                Err(error) => warn!("Falcon pool partial rejected: {}", error.error_message),
+            }
+        });
+        Ok(())
+    }
+
     async fn handle_partial(
         &self,
         p2_singleton_puzzle_hash: &Bytes32,
         qs: &Bytes32,
         new_pos: NewProofOfSpace,
     ) -> Result<(), Error> {
+        if !self.constants.signature_profile.is_bls() {
+            #[cfg(feature = "falcon")]
+            return self
+                .handle_falcon_partial(p2_singleton_puzzle_hash, qs, new_pos)
+                .await;
+            #[cfg(not(feature = "falcon"))]
+            return Err(Error::other("Falcon partials require the falcon feature"));
+        }
         if self
             .shared_state
             .pool_states

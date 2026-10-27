@@ -1,6 +1,6 @@
 use dg_xch_core::blockchain::proof_of_space::{
     ProofOfSpace, calculate_plot_filter_input, calculate_prefix_bits, calculate_prefix_bits_v2,
-    is_proof_version_active, passes_plot_filter_input,
+    is_proof_eligible, passes_plot_filter_input,
 };
 use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::consensus::constants::ConsensusConstants;
@@ -56,7 +56,7 @@ pub fn verify_and_get_quality_string_with_context(
     height: u32,
     previous_transaction_height: u32,
 ) -> Option<Bytes32> {
-    if !is_proof_version_active(pos.version, previous_transaction_height, constants) {
+    if !is_proof_eligible(pos, previous_transaction_height, constants) {
         return None;
     }
     verify_and_get_quality_string_without_activation(

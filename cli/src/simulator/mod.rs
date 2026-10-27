@@ -69,7 +69,7 @@ impl<'a> Simulator<'a> {
         }
         let mnemonic = match menmonic {
             Some(s) => Mnemonic::parse(s).map_err(Error::other)?,
-            None => Mnemonic::generate(24).map_err(Error::other)?,
+            None => Mnemonic::generate(bip39::WordCount::Words24).map_err(Error::other)?,
         };
         let secret_key = key_from_mnemonic(&mnemonic).map_err(Error::other)?;
         let chain_user = Arc::new(ChainUser {

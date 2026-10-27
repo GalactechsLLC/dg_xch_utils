@@ -1,6 +1,5 @@
-use crate::memory_wallet::MemoryWallet;
+use crate::account_wallet::AccountWallet;
 use crate::storage::{BroadcastStatus, StoredTransaction, StoredWallet, WalletDatabase};
-use crate::{Wallet, WalletStore};
 use argon2::{Algorithm, Argon2, Params, Version};
 use blst::min_pk::SecretKey;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -11,6 +10,8 @@ use dg_xch_core::blockchain::sized_bytes::Bytes32;
 use dg_xch_core::blockchain::spend_bundle::SpendBundle;
 use dg_xch_core::blockchain::tx_status::TXStatus;
 use dg_xch_core::consensus::constants::ConsensusConstants;
+use dg_xch_core::protocols::wallet_sync::WalletCoinRecordsRequest;
+use dg_xch_core::traits::SizedBytes;
 use dg_xch_core::utils::hash_256;
 use dg_xch_keys::key_from_mnemonic_str;
 use serde::{Deserialize, Serialize};
@@ -18,13 +19,55 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Error, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
 const ACCOUNT_VERSION: u32 = 1;
 const GAP_LIMIT: u32 = 20;
 const MAX_DERIVATIONS: u32 = 100_000;
+const MAX_WALLET_RECORDS: usize = 100_000;
+const WALLET_PAGE_SIZE: u32 = 500;
+const WALLET_SELECTOR_LIMIT: usize = 100;
+const RPC_CAPABILITY_TTL: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RpcDiscovery {
+    Unknown,
+    Legacy,
+    Paged,
+}
+
+fn remember_discovered_coin(
+    observed: &mut HashMap<Bytes32, CoinRecord>,
+    record: CoinRecord,
+    height: u32,
+) -> Result<(), Error> {
+    if record.confirmed_block_index > height
+        || record.spent_block_index > height
+        || record.spent != (record.spent_block_index != 0)
+        || (record.spent && record.spent_block_index < record.confirmed_block_index)
+    {
+        return Err(Error::other(
+            "node returned inconsistent wallet coin heights",
+        ));
+    }
+    let id = record.coin.name();
+    if let Some(previous) = observed.get(&id) {
+        if *previous != record {
+            return Err(Error::other(
+                "node returned conflicting wallet coin records",
+            ));
+        }
+    } else {
+        if observed.len() >= MAX_WALLET_RECORDS {
+            return Err(Error::other(
+                "wallet coin discovery limit reached; refusing a partial balance",
+            ));
+        }
+        observed.insert(id, record);
+    }
+    Ok(())
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -35,6 +78,28 @@ pub struct Account {
     pub salt: [u8; 16],
     pub nonce: [u8; 24],
     pub encrypted_key: Vec<u8>,
+}
+
+#[derive(Clone)]
+pub enum AccountSecret {
+    Bls(SecretKey),
+    #[cfg(feature = "falcon")]
+    Falcon(Zeroizing<[u8; 64]>),
+}
+impl AccountSecret {
+    pub fn id(&self) -> Result<String, Error> {
+        match self {
+            Self::Bls(secret) => Ok(hex::encode(hash_256(secret.sk_to_pk().to_bytes()))),
+            #[cfg(feature = "falcon")]
+            Self::Falcon(seed) => {
+                use dg_xch_core::signatures::SignatureSigner;
+                let signer =
+                    dg_xch_core::signatures::falcon::FalconSigner::from_seed(seed, 0, 0, false)
+                        .map_err(Error::other)?;
+                Ok(hex::encode(hash_256(signer.public_key())))
+            }
+        }
+    }
 }
 
 impl Account {
@@ -66,7 +131,7 @@ impl Account {
         account.encrypted_key = XChaCha20Poly1305::new_from_slice(key.as_ref())
             .map_err(|_| Error::other("invalid encryption key"))?
             .encrypt(
-                XNonce::from_slice(&account.nonce),
+                &XNonce::from(account.nonce),
                 Payload {
                     msg: plaintext.as_ref(),
                     aad: &account.associated_data()?,
@@ -76,13 +141,112 @@ impl Account {
         Ok(account)
     }
 
+    pub fn import_for_profile(
+        name: String,
+        network: String,
+        mnemonic: &str,
+        password: &str,
+        profile: dg_xch_core::signatures::SignatureProfile,
+    ) -> Result<Self, Error> {
+        if profile.is_bls() {
+            return Self::import(name, network, mnemonic, password);
+        }
+        #[cfg(not(feature = "falcon"))]
+        {
+            Err(Error::other("Falcon backend is unavailable"))
+        }
+        #[cfg(feature = "falcon")]
+        {
+            if password.len() < 12 || name.trim().is_empty() || network.trim().is_empty() {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "name, network and a password of at least 12 bytes are required",
+                ));
+            }
+            let seed = dg_xch_keys::mnemonic_seed(mnemonic)?;
+            let id = AccountSecret::Falcon(seed.clone()).id()?;
+            let mut account = Self {
+                version: 2,
+                id,
+                name,
+                network,
+                salt: rand::random(),
+                nonce: rand::random(),
+                encrypted_key: Vec::new(),
+            };
+            let key = account.encryption_key(password)?;
+            account.encrypted_key = XChaCha20Poly1305::new_from_slice(key.as_ref())
+                .map_err(|_| Error::other("invalid encryption key"))?
+                .encrypt(
+                    &XNonce::from(account.nonce),
+                    Payload {
+                        msg: seed.as_ref(),
+                        aad: &account.associated_data()?,
+                    },
+                )
+                .map_err(|_| Error::other("account encryption failed"))?;
+            Ok(account)
+        }
+    }
+
+    pub fn unlock_for_profile(
+        &self,
+        password: &str,
+        profile: dg_xch_core::signatures::SignatureProfile,
+    ) -> Result<AccountSecret, Error> {
+        if profile.is_bls() {
+            if self.version != ACCOUNT_VERSION {
+                return Err(Error::other("account signature profile mismatch"));
+            }
+            return self.unlock(password).map(AccountSecret::Bls);
+        }
+        #[cfg(not(feature = "falcon"))]
+        {
+            Err(Error::other("Falcon backend is unavailable"))
+        }
+        #[cfg(feature = "falcon")]
+        {
+            if self.version != 2 {
+                return Err(Error::other("account signature profile mismatch"));
+            }
+            let key = self.encryption_key(password)?;
+            let plaintext = Zeroizing::new(
+                XChaCha20Poly1305::new_from_slice(key.as_ref())
+                    .map_err(|_| Error::other("invalid encryption key"))?
+                    .decrypt(
+                        &XNonce::from(self.nonce),
+                        Payload {
+                            msg: &self.encrypted_key,
+                            aad: &self.associated_data()?,
+                        },
+                    )
+                    .map_err(|_| {
+                        Error::new(
+                            ErrorKind::PermissionDenied,
+                            "incorrect password or damaged account",
+                        )
+                    })?,
+            );
+            let mut seed = Zeroizing::new([0; 64]);
+            if plaintext.len() != seed.len() {
+                return Err(Error::other("invalid account seed"));
+            }
+            seed.copy_from_slice(&plaintext);
+            let secret = AccountSecret::Falcon(seed);
+            if secret.id()? != self.id {
+                return Err(Error::other("account identity mismatch"));
+            }
+            Ok(secret)
+        }
+    }
+
     fn associated_data(&self) -> Result<Vec<u8>, Error> {
         serde_json::to_vec(&(self.version, &self.id, &self.name, &self.network))
             .map_err(Error::other)
     }
 
     fn encryption_key(&self, password: &str) -> Result<Zeroizing<[u8; 32]>, Error> {
-        if self.version != ACCOUNT_VERSION {
+        if self.version != ACCOUNT_VERSION && self.version != 2 {
             return Err(Error::new(
                 ErrorKind::InvalidData,
                 "unsupported account version",
@@ -97,12 +261,15 @@ impl Account {
     }
 
     pub fn unlock(&self, password: &str) -> Result<SecretKey, Error> {
+        if self.version != ACCOUNT_VERSION {
+            return Err(Error::other("account signature profile mismatch"));
+        }
         let key = self.encryption_key(password)?;
         let plaintext = Zeroizing::new(
             XChaCha20Poly1305::new_from_slice(key.as_ref())
                 .map_err(|_| Error::other("invalid encryption key"))?
                 .decrypt(
-                    XNonce::from_slice(&self.nonce),
+                    &XNonce::from(self.nonce),
                     Payload {
                         msg: &self.encrypted_key,
                         aad: &self.associated_data()?,
@@ -198,13 +365,15 @@ struct WalletJournal {
 }
 
 pub struct WalletSession {
-    wallet: MemoryWallet,
+    wallet: AccountWallet,
     client: FullnodeClient,
     database: WalletDatabase,
     stored: StoredWallet,
     owned_hashes: HashSet<Bytes32>,
     expected_genesis: Bytes32,
     verified_chain: Option<crate::sync::VerifiedChain>,
+    rpc_discovery: RpcDiscovery,
+    rpc_discovered_at: Option<Instant>,
 }
 
 impl WalletSession {
@@ -215,8 +384,27 @@ impl WalletSession {
         expected_genesis: Bytes32,
         database_path: PathBuf,
     ) -> Result<Self, Error> {
+        Self::new_with_secret(
+            AccountSecret::Bls(secret),
+            client,
+            constants,
+            expected_genesis,
+            database_path,
+        )
+        .await
+    }
+
+    pub async fn new_with_secret(
+        secret: AccountSecret,
+        client: FullnodeClient,
+        constants: Arc<ConsensusConstants>,
+        expected_genesis: Bytes32,
+        database_path: PathBuf,
+    ) -> Result<Self, Error> {
         let database_path = database_path.with_extension("sqlite");
-        let account_id = hex::encode(hash_256(secret.sk_to_pk().to_bytes()));
+        // Reject an incompatible identity before opening or migrating its database.
+        let account_id = secret.id()?;
+        let wallet = AccountWallet::new(secret, &client, constants)?;
         let mut database =
             WalletDatabase::open(&database_path, &account_id, expected_genesis).await?;
         let mut stored = match database.load().await? {
@@ -254,13 +442,7 @@ impl WalletSession {
             ));
         }
         stored.snapshot.synced = false;
-        let wallet = MemoryWallet::new(secret, &client, constants)?;
-        wallet
-            .wallet_store()
-            .lock()
-            .await
-            .current_index
-            .store(stored.address_index, Ordering::Relaxed);
+        wallet.set_index(stored.address_index).await;
         stored.snapshot.receive_puzzle_hash = wallet.get_puzzle_hash(false).await?;
         stored.refresh_balances()?;
         database.save(&stored).await?;
@@ -272,6 +454,8 @@ impl WalletSession {
             owned_hashes: HashSet::new(),
             expected_genesis,
             verified_chain: None,
+            rpc_discovery: RpcDiscovery::Unknown,
+            rpc_discovered_at: None,
         };
         session.restore_signer_coins().await;
         Ok(session)
@@ -285,7 +469,26 @@ impl WalletSession {
         database_path: PathBuf,
         mode: crate::sync::SyncMode,
     ) -> Result<Self, Error> {
-        let mut session = Self::new(
+        Self::new_with_secret_and_mode(
+            AccountSecret::Bls(secret),
+            client,
+            constants,
+            expected_genesis,
+            database_path,
+            mode,
+        )
+        .await
+    }
+
+    pub async fn new_with_secret_and_mode(
+        secret: AccountSecret,
+        client: FullnodeClient,
+        constants: Arc<ConsensusConstants>,
+        expected_genesis: Bytes32,
+        database_path: PathBuf,
+        mode: crate::sync::SyncMode,
+    ) -> Result<Self, Error> {
+        let mut session = Self::new_with_secret(
             secret,
             client,
             constants.clone(),
@@ -329,6 +532,169 @@ impl WalletSession {
                 .await
                 .map_err(Error::from)
         }
+    }
+
+    async fn paged_sync_available(&mut self) -> Result<bool, Error> {
+        if self.verified_chain.is_some() {
+            return Ok(false);
+        }
+        if self.rpc_discovery == RpcDiscovery::Unknown
+            || self
+                .rpc_discovered_at
+                .is_none_or(|checked| checked.elapsed() >= RPC_CAPABILITY_TTL)
+        {
+            // Cache only a completed negotiation. Transport/auth/server failures must
+            // remain visible and may be retried by the next sync attempt.
+            let capabilities = self.client.get_rpc_capabilities().await?;
+            self.rpc_discovery = match capabilities {
+                Some(capabilities) if !capabilities.success => {
+                    return Err(Error::other("RPC capability discovery failed"));
+                }
+                Some(capabilities)
+                    if capabilities.endpoints.get("/get_wallet_coin_records") == Some(&1) =>
+                {
+                    RpcDiscovery::Paged
+                }
+                _ => RpcDiscovery::Legacy,
+            };
+            self.rpc_discovered_at = Some(Instant::now());
+        }
+        Ok(self.rpc_discovery == RpcDiscovery::Paged)
+    }
+
+    async fn paged_coin_records(
+        &self,
+        puzzle_hashes: &[Bytes32],
+        hints: &[Bytes32],
+        peak_hash: Bytes32,
+        height: u32,
+        observed: &mut HashMap<Bytes32, CoinRecord>,
+    ) -> Result<Vec<CoinRecord>, Error> {
+        let mut request = WalletCoinRecordsRequest {
+            puzzle_hashes: puzzle_hashes.to_vec(),
+            hints: hints.to_vec(),
+            peak_hash,
+            cursor: None,
+            limit: WALLET_PAGE_SIZE,
+        };
+        let mut result = Vec::new();
+        loop {
+            let page = self.client.get_wallet_coin_records(&request).await?;
+            if !page.success || page.peak_hash != peak_hash || page.height != height {
+                return Err(Error::other(
+                    "wallet coin page does not match the requested chain peak",
+                ));
+            }
+            if page.coin_records.len() > request.limit as usize {
+                return Err(Error::other("wallet coin page exceeds the requested limit"));
+            }
+            if request.cursor.is_some() && page.coin_records.is_empty() {
+                return Err(Error::other(
+                    "wallet coin pagination ended with an empty continuation",
+                ));
+            }
+            let mut previous = request.cursor;
+            for record in &page.coin_records {
+                let id = record.coin.name();
+                if previous.is_some_and(|cursor| id.bytes() <= cursor.bytes()) {
+                    return Err(Error::other(
+                        "wallet coin page is unordered, duplicated, or did not advance its cursor",
+                    ));
+                }
+                previous = Some(id);
+                remember_discovered_coin(observed, *record, height)?;
+            }
+            if let Some(cursor) = page.next_cursor
+                && (page.coin_records.len() != request.limit as usize || previous != Some(cursor))
+            {
+                return Err(Error::other(
+                    "wallet coin page returned an invalid next cursor",
+                ));
+            }
+            result.extend(page.coin_records);
+            match page.next_cursor {
+                Some(cursor) => request.cursor = Some(cursor),
+                None => return Ok(result),
+            }
+        }
+    }
+
+    async fn discover_coins(
+        &self,
+        batch: &[Bytes32],
+        peak_hash: Bytes32,
+        height: u32,
+        paged: bool,
+        observed: &mut HashMap<Bytes32, CoinRecord>,
+    ) -> Result<(Vec<CoinRecord>, Vec<CoinRecord>), Error> {
+        let requested: HashSet<_> = batch.iter().copied().collect();
+        let mut coins = Vec::new();
+        let mut hinted = HashMap::new();
+        if paged {
+            // Both hardened and unhardened addresses plus their asset hints fit
+            // into one request for a gap-limit batch (40 + 40 selectors).
+            for record in self
+                .paged_coin_records(batch, batch, peak_hash, height, observed)
+                .await?
+            {
+                if requested.contains(&record.coin.puzzle_hash) {
+                    coins.push(record);
+                } else {
+                    hinted.insert(record.coin.name(), record);
+                }
+            }
+        } else {
+            coins = self.coins_by_hashes(batch).await?;
+            for record in &coins {
+                if !requested.contains(&record.coin.puzzle_hash) {
+                    return Err(Error::other("node returned an unrelated wallet coin"));
+                }
+                remember_discovered_coin(observed, *record, height)?;
+            }
+            for hash in batch {
+                let records = self.coins_by_hint(hash).await?;
+                if records.len() > 1000 {
+                    return Err(Error::other(
+                        "asset discovery limit exceeded; refusing a partial asset balance",
+                    ));
+                }
+                for record in records {
+                    remember_discovered_coin(observed, record, height)?;
+                    hinted.insert(record.coin.name(), record);
+                }
+            }
+        }
+        // Watched CATs may not carry hints. Batch their explicit wrapped puzzle
+        // hashes as well, retaining the existing parent-spend asset verification.
+        let mut wrapped = Vec::new();
+        for hash in batch {
+            for id in &self.stored.snapshot.watched_cats {
+                for kind in [
+                    crate::assets::AssetKind::Cat1,
+                    crate::assets::AssetKind::Cat2,
+                ] {
+                    wrapped.push(crate::assets::cat_puzzle_hash(kind, *id, *hash));
+                }
+            }
+        }
+        for chunk in wrapped.chunks(WALLET_SELECTOR_LIMIT) {
+            let records = if paged {
+                self.paged_coin_records(chunk, &[], peak_hash, height, observed)
+                    .await?
+            } else {
+                self.coins_by_hashes(chunk).await?
+            };
+            for record in records {
+                if !chunk.contains(&record.coin.puzzle_hash) {
+                    return Err(Error::other(
+                        "node returned an unrelated watched asset coin",
+                    ));
+                }
+                remember_discovered_coin(observed, record, height)?;
+                hinted.insert(record.coin.name(), record);
+            }
+        }
+        Ok((coins, hinted.into_values().collect()))
     }
 
     async fn coin_by_name(&self, id: &Bytes32) -> Result<Option<CoinRecord>, Error> {
@@ -380,8 +746,7 @@ impl WalletSession {
             .filter(|coin| !coin.spent && !reserved.contains(&coin.coin.name()))
             .copied()
             .collect();
-        let coin_store = self.wallet.wallet_store().lock().await.standard_coins();
-        *coin_store.lock().await = coins;
+        self.wallet.restore_coins(coins).await;
     }
 
     pub async fn checkpoint(&mut self) -> Result<(), Error> {
@@ -391,7 +756,7 @@ impl WalletSession {
     pub async fn sync(&mut self) -> Result<WalletSnapshot, Error> {
         self.stored.snapshot.synced = false;
         let genesis = self.client.get_block_record_by_height(0).await?;
-        if genesis.header_hash != self.expected_genesis {
+        if genesis.height != 0 || genesis.header_hash != self.expected_genesis {
             return Err(Error::new(
                 ErrorKind::InvalidData,
                 "node genesis does not match this wallet connection",
@@ -407,6 +772,8 @@ impl WalletSession {
         if let Some(chain) = &mut self.verified_chain {
             chain.sync(&self.client, &peak).await?;
         }
+        let paged = self.paged_sync_available().await?;
+        let mut observed = HashMap::new();
         let mut records = HashMap::new();
         let mut assets = HashMap::new();
         let mut parents = HashMap::new();
@@ -427,83 +794,57 @@ impl WalletSession {
                         .await?,
                 );
             }
-            let coins = self.coins_by_hashes(&batch).await?;
+            let (coins, hinted) = self
+                .discover_coins(&batch, peak.header_hash, peak.height, paged, &mut observed)
+                .await?;
             let mut used = !coins.is_empty();
             hashes.extend(batch.iter().copied());
-            for hash in &batch {
-                let mut hinted = self.coins_by_hint(hash).await?;
-                let wrapped: Vec<_> = self
-                    .stored
-                    .snapshot
-                    .watched_cats
-                    .iter()
-                    .flat_map(|id| {
-                        [
-                            crate::assets::AssetKind::Cat1,
-                            crate::assets::AssetKind::Cat2,
-                        ]
-                        .map(|kind| crate::assets::cat_puzzle_hash(kind, *id, *hash))
-                    })
-                    .collect();
-                if !wrapped.is_empty() {
-                    hinted.extend(self.coins_by_hashes(&wrapped).await?);
+            for record in hinted {
+                if hashes.contains(&record.coin.puzzle_hash) {
+                    continue;
                 }
-                if hinted.len() > 1000 {
-                    return Err(Error::other(
-                        "asset discovery limit exceeded; refusing a partial asset balance",
-                    ));
+                if let Some(previous) = assets.get(&record.coin.name()) {
+                    let previous: &crate::assets::AssetCoin = previous;
+                    if previous.record != record {
+                        return Err(Error::other("node returned conflicting asset coin records"));
+                    }
+                    continue;
                 }
-                for record in hinted {
-                    if hashes.contains(&record.coin.puzzle_hash) {
-                        continue;
+                if record.confirmed_block_index > peak.height
+                    || record.spent_block_index > peak.height
+                    || record.spent != (record.spent_block_index != 0)
+                    || (record.spent && record.spent_block_index < record.confirmed_block_index)
+                {
+                    return Err(Error::other("inconsistent asset coin heights"));
+                }
+                let parent_id = record.coin.parent_coin_info;
+                if !parents.contains_key(&parent_id) {
+                    if parents.len() >= 1000 {
+                        return Err(Error::other("asset discovery parent limit exceeded"));
                     }
-                    if let Some(previous) = assets.get(&record.coin.name()) {
-                        let previous: &crate::assets::AssetCoin = previous;
-                        if previous.record != record {
-                            return Err(Error::other(
-                                "node returned conflicting asset coin records",
-                            ));
-                        }
-                        continue;
+                    let parent = self
+                        .coin_by_name(&parent_id)
+                        .await?
+                        .ok_or_else(|| Error::other("asset parent is missing"))?;
+                    if !parent.spent || parent.spent_block_index != record.confirmed_block_index {
+                        return Err(Error::other("asset parent spend height mismatch"));
                     }
-                    if record.confirmed_block_index > peak.height
-                        || record.spent_block_index > peak.height
-                        || record.spent != (record.spent_block_index != 0)
-                        || (record.spent && record.spent_block_index < record.confirmed_block_index)
-                    {
-                        return Err(Error::other("inconsistent asset coin heights"));
+                    let spend = self
+                        .client
+                        .get_puzzle_and_solution(&parent_id, parent.spent_block_index)
+                        .await?;
+                    if spend.coin != parent.coin {
+                        return Err(Error::other("asset parent spend coin mismatch"));
                     }
-                    let parent_id = record.coin.parent_coin_info;
-                    if !parents.contains_key(&parent_id) {
-                        if parents.len() >= 1000 {
-                            return Err(Error::other("asset discovery parent limit exceeded"));
-                        }
-                        let parent = self
-                            .coin_by_name(&parent_id)
-                            .await?
-                            .ok_or_else(|| Error::other("asset parent is missing"))?;
-                        if !parent.spent || parent.spent_block_index != record.confirmed_block_index
-                        {
-                            return Err(Error::other("asset parent spend height mismatch"));
-                        }
-                        let spend = self
-                            .client
-                            .get_puzzle_and_solution(&parent_id, parent.spent_block_index)
-                            .await?;
-                        if spend.coin != parent.coin {
-                            return Err(Error::other("asset parent spend coin mismatch"));
-                        }
-                        parents.insert(parent_id, spend);
-                    }
-                    let parent = parents
-                        .get(&parent_id)
-                        .ok_or_else(|| Error::other("missing asset parent cache"))?;
-                    if let Some(asset) =
-                        crate::assets::discover_asset(record, parent.clone(), &hashes)?
-                    {
-                        used = true;
-                        assets.insert(record.coin.name(), asset);
-                    }
+                    parents.insert(parent_id, spend);
+                }
+                let parent = parents
+                    .get(&parent_id)
+                    .ok_or_else(|| Error::other("missing asset parent cache"))?;
+                if let Some(asset) = crate::assets::discover_asset(record, parent.clone(), &hashes)?
+                {
+                    used = true;
+                    assets.insert(record.coin.name(), asset);
                 }
             }
             for coin in coins {
@@ -543,7 +884,11 @@ impl WalletSession {
             }
         }
         let after = self.client.get_blockchain_state().await?;
-        if after.peak.as_ref().map(|record| record.header_hash) != Some(peak.header_hash)
+        if after
+            .peak
+            .as_ref()
+            .map(|record| (record.header_hash, record.height))
+            != Some((peak.header_hash, peak.height))
             || !after.sync.synced
             || after.sync.sync_mode
         {
@@ -599,13 +944,25 @@ impl WalletSession {
             return Err(Error::new(ErrorKind::InvalidInput, "invalid amount or fee"));
         }
         self.sync().await?;
-        let transaction = self
+        let reserved = self.stored.reserved_coins();
+        let coins = self
+            .stored
+            .snapshot
+            .coins
+            .iter()
+            .filter(|c| !reserved.contains(&c.coin.name()))
+            .copied()
+            .collect::<Vec<_>>();
+        let bundle = self
             .wallet
-            .generate_simple_signed_transaction(amount, fee, destination)
+            .payment(
+                &coins,
+                destination,
+                amount,
+                fee,
+                self.stored.snapshot.height.unwrap_or(0),
+            )
             .await?;
-        let bundle = transaction
-            .spend_bundle
-            .ok_or_else(|| Error::other("transaction has no spend bundle"))?;
         self.broadcast(bundle).await
     }
 
@@ -615,7 +972,7 @@ impl WalletSession {
         fee: u64,
     ) -> Result<Bytes32, Error> {
         self.sync().await?;
-        let bundle = crate::assets::build_transaction(
+        let bundle = crate::assets::build_asset_transaction(
             &self.wallet,
             &self.stored.snapshot.coins,
             &self.stored.snapshot.assets,
@@ -623,6 +980,7 @@ impl WalletSession {
             &action,
             fee,
             self.stored.snapshot.receive_puzzle_hash,
+            self.stored.snapshot.height.unwrap_or(0),
         )
         .await?;
         self.broadcast(bundle).await
@@ -638,6 +996,7 @@ impl WalletSession {
         let reserved = self.stored.reserved_coins();
         let prepared = crate::offers::OfferInputs {
             wallet: &self.wallet,
+            height: self.stored.snapshot.height.unwrap_or(0),
             coins: &self.stored.snapshot.coins,
             assets: &self.stored.snapshot.assets,
             reserved: &reserved,
@@ -694,6 +1053,7 @@ impl WalletSession {
         let reserved = self.stored.reserved_coins();
         let bundle = crate::offers::OfferInputs {
             wallet: &self.wallet,
+            height: self.stored.snapshot.height.unwrap_or(0),
             coins: &self.stored.snapshot.coins,
             assets: &self.stored.snapshot.assets,
             reserved: &reserved,
@@ -722,6 +1082,7 @@ impl WalletSession {
         let reserved = self.stored.reserved_coins();
         let bundle = crate::offers::OfferInputs {
             wallet: &self.wallet,
+            height: self.stored.snapshot.height.unwrap_or(0),
             coins: &self.stored.snapshot.coins,
             assets: &self.stored.snapshot.assets,
             reserved: &reserved,
@@ -737,6 +1098,13 @@ impl WalletSession {
         bundle: SpendBundle,
         replacement: Option<Bytes32>,
     ) -> Result<Bytes32, Error> {
+        use crate::signing::TransactionWallet;
+        let bundle = crate::signing::finalize_authorization(
+            bundle,
+            self.wallet.consensus_constants(),
+            self.stored.snapshot.height.unwrap_or(0),
+        )
+        .await?;
         let name = bundle.name()?;
         let mut next = self.stored.clone();
         let offer = if let Some(replacement) = replacement {
@@ -752,7 +1120,7 @@ impl WalletSession {
         } else {
             None
         };
-        next.address_index = self.wallet.wallet_store().lock().await.current_index();
+        next.address_index = self.wallet.current_index().await;
         if next.address_index >= MAX_DERIVATIONS {
             return Err(Error::other("wallet derivation limit exceeded"));
         }
@@ -836,9 +1204,80 @@ fn refresh_pending_change(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn bls_accounts_reject_other_profiles_before_creating_a_database() {
+        use dg_xch_core::consensus::chain_definition::ChainDefinition;
+        use dg_xch_core::signatures::labrador::LabradorProfile;
+
+        for aggregation in [
+            None,
+            Some(LabradorProfile::Packed11V2),
+            Some(LabradorProfile::Packed11ZkV2),
+        ] {
+            let mut definition = ChainDefinition::falcon_development("account isolation".into());
+            definition.falcon_aggregation = aggregation;
+            let directory = tempfile::tempdir().unwrap();
+            let database = directory.path().join("wallet.sqlite");
+            let result = super::WalletSession::new(
+                blst::min_pk::SecretKey::key_gen(&[71; 32], &[]).unwrap(),
+                dg_xch_clients::rpc::full_node::FullnodeClient::new_simulator("127.0.0.1", 8555, 5)
+                    .unwrap(),
+                std::sync::Arc::new(definition.constants().unwrap()),
+                [42; 32].into(),
+                database.clone(),
+            )
+            .await;
+            assert!(
+                result
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("matching wallet identity")
+            );
+            assert!(!database.exists());
+        }
+    }
+
     use super::*;
 
     const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+    #[test]
+    fn discovery_budget_allows_overlap_but_rejects_overflow_and_conflicting_records() {
+        let coin = |amount| CoinRecord {
+            coin: dg_xch_core::blockchain::coin::Coin {
+                parent_coin_info: Bytes32::default(),
+                puzzle_hash: Bytes32::default(),
+                amount,
+            },
+            confirmed_block_index: 1,
+            spent_block_index: 0,
+            coinbase: false,
+            timestamp: 0,
+            spent: false,
+        };
+        let mut observed = HashMap::new();
+        for amount in 0..MAX_WALLET_RECORDS as u64 {
+            remember_discovered_coin(&mut observed, coin(amount), 42).unwrap();
+        }
+        remember_discovered_coin(&mut observed, coin(0), 42).unwrap();
+        assert!(
+            remember_discovered_coin(&mut observed, coin(MAX_WALLET_RECORDS as u64), 42)
+                .unwrap_err()
+                .to_string()
+                .contains("partial balance")
+        );
+        let mut conflicting = coin(0);
+        conflicting.timestamp = 1;
+        assert!(
+            remember_discovered_coin(&mut observed, conflicting, 42)
+                .unwrap_err()
+                .to_string()
+                .contains("conflicting")
+        );
+        assert_eq!(observed.len(), MAX_WALLET_RECORDS);
+        assert_eq!(observed[&coin(0).coin.name()], coin(0));
+    }
 
     #[test]
     fn encrypted_accounts_round_trip_and_reject_tampering() {
@@ -869,5 +1308,43 @@ mod tests {
             account.unlock(password).unwrap().to_bytes()
         );
         assert!(account_path(directory.path(), "../../escape").is_err());
+    }
+}
+
+#[cfg(all(test, feature = "falcon"))]
+mod falcon_account_tests {
+    use super::*;
+    use dg_xch_core::signatures::SignatureProfile;
+    #[test]
+    fn encrypted_falcon_account_roundtrip_rejects_wrong_profile_and_tampering() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let mut account = Account::import_for_profile(
+            "Test".into(),
+            "dgx".into(),
+            phrase,
+            "test-password-123",
+            SignatureProfile::FnDsa512V2,
+        )
+        .unwrap();
+        let secret = account
+            .unlock_for_profile("test-password-123", SignatureProfile::FnDsa512V2)
+            .unwrap();
+        assert_eq!(secret.id().unwrap(), account.id);
+        assert!(
+            account
+                .unlock_for_profile("test-password-123", SignatureProfile::Bls12381Aug)
+                .is_err()
+        );
+        assert!(
+            account
+                .unlock_for_profile("wrong-password", SignatureProfile::FnDsa512V2)
+                .is_err()
+        );
+        account.network = "another-network".into();
+        assert!(
+            account
+                .unlock_for_profile("test-password-123", SignatureProfile::FnDsa512V2)
+                .is_err()
+        );
     }
 }

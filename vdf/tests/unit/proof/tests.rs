@@ -1,6 +1,7 @@
 use super::*;
 use crate::discriminant::create_discriminant_int;
-use crate::form::{B_BYTES, get_b};
+use crate::form::{B_BYTES, get_b, get_block};
+use num_traits::One;
 
 #[test]
 fn memory_bounded_prover_preserves_wesolowski_proofs() {
@@ -148,4 +149,274 @@ fn fixed_be_bytes(value: &BigInt, size: usize) -> Vec<u8> {
     let mut out = vec![0u8; size - bytes.len()];
     out.extend_from_slice(&bytes);
     out
+}
+
+fn reference_prover(
+    discriminant: &BigInt,
+    input: &Form,
+    iterations: u64,
+    spacing: u64,
+    window: u64,
+) -> Vec<u8> {
+    let bound = nucomp_bound(discriminant);
+    let mut output = input.clone();
+    let mut checkpoints = Vec::new();
+    for i in 0..iterations {
+        if i.is_multiple_of(spacing * window) {
+            checkpoints.push(output.clone());
+        }
+        output = output.square_with(discriminant, &bound).unwrap();
+    }
+    let witness = generate_wesolowski_reference(
+        discriminant,
+        &output,
+        input,
+        &checkpoints,
+        iterations,
+        window,
+        spacing,
+    )
+    .unwrap();
+    let bits = bit_len(discriminant);
+    let mut bytes = output.serialize(bits).unwrap().to_vec();
+    bytes.extend_from_slice(&witness.serialize(bits).unwrap());
+    bytes
+}
+
+#[test]
+fn continuous_prover_preserves_full_proof_bytes_for_generator_and_nonidentity_inputs() {
+    for bits in [16, 32, 256, 1024] {
+        let discriminant = create_discriminant_int(&[64; 32], bits).unwrap();
+        let bound = nucomp_bound(&discriminant);
+        let mut input = Form::generator(&discriminant).unwrap();
+        for iterations in [1, 73, 4097] {
+            let expected = reference_prover(&discriminant, &input, iterations, 3, 5);
+            let actual = prove_with_parameters(&discriminant, &input, iterations, 3, 5).unwrap();
+            assert_eq!(actual, expected, "bits={bits} iterations={iterations}");
+            verify_wesolowski(
+                &discriminant,
+                &nucomp_bound(&discriminant),
+                &input,
+                &Form::deserialize(&discriminant, &actual[..FORM_SIZE]).unwrap(),
+                &Form::deserialize(&discriminant, &actual[FORM_SIZE..]).unwrap(),
+                iterations,
+                false,
+            )
+            .unwrap();
+            // Exercise continuation from a reduced nonidentity form as well as the generator.
+            input = input.square_with(&discriminant, &bound).unwrap();
+        }
+    }
+}
+
+#[test]
+#[ignore = "release-mode prover timing comparison"]
+fn continuous_prover_performance_comparison() {
+    let discriminant = create_discriminant_int(&[64; 32], 1024).unwrap();
+    let input = Form::generator(&discriminant).unwrap();
+    for iterations in [32_768, 262_144] {
+        let (spacing, window) = bounded_parameters(iterations, 128 * 1024 * 1024).unwrap();
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            let reference = reference_prover(&discriminant, &input, iterations, spacing, window);
+            let before = started.elapsed();
+            let started = std::time::Instant::now();
+            let optimized =
+                prove_with_parameters(&discriminant, &input, iterations, spacing, window).unwrap();
+            let after = started.elapsed();
+            assert_eq!(optimized, reference);
+            eprintln!(
+                "prover comparison: iterations={iterations} old_ms={:.2} new_ms={:.2} speedup={:.3}",
+                before.as_secs_f64() * 1000.0,
+                after.as_secs_f64() * 1000.0,
+                before.as_secs_f64() / after.as_secs_f64()
+            );
+        }
+    }
+}
+
+fn generate_wesolowski_reference(
+    discriminant: &BigInt,
+    y: &Form,
+    x_init: &Form,
+    intermediates: &[Form],
+    num_iterations: u64,
+    k: u64,
+    l: u64,
+) -> Result<Form> {
+    let b = get_b(discriminant, x_init, y)?;
+    let k1 = k / 2;
+    let k0 = k - k1;
+    let bucket_count = 1usize
+        .checked_shl(k.try_into().map_err(|_| Error::InvalidProofParameters)?)
+        .ok_or(Error::InvalidProofParameters)?;
+    let bucket0_count = 1usize
+        .checked_shl(k0.try_into().map_err(|_| Error::InvalidProofParameters)?)
+        .ok_or(Error::InvalidProofParameters)?;
+    let bucket1_count = 1usize
+        .checked_shl(k1.try_into().map_err(|_| Error::InvalidProofParameters)?)
+        .ok_or(Error::InvalidProofParameters)?;
+
+    // NUCOMP bound computed once for every loop composition below.
+    let nl = nucomp_bound(discriminant);
+    let mut x = Form::identity(discriminant)?;
+    for j in (0..l).rev() {
+        x = fast_pow_form_with(&x, discriminant, &nl, &(BigInt::one() << k as usize))?;
+
+        let mut ys = Vec::new();
+        ys.try_reserve_exact(bucket_count)
+            .map_err(|_| Error::ProverMemoryLimit)?;
+        ys.resize(bucket_count, Form::identity(discriminant)?);
+        let chunks =
+            num_iterations.div_ceil(k.checked_mul(l).ok_or(Error::InvalidProofParameters)?);
+        for i in 0..chunks {
+            let block_number = i
+                .checked_mul(l)
+                .and_then(|base| base.checked_add(j))
+                .ok_or(Error::InvalidProofParameters)?;
+            if block_number
+                .checked_add(1)
+                .and_then(|next| k.checked_mul(next))
+                .is_some_and(|end| num_iterations >= end)
+            {
+                let block = get_block(block_number, k, num_iterations, &b)?;
+                let block_index =
+                    usize::try_from(block).map_err(|_| Error::InvalidProofParameters)?;
+                if block_index >= ys.len() {
+                    return Err(Error::InvalidProofParameters);
+                }
+                ys[block_index] = ys[block_index].multiply_with(
+                    intermediates
+                        .get(i as usize)
+                        .ok_or(Error::InvalidProofParameters)?,
+                    discriminant,
+                    &nl,
+                )?;
+            }
+        }
+
+        for b1 in 0..bucket1_count {
+            let mut z = Form::identity(discriminant)?;
+            for b0 in 0..bucket0_count {
+                z = z.multiply_with(&ys[b1 * bucket0_count + b0], discriminant, &nl)?;
+            }
+            z = fast_pow_form_with(
+                &z,
+                discriminant,
+                &nl,
+                &BigInt::from((b1 as u64) * (1u64 << k0)),
+            )?;
+            x = x.multiply_with(&z, discriminant, &nl)?;
+        }
+
+        for b0 in 0..bucket0_count {
+            let mut z = Form::identity(discriminant)?;
+            for b1 in 0..bucket1_count {
+                z = z.multiply_with(&ys[b1 * bucket0_count + b0], discriminant, &nl)?;
+            }
+            z = fast_pow_form_with(&z, discriminant, &nl, &BigInt::from(b0 as u64))?;
+            x = x.multiply_with(&z, discriminant, &nl)?;
+        }
+    }
+
+    x.reduce();
+    Ok(x)
+}
+
+#[test]
+fn streaming_prover_reuses_squarings_and_preserves_proofs_through_coarsening_and_late_targets() {
+    let challenge = [64; 32];
+    let mut input = [0; 100];
+    input[0] = 8;
+    for threads in [1, 2, 3, 4] {
+        for bits in [32, 1024] {
+            let mut prover =
+                StreamingProver::new_with_threads(&challenge, &input, bits, 128 * 1024, threads)
+                    .unwrap();
+            let mut previous = 0;
+            for target in [1, 73, 4097, 8193, 17001] {
+                let actual = prover.prove(target).unwrap();
+                let reference =
+                    prove_result_bounded(&challenge, &input, bits, target, 128 * 1024).unwrap();
+                assert_eq!(actual.bytes, reference);
+                assert_eq!(actual.new_squarings, target - previous);
+                assert_eq!(actual.reused_squarings, previous);
+                assert!(actual.checkpoint_budget_bytes <= 128 * 1024);
+                assert!(verify_vdf_serial(
+                    &challenge,
+                    &input,
+                    &actual.bytes,
+                    bits,
+                    target,
+                    0
+                ));
+                previous = target;
+            }
+            assert!(prover.spacing > 1);
+            for target in [1, 73, 4097, 16000, 17001] {
+                let actual = prover.prove(target).unwrap();
+                assert_eq!(
+                    actual.bytes,
+                    prove_result_bounded(&challenge, &input, bits, target, 128 * 1024).unwrap()
+                );
+                assert!(actual.new_squarings < prover.spacing * prover.window);
+            }
+            let next = prover.prove(18000).unwrap();
+            assert_eq!(next.new_squarings, 999);
+            assert_eq!(
+                next.bytes,
+                prove_result_bounded(&challenge, &input, bits, 18000, 128 * 1024).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "release-mode multi-signage prover benchmark"]
+fn streaming_signage_performance_comparison() {
+    let challenge = [64; 32];
+    let mut input_bytes = [0; 100];
+    input_bytes[0] = 8;
+    let discriminant = create_discriminant_int(&challenge, 1024).unwrap();
+    let input = Form::deserialize(&discriminant, &input_bytes).unwrap();
+    let targets: Vec<u64> = (1..=20).map(|index| index * 32768).collect();
+    let started = std::time::Instant::now();
+    let mut reference = Vec::new();
+    for &target in &targets {
+        let (spacing, window) = bounded_parameters(target, 64 * 1024 * 1024).unwrap();
+        reference.push(reference_prover(
+            &discriminant,
+            &input,
+            target,
+            spacing,
+            window,
+        ));
+    }
+    let before = started.elapsed();
+    for (memory, threads) in [
+        (64 * 1024 * 1024, 1),
+        (64 * 1024 * 1024, 4),
+        (4 * 1024 * 1024, 4),
+    ] {
+        let started = std::time::Instant::now();
+        let mut prover =
+            StreamingProver::new_with_threads(&challenge, &input_bytes, 1024, memory, threads)
+                .unwrap();
+        let mut squares = 0;
+        for (&target, expected) in targets.iter().zip(&reference) {
+            let actual = prover.prove(target).unwrap();
+            assert_eq!(&actual.bytes, expected);
+            squares += actual.new_squarings;
+        }
+        let after = started.elapsed();
+        assert_eq!(squares, *targets.last().unwrap());
+        eprintln!(
+            "multi-signage comparison: points={} threads={threads} memory_bytes={memory} old_ms={:.1} new_ms={:.1} speedup={:.2} old_squarings={} new_squarings={squares}",
+            targets.len(),
+            before.as_secs_f64() * 1000.0,
+            after.as_secs_f64() * 1000.0,
+            before.as_secs_f64() / after.as_secs_f64(),
+            targets.iter().sum::<u64>()
+        );
+    }
 }

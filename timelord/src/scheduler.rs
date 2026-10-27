@@ -86,6 +86,12 @@ pub enum Event {
     EndOfSubSlot,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnfinishedDisposition {
+    Accepted,
+    Ignored(&'static str),
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkPlan {
     pub generation: u64,
@@ -119,6 +125,7 @@ struct Candidate {
     slot_start: u128,
     rc_prev: Bytes32,
     signage_total_iters: u128,
+    genesis_prefarm: bool,
 }
 
 pub struct Scheduler {
@@ -400,6 +407,7 @@ impl Scheduler {
             let rewards = &self.rewards;
             self.candidates.retain(|_, candidate| {
                 candidate.total_iters > state.total_iters
+                    && (!candidate.genesis_prefarm || state.height.is_none())
                     && candidate.slot_start >= state.slot_start
                     && (!state.new_epoch
                         || !candidate.overflow
@@ -414,19 +422,35 @@ impl Scheduler {
     }
 
     pub fn add_unfinished(&mut self, message: NewUnfinishedBlockTimelord) -> Result<bool, Error> {
+        self.add_unfinished_with_disposition(message)
+            .map(|result| result == UnfinishedDisposition::Accepted)
+    }
+
+    pub fn add_unfinished_with_disposition(
+        &mut self,
+        message: NewUnfinishedBlockTimelord,
+    ) -> Result<UnfinishedDisposition, Error> {
         let Some(state) = &self.state else {
-            return Ok(false);
+            return Ok(UnfinishedDisposition::Ignored("chain_not_initialized"));
         };
+        if self.constants.signature_profile.is_bls() && !message.authorization.is_none() {
+            return Err(invalid("unexpected Falcon authorization on BLS timelord"));
+        }
         let block = &message.reward_chain_block;
         let hash = block.hash()?;
         if self.candidates.contains_key(&hash.const_bytes()) || self.infused.contains(&hash) {
-            return Ok(false);
+            return Ok(UnfinishedDisposition::Ignored(
+                "duplicate_or_already_infused",
+            ));
         }
-        if self.candidates.len() >= self.reward_limit()
-            || message.difficulty != state.difficulty
-            || message.sub_slot_iters != state.sub_slot_iters
+        if self.candidates.len() >= self.reward_limit() {
+            return Ok(UnfinishedDisposition::Ignored("candidate_limit"));
+        }
+        if message.difficulty != state.difficulty || message.sub_slot_iters != state.sub_slot_iters
         {
-            return Ok(false);
+            return Ok(UnfinishedDisposition::Ignored(
+                "difficulty_or_slot_iters_mismatch",
+            ));
         }
         let height = match state.height {
             Some(height) => height
@@ -457,11 +481,13 @@ impl Scheduler {
             ),
         }
         .ok_or_else(|| invalid("unfinished block proof of space is invalid"))?;
-        if !verify_plot_signature(
-            &block.proof_of_space.plot_public_key,
-            signage_hash,
-            &block.challenge_chain_sp_signature,
-        ) {
+        if self.constants.signature_profile.is_bls()
+            && !verify_plot_signature(
+                &block.proof_of_space.plot_public_key,
+                signage_hash,
+                &block.challenge_chain_sp_signature,
+            )
+        {
             return Err(invalid("unfinished block signage signature is invalid"));
         }
         let required = calculate_iterations_quality_for_proof(
@@ -497,11 +523,32 @@ impl Scheduler {
             None if block.signage_point_index == 0 => message.rc_prev,
             _ => return Err(invalid("invalid unfinished reward signage-point fields")),
         };
-        if !verify_plot_signature(
-            &block.proof_of_space.plot_public_key,
-            reward_signage_hash,
-            &block.reward_chain_sp_signature,
-        ) {
+        let authorized = if self.constants.signature_profile.is_bls() {
+            verify_plot_signature(
+                &block.proof_of_space.plot_public_key,
+                reward_signage_hash,
+                &block.reward_chain_sp_signature,
+            )
+        } else {
+            message.authorization.as_ref().is_some_and(|auth| {
+                auth.verify_messages(
+                    self.constants.genesis_challenge,
+                    &[
+                        (
+                            block.proof_of_space.plot_public_key,
+                            signage_hash.const_bytes().to_vec(),
+                            block.challenge_chain_sp_signature,
+                        ),
+                        (
+                            block.proof_of_space.plot_public_key,
+                            reward_signage_hash.const_bytes().to_vec(),
+                            block.reward_chain_sp_signature,
+                        ),
+                    ],
+                )
+            })
+        };
+        if !authorized {
             return Err(invalid("unfinished reward signage signature is invalid"));
         }
         let overflow = is_overflow_block(&self.constants, block.signage_point_index)?;
@@ -514,12 +561,12 @@ impl Scheduler {
             || (slot_start != state.slot_start && !(overflow && slot_start == next_slot))
             || (overflow && state.new_epoch && slot_start == state.slot_start)
         {
-            return Ok(false);
+            return Ok(UnfinishedDisposition::Ignored("stale_or_wrong_slot"));
         }
         if (!overflow || slot_start == next_slot)
             && block.pos_ss_cc_challenge_hash != state.challenge.challenge
         {
-            return Ok(false);
+            return Ok(UnfinishedDisposition::Ignored("challenge_mismatch"));
         }
         let signage_total_iters = slot_start
             .checked_add(u128::from(signage_offset))
@@ -532,7 +579,7 @@ impl Scheduler {
             })
             .ok_or_else(|| invalid("unfinished signage iteration overflow"))?;
         if !self.reward_matches(message.rc_prev, signage_total_iters) {
-            return Ok(false);
+            return Ok(UnfinishedDisposition::Ignored("reward_history_mismatch"));
         }
         self.candidates.insert(
             hash.const_bytes(),
@@ -543,9 +590,11 @@ impl Scheduler {
                 slot_start,
                 rc_prev: message.rc_prev,
                 signage_total_iters,
+                genesis_prefarm: message.foliage.prev_block_hash
+                    == self.constants.genesis_challenge,
             },
         );
-        Ok(true)
+        Ok(UnfinishedDisposition::Accepted)
     }
 
     pub fn next_plan(&self) -> Result<Option<WorkPlan>, Error> {
@@ -903,6 +952,7 @@ mod tests {
                 slot_start,
                 rc_prev: state.reward.challenge,
                 signage_total_iters: state.total_iters,
+                genesis_prefarm: false,
             },
         );
         hash
@@ -954,6 +1004,116 @@ mod tests {
             },
             passes_ses_height_but_not_yet_included: false,
         }
+    }
+
+    #[test]
+    fn streaming_workers_produce_verified_signage_infusions_and_slot_ends_across_peak_changes() {
+        use crate::worker::StreamingRegularWorker;
+        let mut scheduler = scheduler();
+        let mut cc = StreamingRegularWorker::default();
+        let mut rc = StreamingRegularWorker::default();
+        let mut icc = StreamingRegularWorker::default();
+        candidate(&mut scheduler, 25, false);
+        let mut signage = 0;
+        let mut infusions = 0;
+        let mut slots = 0;
+        for _ in 0..40 {
+            let plan = scheduler.next_plan().unwrap().unwrap();
+            let prove = |worker: &mut StreamingRegularWorker, request: &ProofRequest| {
+                worker
+                    .prove_with_threads(
+                        &RegularProofRequest {
+                            request: request.clone(),
+                            memory_bytes: 256 * 1024,
+                        },
+                        4,
+                    )
+                    .unwrap()
+                    .result
+            };
+            let result = WorkResult {
+                challenge: prove(&mut cc, &plan.challenge),
+                reward: prove(&mut rc, &plan.reward),
+                infused: plan
+                    .infused
+                    .as_ref()
+                    .map(|request| prove(&mut icc, request)),
+            };
+            let expected = prove_plan(&plan);
+            assert_eq!(result.challenge.info, expected.challenge.info);
+            assert_eq!(result.challenge.proof, expected.challenge.proof);
+            assert_eq!(result.reward.info, expected.reward.info);
+            assert_eq!(result.reward.proof, expected.reward.proof);
+            if let Some(proof) = &result.infused {
+                assert_eq!(proof.proof, expected.infused.as_ref().unwrap().proof);
+            }
+            match scheduler.finish(plan, result).unwrap().unwrap() {
+                Output::SignagePoint(_) => signage += 1,
+                Output::InfusionPoint(point) => {
+                    infusions += 1;
+                    let next = peak(&scheduler, &point, 15);
+                    assert!(scheduler.set_peak(next).unwrap());
+                }
+                Output::EndOfSubSlot(_) => slots += 1,
+            }
+        }
+        assert!(signage > 8);
+        assert_eq!(infusions, 1);
+        assert!(slots >= 2);
+    }
+
+    #[test]
+    fn late_candidate_can_reuse_history_after_a_superseded_signage_job() {
+        use crate::worker::StreamingRegularWorker;
+        let mut scheduler = scheduler();
+        let mut cc = StreamingRegularWorker::default();
+        let mut rc = StreamingRegularWorker::default();
+        let prove = |worker: &mut StreamingRegularWorker, request: &ProofRequest| {
+            worker
+                .prove_with_threads(
+                    &RegularProofRequest {
+                        request: request.clone(),
+                        memory_bytes: 128 * 1024,
+                    },
+                    4,
+                )
+                .unwrap()
+        };
+        for _ in 0..3 {
+            let plan = scheduler.next_plan().unwrap().unwrap();
+            let result = WorkResult {
+                challenge: prove(&mut cc, &plan.challenge).result,
+                reward: prove(&mut rc, &plan.reward).result,
+                infused: None,
+            };
+            assert!(matches!(
+                scheduler.finish(plan, result).unwrap(),
+                Some(Output::SignagePoint(_))
+            ));
+        }
+        let obsolete = scheduler.next_plan().unwrap().unwrap();
+        assert_eq!(obsolete.total_iters, 32);
+        let result = WorkResult {
+            challenge: prove(&mut cc, &obsolete.challenge).result,
+            reward: prove(&mut rc, &obsolete.reward).result,
+            infused: None,
+        };
+        candidate(&mut scheduler, 25, false);
+        assert!(scheduler.finish(obsolete, result).unwrap().is_none());
+        let plan = scheduler.next_plan().unwrap().unwrap();
+        let challenge = prove(&mut cc, &plan.challenge);
+        assert!(challenge.new_squarings < 25);
+        assert!(challenge.reused_squarings > 0);
+        let reward = prove(&mut rc, &plan.reward);
+        let result = WorkResult {
+            challenge: challenge.result,
+            reward: reward.result,
+            infused: None,
+        };
+        assert!(matches!(
+            scheduler.finish(plan, result).unwrap(),
+            Some(Output::InfusionPoint(_))
+        ));
     }
 
     #[test]
@@ -1097,6 +1257,30 @@ mod tests {
         let mut result = prove_plan(&plan);
         result.challenge.info.number_of_iterations += 1;
         assert!(scheduler.finish(plan, result).is_err());
+    }
+
+    #[test]
+    fn genesis_peak_expires_prefarm_candidates_but_preserves_reparentable_candidates() {
+        let mut scheduler = scheduler();
+        candidate(&mut scheduler, 5, false);
+        let prefarm = candidate(&mut scheduler, 9, false);
+        scheduler
+            .candidates
+            .get_mut(&prefarm.const_bytes())
+            .unwrap()
+            .genesis_prefarm = true;
+        let regular = candidate(&mut scheduler, 10, false);
+        let Output::InfusionPoint(point) = advance(&mut scheduler) else {
+            panic!("expected first candidate infusion")
+        };
+        scheduler.set_peak(peak(&scheduler, &point, 15)).unwrap();
+        assert!(!scheduler.candidates.contains_key(&prefarm.const_bytes()));
+        assert!(scheduler.candidates.contains_key(&regular.const_bytes()));
+        assert!(matches!(advance(&mut scheduler), Output::SignagePoint(_)));
+        let Output::InfusionPoint(point) = advance(&mut scheduler) else {
+            panic!("expected reparented candidate infusion")
+        };
+        assert_eq!(point.unfinished_reward_hash, regular);
     }
 
     #[test]

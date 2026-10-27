@@ -313,6 +313,7 @@ impl GigahorseHarvester {
             ));
         }
         Ok(Some(RespondSignatures {
+            authorization: Default::default(),
             plot_identifier: request.plot_identifier.clone(),
             challenge_hash: request.challenge_hash,
             sp_hash: request.sp_hash,
@@ -621,6 +622,8 @@ mod tests {
             },
             &[],
             Arc::new(FarmingKeys {
+                #[cfg(feature = "falcon")]
+                falcon: None,
                 farmer_public_keys: Vec::new(),
                 pool_public_keys: Vec::new(),
                 pool_contract_hashes: Vec::new(),
@@ -663,6 +666,8 @@ mod tests {
             .decrypt_og_memo()
             .unwrap();
         let keys = Arc::new(FarmingKeys {
+            #[cfg(feature = "falcon")]
+            falcon: None,
             farmer_public_keys: vec![memo.farmer_public_key.into()],
             pool_public_keys: vec![memo.pool_public_key.into()],
             pool_contract_hashes: Vec::new(),

@@ -10,6 +10,11 @@ pub const GPU_BATCH_SIZE: usize = 262_144;
 pub const SCRATCH_BYTES: u64 = 32 * 1024 * 1024;
 
 pub trait HashEngine: Send {
+    /// Expose the CPU kernel so recovery can fuse hashing and matching per worker.
+    fn cpu_hasher(&self) -> Option<&CpuHasher> {
+        None
+    }
+
     fn is_accelerated(&self) -> bool {
         false
     }
@@ -32,6 +37,10 @@ pub trait HashEngine: Send {
 }
 
 impl<Engine: HashEngine + ?Sized> HashEngine for Box<Engine> {
+    fn cpu_hasher(&self) -> Option<&CpuHasher> {
+        (**self).cpu_hasher()
+    }
+
     fn is_accelerated(&self) -> bool {
         (**self).is_accelerated()
     }
@@ -85,6 +94,10 @@ impl CpuHasher {
 }
 
 impl HashEngine for CpuHasher {
+    fn cpu_hasher(&self) -> Option<&CpuHasher> {
+        Some(self)
+    }
+
     fn hash(
         &mut self,
         inputs: &[[u32; 4]],

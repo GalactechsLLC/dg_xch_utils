@@ -62,6 +62,14 @@ fn fetch_retry_delay(failures: u32) -> Duration {
     Duration::from_millis(250 << failures.saturating_sub(1).min(3))
 }
 
+fn fetch_retry_after_failure(failures: u32, alternative_available: bool) -> Duration {
+    if alternative_available {
+        Duration::ZERO
+    } else {
+        fetch_retry_delay(failures)
+    }
+}
+
 async fn wait_fetch_retry(queue: &BlockQueue, generation: u64, delay: Duration) {
     tokio::select! {
         () = tokio::time::sleep(delay) => {}
@@ -166,12 +174,7 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
         let fetched = match prefetched {
             Some(blocks) => Some(blocks),
             None => {
-                let selected = dg_xch_node::sync::source::select_fetch_source(
-                    &peer_sources,
-                    rotation,
-                    to,
-                    |source| Some(usize::from(readahead.busy_peer(source.peer_id()))),
-                );
+                let selected = readahead.select_source(&peer_sources, rotation, to);
                 let Some(index) = selected else {
                     wait_fetch_retry(&queue, dispatch_gen, DRIVER_TICK).await;
                     continue;
@@ -182,12 +185,7 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
                 // Bound the whole operation, including websocket-lock acquisition and send. The
                 // guarded request ticket makes cancelling this future release correlation/V3 state.
                 let direct = tokio::select! {
-                    result = tokio::time::timeout(REQUEST_TIMEOUT, source.fetch_range(from, to)) => {
-                        match result {
-                            Ok(result) => result,
-                            Err(_) => Err(SyncError::PeerStalled(source.peer_id())),
-                        }
-                    }
+                    result = readahead.fetch_from(source.as_ref(), from, to) => result,
                     () = queue.wait_replan(dispatch_gen) => {
                         readahead.abort_all();
                         continue;
@@ -204,7 +202,14 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
                     }
                     Err(e) => {
                         failures = failures.saturating_add(1);
-                        let delay = fetch_retry_delay(failures);
+                        // A failed source is now cooling down. Rotate immediately when another
+                        // source can serve this range; only pace retries when all are unavailable.
+                        let delay = fetch_retry_after_failure(
+                            failures,
+                            readahead
+                                .select_source(&peer_sources, rotation, to)
+                                .is_some(),
+                        );
                         let tip_wait =
                             to == claimed && matches!(e, SyncError::RangeRejected { .. });
                         log::log!(
@@ -224,7 +229,9 @@ pub(super) async fn fetch_scheduler<S: BlockStore + CoinStore + Send + Sync + 's
                             queue.len(),
                             e
                         );
-                        wait_fetch_retry(&queue, dispatch_gen, delay).await;
+                        if !delay.is_zero() {
+                            wait_fetch_retry(&queue, dispatch_gen, delay).await;
+                        }
                         None
                     }
                 }
