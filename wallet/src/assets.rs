@@ -1,4 +1,5 @@
 use crate::conditions::{Conditions, announcement_id};
+#[cfg(test)]
 use crate::memory_wallet::MemoryWallet;
 use crate::signing::TransactionWallet;
 use dg_xch_core::blockchain::{
@@ -294,6 +295,7 @@ fn nft_metadata(request: &NftLaunch) -> Result<Program<'static>, Error> {
     ]))
 }
 
+#[cfg(test)]
 pub(crate) async fn build_transaction(
     wallet: &MemoryWallet,
     coins: &[CoinRecord],
@@ -361,7 +363,10 @@ pub async fn build_asset_transaction<W: TransactionWallet>(
                 .first()
                 .ok_or_else(|| Error::other("missing DID funding coin"))?;
             let inner = wallet.owner_puzzle(&change).await?.to_owned();
-            let (issue, spends) = dg_xch_puzzles::dids::launch_did(parent.name(), &inner)?;
+            let (issue, spends) =
+                dg_xch_puzzles::dids::launch_did_with_solution(parent.name(), &inner, |outputs| {
+                    wallet.conditions_solution(Program::to(outputs))
+                })?;
             conditions = conditions.extend(issue);
             native_spends.extend(spends);
         }

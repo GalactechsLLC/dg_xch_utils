@@ -54,11 +54,13 @@ impl BlockGeneratorFlags {
     /// fork 2, whose cost model subsumes it. Every transition is pinned in `flag_ladder.rs`.
     #[must_use]
     pub fn for_height(constants: &ConsensusConstants, height: u32) -> Self {
-        let mut clvm_flags = 0u32;
+        let mut clvm_flags = if constants.signature_profile.is_bls() {
+            0
+        } else {
+            crate::clvm::falcon_ops::ENABLE_FALCON_OPS
+        };
 
         if height >= constants.hard_fork2_height {
-            // ENABLE_SECP_OPS belongs here too; it is absent because the secp operators are not
-            // implemented, and a flag without its operators is absorbed by `op_unknown`.
             clvm_flags |=
                 ENABLE_KECCAK_OPS_OUTSIDE_FORK | COST_CONDITIONS | NEW_COST_MODEL | RELAXED_BLS;
         } else if height >= constants.soft_fork8_height {

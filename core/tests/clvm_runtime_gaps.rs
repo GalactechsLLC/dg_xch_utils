@@ -251,3 +251,97 @@ fn bls_guard_executes_pairing_check() {
         .is_err()
     );
 }
+
+#[cfg(feature = "falcon")]
+#[test]
+fn falcon_operator_is_profile_gated_and_checks_signature_and_cost() {
+    use dg_xch_core::clvm::falcon_ops::{ENABLE_FALCON_OPS, FALCON_VERIFY_COST};
+    use dg_xch_core::signatures::{SignatureSigner, falcon::FalconSigner};
+    let signer = FalconSigner::generate().unwrap();
+    let message = [42u8; 32];
+    let signature = signer.sign_message(&message).unwrap();
+    let key = hex::encode(signer.public_key());
+    let digest = hex::encode(message);
+    let signature = hex::encode(signature);
+    let source = format!("(0x4447580101 (q . 0x{key}) (q . 0x{digest}) (q . 0x{signature}))");
+    for flags in [ENABLE_FALCON_OPS, ENABLE_FALCON_OPS | MEMPOOL_MODE] {
+        assert_eq!(
+            run(&source, flags, FALCON_VERIFY_COST + 61).unwrap(),
+            (FALCON_VERIFY_COST + 61, SExp::default())
+        );
+        assert!(run(&source, flags, FALCON_VERIFY_COST + 60).is_err());
+        assert!(
+            run(
+                &source.replace(&digest, &hex::encode([43; 32])),
+                flags,
+                10_000_000
+            )
+            .is_err()
+        );
+        for invalid in [
+            source.replace(&key, "01"),
+            source.replace(&signature, "01"),
+            source.replace(&digest, "01"),
+            "(0x4447580101)".into(),
+        ] {
+            assert!(run(&invalid, flags, 10_000_000).is_err());
+        }
+    }
+    let compiler = Compiler::new(
+        Cow::Borrowed(b"(mod (KEY MSG SIG) (falcon_verify KEY MSG SIG))"),
+        COMPAT_CHIA,
+        OPT_REFERENCE,
+        &[],
+    );
+    let compiled = compiler.compile().unwrap();
+    let args = SExp::from(vec![
+        SExp::from(signer.public_key().to_vec()),
+        SExp::from(message.to_vec()),
+        SExp::from(hex::decode(signature).unwrap()),
+    ]);
+    assert_eq!(
+        ClvmRuntime::new(10_000_000, ENABLE_FALCON_OPS)
+            .run(compiled.sexp(), &args)
+            .unwrap()
+            .1,
+        SExp::default()
+    );
+    for flags in [0, MEMPOOL_MODE] {
+        assert!(run(&source, flags, 10_000_000).is_err());
+    }
+}
+
+#[cfg(feature = "falcon")]
+#[test]
+fn falcon_key_derivation_separates_roles_indices_and_hardened_paths() {
+    use dg_xch_core::signatures::{
+        SignatureScheme, SignatureSigner,
+        falcon::{FalconSigner, FnDsa512V2},
+    };
+    let key = FalconSigner::from_seed(&[42; 64], 0, 0, false).unwrap();
+    assert_eq!(
+        hex::encode(dg_xch_core::utils::hash_256(key.public_key())),
+        "2412946131d43cf0f086f6a86f5183c8ab11ebf8460a8033d70b5ab90449253e"
+    );
+    assert_eq!(
+        key.public_key(),
+        FalconSigner::from_seed(&[42; 64], 0, 0, false)
+            .unwrap()
+            .public_key()
+    );
+    for (seed, role, index, hardened) in [
+        ([43; 64], 0, 0, false),
+        ([42; 64], 1, 0, false),
+        ([42; 64], 0, 1, false),
+        ([42; 64], 0, 0, true),
+    ] {
+        assert_ne!(
+            key.public_key(),
+            FalconSigner::from_seed(&seed, role, index, hardened)
+                .unwrap()
+                .public_key()
+        );
+    }
+    let signature = key.sign_message(b"recovered identity").unwrap();
+    assert!(FnDsa512V2.verify(&key.public_key(), b"recovered identity", &signature));
+}

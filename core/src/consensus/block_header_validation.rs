@@ -5,7 +5,7 @@
 use crate::blockchain::block_record::BlockRecord;
 use crate::blockchain::class_group_element::ClassgroupElement;
 use crate::blockchain::header_block::HeaderBlock;
-use crate::blockchain::proof_of_space::{ProofOfSpace, is_proof_version_active, is_v1_phased_out};
+use crate::blockchain::proof_of_space::{ProofOfSpace, is_proof_eligible};
 use crate::blockchain::sized_bytes::{Bytes32, Bytes48, Bytes96};
 use crate::blockchain::vdf_info::VdfInfo;
 use crate::blockchain::vdf_proof::VdfProof;
@@ -142,21 +142,7 @@ pub fn validate_pospace_and_get_required_iters(
     difficulty: u64,
     prev_transaction_block_height: u32,
 ) -> Result<Option<u64>, Error> {
-    if !is_proof_version_active(
-        proof_of_space.version,
-        prev_transaction_block_height,
-        constants,
-    ) {
-        return Ok(None);
-    }
-    // A v1 proof past the phase-out window is no longer a valid proof of space.
-    if proof_of_space.version == 0
-        && is_v1_phased_out(
-            proof_of_space.proof.as_ref(),
-            prev_transaction_block_height,
-            constants,
-        )
-    {
+    if !is_proof_eligible(proof_of_space, prev_transaction_block_height, constants) {
         return Ok(None);
     }
     let Some(q_str) =

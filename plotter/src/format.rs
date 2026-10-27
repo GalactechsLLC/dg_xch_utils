@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use dg_xch_pos2::compact::PackedChunk;
 
-pub(crate) fn write_plot(
+pub fn write_plot(
     output: &mut (impl Write + Seek),
     plot: &NativePlot,
     index: u16,

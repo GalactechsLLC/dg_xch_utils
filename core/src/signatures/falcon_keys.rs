@@ -25,6 +25,17 @@ pub struct FalconKeyring {
     pub plots: Vec<FalconPlotKeyPair>,
     pub wallet: Arc<FalconSigner>,
 }
+impl PartialEq for FalconKeyring {
+    fn eq(&self, other: &Self) -> bool {
+        self.wallet.public_key() == other.wallet.public_key()
+            && self.plots.len() == other.plots.len()
+            && self.plots.iter().zip(&other.plots).all(|(a, b)| {
+                a.plot.public_key() == b.plot.public_key()
+                    && a.pool.public_key() == b.pool.public_key()
+            })
+    }
+}
+impl Eq for FalconKeyring {}
 impl std::fmt::Debug for FalconKeyring {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FalconKeyring")

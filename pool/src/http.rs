@@ -37,6 +37,32 @@ impl PoolHttp {
         let pool = &self.0;
         let path = request.uri().path().to_owned();
         let method = request.method().as_str().to_owned();
+        if matches!(method.as_str(), "GET" | "HEAD") {
+            if let Some(asset) = dg_xch_servers::web_theme::asset(&path) {
+                return Ok(asset);
+            }
+            let asset = match path.as_str() {
+                "/" | "/farmers" | "/leaderboards" | "/blocks" | "/payouts" | "/pool-status"
+                | "/join" | "/fees" | "/login" | "/account" | "/api-help" => Some((
+                    include_str!("../static/index.html"),
+                    "text/html; charset=utf-8",
+                )),
+                "/pool.js" => Some((
+                    include_str!("../static/pool.js"),
+                    "text/javascript; charset=utf-8",
+                )),
+                "/pool.css" => Some((
+                    include_str!("../static/pool.css"),
+                    "text/css; charset=utf-8",
+                )),
+                _ => None,
+            };
+            if let Some((body, content_type)) = asset {
+                return Ok(crate::browser::secure(
+                    Response::ok(body).content_type(content_type),
+                ));
+            }
+        }
         if matches!(method.as_str(), "GET" | "HEAD")
             && matches!(path.as_str(), "/health" | "/metrics")
         {
@@ -111,8 +137,23 @@ impl PoolHttp {
         }
         if method == "GET" && path == "/pool_info" {
             let mut info = pool.info.clone();
-            info.protocol_version = 1;
+            info.protocol_version = if pool.chain.signature_profile().is_bls() {
+                1
+            } else {
+                3
+            };
+            let mut info = serde_json::to_value(info)
+                .map_err(|error| PortfuError::Io(std::io::Error::other(error)))?;
+            info["currency_code"] = serde_json::json!(pool.chain.currency_code());
+            info["chain_profile"] = serde_json::json!(pool.chain.profile_label());
             return Ok(Response::json(info));
+        }
+        if !pool.chain.signature_profile().is_bls()
+            && (path.starts_with("/v2/") || matches!(path.as_str(), "/farmer" | "/partial"))
+        {
+            return Ok(invalid(
+                "BLS pool protocol is disabled on this Falcon chain; use /falcon",
+            ));
         }
         if method == "GET" && path == "/v2/pool_info" {
             let mut info = pool.info.clone();
@@ -131,6 +172,11 @@ impl PoolHttp {
         } else {
             Vec::new()
         };
+        if path.starts_with("/api/") {
+            return Ok(crate::browser::secure(
+                crate::browser::dispatch(pool, request, &body).await,
+            ));
+        }
         macro_rules! from_body {
             () => {
                 match serde_json::from_slice(&body) {
@@ -148,6 +194,16 @@ impl PoolHttp {
             };
         }
         Ok(match (method.as_str(), path.as_str()) {
+            ("POST", "/web/login") if pool.chain.signature_profile().is_bls() => {
+                crate::browser::secure(result(pool.browser_login_bls(from_body!()).await))
+            }
+            ("POST", "/web/login" | "/falcon/web/login") => {
+                crate::browser::secure(result(pool.browser_login(from_body!()).await))
+            }
+            ("POST", "/falcon/farmer") => result(pool.register_falcon(from_body!()).await),
+            ("POST", "/falcon/farmer/info") => result(pool.get_falcon(from_body!()).await),
+            ("POST", "/falcon/farmer/update") => result(pool.update_falcon(from_body!()).await),
+            ("POST", "/falcon/partial") => result(pool.partial_falcon(from_body!()).await),
             ("GET", "/farmer") => result(pool.get_v1(from_query!()).await),
             ("POST", "/farmer") => result(pool.register(PoolVersion::V1, from_body!()).await),
             ("PUT", "/farmer") => result(pool.put_v1(from_body!()).await),

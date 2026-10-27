@@ -9,6 +9,7 @@ pub mod core_ops;
 pub mod curry_utils;
 pub mod debug_ops;
 pub mod dialect;
+pub mod falcon_ops;
 pub mod keccak_ops;
 pub mod more_ops;
 pub mod parser;

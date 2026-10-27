@@ -263,7 +263,13 @@ where
     pub farmer_info: Vec<FarmingInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub falcon_key_file: Option<PathBuf>,
+    #[cfg(feature = "falcon")]
+    #[serde(skip)]
+    pub runtime_falcon_keys:
+        Option<std::sync::Arc<dg_xch_core::signatures::falcon_keys::FalconKeyring>>,
     pub pool_info: Vec<PoolWalletConfig>,
+    #[serde(default)]
+    pub falcon_pools: Vec<dg_xch_core::protocols::pool_falcon::PoolConfig>,
     #[serde(default)]
     pub pool_ca_certificates: Vec<PathBuf>,
     pub payout_address: String,
@@ -286,17 +292,33 @@ impl<C: Clone + Serialize> Config<C> {
         }
         let constants = self.constants()?;
         if constants.signature_profile.is_bls() {
-            if self.falcon_key_file.is_some() {
+            if self.has_falcon_keys() || !self.falcon_pools.is_empty() {
                 return Err(Error::other("BLS farmer cannot use Falcon keys"));
             }
         } else if !cfg!(feature = "falcon")
-            || self.falcon_key_file.is_none()
+            || !self.has_falcon_keys()
             || !self.farmer_info.is_empty()
             || !self.pool_info.is_empty()
         {
             return Err(Error::other(
-                "Falcon farming requires the falcon feature, a key file, and solo farming",
+                "Falcon farming requires the falcon feature, Falcon keys, and no BLS identities or pool credentials",
             ));
+        }
+        if self.falcon_pools.len() > 16 {
+            return Err(Error::other("at most 16 Falcon pools are allowed"));
+        }
+        let mut contracts = std::collections::HashSet::new();
+        for pool in &self.falcon_pools {
+            dg_xch_clients::api::pool_falcon::endpoint(&pool.pool_url, "farmer")?;
+            if pool.target_puzzle_hash == Default::default()
+                || !contracts.insert(pool.contract_puzzle_hash)
+                || dg_xch_puzzles::pool_v2::reward_puzzle(pool.launcher_id)?.tree_hash()
+                    != pool.contract_puzzle_hash
+            {
+                return Err(Error::other(
+                    "invalid or duplicate Falcon pool configuration",
+                ));
+            }
         }
         for info in &self.farmer_info {
             for key in [
@@ -338,7 +360,7 @@ impl<C: Clone + Serialize> Config<C> {
             && !self.fullnode_rpc_host.is_empty()
             && self.fullnode_ws_port != 0
             && self.fullnode_rpc_port != 0
-            && (!self.farmer_info.is_empty() || self.falcon_key_file.is_some())
+            && (!self.farmer_info.is_empty() || self.has_falcon_keys())
             && parse_payout_address(&self.payout_address).is_ok()
             && self.pool_info.iter().all(|c| {
                 self.farmer_info
@@ -371,7 +393,10 @@ impl<C: Clone> Default for Config<C> {
             signage_point_timeout_seconds: default_signage_point_timeout_seconds(),
             farmer_info: vec![],
             falcon_key_file: None,
+            #[cfg(feature = "falcon")]
+            runtime_falcon_keys: None,
             pool_info: vec![],
+            falcon_pools: vec![],
             pool_ca_certificates: vec![],
             payout_address: "".to_string(),
             harvester_configs: HarvesterConfig {
@@ -444,6 +469,14 @@ impl<C: Clone> Config<C> {
         Ok(client)
     }
 
+    fn has_falcon_keys(&self) -> bool {
+        #[cfg(feature = "falcon")]
+        if self.runtime_falcon_keys.is_some() {
+            return true;
+        }
+        self.falcon_key_file.is_some()
+    }
+
     #[cfg(feature = "falcon")]
     pub fn falcon_keys(
         &self,
@@ -451,6 +484,12 @@ impl<C: Clone> Config<C> {
     {
         if self.constants()?.signature_profile.is_bls() {
             return Ok(None);
+        }
+        if let Some(keys) = &self.runtime_falcon_keys {
+            if keys.plots.is_empty() || keys.plots.len() > 32 {
+                return Err(Error::other("Falcon plot key count must be 1..32"));
+            }
+            return Ok(Some(keys.clone()));
         }
         let path = self
             .falcon_key_file

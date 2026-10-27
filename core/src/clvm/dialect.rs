@@ -72,6 +72,15 @@ impl Dialect for ChiaDialect {
                     [0x1c, 0x3a, 0x8f, 0x00] => {
                         return op_secp_verify(arena, argument_list, max_cost, true);
                     }
+                    crate::clvm::falcon_ops::FALCON_VERIFY_OPCODE
+                        if self.flags & crate::clvm::falcon_ops::ENABLE_FALCON_OPS != 0 =>
+                    {
+                        return crate::clvm::falcon_ops::op_falcon_verify(
+                            arena,
+                            argument_list,
+                            max_cost,
+                        );
+                    }
                     [v] => Some(*v),
                     _ => None,
                 }

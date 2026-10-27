@@ -12,6 +12,7 @@ repository = "https://github.com/GalactechsLLC/dg_fast_farmer"
 revision = "270d44e1d885bd2d21ed658345042c954abfdcdc"
 
 [features]
+labrador = ["falcon", "dg_xch_core/labrador"]
 falcon = ["dg_xch_core/falcon"]
 vulkan = ["dg_xch_plotter/vulkan", "dg_xch_pos/vulkan"]
 cuda = ["dg_xch_pos/cuda"]

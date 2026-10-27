@@ -88,3 +88,68 @@ fn validation_context_cannot_reuse_evidence_from_a_mutated_or_different_block() 
             .is_err()
     );
 }
+
+#[test]
+fn portable_declarations_authenticate_without_a_solo_pool_signature() {
+    use dg_xch_core::{
+        blockchain::pool_target::PoolTarget, protocols::farmer::DeclareProofOfSpace,
+    };
+    use dg_xch_node::farmer::{DeclareVerdict, validate_declared_proof};
+    let constants = ChainDefinition::falcon_development("portable declaration".into())
+        .constants()
+        .unwrap();
+    let signer = FalconSigner::generate().unwrap();
+    let genesis = constants.genesis_challenge;
+    let cc = FalconHeaderAuthorization::sign(&signer, genesis, &[1; 32]).unwrap();
+    let rc = FalconHeaderAuthorization::sign(&signer, genesis, &[2; 32]).unwrap();
+    let block: FullBlock = serde_json::from_str(include_str!(
+        "../../full-node/tests/fixtures/full_block_5000000.json"
+    ))
+    .unwrap();
+    let mut proof = block.reward_chain_block.proof_of_space;
+    proof.plot_public_key = public_key_id(&cc.public_key);
+    proof.pool_public_key = None;
+    proof.pool_contract_puzzle_hash = Some([3; 32].into());
+    let mut auth = FalconAuthorization {
+        genesis,
+        header: vec![cc.clone(), rc.clone()],
+        transactions: vec![],
+        labrador: None,
+    };
+    auth.canonicalize();
+    let declaration = DeclareProofOfSpace {
+        challenge_hash: [4; 32].into(),
+        challenge_chain_sp: [1; 32].into(),
+        reward_chain_sp: [2; 32].into(),
+        signage_point_index: 1,
+        proof_of_space: proof,
+        challenge_chain_sp_signature: cc.reference(genesis),
+        reward_chain_sp_signature: rc.reference(genesis),
+        farmer_puzzle_hash: [5; 32].into(),
+        pool_target: None,
+        pool_signature: None,
+        include_signature_source_data: false,
+        authorization: auth.into(),
+    };
+    // An authenticated declaration reaches the signage-point lookup. The test
+    // intentionally provides no point rather than pretending this fixture is a
+    // valid Falcon space proof.
+    let verdict =
+        |d: &DeclareProofOfSpace| validate_declared_proof(&constants, d, 1, |_| None, |_| false);
+    assert_eq!(verdict(&declaration), DeclareVerdict::UnknownSignagePoint);
+    let mut changed = declaration.clone();
+    changed.authorization.as_mut().unwrap().header[0].signature[20] ^= 1;
+    assert_eq!(verdict(&changed), DeclareVerdict::InvalidProof);
+    changed = declaration.clone();
+    changed.proof_of_space.pool_public_key = Some(public_key_id(&cc.public_key));
+    assert_eq!(verdict(&changed), DeclareVerdict::InvalidProof);
+    changed = declaration.clone();
+    changed.pool_target = Some(PoolTarget {
+        puzzle_hash: [6; 32].into(),
+        max_height: 0,
+    });
+    assert_eq!(verdict(&changed), DeclareVerdict::InvalidProof);
+    changed = declaration;
+    changed.proof_of_space.pool_contract_puzzle_hash = None;
+    assert_eq!(verdict(&changed), DeclareVerdict::InvalidProof);
+}

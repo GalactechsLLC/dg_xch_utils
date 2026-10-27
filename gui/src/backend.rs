@@ -10,7 +10,7 @@ use dg_xch_plotter::backend::{
     select_gpu,
 };
 use dg_xch_pos2::plotting::PlotLimits;
-use dg_xch_wallet::accounts::{Account, WalletSession, WalletSnapshot};
+use dg_xch_wallet::accounts::{Account, AccountSecret, WalletSession, WalletSnapshot};
 use std::collections::{HashMap, VecDeque};
 use std::io::Error;
 use std::path::PathBuf;
@@ -33,6 +33,7 @@ pub struct AccountView {
 
 #[derive(Clone, Default)]
 pub struct State {
+    pub chain_profile: Option<&'static str>,
     pub settings: Option<Settings>,
     pub accounts: Vec<AccountView>,
     pub node: Option<BlockchainState>,
@@ -194,7 +195,13 @@ impl Backend {
             ))
         })?;
         let runtime = Runtime::new()?;
-        let state = Arc::new(Mutex::new(State::default()));
+        let state = Arc::new(Mutex::new(State {
+            chain_profile: settings
+                .constants()
+                .ok()
+                .map(|constants| dg_xch_core::branding::consensus_label(&constants)),
+            ..State::default()
+        }));
         let (commands, receiver) = mpsc::channel(32);
         let (configuration, updates) = watch::channel(settings);
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -436,7 +443,7 @@ async fn command_worker(
     let mut wallets: HashMap<String, (mpsc::Sender<WalletCommand>, JoinHandle<()>)> =
         HashMap::new();
     let mut farming_keys = HashMap::new();
-    let mut payout_keys = HashMap::new();
+    let mut payout_keys: HashMap<String, PayoutKey> = HashMap::new();
     let mut plot_queue = VecDeque::new();
     let mut farmer: Option<FarmerService> = None;
     let mut plot: Option<JoinHandle<()>> = None;
@@ -508,21 +515,22 @@ async fn command_worker(
                 Command::PayoutAddress { id, index } => {
                     if index >= 100_000 { return Err(Error::other("Derivation index must be below 100000")); }
                     let key = payout_keys.get(&id).ok_or_else(|| Error::other("Unlock the selected wallet first"))?;
-                    let address = payout_address(key, index, settings.constants()?.bech32_prefix)?;
+                    let address = key.address(index, settings.constants()?.bech32_prefix)?;
                     update(&state, |state| { state.payout_address = Some((id, index, address)); state.notice = "Payout address loaded. Save settings to use it.".into(); });
                 },
                 Command::PlottingKeys { id, password } => {
                     update(&state, |state| state.plotting_keys = None);
                     let account = Account::load(&paths.accounts(), &id)?;
                     if account.network != settings.network { return Err(Error::other("account belongs to another network")); }
+                    if (account.version == 1) != settings.constants()?.signature_profile.is_bls() { return Err(Error::other("account signature profile mismatch")); }
                     let keys = account_farming_keys(&account, password, &farming_keys).await?;
-                    let farmer = hex::encode(keys.0.sk_to_pk().to_bytes());
-                    let pool = hex::encode(keys.1.sk_to_pk().to_bytes());
+                    let (farmer, pool) = keys.plotting_keys();
                     update(&state, |state| { state.plotting_keys = Some((id, farmer, pool)); state.notice = "Public plotting keys loaded. No node connection or wallet sync is needed.".into(); });
                 },
                 Command::Import { name, mnemonic, password } => {
                     if state.lock().unwrap_or_else(|error| error.into_inner()).accounts.len() >= 64 { return Err(Error::other("account limit reached")); }
-                    let account = tokio::task::spawn_blocking(move || Account::import(name, settings.network, &mnemonic, &password)).await.map_err(Error::other)??;
+                    let profile = settings.constants()?.signature_profile;
+                    let account = tokio::task::spawn_blocking(move || Account::import_for_profile(name, settings.network, &mnemonic, &password, profile)).await.map_err(Error::other)??;
                     account.save_new(&paths.accounts())?;
                     update(&state, |state| { state.import_result = Some(Ok(account.id.clone())); state.accounts.push(AccountView { account, unlocked: false, snapshot: None, error: None, updated: None }); state.notice = "Wallet created and encrypted. Unlock it to track its balance.".into(); });
                 },
@@ -531,10 +539,11 @@ async fn command_worker(
                     let account = Account::load(&paths.accounts(), &id)?;
                     if account.network != settings.network { return Err(Error::other("account belongs to another network")); }
                     let genesis = settings.trusted_genesis()?;
-                    let secret = tokio::task::spawn_blocking(move || account.unlock(&password)).await.map_err(Error::other)??;
-                    let payout_key = dg_xch_keys::master_sk_to_wallet_sk_unhardened_intermediate(&secret)?.sk_to_pk();
-                    let keys = (dg_xch_keys::master_sk_to_farmer_sk(&secret)?, dg_xch_keys::master_sk_to_pool_sk(&secret)?);
-                    let session = WalletSession::new_with_mode(secret, settings.client()?, Arc::new(settings.constants()?), genesis, paths.data.join("wallets").join(&id).join(format!("{}.sqlite", hex::encode(genesis))), settings.wallet_sync_mode).await?;
+                    let profile = settings.constants()?.signature_profile;
+                    let secret = tokio::task::spawn_blocking(move || account.unlock_for_profile(&password, profile)).await.map_err(Error::other)??;
+                    let payout_key = PayoutKey::from_secret(&secret)?;
+                    let keys = FarmingKeys::from_secret(&secret)?;
+                    let session = WalletSession::new_with_secret_and_mode(secret, settings.client()?, Arc::new(settings.constants()?), genesis, paths.data.join("wallets").join(&id).join(format!("{}.sqlite", hex::encode(genesis))), settings.wallet_sync_mode).await?;
                     let (sender, receiver) = mpsc::channel(4);
                     update(&state, |state| if let Some(account) = state.accounts.iter_mut().find(|account| account.account.id == id) { account.unlocked = true; account.snapshot = Some(session.snapshot()); account.error = None; });
                     let worker = tokio::spawn(wallet_worker(id.clone(), session, receiver, state.clone(), settings.poll_seconds));
@@ -594,7 +603,8 @@ async fn command_worker(
                     if !wallets.is_empty() || farmer.is_some() || plot.is_some() || !plot_queue.is_empty() { return Err(Error::other("lock wallets, stop farming and finish or cancel plotting before changing connection settings")); }
                     paths.save(&settings)?;
                     configuration.send(settings.clone()).map_err(Error::other)?;
-                    update(&state, |state| state.settings = Some(settings));
+                    let chain_profile = dg_xch_core::branding::consensus_label(&settings.constants()?);
+                    update(&state, |state| { state.chain_profile = Some(chain_profile); state.settings = Some(settings); });
                     update(&state, |state| { state.node = None; state.node_updated = None; state.plotting_keys = None; state.notice = "Settings saved.".into(); });
                 },
                 Command::StartFarmer => {
@@ -608,6 +618,7 @@ async fn command_worker(
                     if farmer.is_some() { return Err(Error::other("farmer is already running")); }
                     let account = Account::load(&paths.accounts(), &id)?;
                     if account.network != settings.network { return Err(Error::other("farming account belongs to another network")); }
+                    if (account.version == 1) != settings.constants()?.signature_profile.is_bls() { return Err(Error::other("account signature profile mismatch")); }
                     let keys = account_farming_keys(&account, password, &farming_keys).await?;
                     if settings.farmer_payout_address.trim().is_empty() { return Err(Error::other("Set a farmer payout address in Settings before starting the farmer.")); }
                     let constants = settings.constants()?;
@@ -623,11 +634,13 @@ async fn command_worker(
                     config.fullnode_rpc_port = settings.node_port;
                     config.ssl_root_path = if settings.farmer_ssl_root.is_empty() { None } else { Some(settings.farmer_ssl_root) };
                     config.payout_address = settings.farmer_payout_address;
-                    config.farmer_info.push(dg_xch_farmer::farmer::config::FarmingInfo {
-                        farmer_secret_key: keys.0.to_bytes().into(),
-                        pool_secret_key: Some(keys.1.to_bytes().into()),
-                        ..Default::default()
-                    });
+                    match keys {
+                        FarmingKeys::Bls(farmer, pool) => config.farmer_info.push(dg_xch_farmer::farmer::config::FarmingInfo {
+                            farmer_secret_key: farmer.to_bytes().into(), pool_secret_key: Some(pool.to_bytes().into()), ..Default::default()
+                        }),
+                        #[cfg(feature = "falcon")]
+                        FarmingKeys::Falcon(keys) => config.runtime_falcon_keys = Some(keys),
+                    }
                     config.harvester_configs.plot_directories = settings.plot_directories.iter().map(|path| path.to_string_lossy().into_owned()).collect();
                     farmer = Some(FarmerService::start(config).await?);
                     update(&state, |state| { state.farmer_running = true; state.notice = "Account farmer started. Derived farming keys are not written to disk.".into(); });
@@ -654,6 +667,7 @@ async fn command_worker(
                     });
                 },
                 Command::Plot { request, output, limits, gpu } => {
+                    let profile = settings.constants()?.signature_profile;
                     if !output.is_dir() { return Err(Error::other("choose an existing output directory")); }
                     if plot.is_some() {
                         if plot_queue.len() >= 100 { return Err(Error::other("Plot queue is full (100 pending plots)")); }
@@ -681,6 +695,7 @@ async fn command_worker(
                             dg_xch_plotter::PoolBinding::PublicKey(key) => args.extend(["--pool-key".into(), hex::encode(key).into()]),
                         }
                         if request.testnet { args.push("--testnet".into()); }
+                        if !profile.is_bls() { args.push("--falcon".into()); }
                         update(&state, |state| state.plot_job = Some(format!("Running {job_label}")));
                         plot = Some(tokio::spawn(async move {
                             let result = run_cuda(&settings, args, &cancelled, Duration::from_secs(3600)).await;
@@ -695,9 +710,9 @@ async fn command_worker(
                     update(&state, |state| state.plot_job = Some(format!("Running {job_label}")));
                     plot = Some(tokio::task::spawn_blocking(move || {
                         let result = if let Some(selection) = selection {
-                            dg_xch_plotter::vulkan::create(&request, &output, limits, &cancelled, selection.device.ordinal)
+                            dg_xch_plotter::vulkan::create_for_profile(&request, profile, &output, limits, &cancelled, selection.device.ordinal)
                         } else {
-                            dg_xch_plotter::create(&request, &output, limits, &cancelled)
+                            dg_xch_plotter::create_for_profile(&request, profile, &output, limits, &cancelled)
                         };
                         update(&state, |state| state.plot_job = Some(match result {
                             Ok(info) => match publish_plot(staging, &info, started) {
@@ -796,7 +811,88 @@ async fn command_worker(
     }
 }
 
-type FarmingKeys = (blst::min_pk::SecretKey, blst::min_pk::SecretKey);
+#[derive(Clone)]
+enum FarmingKeys {
+    Bls(blst::min_pk::SecretKey, blst::min_pk::SecretKey),
+    #[cfg(feature = "falcon")]
+    Falcon(Arc<dg_xch_core::signatures::falcon_keys::FalconKeyring>),
+}
+impl FarmingKeys {
+    fn from_secret(secret: &AccountSecret) -> Result<Self, Error> {
+        match secret {
+            AccountSecret::Bls(secret) => Ok(Self::Bls(
+                dg_xch_keys::master_sk_to_farmer_sk(secret)?,
+                dg_xch_keys::master_sk_to_pool_sk(secret)?,
+            )),
+            #[cfg(feature = "falcon")]
+            AccountSecret::Falcon(seed) => {
+                use dg_xch_core::signatures::{
+                    falcon::FalconSigner,
+                    falcon_keys::{FalconKeyring, FalconPlotKeyPair},
+                };
+                Ok(Self::Falcon(Arc::new(FalconKeyring {
+                    plots: vec![FalconPlotKeyPair {
+                        plot: Arc::new(
+                            FalconSigner::from_seed(seed, 1, 0, false).map_err(Error::other)?,
+                        ),
+                        pool: Arc::new(
+                            FalconSigner::from_seed(seed, 2, 0, false).map_err(Error::other)?,
+                        ),
+                    }],
+                    wallet: Arc::new(
+                        FalconSigner::from_seed(seed, 0, 0, false).map_err(Error::other)?,
+                    ),
+                })))
+            }
+        }
+    }
+    fn plotting_keys(&self) -> (String, String) {
+        match self {
+            Self::Bls(farmer, pool) => (
+                hex::encode(farmer.sk_to_pk().to_bytes()),
+                hex::encode(pool.sk_to_pk().to_bytes()),
+            ),
+            #[cfg(feature = "falcon")]
+            Self::Falcon(keys) => {
+                use dg_xch_core::signatures::{SignatureSigner, falcon_block::public_key_id};
+                (
+                    hex::encode(public_key_id(&keys.plots[0].plot.public_key())),
+                    hex::encode(public_key_id(&keys.plots[0].pool.public_key())),
+                )
+            }
+        }
+    }
+}
+enum PayoutKey {
+    Bls(blst::min_pk::PublicKey),
+    #[cfg(feature = "falcon")]
+    Falcon(Zeroizing<[u8; 64]>),
+}
+impl PayoutKey {
+    fn from_secret(secret: &AccountSecret) -> Result<Self, Error> {
+        match secret {
+            AccountSecret::Bls(secret) => Ok(Self::Bls(
+                dg_xch_keys::master_sk_to_wallet_sk_unhardened_intermediate(secret)?.sk_to_pk(),
+            )),
+            #[cfg(feature = "falcon")]
+            AccountSecret::Falcon(seed) => Ok(Self::Falcon(seed.clone())),
+        }
+    }
+    fn address(&self, index: u32, prefix: &str) -> Result<String, Error> {
+        match self {
+            Self::Bls(key) => payout_address(key, index, prefix),
+            #[cfg(feature = "falcon")]
+            Self::Falcon(seed) => {
+                use dg_xch_core::signatures::{SignatureSigner, falcon::FalconSigner};
+                let key = FalconSigner::from_seed(seed, 0, index, false).map_err(Error::other)?;
+                dg_xch_keys::encode_puzzle_hash(
+                    &dg_xch_wallet::falcon::puzzle(&key.public_key()).tree_hash(),
+                    prefix,
+                )
+            }
+        }
+    }
+}
 
 fn payout_address(
     key: &blst::min_pk::PublicKey,
@@ -820,11 +916,13 @@ async fn account_farming_keys(
     }
     let account = account.clone();
     tokio::task::spawn_blocking(move || {
-        let secret = account.unlock(&password)?;
-        Ok((
-            dg_xch_keys::master_sk_to_farmer_sk(&secret)?,
-            dg_xch_keys::master_sk_to_pool_sk(&secret)?,
-        ))
+        let profile = if account.version == 1 {
+            dg_xch_core::signatures::SignatureProfile::Bls12381Aug
+        } else {
+            dg_xch_core::signatures::SignatureProfile::FnDsa512V2
+        };
+        let secret = account.unlock_for_profile(&password, profile)?;
+        FarmingKeys::from_secret(&secret)
     })
     .await
     .map_err(Error::other)?
@@ -1211,15 +1309,13 @@ mod tests {
         )
         .await
         .unwrap();
-        let public_key = keys.0.sk_to_pk().to_bytes();
+        let public_key = keys.plotting_keys();
         unlocked.insert(account.id.clone(), keys);
         assert_eq!(
             account_farming_keys(&account, Zeroizing::new(String::new()), &unlocked)
                 .await
                 .unwrap()
-                .0
-                .sk_to_pk()
-                .to_bytes(),
+                .plotting_keys(),
             public_key
         );
         unlocked.remove(&account.id);

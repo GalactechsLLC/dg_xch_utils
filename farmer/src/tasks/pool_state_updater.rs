@@ -41,6 +41,14 @@ pub async fn pool_updater<T, C: Clone>(
             return;
         }
     };
+    #[cfg(feature = "falcon")]
+    let falcon_keys = match config.read().await.falcon_keys() {
+        Ok(keys) => keys,
+        Err(error) => {
+            error!("Failed to load Falcon pool identity: {error}");
+            return;
+        }
+    };
     loop {
         if !shared_state.signal.load(Ordering::Relaxed) {
             break;
@@ -49,13 +57,25 @@ pub async fn pool_updater<T, C: Clone>(
             || Instant::now().duration_since(last_update).as_secs() >= 60
         {
             debug!("Updating Pool State");
-            if let Err(e) = update_pool_state(
-                pool_client.clone(),
-                &*config.read().await,
-                shared_state.clone(),
-            )
-            .await
-            {
+            let update = async {
+                #[cfg(feature = "falcon")]
+                if let Some(keys) = &falcon_keys {
+                    return update_falcon_pool_state(
+                        &pool_client,
+                        &*config.read().await,
+                        &shared_state,
+                        keys,
+                    )
+                    .await;
+                }
+                update_pool_state(
+                    pool_client.clone(),
+                    &*config.read().await,
+                    shared_state.clone(),
+                )
+                .await
+            };
+            if let Err(e) = update.await {
                 error!("Error updating Pool State: {e}");
                 tokio::time::sleep(Duration::from_secs(10)).await;
             } else {
@@ -76,6 +96,83 @@ pub async fn pool_updater<T, C: Clone>(
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     info!("Pool Handle Stopped");
+}
+
+#[cfg(feature = "falcon")]
+async fn update_falcon_pool_state<T, C: Clone>(
+    client: &dg_xch_clients::api::pool::DefaultPoolClient,
+    config: &Config<C>,
+    state: &FarmerSharedState<T>,
+    keys: &dg_xch_core::signatures::falcon_keys::FalconKeyring,
+) -> Result<(), Error> {
+    use dg_xch_core::protocols::pool_falcon as wire;
+    use std::str::FromStr;
+    let constants = config.constants()?;
+    let payout = Bytes32::from_str(&parse_payout_address(&config.payout_address)?)?;
+    for pool in &config.falcon_pools {
+        let info = client
+            .get_pool_info(&pool.pool_url)
+            .await
+            .map_err(|e| Error::other(e.error_message))?;
+        if info.protocol_version != 3
+            || info.target_puzzle_hash != pool.target_puzzle_hash
+            || info.minimum_difficulty == 0
+        {
+            return Err(Error::other("Falcon pool profile or target mismatch"));
+        }
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(Error::other)?
+            .as_secs();
+        let request = wire::sign(
+            &keys.wallet,
+            constants.genesis_challenge,
+            pool.target_puzzle_hash,
+            "get_farmer",
+            wire::FarmerQuery {
+                launcher_id: pool.launcher_id,
+                timestamp,
+            },
+        )?;
+        let response: wire::FarmerInfo = match client
+            .falcon_request(&pool.pool_url, "farmer/info", request)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if error.error_code == PoolErrorCode::FarmerNotKnown as u8 => {
+                let registration = wire::sign(
+                    &keys.wallet,
+                    constants.genesis_challenge,
+                    pool.target_puzzle_hash,
+                    "register",
+                    wire::Registration {
+                        launcher_id: pool.launcher_id,
+                        payout_puzzle_hash: payout,
+                        timestamp,
+                    },
+                )?;
+                client
+                    .falcon_request(&pool.pool_url, "farmer", registration)
+                    .await
+                    .map_err(|e| Error::other(e.error_message))?
+            }
+            Err(error) => return Err(Error::other(error.error_message)),
+        };
+        if response.launcher_id != pool.launcher_id
+            || response.contract_puzzle_hash != pool.contract_puzzle_hash
+            || response.current_difficulty == 0
+        {
+            return Err(Error::other(
+                "Falcon pool registration does not match farmer configuration",
+            ));
+        }
+        state
+            .falcon_pool_states
+            .write()
+            .await
+            .insert(pool.contract_puzzle_hash, response);
+    }
+    Ok(())
 }
 
 pub async fn get_farmer<T: PoolClient + Sized + Sync + Send>(

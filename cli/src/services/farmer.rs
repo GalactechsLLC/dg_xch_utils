@@ -30,6 +30,8 @@ struct Args {
 enum Command {
     /// Generate stable farmer credentials and public plotting keys for a custom chain.
     Init(super::farmer_setup::InitArgs),
+    /// Create a Falcon-signed, single-use pool website login link.
+    PoolLogin(super::pool_login::LoginArgs),
 }
 
 pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
@@ -38,6 +40,9 @@ pub async fn run(arguments: &[std::ffi::OsString]) -> Result<(), Error> {
     );
     if let Some(Command::Init(args)) = &args.command {
         return super::farmer_setup::initialize(args);
+    }
+    if let Some(Command::PoolLogin(args)) = &args.command {
+        return super::pool_login::run(args).await;
     }
     let level = std::env::var("RUST_LOG")
         .ok()

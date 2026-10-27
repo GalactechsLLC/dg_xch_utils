@@ -9,9 +9,11 @@
     )
 )]
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub use dg_xch_core::signatures::SignatureProfile;
 pub mod backend;
 #[cfg(test)]
 mod benchmark;
+pub mod falcon;
 pub mod format;
 pub mod proving;
 pub mod reader;
@@ -100,26 +102,40 @@ fn identity_for_profile(
     if profile.is_bls() {
         return identity(memo, strength, index, meta_group);
     }
-    if memo.len() != 128 || &memo[..8] != b"DGXFAL02" || memo[8..32].iter().any(|b| *b != 0) {
+    if !matches!(memo.len(), 112 | 128)
+        || &memo[..8] != b"DGXFAL02"
+        || memo[8..32].iter().any(|b| *b != 0)
+    {
         return Err(invalid("invalid Falcon plot memo"));
     }
-    let pool = Bytes48::const_new(
-        memo[32..80]
-            .try_into()
-            .map_err(|_| invalid("pool key commitment"))?,
-    );
+    let (pool, contract, offset) = if memo.len() == 112 {
+        (
+            None,
+            Some(Bytes32::const_new(
+                memo[32..64]
+                    .try_into()
+                    .map_err(|_| invalid("pool contract"))?,
+            )),
+            64,
+        )
+    } else {
+        (
+            Some(Bytes48::const_new(
+                memo[32..80]
+                    .try_into()
+                    .map_err(|_| invalid("pool key commitment"))?,
+            )),
+            None,
+            80,
+        )
+    };
     let plot = Bytes48::const_new(
-        memo[80..128]
+        memo[offset..]
             .try_into()
             .map_err(|_| invalid("plot key commitment"))?,
     );
     Ok(calculate_plot_id_v2(
-        strength,
-        plot,
-        Some(pool),
-        None,
-        index,
-        meta_group,
+        strength, plot, pool, contract, index, meta_group,
     ))
 }
 
@@ -445,6 +461,68 @@ pub fn create_with_writer(
     writer: impl FnOnce(ProofParams, &mut File, &[u8]) -> Result<(), Error>,
 ) -> Result<PlotInfo, Error> {
     ProofParams::new([0; 32].into(), request.k, request.strength, request.testnet)?;
+    let (params, memo) = create_identity(request)?;
+    publish_with_writer(params, &memo, destination, cancelled, writer)
+}
+
+/// Shared plotting path. For Falcon, farmer_public_key carries the plot key ID;
+/// for BLS it carries the farmer public key used in local-key aggregation.
+pub fn create_with_writer_for_profile(
+    request: &PlotRequest,
+    profile: SignatureProfile,
+    destination: &Path,
+    cancelled: &AtomicBool,
+    writer: impl FnOnce(ProofParams, &mut File, &[u8]) -> Result<(), Error>,
+) -> Result<PlotInfo, Error> {
+    if profile.is_bls() {
+        return create_with_writer(request, destination, cancelled, writer);
+    }
+    let (params, memo) = falcon::FalconPlotRequest {
+        plot_public_key_id: request.farmer_public_key,
+        pool: request.pool.clone(),
+        k: request.k,
+        strength: request.strength,
+        index: request.index,
+        meta_group: request.meta_group,
+        testnet: request.testnet,
+    }
+    .identity()?;
+    publish_with_writer(params, &memo, destination, cancelled, writer)
+}
+
+pub fn create_for_profile(
+    request: &PlotRequest,
+    profile: SignatureProfile,
+    destination: &Path,
+    limits: PlotLimits,
+    cancelled: &AtomicBool,
+) -> Result<PlotInfo, Error> {
+    create_with_writer_for_profile(
+        request,
+        profile,
+        destination,
+        cancelled,
+        |params, file, memo| {
+            let plot = dg_xch_pos2::compact::CompactPlot::build(params, limits, cancelled)?;
+            format::write_compact(
+                file,
+                &plot,
+                request.index,
+                request.meta_group,
+                memo,
+                cancelled,
+            )
+        },
+    )
+}
+
+fn publish_with_writer(
+    params: ProofParams,
+    memo: &[u8],
+    destination: &Path,
+    cancelled: &AtomicBool,
+    writer: impl FnOnce(ProofParams, &mut File, &[u8]) -> Result<(), Error>,
+) -> Result<PlotInfo, Error> {
     if destination.exists() {
         return Err(Error::new(
             ErrorKind::AlreadyExists,
@@ -452,8 +530,9 @@ pub fn create_with_writer(
         ));
     }
     dg_xch_pos2::compute::check_cancelled(cancelled)?;
-    let (params, memo) = create_identity(request)?;
     let plot_id = params.plot_id();
+    let k = params.k();
+    let strength = params.strength();
     let parent = destination
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -462,12 +541,9 @@ pub fn create_with_writer(
         .prefix(".pos2-")
         .suffix(".partial")
         .tempfile_in(parent)?;
-    writer(params, temporary.as_file_mut(), &memo)?;
+    writer(params, temporary.as_file_mut(), memo)?;
     let info = inspect(temporary.path())?;
-    if Bytes32::from(info.plot_id) != plot_id
-        || info.k != request.k
-        || info.strength != request.strength
-    {
+    if Bytes32::from(info.plot_id) != plot_id || info.k != k || info.strength != strength {
         return Err(invalid("native writer produced unexpected plot metadata"));
     }
     temporary.as_file().sync_all()?;

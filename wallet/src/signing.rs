@@ -10,6 +10,7 @@ use std::{collections::HashMap, io::Error};
 
 #[async_trait]
 pub trait TransactionWallet: Send + Sync {
+    fn consensus_constants(&self) -> &dg_xch_core::consensus::constants::ConsensusConstants;
     async fn owner_puzzle(&self, puzzle_hash: &Bytes32) -> Result<Program<'static>, Error>;
     fn conditions_solution(&self, conditions: Program<'static>) -> Result<Program<'static>, Error>;
     async fn authorize(&self, spends: Vec<CoinSpend>, height: u32) -> Result<SpendBundle, Error>;
@@ -17,6 +18,9 @@ pub trait TransactionWallet: Send + Sync {
 
 #[async_trait]
 impl TransactionWallet for MemoryWallet {
+    fn consensus_constants(&self) -> &dg_xch_core::consensus::constants::ConsensusConstants {
+        &self.wallet_info().constants
+    }
     async fn owner_puzzle(&self, puzzle_hash: &Bytes32) -> Result<Program<'static>, Error> {
         Ok(self.puzzle_for_puzzle_hash(puzzle_hash).await?.to_owned())
     }

@@ -59,7 +59,7 @@ struct OfferConfirmation {
 fn offer_amount_label(amount: &dg_xch_wallet::offers::OfferAmount) -> String {
     match amount.asset {
         dg_xch_wallet::offers::OfferAsset::Xch => format!(
-            "{} XCH ({} mojos)",
+            "{} coins ({} mojos)",
             format_mojos(u128::from(amount.amount)),
             amount.amount
         ),
@@ -157,6 +157,10 @@ impl Desktop {
             .first()
             .map(|path| path.display().to_string())
             .unwrap_or_default();
+        let converter_prefix = settings
+            .constants()
+            .map(|c| c.bech32_prefix.to_string())
+            .unwrap_or_default();
         Self {
             backend,
             paths,
@@ -208,7 +212,7 @@ impl Desktop {
             },
             offer_confirmation: None,
             converter_input: String::new(),
-            converter_prefix: "xch".into(),
+            converter_prefix,
             converter_result: None,
             pool_draft: None,
             pool_confirm: false,
@@ -250,7 +254,7 @@ impl Desktop {
                     .node
                     .as_ref()
                     .and_then(|node| node.peak.as_ref())
-                    .map(|peak| peak.height.to_string())
+                    .map(|peak| format_count(peak.height))
                     .unwrap_or_else(|| "Unavailable".into()),
             );
             card(
@@ -286,7 +290,7 @@ impl Desktop {
                     if !snapshot.synced {
                         ui.colored_label(ui.visuals().warn_fg_color, "Cached wallet state. Payments stay disabled until a successful node sync.");
                     }
-                    ui.monospace(format_mojos(snapshot.confirmed));
+                    ui.monospace(wallet_balance_text(snapshot.confirmed, snapshot.height));
                     if account.error.is_some() {
                         ui.colored_label(ui.visuals().warn_fg_color, "stale");
                     }
@@ -303,6 +307,7 @@ impl Desktop {
             ui.label("No wallets yet. Create one or import an existing recovery phrase.");
             if primary_button(ui, "Add your first wallet").clicked() {
                 self.page = Page::Wallets;
+                self.show_wallet_form = true;
             }
         }
         ui.add_space(24.0);
@@ -311,15 +316,24 @@ impl Desktop {
             "{} · {}:{}",
             self.settings.network, self.settings.node_host, self.settings.node_port
         ));
-        if state.node.is_some() && state.node_error.is_none() {
+        if state.node.is_some() && !node_sample_stale(state, self.settings.poll_seconds) {
             ui.colored_label(crate::theme::GREEN, "Connected to your node");
             if ui.button("View sync progress").clicked() {
                 self.page = Page::Node;
             }
         }
+        if state.node.is_some() && node_sample_stale(state, self.settings.poll_seconds) {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "Showing cached node data. Waiting for a fresh sample.",
+            );
+        }
         if let Some(error) = &state.node_error {
             ui.colored_label(ui.visuals().warn_fg_color, "Waiting for your node");
-            ui.weak("Start dgx full-node, or configure an existing node in Settings.");
+            ui.weak("Check your node connection and TLS certificates in Settings.");
+            if primary_button(ui, "Connection settings").clicked() {
+                self.page = Page::Settings;
+            }
             if ui
                 .button("Open node details")
                 .on_hover_text(error)
@@ -400,11 +414,41 @@ impl Desktop {
                     self.transfer = None;
                 }
                 if let Some(error) = &account.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
+                    let retrying = is_wallet_sync_retry(error);
+                    ui.colored_label(
+                        if retrying {
+                            ui.visuals().warn_fg_color
+                        } else {
+                            ui.visuals().error_fg_color
+                        },
+                        if retrying {
+                            "The chain advanced during this refresh. Retrying automatically."
+                        } else {
+                            error
+                        },
+                    )
+                    .on_hover_text(error);
                 }
                 if let Some(snapshot) = &account.snapshot {
+                    if snapshot.synced
+                        && account.error.is_none()
+                        && let Some(height) = snapshot.height
+                    {
+                        ui.weak(format!(
+                            "Balance verified at block {}",
+                            format_count(height)
+                        ));
+                    }
+                    if !snapshot.synced {
+                        ui.colored_label(ui.visuals().warn_fg_color, if snapshot.height.is_some() {
+                            "Cached balances. Payments stay disabled until synchronization succeeds."
+                        } else {
+                            "Balances are unavailable until the first successful synchronization."
+                        });
+                    }
                     ui.horizontal_wrapped(|ui| {
-                        for (index, name) in ["Chia", "Tokens", "NFTs", "DIDs"].iter().enumerate() {
+                        for (index, name) in ["Coins", "Tokens", "NFTs", "DIDs"].iter().enumerate()
+                        {
                             if selection_button(ui, name, self.wallet_tab == index as u8).clicked()
                             {
                                 self.wallet_tab = index as u8;
@@ -419,17 +463,17 @@ impl Desktop {
                         card(
                             &mut columns[0],
                             "Confirmed (coins)",
-                            &balance_text(snapshot.confirmed),
+                            &wallet_balance_text(snapshot.confirmed, snapshot.height),
                         );
                         card(
                             &mut columns[1],
                             "Spendable (coins)",
-                            &balance_text(snapshot.spendable),
+                            &wallet_balance_text(snapshot.spendable, snapshot.height),
                         );
                         card(
                             &mut columns[2],
                             "Pending change (coins)",
-                            &balance_text(snapshot.pending_change),
+                            &wallet_balance_text(snapshot.pending_change, snapshot.height),
                         );
                     });
                     if let Ok(constants) = self.settings.constants()
@@ -520,7 +564,7 @@ impl Desktop {
                 });
             }
         }
-        ui.weak("CAT1 is read-only. CAT2 and NFT1 transfers are available after synchronization. XCH/CAT2 offers are under Tools. Hardware signing and automatic recovery are not yet available.");
+        ui.weak("CAT1 is read-only. CAT2 and NFT1 transfers are available after synchronization. Coin/CAT2 offers are under Tools. Hardware signing and automatic recovery are not yet available.");
     }
 
     fn wallet_form(&mut self, ui: &mut Ui, state: &State) {
@@ -530,6 +574,10 @@ impl Desktop {
                 ui.add_enabled_ui(!self.import_pending, |ui| {
                     field(ui, "Account name", &mut self.account_name);
                     ui.label(format!("Network: {}", self.settings.network));
+                    if let Some(profile) = state.chain_profile {
+                        ui.label(format!("Signature type: {profile}"));
+                    }
+                    ui.weak("Recovery is tied to this network and signature type. Keep both with your backup.");
                     ui.label("Recovery phrase");
                     ui.weak("Paste an existing phrase, or generate a new one. Never share it.");
                     ui.add(
@@ -564,7 +612,7 @@ impl Desktop {
                         .add_enabled(
                             self.backup_confirmed,
                             egui::Button::new(RichText::new("Create wallet").color(Color32::WHITE))
-                                .fill(crate::theme::GREEN),
+                                .fill(crate::theme::PRIMARY),
                         )
                         .on_disabled_hover_text("Back up your recovery phrase and check the confirmation above before creating a wallet.")
                         .clicked()
@@ -623,23 +671,23 @@ impl Desktop {
                 ui.visuals().error_fg_color,
                 "Node disconnected or data is stale.",
             );
-            ui.label("Start dgx full-node in a terminal, then check the connection and TLS paths in Settings.");
+            ui.label("Check your existing node endpoint and TLS certificates in Settings.");
+            if primary_button(ui, "Connection settings").clicked() {
+                self.page = Page::Settings;
+            }
             ui.label("Sync progress appears here after a successful connection. You can create accounts and plots meanwhile.");
             section(ui, "Connection error details", |ui| {
                 ui.label(error);
             });
         }
         if let Some(node) = &state.node {
-            let stale = state.node_error.is_some()
-                || state.node_updated.is_none_or(|updated| {
-                    updated.elapsed().as_secs() >= self.settings.poll_seconds * 3
-                });
+            let stale = node_sample_stale(state, self.settings.poll_seconds);
             let values = [
                 (
                     "Block height",
                     node.peak
                         .as_ref()
-                        .map(|peak| peak.height.to_string())
+                        .map(|peak| format_count(peak.height))
                         .unwrap_or_else(|| "Unavailable".into()),
                     "Height is the zero-based position of the current peak block. Genesis has height 0. A reorganization can change the peak.",
                 ),
@@ -650,12 +698,12 @@ impl Desktop {
                 ),
                 (
                     "Difficulty",
-                    node.difficulty.to_string(),
+                    format_count(node.difficulty),
                     "Current consensus difficulty. Each block adds its difficulty to cumulative chain weight. This is not the block height.",
                 ),
                 (
                     "Pending transactions",
-                    node.mempool_size.to_string(),
+                    format_count(node.mempool_size),
                     "Transactions accepted into this node's mempool and waiting for inclusion in a block. Other nodes may have different pending transactions.",
                 ),
             ];
@@ -696,8 +744,8 @@ impl Desktop {
                 ui.weak("Height counts blocks. Weight adds up their difficulty; it is not another height counter.");
                 metric_grid(ui, "chain_progress").show(ui, |ui| {
                     if let Some(peak) = &node.peak {
-                        detail(ui, "Cumulative chain weight", peak.weight.to_string());
-                        detail(ui, "Total VDF iterations", peak.total_iters.to_string());
+                        detail(ui, "Cumulative chain weight", format_count(peak.weight));
+                        detail(ui, "Total VDF iterations", format_count(peak.total_iters));
                         detail(ui, "Peak block hash", peak.header_hash.to_string());
                         detail(ui, "Previous block hash", peak.prev_hash.to_string());
                     } else {
@@ -706,10 +754,14 @@ impl Desktop {
                     detail(
                         ui,
                         "Iterations per sub-slot",
-                        node.sub_slot_iters.to_string(),
+                        format_count(node.sub_slot_iters),
                     );
-                    detail(ui, "Estimated network space", format_space(node.space));
+                    detail(ui, "Node-reported space estimate", format_space(node.space));
                 });
+                ui.weak("This estimate is derived from chain difficulty and timing, not measured plot files. Development-chain parameters can produce values that do not represent physical storage.");
+                if let Some(profile) = state.chain_profile {
+                    ui.weak(format!("Signature type: {profile}"));
+                }
             });
             section(ui, "Transaction pool", |ui| {
                 let capacity = node.mempool_cost as f64 / node.mempool_max_total_cost.max(1) as f64;
@@ -723,9 +775,17 @@ impl Desktop {
                     detail(
                         ui,
                         "Current / maximum cost",
-                        format!("{} / {}", node.mempool_cost, node.mempool_max_total_cost),
+                        format!(
+                            "{} / {}",
+                            format_count(node.mempool_cost),
+                            format_count(node.mempool_max_total_cost)
+                        ),
                     );
-                    detail(ui, "Block CLVM cost limit", node.block_max_cost.to_string());
+                    detail(
+                        ui,
+                        "Block CLVM cost limit",
+                        format_count(node.block_max_cost),
+                    );
                     detail(
                         ui,
                         "Minimum fee per cost",
@@ -742,26 +802,32 @@ impl Desktop {
                     }
                 });
             });
-            data_section(
-                ui,
-                "Peak block and synchronization snapshot",
-                &serde_json::to_string_pretty(node).unwrap_or_default(),
-            );
-        }
-        data_section(ui, "Block counters", &state.node_metrics);
-        data_section(ui, "Live diagnostics", &state.node_details);
-        match self.settings.constants() {
-            Ok(constants) => {
+            ui.collapsing("Peak block and synchronization snapshot", |ui| {
                 data_section(
                     ui,
-                    "Network rules",
-                    &serde_json::to_string_pretty(&constants).unwrap_or_default(),
+                    "RPC snapshot",
+                    &serde_json::to_string_pretty(node).unwrap_or_default(),
                 );
-            }
-            Err(error) => {
-                ui.label(error.to_string());
-            }
-        };
+            });
+        }
+        ui.collapsing("Advanced node diagnostics", |ui| {
+            data_section(ui, "Block counters", &state.node_metrics);
+            data_section(ui, "Live diagnostics", &state.node_details);
+        });
+        ui.collapsing("Network rules", |ui| {
+            match self.settings.constants() {
+                Ok(constants) => {
+                    data_section(
+                        ui,
+                        "Network rules",
+                        &serde_json::to_string_pretty(&constants).unwrap_or_default(),
+                    );
+                }
+                Err(error) => {
+                    ui.label(error.to_string());
+                }
+            };
+        });
         ui.weak("RPC samples are diagnostic, not atomic snapshots. Live internals require a dg_xch node exposing get_node_details.");
     }
 
@@ -999,7 +1065,7 @@ impl Desktop {
                 ui.weak("CAT1 is read-only. CAT2 amounts use base units (1 token = 1000 units). NFTs use the NFT1 standard. Untrusted metadata is displayed as text, never fetched or executed.");
                 if self.wallet_tab == 3 {
                     ui.weak("Chia DID1 identities. Creation uses one mojo, with social recovery disabled. JuliaDID support is planned but unavailable.");
-                    field(ui, "Transaction fee (XCH)", &mut self.asset_form.fee);
+                    field(ui, "Transaction fee (coins)", &mut self.asset_form.fee);
                     if ui
                         .add_enabled(snapshot.synced, egui::Button::new("Review DID creation"))
                         .clicked()
@@ -1082,7 +1148,7 @@ impl Desktop {
                         } else if self.asset_form.selected_coin == Some(asset.record.coin.name()) {
                             field(ui, "Recipient address", &mut self.asset_form.destination);
                             if asset.kind == AssetKind::Cat2 { field(ui, "Amount (base units)", &mut self.asset_form.amount); }
-                            field(ui, "Transaction fee (XCH)", &mut self.asset_form.fee);
+                            field(ui, "Transaction fee (coins)", &mut self.asset_form.fee);
                             if ui.add_enabled(snapshot.synced, egui::Button::new("Review asset transfer")).clicked() {
                                 let result = (|| -> Result<AssetConfirmation, std::io::Error> {
                                     let constants = self.settings.constants()?;
@@ -1127,8 +1193,8 @@ impl Desktop {
                     self.selected_account = Some(account.account.id.clone());
                 }
             }
-            ui.weak("XCH and standard CAT2 offers are supported. NFT trades and restricted CATs are not supported yet. Amounts are integer base units, not display token units.");
-            field(ui, "Transaction fee (XCH)", &mut self.offer_form.fee);
+            ui.weak("Native coin and standard CAT2 offers are supported. NFT trades and restricted CATs are not supported yet. Amounts are integer base units, not display token units.");
+            field(ui, "Transaction fee (coins)", &mut self.offer_form.fee);
         });
         let selected = self.selected_account.clone();
         let ready = selected.as_ref().is_some_and(|id| {
@@ -1146,7 +1212,7 @@ impl Desktop {
         section(ui, "Create offer", |ui| {
             field(
                 ui,
-                "Give asset (blank for XCH, otherwise CAT2 ID)",
+                "Give asset (blank for native coins, otherwise CAT2 ID)",
                 &mut self.offer_form.give_asset,
             );
             field(
@@ -1156,7 +1222,7 @@ impl Desktop {
             );
             field(
                 ui,
-                "Receive asset (blank for XCH, otherwise CAT2 ID)",
+                "Receive asset (blank for native coins, otherwise CAT2 ID)",
                 &mut self.offer_form.receive_asset,
             );
             field(
@@ -1254,7 +1320,7 @@ impl Desktop {
                     action = Some((
                         OfferAction::Cancel(*id),
                         format!(
-                            "Cancel offer {id} by spending its owned inputs back to this wallet. This can race with acceptance. A CAT-only offer needs a zero cancellation fee unless it already includes XCH inputs."
+                            "Cancel offer {id} by spending its owned inputs back to this wallet. This can race with acceptance. A CAT-only offer needs a zero cancellation fee unless it already includes native coin inputs."
                         ),
                     ));
                 }
@@ -1302,7 +1368,7 @@ impl Desktop {
                     &mut self.converter_input,
                 );
                 field(ui, "Output prefix", &mut self.converter_prefix);
-                ui.weak("Chia uses xch on mainnet and txch on testnet. Changing a prefix does not move funds between networks.");
+                ui.weak(format!("The selected network uses the {} address prefix. Changing a prefix does not move funds between networks.", self.settings.constants().map(|c| c.bech32_prefix.to_string()).unwrap_or_else(|_| "unknown".into())));
                 if primary_button(ui, "Convert address").clicked() {
                     match dg_xch_keys::convert_address(
                         &self.converter_input,
@@ -1362,7 +1428,7 @@ impl Desktop {
                             "Fixed supply (base units, 1000 = 1 token)",
                             &mut self.asset_form.supply,
                         );
-                        ui.weak("Creates a new fixed-supply CAT2 using the genesis-by-coin-ID issuance policy. The supply locks the same number of XCH mojos, in addition to the fee. There is no later minting authority.");
+                        ui.weak("Creates a new fixed-supply CAT2 using the genesis-by-coin-ID issuance policy. The supply locks the same number of native coin mojos, in addition to the fee. There is no later minting authority.");
                     } else {
                         field(
                             ui,
@@ -1388,7 +1454,7 @@ impl Desktop {
                         field(ui, "Edition total", &mut self.asset_form.editions);
                         ui.weak("Creates one NFT1, costing one mojo plus the fee. Supply your own content hash; the app does not upload, download or verify the hosted file. No DID is assigned at minting.");
                     }
-                    field(ui, "Transaction fee (XCH)", &mut self.asset_form.fee);
+                    field(ui, "Transaction fee (coins)", &mut self.asset_form.fee);
                     if ui
                         .add_enabled(ready, egui::Button::new("Review launch"))
                         .on_disabled_hover_text("Unlock a wallet and wait for a successful sync.")
@@ -1458,13 +1524,13 @@ impl Desktop {
                             };
                             let details = match &action {
                                 AssetAction::LaunchCat2 { amount } => format!(
-                                    "Create a fixed supply of {amount} CAT2 base units.\nXCH locked in the token supply: {}",
+                                    "Create a fixed supply of {amount} CAT2 base units.\nCoins locked in the token supply: {}",
                                     format_mojos(u128::from(*amount))
                                 ),
                                 AssetAction::LaunchNft(request) => {
                                     request.validate()?;
                                     format!(
-                                        "Mint one NFT1, edition {} of {}.\nContent: {}\nSHA-256: {}\nRoyalty: {}.{:02}%\nRoyalty puzzle hash: {}\nXCH locked in the NFT: 0.000000000001",
+                                        "Mint one NFT1, edition {} of {}.\nContent: {}\nSHA-256: {}\nRoyalty: {}.{:02}%\nRoyalty puzzle hash: {}\nCoins locked in the NFT: 0.000000000001",
                                         request.edition_number,
                                         request.edition_total,
                                         request.data_uri,
@@ -1503,7 +1569,7 @@ impl Desktop {
 
     fn plots(&mut self, ui: &mut Ui, state: &State) {
         heading(ui, "Plots", "Create and queue plots.");
-        ui.weak("Leave memory for the node. PoS2 farming requires network activation; small plots are for testing.");
+        ui.weak("Leave memory for other applications. PoS2 farming requires network activation; small plots are for testing.");
         if ui.available_width() >= 850.0 {
             ui.columns(2, |columns| {
                 self.plotting_account(&mut columns[0], state);
@@ -1754,14 +1820,30 @@ impl Desktop {
             field(ui, "Output directory", &mut self.plot_output);
             ui.weak("Filenames are generated automatically.")
                 .on_hover_text("plot-k<size>-YYYY-MM-DD-HH-MM-<plot ID>.plot (UTC)");
-            field(ui, "Farmer public key (48-byte hex)", &mut self.farmer_key);
+            let falcon = self
+                .settings
+                .constants()
+                .is_ok_and(|c| !c.signature_profile.is_bls());
+            field(
+                ui,
+                if falcon {
+                    "Plot public key ID (48-byte hex)"
+                } else {
+                    "Farmer public key (48-byte hex)"
+                },
+                &mut self.farmer_key,
+            );
             ui.checkbox(&mut self.portable, "Portable / pool contract plot");
             field(
                 ui,
                 if self.portable {
                     "Pool contract puzzle hash (32-byte hex)"
                 } else {
-                    "Pool public key (48-byte hex)"
+                    if falcon {
+                        "Pool public key ID (48-byte hex)"
+                    } else {
+                        "Pool public key (48-byte hex)"
+                    }
                 },
                 &mut self.pool_binding,
             );
@@ -1775,12 +1857,32 @@ impl Desktop {
                 .map_err(|_| format!("{label} must contain {SIZE} bytes of hexadecimal data. Load your wallet's public plotting keys or enter a valid value."))?;
             Ok(result)
         }
+        let falcon = !self
+            .settings
+            .constants()
+            .map_err(|error| error.to_string())?
+            .signature_profile
+            .is_bls();
         Ok(PlotRequest {
-            farmer_public_key: bytes("Farmer public key", &self.farmer_key)?,
+            farmer_public_key: bytes(
+                if falcon {
+                    "Plot public key ID"
+                } else {
+                    "Farmer public key"
+                },
+                &self.farmer_key,
+            )?,
             pool: if self.portable {
                 PoolBinding::Contract(bytes("Pool contract puzzle hash", &self.pool_binding)?)
             } else {
-                PoolBinding::PublicKey(bytes("Pool public key", &self.pool_binding)?)
+                PoolBinding::PublicKey(bytes(
+                    if falcon {
+                        "Pool public key ID"
+                    } else {
+                        "Pool public key"
+                    },
+                    &self.pool_binding,
+                )?)
             },
             k: self.plot_k,
             strength: self.plot_strength,
@@ -1792,7 +1894,7 @@ impl Desktop {
 
     fn settings(&mut self, ui: &mut Ui) {
         heading(ui, "Settings", "Connections, storage, and appearance.");
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Appearance");
             if selection_button(
                 ui,
@@ -1812,11 +1914,23 @@ impl Desktop {
             {
                 self.settings_draft.theme = Theme::Daylight;
             }
-            if primary_button(ui, "Save settings").clicked() {
+            let changed = self.settings_draft != self.settings;
+            if ui
+                .add_enabled(changed, egui::Button::new("Save settings"))
+                .clicked()
+            {
                 self.backend
                     .command(Command::Settings(self.settings_draft.clone()));
             }
         });
+        if self.settings_draft != self.settings {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(ui.visuals().warn_fg_color, "Unsaved changes");
+                if ui.button("Discard changes").clicked() {
+                    self.settings_draft = self.settings.clone();
+                }
+            });
+        }
         ui.weak("Appearance and payout addresses can be saved while wallets are unlocked. Stop farming to change its payout address. Lock wallets and finish active jobs before changing connections.");
         ui.add_space(18.0);
         if ui.available_width() >= 850.0 {
@@ -2161,6 +2275,13 @@ impl eframe::App for Desktop {
         if let Some(settings) = &state.settings
             && self.smoke_test.is_none()
         {
+            if settings.network != self.settings.network {
+                self.converter_prefix = settings
+                    .constants()
+                    .map(|c| c.bech32_prefix.to_string())
+                    .unwrap_or_default();
+                self.converter_result = None;
+            }
             self.settings = settings.clone();
         }
         crate::theme::apply(
@@ -2205,8 +2326,8 @@ impl eframe::App for Desktop {
                     ui.label(RichText::new("Druid Garden").size(19.0).strong());
                 });
                 ui.add_space(6.0);
-                ui.weak("Your Chia workspace");
-                ui.add_space(30.0);
+                ui.weak("Wallets, plots & farming");
+                ui.add_space(20.0);
                 for (page, label) in [
                     (Page::Overview, "Overview"),
                     (Page::Wallets, "Wallets"),
@@ -2218,18 +2339,23 @@ impl eframe::App for Desktop {
                 ] {
                     let selected = self.page == page;
                     let response = ui.add_sized(
-                        [ui.available_width(), 44.0],
-                        egui::Button::new(RichText::new(label).size(15.0)).selected(selected),
+                        [ui.available_width(), 40.0],
+                        egui::Button::new(RichText::new(label).size(15.0))
+                            .selected(selected)
+                            .frame(selected),
                     );
                     if response.clicked() {
                         self.page = page;
                         self.message.clear();
                     }
-                    ui.add_space(3.0);
+                    ui.add_space(2.0);
                 }
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.weak(format!("dgx {}", crate::version()));
                     ui.label(&self.settings.network);
+                    if let Some(profile) = state.chain_profile {
+                        ui.weak(profile);
+                    }
                     ui.separator();
                 });
             });
@@ -2241,12 +2367,13 @@ impl eframe::App for Desktop {
             )
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    let (label, color) = if state.node_error.is_some() {
-                        ("Node offline", ui.visuals().warn_fg_color)
-                    } else if state.node.is_some() {
-                        ("Node connected", crate::theme::GREEN)
+                    let label = connection_status(&state, self.settings.poll_seconds);
+                    let color = if state.node.is_some()
+                        && !node_sample_stale(&state, self.settings.poll_seconds)
+                    {
+                        crate::theme::GREEN
                     } else {
-                        ("Connecting", ui.visuals().weak_text_color())
+                        ui.visuals().warn_fg_color
                     };
                     ui.colored_label(color, label);
                 });
@@ -2258,7 +2385,6 @@ impl eframe::App for Desktop {
                     .inner_margin(28),
             )
             .show(ui, |ui| {
-                crate::theme::paint_background(ui);
                 if !self.message.is_empty() {
                     alert_frame(ui, self.message_error, |ui| {
                         ui.colored_label(
@@ -2330,7 +2456,7 @@ impl eframe::App for Desktop {
                 ui.heading("Review offer operation");
                 ui.label(format!("Network: {}", self.settings.network));
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| { ui.label(&confirmation.description); });
-                ui.label(format!("Fee: {} XCH", format_mojos(u128::from(confirmation.fee))));
+                ui.label(format!("Fee: {} coins", format_mojos(u128::from(confirmation.fee))));
                 ui.weak("Creating an offer reserves coins and signs a shareable commitment. Taking or cancelling broadcasts a transaction. Cancellation is effective only after confirmation.");
                 let ready = self.settings.trusted_genesis().ok() == Some(confirmation.genesis) && selected_unlocked(&state, Some(&confirmation.id));
                 submit = ui.add_enabled(ready, egui::Button::new("Confirm and sign")).clicked();
@@ -2359,7 +2485,7 @@ impl eframe::App for Desktop {
                 egui::ScrollArea::vertical().max_height((context.content_rect().height() - 240.0).max(160.0)).show(ui, |ui| {
                     ui.label(format!("Network: {}", self.settings.network));
                     ui.label(&confirmation.description);
-                    ui.label(format!("Fee: {} XCH", format_mojos(u128::from(confirmation.fee))));
+                    ui.label(format!("Fee: {} coins", format_mojos(u128::from(confirmation.fee))));
                     ui.weak("This signs and broadcasts a real transaction. Confirmed transactions cannot be undone.");
                 });
                 let same_wallet = self.settings.trusted_genesis().ok() == Some(confirmation.genesis) && selected_unlocked(&state, Some(&confirmation.id));
@@ -2441,7 +2567,7 @@ fn heading(ui: &mut Ui, title: &str, subtitle: &str) {
 fn primary_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(RichText::new(label).color(Color32::WHITE).strong())
-            .fill(crate::theme::GREEN),
+            .fill(crate::theme::PRIMARY),
     )
 }
 
@@ -2453,7 +2579,7 @@ fn selection_button(ui: &mut Ui, label: &str, selected: bool) -> egui::Response 
     }))
     .min_size(egui::vec2(140.0, 40.0));
     let response = ui.add(if selected {
-        button.fill(crate::theme::GREEN)
+        button.fill(crate::theme::PRIMARY)
     } else {
         button
     });
@@ -2510,6 +2636,14 @@ fn validate_wallet_form(name: &str, mnemonic: &str, password: &str) -> Result<()
     Ok(())
 }
 
+fn wallet_balance_text(amount: u128, height: Option<u32>) -> String {
+    if height.is_some() {
+        balance_text(amount)
+    } else {
+        "Unavailable".into()
+    }
+}
+
 fn balance_text(amount: u128) -> String {
     format_mojos(amount)
         .trim_end_matches('0')
@@ -2524,7 +2658,7 @@ fn field(ui: &mut Ui, label: &str, value: &mut String) {
             .desired_width(f32::INFINITY)
             .margin(egui::vec2(12.0, 10.0)),
     );
-    ui.add_space(3.0);
+    ui.add_space(2.0);
 }
 
 fn password_field(ui: &mut Ui, value: &mut String) {
@@ -2681,8 +2815,23 @@ fn detail(ui: &mut Ui, label: &str, value: String) {
     let help = node_metric_help(label);
     ui.add(egui::Label::new(RichText::new(label).weak()).wrap())
         .on_hover_text(help);
-    ui.add(egui::Label::new(RichText::new(value).monospace()).wrap())
-        .on_hover_text(help);
+    if is_hash(&value) {
+        ui.horizontal(|ui| {
+            ui.set_min_width(ui.available_width());
+            ui.monospace(format!("{}…{}", &value[..10], &value[value.len() - 8..]))
+                .on_hover_text(&value);
+            if ui
+                .small_button("Copy")
+                .on_hover_text(format!("Copy {label}"))
+                .clicked()
+            {
+                ui.ctx().copy_text(value.clone());
+            }
+        });
+    } else {
+        ui.add(egui::Label::new(RichText::new(value).monospace()).wrap())
+            .on_hover_text(help);
+    }
     ui.end_row();
 }
 
@@ -2751,6 +2900,56 @@ fn data_rows(ui: &mut Ui, path: &str, value: &serde_json::Value, remaining: &mut
             );
             ui.end_row();
         }
+    }
+}
+
+fn is_wallet_sync_retry(error: &str) -> bool {
+    matches!(
+        error
+            .strip_prefix("Success: false, Message: ")
+            .unwrap_or(error),
+        "Node checkpoint changed; retry" | "chain changed during wallet scan; retrying next poll"
+    )
+}
+
+fn format_count(value: impl std::fmt::Display) -> String {
+    let text = value.to_string();
+    let mut grouped = String::with_capacity(text.len() + text.len() / 3);
+    for (index, digit) in text.chars().enumerate() {
+        if index > 0 && (text.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
+fn is_hash(value: &str) -> bool {
+    let hex = value.strip_prefix("0x").unwrap_or(value);
+    hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn node_sample_stale(state: &State, poll_seconds: u64) -> bool {
+    state.node_error.is_some()
+        || state
+            .node_updated
+            .is_none_or(|updated| updated.elapsed().as_secs() >= poll_seconds.saturating_mul(3))
+}
+
+fn connection_status(state: &State, poll_seconds: u64) -> &'static str {
+    if state.node_error.is_some() {
+        return "Node offline";
+    }
+    let Some(node) = &state.node else {
+        return "Connecting";
+    };
+    if node_sample_stale(state, poll_seconds) {
+        return "Node data stale";
+    }
+    match node_sync_label(node, false) {
+        "Synced" => "Node synced",
+        "Waiting" => "Node connected · waiting for peak",
+        _ => "Node syncing",
     }
 }
 
@@ -2852,6 +3051,94 @@ fn node_metric_help(label: &str) -> &'static str {
 #[cfg(test)]
 mod node_view_tests {
     use super::*;
+
+    #[test]
+    fn only_expected_chain_changes_are_presented_as_sync_retries() {
+        assert!(is_wallet_sync_retry(
+            "Success: false, Message: Node checkpoint changed; retry"
+        ));
+        assert!(is_wallet_sync_retry(
+            "chain changed during wallet scan; retrying next poll"
+        ));
+        assert!(!is_wallet_sync_retry(
+            "node genesis does not match this wallet connection"
+        ));
+        assert!(!is_wallet_sync_retry(
+            "incorrect password or damaged account"
+        ));
+    }
+
+    #[test]
+    fn live_counter_formatting_preserves_integer_precision() {
+        assert_eq!(format_count(0), "0");
+        assert_eq!(format_count(999), "999");
+        assert_eq!(format_count(4_880_031), "4,880,031");
+        assert_eq!(
+            format_count(u128::MAX).replace(',', ""),
+            u128::MAX.to_string()
+        );
+        assert!(is_hash(&"ab".repeat(32)));
+        assert!(is_hash(&format!("0x{}", "ab".repeat(32))));
+        assert!(!is_hash(&"é".repeat(32)));
+        assert!(!is_hash("not a hash"));
+    }
+
+    #[test]
+    fn connection_status_distinguishes_stale_data_and_sync() {
+        let mut state = State::default();
+        assert_eq!(connection_status(&state, 15), "Connecting");
+        state.node = Some(Default::default());
+        assert_eq!(connection_status(&state, 15), "Node data stale");
+        state.node_updated = Some(std::time::Instant::now());
+        assert_eq!(
+            connection_status(&state, 15),
+            "Node connected · waiting for peak"
+        );
+        let node = state.node.as_mut().unwrap();
+        node.peak = Some(dg_xch_core::blockchain::block_record::BlockRecord {
+            header_hash: Default::default(),
+            prev_hash: Default::default(),
+            height: 1,
+            weight: 1,
+            total_iters: 1,
+            signage_point_index: 0,
+            challenge_vdf_output:
+                dg_xch_core::blockchain::class_group_element::ClassgroupElement::get_default_element(
+                ),
+            infused_challenge_vdf_output: None,
+            reward_infusion_new_challenge: Default::default(),
+            challenge_block_info_hash: Default::default(),
+            sub_slot_iters: 1,
+            pool_puzzle_hash: Default::default(),
+            farmer_puzzle_hash: Default::default(),
+            required_iters: 1,
+            deficit: 0,
+            overflow: false,
+            prev_transaction_block_height: 0,
+            timestamp: None,
+            prev_transaction_block_hash: None,
+            fees: None,
+            reward_claims_incorporated: None,
+            finished_challenge_slot_hashes: None,
+            finished_infused_challenge_slot_hashes: None,
+            finished_reward_slot_hashes: None,
+            sub_epoch_summary_included: None,
+        });
+        assert_eq!(connection_status(&state, 15), "Node syncing");
+        state.node.as_mut().unwrap().sync.synced = true;
+        assert_eq!(connection_status(&state, 15), "Node synced");
+        state.node_updated = Some(std::time::Instant::now() - Duration::from_secs(46));
+        assert_eq!(connection_status(&state, 15), "Node data stale");
+        state.node_error = Some("Disconnected".into());
+        assert_eq!(connection_status(&state, 15), "Node offline");
+    }
+
+    #[test]
+    fn unsynchronized_wallet_does_not_claim_a_zero_balance() {
+        assert_eq!(wallet_balance_text(0, None), "Unavailable");
+        assert_eq!(wallet_balance_text(0, Some(0)), "0");
+        assert_eq!(wallet_balance_text(1_000_000_000_000, Some(1)), "1");
+    }
 
     #[test]
     fn wallet_form_validation_keeps_input_and_explains_errors() {

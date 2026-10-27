@@ -1,4 +1,5 @@
 pub mod blockchain;
+pub mod branding;
 pub mod clvm;
 pub mod compute;
 pub mod config;

@@ -165,7 +165,18 @@ impl SpendBundle {
 
     pub fn additions(&self) -> Result<Vec<Coin>, Error> {
         self.coin_spends.iter().try_fold(vec![], |mut prev, cur| {
-            prev.extend(cur.additions()?);
+            let flags = if !self.authorization.is_none() {
+                crate::clvm::falcon_ops::ENABLE_FALCON_OPS
+            } else {
+                0
+            };
+            prev.extend(crate::blockchain::utils::additions_for_solution_with_flags(
+                cur.coin.name(),
+                &cur.puzzle_reveal.to_program()?,
+                &cur.solution.to_program()?,
+                INFINITE_COST,
+                flags,
+            )?);
             Ok(prev)
         })
     }
@@ -338,6 +349,51 @@ impl SpendBundle {
         print: bool,
     ) -> Result<Vec<ConditionWithArgs>, ClvmError> {
         let mut max_cost = max_cost.unwrap_or(INFINITE_COST);
+        let falcon = !consensus_constants.signature_profile.is_bls();
+        if falcon {
+            use crate::consensus::block_generator::{
+                conditions_from_spend_bundle, validate_block_authorization,
+            };
+            use crate::signatures::falcon_condition::transaction_reference;
+            // This offline helper has no block-height context. Native chain
+            // admission remains responsible for height-dependent eligibility.
+            // Do not let caller-selected dialect flags change the conditions
+            // after the native authorization statement has been checked.
+            let allowed =
+                DISABLE_SIGNATURE_VALIDATION | NO_UNKNOWN_OPS | crate::clvm::utils::DISABLE_PRINTS;
+            if flags & !allowed != 0 {
+                return Err(ClvmError::InvalidSpendbundle(
+                    "unsupported Falcon offline validation flags".into(),
+                ));
+            }
+            let invalid = |error: String| ClvmError::InvalidSpendbundle(error);
+            let conditions = conditions_from_spend_bundle(self, 0, consensus_constants)
+                .map_err(|e| invalid(format!("{e:?}")))?;
+            if conditions.cost > max_cost {
+                return Err(ClvmError::CostExceeded(max_cost, conditions.cost));
+            }
+            let auth = self
+                .authorization
+                .as_ref()
+                .ok_or_else(|| invalid("missing Falcon authorization".into()))?;
+            if auth.genesis != consensus_constants.genesis_challenge
+                || !auth.header.is_empty()
+                || self.aggregated_signature
+                    != transaction_reference(auth.genesis, &conditions.falcon_signatures)
+            {
+                return Err(invalid("Falcon authorization does not match bundle".into()));
+            }
+            if flags & DISABLE_SIGNATURE_VALIDATION == 0 {
+                validate_block_authorization(
+                    &conditions,
+                    &auth
+                        .transaction_witness()
+                        .map_err(|e| invalid(e.to_string()))?,
+                    consensus_constants,
+                )
+                .map_err(|e| invalid(format!("{e:?}")))?;
+            }
+        }
         let mut create_conditions = vec![];
         let mut state = ValidationState::default();
         let additional_data =
@@ -350,8 +406,17 @@ impl SpendBundle {
                     "Puzzle Hash does not match Puzzle Reveal for Spend".to_string(),
                 ))?;
             }
-            let (cost, output_conditions_program) =
-                reveal.run(max_cost, NO_UNKNOWN_OPS | flags, &solution)?;
+            let (cost, output_conditions_program) = reveal.run(
+                max_cost,
+                NO_UNKNOWN_OPS
+                    | flags
+                    | if falcon {
+                        crate::clvm::falcon_ops::ENABLE_FALCON_OPS
+                    } else {
+                        0
+                    },
+                &solution,
+            )?;
             state.total_cost += cost;
             state.total_removed += spend.coin.amount;
             if state.total_cost > max_cost {
@@ -360,8 +425,28 @@ impl SpendBundle {
             if !state.coins_spent.insert(spend.coin) {
                 Err(ClvmError::DoubleSpend(format!("{}", spend.coin.coin_id())))?;
             }
-            let conditions_with_args: Vec<ConditionWithArgs> =
-                output_conditions_program.sexp().try_into()?;
+            let conditions_with_args: Vec<ConditionWithArgs> = if falcon {
+                // Falcon signature conditions were parsed, costed and verified
+                // above. The remaining common conditions retain this helper's
+                // announcement, amount, fee and duplicate-output checks.
+                let common = output_conditions_program
+                    .sexp()
+                    .ref_list()
+                    .into_iter()
+                    .filter(|condition| {
+                        condition.ref_list().first().is_none_or(|op| {
+                            let code =
+                                crate::blockchain::condition_opcode::ConditionOpcode::from(*op)
+                                    as u8;
+                            !(43..=50).contains(&code)
+                        })
+                    })
+                    .map(|condition| condition.to_owned())
+                    .collect::<Vec<_>>();
+                (&crate::clvm::sexp::SExp::from(common)).try_into()?
+            } else {
+                output_conditions_program.sexp().try_into()?
+            };
             if print {
                 info!("Validating Spend of: {:?}", spend.coin);
                 info!("Reveal: {reveal}");
@@ -718,7 +803,7 @@ impl SpendBundle {
                 state.output_conditions.push(condition_with_args);
             }
         }
-        if (flags & DISABLE_SIGNATURE_VALIDATION) == 0 {
+        if !falcon && (flags & DISABLE_SIGNATURE_VALIDATION) == 0 {
             let (keys, messages) = state.pkm_pairs.iter().fold(
                 (vec![], vec![]),
                 |(mut keys, mut messages), (key, msg)| {

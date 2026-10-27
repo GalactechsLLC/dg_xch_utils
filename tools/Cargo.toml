@@ -52,8 +52,8 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 rustix = { version = "1", features = ["fs", "process"] }
 
 [features]
-falcon = ["dg_xch_core/falcon", "dg_xch_farmer/falcon", "dg_full_node/falcon", "dg_xch_wallet/falcon"]
-labrador = ["falcon", "dg_xch_core/labrador", "dg_full_node/labrador", "dg_xch_wallet/labrador"]
+falcon = ["dg_xch_core/falcon", "dg_xch_farmer/falcon", "dg_xch_pool/falcon", "dg_full_node/falcon", "dg_xch_wallet/falcon"]
+labrador = ["falcon", "dg_xch_core/labrador", "dg_full_node/labrador", "dg_xch_wallet/labrador", "dg_xch_pool/labrador", "dg_xch_farmer/labrador"]
 cuda = ["dg_xch_farmer/cuda"]
 vulkan = ["dg_xch_farmer/vulkan", "dg_xch_plotter/vulkan"]
 default = ["sqlite"]

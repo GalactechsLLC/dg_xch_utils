@@ -1,10 +1,11 @@
 mod encoding;
 
+#[cfg(test)]
+use crate::Wallet;
 use crate::assets::{AssetCoin, AssetKind, ParsedAsset, parse_asset, validate_tree};
-use crate::common::sign_coin_spends;
 use crate::conditions::{Conditions, announcement_id};
 use crate::memory_wallet::MemoryWallet;
-use crate::{Wallet, WalletStore};
+use crate::signing::TransactionWallet;
 use dg_xch_core::blockchain::{
     coin::Coin, coin_record::CoinRecord, coin_spend::CoinSpend, sized_bytes::Bytes32,
     spend_bundle::SpendBundle,
@@ -16,7 +17,7 @@ use dg_xch_puzzles::{
     programs::SETTLEMENT_PAYMENT_PROGRAM,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::io::Error;
 
 const MAX_OFFER_BYTES: usize = 1024 * 1024;
@@ -277,15 +278,16 @@ pub fn inputs(text: &str) -> Result<Vec<Coin>, Error> {
     Ok(inputs)
 }
 
-pub(crate) struct OfferInputs<'a> {
-    pub wallet: &'a MemoryWallet,
+pub struct OfferInputs<'a, W: TransactionWallet = MemoryWallet> {
+    pub wallet: &'a W,
+    pub height: u32,
     pub coins: &'a [CoinRecord],
     pub assets: &'a [AssetCoin],
     pub reserved: &'a HashSet<Bytes32>,
     pub change: Bytes32,
 }
 
-impl OfferInputs<'_> {
+impl<W: TransactionWallet> OfferInputs<'_, W> {
     fn select(&self, amounts: &[OfferAmount], fee: u64) -> Result<Vec<Input>, Error> {
         let mut needs = BTreeMap::from([(OfferAsset::Xch, fee)]);
         for amount in amounts {
@@ -372,23 +374,7 @@ impl OfferInputs<'_> {
         if spends.is_empty() {
             return Ok(SpendBundle::empty());
         }
-        let store = self.wallet.wallet_store();
-        sign_coin_spends(
-            spends,
-            |key| {
-                let key = *key;
-                let store = store.clone();
-                async move { store.lock().await.secret_key_for_public_key(&key).await }
-            },
-            HashMap::new(),
-            self.wallet
-                .wallet_info()
-                .constants
-                .agg_sig_me_additional_data
-                .as_ref(),
-            MAX_COST,
-        )
-        .await
+        self.wallet.authorize(spends, self.height).await
     }
 
     async fn build(
@@ -440,15 +426,8 @@ impl OfferInputs<'_> {
                     }
                 }
                 conditions = conditions.extend(required.clone());
-                let puzzle = self
-                    .wallet
-                    .puzzle_for_puzzle_hash(&input.owner)
-                    .await?
-                    .to_owned();
-                let solution =
-                    dg_xch_puzzles::p2_delegated_puzzle_or_hidden_puzzle::solution_for_conditions(
-                        conditions.program().sexp().to_owned(),
-                    )?;
+                let puzzle = self.wallet.owner_puzzle(&input.owner).await?;
+                let solution = self.wallet.conditions_solution(conditions.program())?;
                 if let Some(cat) = input.cat {
                     cats.push(CatSpend {
                         coin: input.coin,
@@ -587,14 +566,24 @@ impl OfferInputs<'_> {
         if !offer.requested.is_empty() {
             return Err(Error::other("unfunded offer payments"));
         }
-        let mut completed = SpendBundle::aggregate(vec![offer.bundle, own])?;
+        let mut completed = if self.wallet.consensus_constants().signature_profile.is_bls() {
+            SpendBundle::aggregate(vec![offer.bundle, own])?
+        } else {
+            #[cfg(feature = "falcon")]
+            {
+                crate::falcon::combine(
+                    &[offer.bundle, own],
+                    self.wallet.consensus_constants(),
+                    self.height,
+                )?
+            }
+            #[cfg(not(feature = "falcon"))]
+            {
+                return Err(Error::other("Falcon offers require the falcon feature"));
+            }
+        };
         completed.coin_spends.extend(settlement_spends);
-        completed.validate(
-            Some(MAX_COST),
-            0,
-            &self.wallet.wallet_info().constants,
-            false,
-        )?;
+        completed.validate(Some(MAX_COST), 0, self.wallet.consensus_constants(), false)?;
         Ok(completed)
     }
 
@@ -651,12 +640,7 @@ impl OfferInputs<'_> {
             return Err(Error::other("cancellation fee needs XCH inputs"));
         }
         let bundle = source.build(selected, &[], fee, Vec::new()).await?;
-        bundle.validate(
-            Some(MAX_COST),
-            0,
-            &self.wallet.wallet_info().constants,
-            false,
-        )?;
+        bundle.validate(Some(MAX_COST), 0, self.wallet.consensus_constants(), false)?;
         Ok(bundle)
     }
 }
@@ -666,6 +650,7 @@ mod tests {
     use crate::assets::{AssetAction, build_transaction, discover_asset};
     use dg_xch_clients::rpc::full_node::FullnodeClient;
     use dg_xch_core::consensus::constants::{ConsensusConstants, TESTNET_11};
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     fn wallet(seed: u8) -> MemoryWallet {
@@ -738,6 +723,7 @@ mod tests {
             assets: &[],
             reserved: &empty,
             change: maker_hash,
+            height: 0,
         };
         let give = OfferAmount {
             asset: OfferAsset::Xch,
@@ -766,6 +752,7 @@ mod tests {
             assets: &assets,
             reserved: &empty,
             change: taker_hash,
+            height: 0,
         };
         let references: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/reference_offers.json")).unwrap();

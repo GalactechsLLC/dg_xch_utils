@@ -172,6 +172,105 @@ fn fund(sim: &mut CoinsetSimulator, wallet: &FalconWallet, amount: u64) -> CoinR
     *sim.coin_record(coin.name()).unwrap()
 }
 
+#[tokio::test]
+async fn falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization() {
+    use dg_xch_core::{
+        blockchain::coin_spend::CoinSpend,
+        clvm::{
+            program::{Program, SerializedProgram},
+            sexp::SExp,
+        },
+        signatures::SignatureSigner,
+    };
+    use dg_xch_puzzles::pool_v2::{PlotNft, PoolConfig, PoolOwner};
+    use dg_xch_wallet::signing::TransactionWallet;
+    let constants = ChainDefinition::falcon_development("Falcon PlotNFT".into())
+        .constants()
+        .unwrap();
+    let key = Arc::new(FalconSigner::generate().unwrap());
+    let wallet = FalconWallet::new(key.clone(), Arc::new(constants)).unwrap();
+    let mut sim = CoinsetSimulator::new();
+    sim.constants = constants;
+    let origin = fund(&mut sim, &wallet, 1000).coin;
+    let launch = PlotNft::launch(
+        origin,
+        constants.genesis_challenge,
+        key.public_key(),
+        Some(PoolConfig {
+            target: [8; 32].into(),
+            relative_lock_height: 100,
+            memoization: SerializedProgram::from_bytes(&[0x80]),
+        }),
+        wallet.puzzle_hash(),
+    )
+    .unwrap();
+    let bundle =
+        dg_xch_wallet::pooling::fund_falcon_launch(&wallet, origin, launch.clone(), 0, sim.height)
+            .await
+            .unwrap();
+    assert_eq!(bundle.authorization.as_ref().unwrap().transactions.len(), 1);
+    sim.new_transaction(bundle).unwrap();
+    assert!(sim.coin_record(launch.singleton.name()).is_some());
+    let definition = PlotNft {
+        launcher_id: launch.launcher_id,
+        genesis_challenge: constants.genesis_challenge,
+        synthetic_public_key: key.public_key(),
+        exiting: false,
+        pool: Some(PoolConfig {
+            target: [8; 32].into(),
+            relative_lock_height: 100,
+            memoization: SerializedProgram::from_bytes(&[0x80]),
+        }),
+    };
+    sim.height = 128;
+    let reward = dg_xch_core::blockchain::coin::Coin {
+        parent_coin_info: dg_xch_core::consensus::coinbase::pool_parent_id(
+            128,
+            constants.genesis_challenge,
+        ),
+        puzzle_hash: launch.contract_puzzle_hash,
+        amount: constants.rewards.pool_reward(128),
+    };
+    sim.insert_coin(reward);
+    let claims = definition
+        .claim_reward(launch.singleton, &launch.spends[1], reward, 128)
+        .unwrap();
+    let claim_bundle = wallet.authorize(claims, sim.height).await.unwrap();
+    assert!(
+        claim_bundle
+            .authorization
+            .as_ref()
+            .unwrap()
+            .transactions
+            .is_empty()
+    );
+    let outputs = sim.new_transaction(claim_bundle).unwrap();
+    assert!(
+        outputs
+            .iter()
+            .any(|c| c.puzzle_hash == [8; 32].into() && c.amount == reward.amount)
+    );
+    // Exercise the owner member itself: changing the delegated hash must require
+    // a different Falcon signature, with no BLS taproot escape hatch.
+    let member = key.public_key().member().unwrap();
+    let owner_coin = sim.new_coin(member.tree_hash(), 1);
+    let spend = CoinSpend {
+        coin: owner_coin,
+        puzzle_reveal: member.serialized().unwrap(),
+        solution: Program::to(vec![SExp::from(vec![7u8; 32])])
+            .serialized()
+            .unwrap(),
+    };
+    let signed = wallet.authorize(vec![spend], sim.height).await.unwrap();
+    assert_eq!(signed.authorization.as_ref().unwrap().transactions.len(), 1);
+    let mut changed = signed.clone();
+    changed.coin_spends[0].solution = Program::to(vec![SExp::from(vec![9u8; 32])])
+        .serialized()
+        .unwrap();
+    assert!(sim.new_transaction(changed).is_err());
+    sim.new_transaction(signed).unwrap();
+}
+
 fn assets(sim: &CoinsetSimulator, bundle: &SpendBundle, owner: Bytes32) -> Vec<AssetCoin> {
     let mut found = Vec::new();
     for spend in &bundle.coin_spends {
@@ -617,4 +716,131 @@ async fn mixed_256_signature_wallet_batch_fits_the_mempool_budget() {
         conditions.cost
     );
     sim.new_transaction(combined).unwrap();
+}
+
+#[tokio::test]
+async fn falcon_offers_round_trip_take_and_cancel_with_shared_cat_rules() {
+    use dg_xch_wallet::offers::{OfferAmount, OfferAsset, OfferInputs, review};
+    let (mut sim, maker, taker) = setup();
+    let maker_coins = [fund(&mut sim, &maker, 200)];
+    let funding = [fund(&mut sim, &taker, 200)];
+    let empty = HashSet::new();
+    let mint = build_asset_transaction(
+        &taker,
+        &funding,
+        &[],
+        &empty,
+        &AssetAction::LaunchCat2 { amount: 100 },
+        0,
+        taker.puzzle_hash(),
+        sim.height,
+    )
+    .await
+    .unwrap();
+    sim.new_transaction(mint.clone()).unwrap();
+    let cats = assets(&sim, &mint, taker.puzzle_hash());
+    let asset_id = cats[0].asset_id;
+    let maker_inputs = OfferInputs {
+        wallet: &maker,
+        height: sim.height,
+        coins: &maker_coins,
+        assets: &[],
+        reserved: &empty,
+        change: maker.puzzle_hash(),
+    };
+    let taker_inputs = OfferInputs {
+        wallet: &taker,
+        height: sim.height,
+        coins: &[],
+        assets: &cats,
+        reserved: &empty,
+        change: taker.puzzle_hash(),
+    };
+    let offer = maker_inputs
+        .make(
+            OfferAmount {
+                asset: OfferAsset::Xch,
+                amount: 50,
+            },
+            OfferAmount {
+                asset: OfferAsset::Cat2(asset_id),
+                amount: 10,
+            },
+            1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(review(&offer.text).unwrap().requested[0].amount, 10);
+    assert!(
+        sim.clone()
+            .new_transaction(offer.maker_bundle.clone())
+            .is_err()
+    );
+    let completed = taker_inputs.take(&offer.text, 0).await.unwrap();
+    assert!(completed.authorization.as_ref().unwrap().transactions.len() >= 2);
+    let cancellation = maker_inputs.cancel(&offer.maker_bundle, 1).await.unwrap();
+    let mut cancelled = sim.clone();
+    cancelled.new_transaction(cancellation).unwrap();
+    assert!(cancelled.new_transaction(completed.clone()).is_err());
+    let mut forged = completed.clone();
+    forged.authorization.as_mut().unwrap().transactions[0][20] ^= 1;
+    assert!(sim.clone().new_transaction(forged).is_err());
+    sim.new_transaction(completed).unwrap();
+}
+
+#[tokio::test]
+async fn did_launch_and_normal_transfer_use_falcon_owner_authorization() {
+    use dg_xch_wallet::assets::DidType;
+    let (mut sim, owner, recipient) = setup();
+    let funding = [fund(&mut sim, &owner, 100)];
+    let empty = HashSet::new();
+    let launch = build_asset_transaction(
+        &owner,
+        &funding,
+        &[],
+        &empty,
+        &AssetAction::LaunchDid(DidType::Cni),
+        0,
+        owner.puzzle_hash(),
+        sim.height,
+    )
+    .await
+    .unwrap();
+    sim.new_transaction(launch.clone()).unwrap();
+    let owned = assets(&sim, &launch, owner.puzzle_hash());
+    let did = owned
+        .iter()
+        .find(|a| a.kind == AssetKind::Did(DidType::Cni))
+        .unwrap();
+    let transfer = build_asset_transaction(
+        &owner,
+        &[],
+        &owned,
+        &empty,
+        &AssetAction::Transfer {
+            coin_id: did.record.coin.name(),
+            destination: recipient.puzzle_hash(),
+            amount: 1,
+        },
+        0,
+        owner.puzzle_hash(),
+        sim.height,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !transfer
+            .authorization
+            .as_ref()
+            .unwrap()
+            .transactions
+            .is_empty()
+    );
+    sim.new_transaction(transfer.clone()).unwrap();
+    let received = assets(&sim, &transfer, recipient.puzzle_hash());
+    assert!(
+        received
+            .iter()
+            .any(|a| a.asset_id == did.asset_id && a.kind == did.kind)
+    );
 }

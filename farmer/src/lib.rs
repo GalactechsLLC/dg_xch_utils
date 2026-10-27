@@ -54,6 +54,26 @@ pub struct FarmerService {
 
 impl FarmerService {
     pub async fn pool_settings(&self) -> Result<Vec<pool_management::PoolSettings>, Error> {
+        #[cfg(feature = "falcon")]
+        {
+            let config = self.config.read().await;
+            if let Some(keys) = config.falcon_keys()? {
+                let client = config.pool_client()?;
+                let mut settings = Vec::new();
+                for pool in &config.falcon_pools {
+                    settings.push(
+                        pool_management::read_falcon_settings(
+                            &client,
+                            pool,
+                            &keys.wallet,
+                            &config.constants()?,
+                        )
+                        .await?,
+                    );
+                }
+                return Ok(settings);
+            }
+        }
         let client = Arc::new(self.config.read().await.pool_client()?);
         let configs = self.config.read().await.pool_info.clone();
         let mut settings = Vec::new();
@@ -74,25 +94,40 @@ impl FarmerService {
         payout: &str,
         difficulty: u64,
     ) -> Result<pool_management::PoolSettings, Error> {
-        if !self
-            .config
-            .read()
-            .await
-            .pool_info
-            .iter()
-            .any(|config| config == &expected.config)
-        {
+        let config = match &expected.identity {
+            pool_management::PoolIdentity::Bls(config, _) => config,
+            #[cfg(feature = "falcon")]
+            pool_management::PoolIdentity::Falcon(pool) => {
+                let config = self.config.read().await;
+                if !config.falcon_pools.contains(pool) {
+                    return Err(Error::other("pool is no longer configured on this farmer"));
+                }
+                let keys = config
+                    .falcon_keys()?
+                    .ok_or_else(|| Error::other("Falcon keys unavailable"))?;
+                return pool_management::update_falcon_settings(
+                    &config.pool_client()?,
+                    expected,
+                    &keys.wallet,
+                    &config.constants()?,
+                    payout,
+                    difficulty,
+                )
+                .await;
+            }
+        };
+        if !self.config.read().await.pool_info.contains(config) {
             return Err(Error::other("pool is no longer configured on this farmer"));
         }
         let authentication_key = self
             .state
             .owner_public_keys_to_auth_secret_keys
-            .get(&expected.config.owner_public_key)
+            .get(&config.owner_public_key)
             .ok_or_else(|| Error::other("pool authentication key is unavailable"))?;
         let owner_key = self
             .state
             .owner_secret_keys
-            .get(&expected.config.owner_public_key)
+            .get(&config.owner_public_key)
             .ok_or_else(|| Error::other("pool owner key is unavailable"))?;
         pool_management::update_settings(
             Arc::new(self.config.read().await.pool_client()?),

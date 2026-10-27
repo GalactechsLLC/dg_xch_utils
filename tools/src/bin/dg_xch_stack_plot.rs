@@ -204,9 +204,30 @@ fn prepare_falcon(
         signatures::{SignatureSigner, falcon_block::public_key_id, falcon_keys::FalconKeyring},
     };
     use dg_xch_pos2::{compact::CompactPlot, params::ProofParams};
-    if args.pooling {
-        return Err(Error::other("Falcon pool protocol is not implemented"));
-    }
+    let contract = if args.pooling {
+        let mut bytes = Vec::new();
+        std::fs::File::open(
+            args.root
+                .join(format!("farmer-{farmer}/pool-plot-keys.json")),
+        )?
+        .take(4097)
+        .read_to_end(&mut bytes)?;
+        if bytes.len() > 4096 {
+            return Err(Error::other("Falcon pool plot configuration exceeds 4 KiB"));
+        }
+        let pool: dg_xch_core::protocols::pool_falcon::PoolConfig =
+            serde_json::from_slice(&bytes).map_err(Error::other)?;
+        if dg_xch_puzzles::pool_v2::reward_puzzle(pool.launcher_id)?.tree_hash()
+            != pool.contract_puzzle_hash
+        {
+            return Err(Error::other(
+                "Falcon plot contract does not match PlotNFT launcher",
+            ));
+        }
+        Some(pool.contract_puzzle_hash)
+    } else {
+        None
+    };
     let keys = FalconKeyring::load(&args.root.join(format!("farmer-{farmer}/falcon-keys.bin")))?;
     if usize::from(args.count) > keys.plots.len() {
         return Err(Error::other("plot count exceeds keyring size"));
@@ -215,12 +236,19 @@ fn prepare_falcon(
     std::fs::create_dir_all(&directory)?;
     for (index, pair) in keys.plots.iter().take(usize::from(args.count)).enumerate() {
         let index = index as u16;
-        let pool = public_key_id(&pair.pool.public_key());
+        let pool = contract
+            .is_none()
+            .then(|| public_key_id(&pair.pool.public_key()));
         let plot = public_key_id(&pair.plot.public_key());
-        let id = calculate_plot_id_v2(args.strength, plot, Some(pool), None, index, 0);
+        let id = calculate_plot_id_v2(args.strength, plot, pool, contract, index, 0);
         let mut memo = b"DGXFAL02".to_vec();
         memo.resize(32, 0);
-        memo.extend_from_slice(pool.as_ref());
+        if let Some(contract) = contract {
+            memo.extend_from_slice(contract.as_ref());
+        }
+        if let Some(pool) = pool {
+            memo.extend_from_slice(pool.as_ref());
+        }
         memo.extend_from_slice(plot.as_ref());
         let output = directory.join(format!(
             "pos2-k{}-s{}-{index}.plot",

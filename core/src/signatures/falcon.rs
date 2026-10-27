@@ -19,6 +19,20 @@ pub const FN_DSA_CONTEXT: &[u8] = b"dg_xch/fn-dsa-512/v2";
 
 pub struct FnDsa512V2;
 
+impl FnDsa512V2 {
+    pub fn valid_public_key(public_key: &FalconPublicKey) -> bool {
+        #[cfg(feature = "falcon")]
+        {
+            fn_dsa::VerifyingKey512::decode(public_key).is_some()
+        }
+        #[cfg(not(feature = "falcon"))]
+        {
+            let _ = public_key;
+            false
+        }
+    }
+}
+
 impl SignatureScheme for FnDsa512V2 {
     type PublicKey = FalconPublicKey;
     type Signature = FalconSignature;
@@ -98,7 +112,61 @@ pub struct FalconSigner {
     signing_key: std::sync::Mutex<Box<fn_dsa::SigningKey512>>,
 }
 
+// Versioned deterministic key-generation stream. Signing still uses fresh OS entropy.
+#[cfg(feature = "falcon")]
+struct SeedRng(fn_dsa::SHAKE256);
+#[cfg(feature = "falcon")]
+impl fn_dsa::CryptoRng for SeedRng {}
+#[cfg(feature = "falcon")]
+impl fn_dsa::RngCore for SeedRng {
+    fn next_u32(&mut self) -> u32 {
+        let mut bytes = [0; 4];
+        self.0.extract(&mut bytes);
+        u32::from_le_bytes(bytes)
+    }
+    fn next_u64(&mut self) -> u64 {
+        let mut bytes = [0; 8];
+        self.0.extract(&mut bytes);
+        u64::from_le_bytes(bytes)
+    }
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.0.extract(dest);
+    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), fn_dsa::RngError> {
+        self.0.extract(dest);
+        Ok(())
+    }
+}
+
 impl FalconSigner {
+    /// Derive a recoverable FN-DSA v2 key from a BIP39 seed and a fixed application path.
+    /// The pinned fn-dsa version and domain define this derivation format.
+    #[cfg(feature = "falcon")]
+    pub fn from_seed(
+        seed: &[u8; 64],
+        role: u32,
+        index: u32,
+        hardened: bool,
+    ) -> Result<Self, SigningError> {
+        let mut stream = fn_dsa::SHAKE256::new();
+        stream.inject(b"dg_xch/fn-dsa-512/hd/v1\0");
+        stream.inject(seed);
+        stream.inject(&role.to_be_bytes());
+        stream.inject(&index.to_be_bytes());
+        stream.inject(&[u8::from(hardened)]);
+        stream.flip();
+        let mut rng = SeedRng(stream);
+        let mut public_key = [0; 897];
+        let mut secret_key = Zeroizing::new([0; SECRET_KEY_BYTES]);
+        fn_dsa::KeyPairGenerator512::default().keygen(
+            fn_dsa::FN_DSA_LOGN_512,
+            &mut rng,
+            secret_key.as_mut(),
+            &mut public_key,
+        );
+        Self::from_secret_bytes(public_key, secret_key.as_ref())
+    }
+
     pub fn generate() -> Result<Self, SigningError> {
         #[cfg(feature = "falcon")]
         {

@@ -610,27 +610,31 @@ where
         let message = if is_sp {
             let config = self.config.read().await;
             let payout = Bytes32::from_str(&parse_payout_address(&config.payout_address)?)?;
-            let pool_key = proof
-                .pool_public_key
-                .ok_or_else(|| Error::other("Falcon currently requires solo plots"))?;
-            let keys = self
-                .falcon_keys
-                .as_ref()
-                .ok_or_else(|| Error::other("missing Falcon keys"))?;
-            let signer = keys
-                .pool(pool_key)
-                .ok_or_else(|| Error::other("unknown Falcon pool key"))?;
-            let target = PoolTarget {
-                max_height: 0,
-                puzzle_hash: payout,
+            let (pool_target, pool_signature) = if let Some(pool_key) = proof.pool_public_key {
+                let keys = self
+                    .falcon_keys
+                    .as_ref()
+                    .ok_or_else(|| Error::other("missing Falcon keys"))?;
+                let signer = keys
+                    .pool(pool_key)
+                    .ok_or_else(|| Error::other("unknown Falcon pool key"))?;
+                let target = PoolTarget {
+                    max_height: 0,
+                    puzzle_hash: payout,
+                };
+                let pool_proof = FalconHeaderAuthorization::sign(
+                    &signer,
+                    genesis,
+                    &target.to_bytes(PROTOCOL_VERSION)?,
+                )?;
+                let signature = pool_proof.reference(genesis);
+                auth.header.push(pool_proof);
+                (Some(target), Some(signature))
+            } else if proof.pool_contract_puzzle_hash.is_some() {
+                (None, None)
+            } else {
+                return Err(Error::other("Falcon plot has no pool binding"));
             };
-            let pool_proof = FalconHeaderAuthorization::sign(
-                &signer,
-                genesis,
-                &target.to_bytes(PROTOCOL_VERSION)?,
-            )?;
-            let pool_signature = pool_proof.reference(genesis);
-            auth.header.push(pool_proof);
             auth.canonicalize();
             let request = DeclareProofOfSpace {
                 authorization: auth.into(),
@@ -642,8 +646,8 @@ where
                 challenge_chain_sp_signature: *cc_signature,
                 reward_chain_sp_signature: *rc_signature,
                 farmer_puzzle_hash: response.farmer_reward_address_override.unwrap_or(payout),
-                pool_target: Some(target),
-                pool_signature: Some(pool_signature),
+                pool_target,
+                pool_signature,
                 include_signature_source_data: response.include_source_signature_data,
             };
             ChiaMessage::new(

@@ -24,6 +24,12 @@ pub(super) struct InitArgs {
     ssl_root: PathBuf,
     #[arg(long, default_value = "/plots")]
     plots_dir: PathBuf,
+    /// Import an existing owner-only Falcon keyring instead of generating keys.
+    #[arg(long)]
+    import_falcon_keys: Option<PathBuf>,
+    /// Runtime path for the generated or imported Falcon keyring.
+    #[arg(long, default_value = "/runtime/falcon-keys.bin")]
+    falcon_key_file: PathBuf,
 }
 
 pub(super) fn initialize(args: &InitArgs) -> Result<(), Error> {
@@ -40,6 +46,14 @@ pub(super) fn initialize(args: &InitArgs) -> Result<(), Error> {
     if args.fullnode_host.is_empty() || args.fullnode_host.contains(['/', '\n', '\r']) {
         return Err(Error::other("supply a full-node DNS hostname"));
     }
+    if chain.constants.signature_profile.is_bls() && args.import_falcon_keys.is_some() {
+        return Err(Error::other("Falcon keys cannot initialize a BLS farmer"));
+    }
+    if !chain.constants.signature_profile.is_bls() && !cfg!(feature = "falcon") {
+        return Err(Error::other(
+            "Falcon farmer initialization requires the falcon feature",
+        ));
+    }
     // Never replace an existing identity, including when setup is run twice.
     std::fs::create_dir_all(
         args.output_dir
@@ -51,6 +65,10 @@ pub(super) fn initialize(args: &InitArgs) -> Result<(), Error> {
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&args.output_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(feature = "falcon")]
+    if !chain.constants.signature_profile.is_bls() {
+        return initialize_falcon(args, definition, chain.constants);
     }
     let master = blst::min_pk::SecretKey::key_gen_v3(&rand::random::<[u8; 32]>(), &[])
         .map_err(|_| Error::other("could not generate farming key"))?;
@@ -115,9 +133,95 @@ pub(super) fn initialize(args: &InitArgs) -> Result<(), Error> {
     Ok(())
 }
 
+#[cfg(feature = "falcon")]
+fn initialize_falcon(
+    args: &InitArgs,
+    definition: dg_xch_core::consensus::chain_definition::ChainDefinition,
+    constants: dg_xch_core::consensus::constants::ConsensusConstants,
+) -> Result<(), Error> {
+    use dg_xch_core::signatures::{SignatureSigner, falcon_keys::FalconKeyring, falcon_wallet};
+    let keys = match &args.import_falcon_keys {
+        Some(path) => FalconKeyring::load(path)?,
+        None => FalconKeyring::generate(32)?,
+    };
+    let payout = falcon_wallet::puzzle(&keys.wallet.public_key()).tree_hash();
+    let config: Config = Config {
+        selected_network: definition.network_id.clone(),
+        chain_definition: Some(definition),
+        ssl_root_path: Some(args.ssl_root.to_string_lossy().into_owned()),
+        fullnode_ws_host: args.fullnode_host.clone(),
+        fullnode_rpc_host: args.fullnode_host.clone(),
+        fullnode_ws_port: args.fullnode_port,
+        fullnode_rpc_port: args.fullnode_port,
+        falcon_key_file: Some(args.falcon_key_file.clone()),
+        payout_address: encode_puzzle_hash(&payout, constants.bech32_prefix)?,
+        harvester_configs: HarvesterConfig {
+            plot_directories: vec![args.plots_dir.to_string_lossy().into_owned()],
+            druid_garden: None,
+            pos2: Some(Pos2HarvesterConfig::default()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    config.validate_keys()?;
+    if !config.is_ready() {
+        return Err(Error::other(
+            "invalid generated Falcon farmer configuration",
+        ));
+    }
+    write_new(&args.output_dir.join("falcon-keys.bin"), &keys.encode())?;
+    let encoded = serde_yaml::to_string(&config).map_err(Error::other)?;
+    write_new(&args.output_dir.join("farmer.yaml"), encoded.as_bytes())?;
+    write_new(&args.output_dir.join("plot-keys.json"), &serde_json::to_vec_pretty(&serde_json::json!({"signature_profile":"fn_dsa512_v2", "plot_count":keys.plots.len(), "payout_address":config.payout_address})).map_err(Error::other)?)?;
+    eprintln!(
+        "Falcon farmer identity saved in {}. Mount falcon-keys.bin at {} and enroll its RPC certificate before starting.",
+        args.output_dir.display(),
+        args.falcon_key_file.display()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "falcon")]
+    #[test]
+    fn imports_existing_falcon_identity_without_generating_bls_keys() {
+        use dg_xch_core::signatures::falcon_keys::FalconKeyring;
+        let root = tempfile::tempdir().unwrap();
+        let chain = root.path().join("chain.json");
+        let definition =
+            dg_xch_core::consensus::chain_definition::ChainDefinition::falcon_development(
+                "CLI Falcon init".into(),
+            );
+        write_new(&chain, &serde_json::to_vec(&definition).unwrap()).unwrap();
+        let source = root.path().join("existing.bin");
+        let keys = FalconKeyring::generate(1).unwrap();
+        write_new(&source, &keys.encode()).unwrap();
+        let args = InitArgs {
+            chain_config: chain,
+            output_dir: root.path().join("farmer"),
+            fullnode_host: "dgx-test.druid.garden".into(),
+            fullnode_port: 30444,
+            ssl_root: "/runtime/ssl".into(),
+            plots_dir: "/plots".into(),
+            import_falcon_keys: Some(source.clone()),
+            falcon_key_file: "/runtime/falcon-keys.bin".into(),
+        };
+        initialize(&args).unwrap();
+        let config: Config =
+            serde_yaml::from_slice(&std::fs::read(args.output_dir.join("farmer.yaml")).unwrap())
+                .unwrap();
+        assert!(config.farmer_info.is_empty());
+        assert!(config.pool_info.is_empty());
+        assert_eq!(config.falcon_key_file, Some(args.falcon_key_file.clone()));
+        assert_eq!(
+            std::fs::read(&source).unwrap(),
+            std::fs::read(args.output_dir.join("falcon-keys.bin")).unwrap()
+        );
+        assert!(!args.output_dir.join("master-key.hex").exists());
+        assert!(initialize(&args).is_err());
+    }
     #[test]
     fn creates_matching_farmer_and_plotter_credentials_without_rotating_keys() {
         let root = tempfile::tempdir().unwrap();
@@ -131,6 +235,8 @@ mod tests {
             fullnode_port: 58444,
             ssl_root: "/runtime/ssl".into(),
             plots_dir: "/plots".into(),
+            import_falcon_keys: None,
+            falcon_key_file: "/runtime/falcon-keys.bin".into(),
         };
         initialize(&args).unwrap();
         let config: Config =

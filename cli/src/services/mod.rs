@@ -6,3 +6,5 @@ pub mod plotter;
 pub mod pool;
 #[cfg(feature = "timelord")]
 pub mod timelord;
+
+mod pool_login;

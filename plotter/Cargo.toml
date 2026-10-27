@@ -9,6 +9,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [features]
+falcon = ["dg_xch_core/falcon"]
+labrador = ["falcon", "dg_xch_core/labrador"]
 vulkan = ["dg_xch_pos2/vulkan"]
 
 [dependencies]

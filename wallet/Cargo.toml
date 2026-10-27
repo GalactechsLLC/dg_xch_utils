@@ -37,7 +37,7 @@ zeroize = "1.9.1"
 libc = "0.2.191"
 
 [features]
-falcon = ["dg_xch_core/falcon"]
+falcon = ["dg_xch_core/falcon", "dg_xch_node/falcon"]
 labrador = ["falcon", "dg_xch_core/labrador", "dg_xch_node/labrador"]
 
 [dev-dependencies]

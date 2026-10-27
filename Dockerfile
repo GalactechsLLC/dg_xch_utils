@@ -34,9 +34,9 @@ RUN --mount=type=cache,id=dgx-falcon-target,target=/build/target \
     find . -path './target' -prune -o -type f -name '*.rs' -exec touch {} + \
     && cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features --features "hint,timelord,falcon" \
     && cargo build --locked --release -p dg_xch_dev_tools --features falcon \
-       --bin dg_xch_stack_init --bin dg_xch_stack_plot --bin dg_xch_stack_check \
+       --bin dg_xch_stack_init --bin dg_xch_stack_plot --bin dg_xch_stack_check --bin dg_xch_stack_pool \
     && mkdir -p /build/falcon-bin \
-    && cp target/release/dgx target/release/dg_xch_stack_init target/release/dg_xch_stack_plot target/release/dg_xch_stack_check /build/falcon-bin/
+    && cp target/release/dgx target/release/dg_xch_stack_init target/release/dg_xch_stack_plot target/release/dg_xch_stack_check target/release/dg_xch_stack_pool /build/falcon-bin/
 
 FROM build-base AS labrador-builder
 # COPY preserves source mtimes; refresh them so cached artifacts never hide edits
@@ -45,10 +45,10 @@ RUN --mount=type=cache,id=dgx-falcon-target,target=/build/target \
     find . -path './target' -prune -o -type f -name '*.rs' -exec touch {} + \
     && cargo build --locked --release -p dg_xch_cli --bin dgx --no-default-features --features "hint,timelord,labrador" \
     && cargo build --locked --release -p dg_xch_dev_tools --features labrador \
-       --bin dg_xch_stack_init --bin dg_xch_stack_plot --bin dg_xch_stack_check \
+       --bin dg_xch_stack_init --bin dg_xch_stack_plot --bin dg_xch_stack_check --bin dg_xch_stack_pool \
     && cargo build --locked --release -p dg_xch_labrador --features backend --bin dg_xch_labrador_worker \
     && mkdir -p /build/labrador-bin \
-    && cp target/release/dg_xch_labrador_worker target/release/dgx target/release/dg_xch_stack_init target/release/dg_xch_stack_plot target/release/dg_xch_stack_check /build/labrador-bin/
+    && cp target/release/dg_xch_labrador_worker target/release/dgx target/release/dg_xch_stack_init target/release/dg_xch_stack_plot target/release/dg_xch_stack_check target/release/dg_xch_stack_pool /build/labrador-bin/
 
 FROM build-base AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends glslang-tools \
@@ -164,6 +164,7 @@ COPY --from=falcon-builder /build/falcon-bin/dgx /usr/local/bin/dgx
 COPY --from=falcon-builder /build/falcon-bin/dg_xch_stack_init /usr/local/bin/dg_xch_stack_init
 COPY --from=falcon-builder /build/falcon-bin/dg_xch_stack_plot /usr/local/bin/dg_xch_stack_plot
 COPY --from=falcon-builder /build/falcon-bin/dg_xch_stack_check /usr/local/bin/dg_xch_stack_check
+COPY --from=falcon-builder /build/falcon-bin/dg_xch_stack_pool /usr/local/bin/dg_xch_stack_pool
 
 FROM runtime-base AS labrador-stack
 COPY --from=labrador-builder /build/labrador-bin/ /usr/local/bin/

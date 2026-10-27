@@ -1,6 +1,5 @@
-use crate::memory_wallet::MemoryWallet;
+use crate::account_wallet::AccountWallet;
 use crate::storage::{BroadcastStatus, StoredTransaction, StoredWallet, WalletDatabase};
-use crate::{Wallet, WalletStore};
 use argon2::{Algorithm, Argon2, Params, Version};
 use blst::min_pk::SecretKey;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -20,7 +19,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Error, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
@@ -82,6 +80,28 @@ pub struct Account {
     pub encrypted_key: Vec<u8>,
 }
 
+#[derive(Clone)]
+pub enum AccountSecret {
+    Bls(SecretKey),
+    #[cfg(feature = "falcon")]
+    Falcon(Zeroizing<[u8; 64]>),
+}
+impl AccountSecret {
+    pub fn id(&self) -> Result<String, Error> {
+        match self {
+            Self::Bls(secret) => Ok(hex::encode(hash_256(secret.sk_to_pk().to_bytes()))),
+            #[cfg(feature = "falcon")]
+            Self::Falcon(seed) => {
+                use dg_xch_core::signatures::SignatureSigner;
+                let signer =
+                    dg_xch_core::signatures::falcon::FalconSigner::from_seed(seed, 0, 0, false)
+                        .map_err(Error::other)?;
+                Ok(hex::encode(hash_256(signer.public_key())))
+            }
+        }
+    }
+}
+
 impl Account {
     pub fn import(
         name: String,
@@ -121,13 +141,112 @@ impl Account {
         Ok(account)
     }
 
+    pub fn import_for_profile(
+        name: String,
+        network: String,
+        mnemonic: &str,
+        password: &str,
+        profile: dg_xch_core::signatures::SignatureProfile,
+    ) -> Result<Self, Error> {
+        if profile.is_bls() {
+            return Self::import(name, network, mnemonic, password);
+        }
+        #[cfg(not(feature = "falcon"))]
+        {
+            Err(Error::other("Falcon backend is unavailable"))
+        }
+        #[cfg(feature = "falcon")]
+        {
+            if password.len() < 12 || name.trim().is_empty() || network.trim().is_empty() {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "name, network and a password of at least 12 bytes are required",
+                ));
+            }
+            let seed = dg_xch_keys::mnemonic_seed(mnemonic)?;
+            let id = AccountSecret::Falcon(seed.clone()).id()?;
+            let mut account = Self {
+                version: 2,
+                id,
+                name,
+                network,
+                salt: rand::random(),
+                nonce: rand::random(),
+                encrypted_key: Vec::new(),
+            };
+            let key = account.encryption_key(password)?;
+            account.encrypted_key = XChaCha20Poly1305::new_from_slice(key.as_ref())
+                .map_err(|_| Error::other("invalid encryption key"))?
+                .encrypt(
+                    &XNonce::from(account.nonce),
+                    Payload {
+                        msg: seed.as_ref(),
+                        aad: &account.associated_data()?,
+                    },
+                )
+                .map_err(|_| Error::other("account encryption failed"))?;
+            Ok(account)
+        }
+    }
+
+    pub fn unlock_for_profile(
+        &self,
+        password: &str,
+        profile: dg_xch_core::signatures::SignatureProfile,
+    ) -> Result<AccountSecret, Error> {
+        if profile.is_bls() {
+            if self.version != ACCOUNT_VERSION {
+                return Err(Error::other("account signature profile mismatch"));
+            }
+            return self.unlock(password).map(AccountSecret::Bls);
+        }
+        #[cfg(not(feature = "falcon"))]
+        {
+            Err(Error::other("Falcon backend is unavailable"))
+        }
+        #[cfg(feature = "falcon")]
+        {
+            if self.version != 2 {
+                return Err(Error::other("account signature profile mismatch"));
+            }
+            let key = self.encryption_key(password)?;
+            let plaintext = Zeroizing::new(
+                XChaCha20Poly1305::new_from_slice(key.as_ref())
+                    .map_err(|_| Error::other("invalid encryption key"))?
+                    .decrypt(
+                        &XNonce::from(self.nonce),
+                        Payload {
+                            msg: &self.encrypted_key,
+                            aad: &self.associated_data()?,
+                        },
+                    )
+                    .map_err(|_| {
+                        Error::new(
+                            ErrorKind::PermissionDenied,
+                            "incorrect password or damaged account",
+                        )
+                    })?,
+            );
+            let mut seed = Zeroizing::new([0; 64]);
+            if plaintext.len() != seed.len() {
+                return Err(Error::other("invalid account seed"));
+            }
+            seed.copy_from_slice(&plaintext);
+            let secret = AccountSecret::Falcon(seed);
+            if secret.id()? != self.id {
+                return Err(Error::other("account identity mismatch"));
+            }
+            Ok(secret)
+        }
+    }
+
     fn associated_data(&self) -> Result<Vec<u8>, Error> {
         serde_json::to_vec(&(self.version, &self.id, &self.name, &self.network))
             .map_err(Error::other)
     }
 
     fn encryption_key(&self, password: &str) -> Result<Zeroizing<[u8; 32]>, Error> {
-        if self.version != ACCOUNT_VERSION {
+        if self.version != ACCOUNT_VERSION && self.version != 2 {
             return Err(Error::new(
                 ErrorKind::InvalidData,
                 "unsupported account version",
@@ -142,6 +261,9 @@ impl Account {
     }
 
     pub fn unlock(&self, password: &str) -> Result<SecretKey, Error> {
+        if self.version != ACCOUNT_VERSION {
+            return Err(Error::other("account signature profile mismatch"));
+        }
         let key = self.encryption_key(password)?;
         let plaintext = Zeroizing::new(
             XChaCha20Poly1305::new_from_slice(key.as_ref())
@@ -243,7 +365,7 @@ struct WalletJournal {
 }
 
 pub struct WalletSession {
-    wallet: MemoryWallet,
+    wallet: AccountWallet,
     client: FullnodeClient,
     database: WalletDatabase,
     stored: StoredWallet,
@@ -262,8 +384,27 @@ impl WalletSession {
         expected_genesis: Bytes32,
         database_path: PathBuf,
     ) -> Result<Self, Error> {
+        Self::new_with_secret(
+            AccountSecret::Bls(secret),
+            client,
+            constants,
+            expected_genesis,
+            database_path,
+        )
+        .await
+    }
+
+    pub async fn new_with_secret(
+        secret: AccountSecret,
+        client: FullnodeClient,
+        constants: Arc<ConsensusConstants>,
+        expected_genesis: Bytes32,
+        database_path: PathBuf,
+    ) -> Result<Self, Error> {
         let database_path = database_path.with_extension("sqlite");
-        let account_id = hex::encode(hash_256(secret.sk_to_pk().to_bytes()));
+        // Reject an incompatible identity before opening or migrating its database.
+        let account_id = secret.id()?;
+        let wallet = AccountWallet::new(secret, &client, constants)?;
         let mut database =
             WalletDatabase::open(&database_path, &account_id, expected_genesis).await?;
         let mut stored = match database.load().await? {
@@ -301,13 +442,7 @@ impl WalletSession {
             ));
         }
         stored.snapshot.synced = false;
-        let wallet = MemoryWallet::new(secret, &client, constants)?;
-        wallet
-            .wallet_store()
-            .lock()
-            .await
-            .current_index
-            .store(stored.address_index, Ordering::Relaxed);
+        wallet.set_index(stored.address_index).await;
         stored.snapshot.receive_puzzle_hash = wallet.get_puzzle_hash(false).await?;
         stored.refresh_balances()?;
         database.save(&stored).await?;
@@ -334,7 +469,26 @@ impl WalletSession {
         database_path: PathBuf,
         mode: crate::sync::SyncMode,
     ) -> Result<Self, Error> {
-        let mut session = Self::new(
+        Self::new_with_secret_and_mode(
+            AccountSecret::Bls(secret),
+            client,
+            constants,
+            expected_genesis,
+            database_path,
+            mode,
+        )
+        .await
+    }
+
+    pub async fn new_with_secret_and_mode(
+        secret: AccountSecret,
+        client: FullnodeClient,
+        constants: Arc<ConsensusConstants>,
+        expected_genesis: Bytes32,
+        database_path: PathBuf,
+        mode: crate::sync::SyncMode,
+    ) -> Result<Self, Error> {
+        let mut session = Self::new_with_secret(
             secret,
             client,
             constants.clone(),
@@ -592,8 +746,7 @@ impl WalletSession {
             .filter(|coin| !coin.spent && !reserved.contains(&coin.coin.name()))
             .copied()
             .collect();
-        let coin_store = self.wallet.wallet_store().lock().await.standard_coins();
-        *coin_store.lock().await = coins;
+        self.wallet.restore_coins(coins).await;
     }
 
     pub async fn checkpoint(&mut self) -> Result<(), Error> {
@@ -791,13 +944,25 @@ impl WalletSession {
             return Err(Error::new(ErrorKind::InvalidInput, "invalid amount or fee"));
         }
         self.sync().await?;
-        let transaction = self
+        let reserved = self.stored.reserved_coins();
+        let coins = self
+            .stored
+            .snapshot
+            .coins
+            .iter()
+            .filter(|c| !reserved.contains(&c.coin.name()))
+            .copied()
+            .collect::<Vec<_>>();
+        let bundle = self
             .wallet
-            .generate_simple_signed_transaction(amount, fee, destination)
+            .payment(
+                &coins,
+                destination,
+                amount,
+                fee,
+                self.stored.snapshot.height.unwrap_or(0),
+            )
             .await?;
-        let bundle = transaction
-            .spend_bundle
-            .ok_or_else(|| Error::other("transaction has no spend bundle"))?;
         self.broadcast(bundle).await
     }
 
@@ -807,7 +972,7 @@ impl WalletSession {
         fee: u64,
     ) -> Result<Bytes32, Error> {
         self.sync().await?;
-        let bundle = crate::assets::build_transaction(
+        let bundle = crate::assets::build_asset_transaction(
             &self.wallet,
             &self.stored.snapshot.coins,
             &self.stored.snapshot.assets,
@@ -815,6 +980,7 @@ impl WalletSession {
             &action,
             fee,
             self.stored.snapshot.receive_puzzle_hash,
+            self.stored.snapshot.height.unwrap_or(0),
         )
         .await?;
         self.broadcast(bundle).await
@@ -830,6 +996,7 @@ impl WalletSession {
         let reserved = self.stored.reserved_coins();
         let prepared = crate::offers::OfferInputs {
             wallet: &self.wallet,
+            height: self.stored.snapshot.height.unwrap_or(0),
             coins: &self.stored.snapshot.coins,
             assets: &self.stored.snapshot.assets,
             reserved: &reserved,
@@ -886,6 +1053,7 @@ impl WalletSession {
         let reserved = self.stored.reserved_coins();
         let bundle = crate::offers::OfferInputs {
             wallet: &self.wallet,
+            height: self.stored.snapshot.height.unwrap_or(0),
             coins: &self.stored.snapshot.coins,
             assets: &self.stored.snapshot.assets,
             reserved: &reserved,
@@ -914,6 +1082,7 @@ impl WalletSession {
         let reserved = self.stored.reserved_coins();
         let bundle = crate::offers::OfferInputs {
             wallet: &self.wallet,
+            height: self.stored.snapshot.height.unwrap_or(0),
             coins: &self.stored.snapshot.coins,
             assets: &self.stored.snapshot.assets,
             reserved: &reserved,
@@ -944,7 +1113,7 @@ impl WalletSession {
         } else {
             None
         };
-        next.address_index = self.wallet.wallet_store().lock().await.current_index();
+        next.address_index = self.wallet.current_index().await;
         if next.address_index >= MAX_DERIVATIONS {
             return Err(Error::other("wallet derivation limit exceeded"));
         }
@@ -1028,6 +1197,40 @@ fn refresh_pending_change(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn bls_accounts_reject_other_profiles_before_creating_a_database() {
+        use dg_xch_core::consensus::chain_definition::ChainDefinition;
+        use dg_xch_core::signatures::labrador::LabradorProfile;
+
+        for aggregation in [
+            None,
+            Some(LabradorProfile::Packed11V2),
+            Some(LabradorProfile::Packed11ZkV2),
+        ] {
+            let mut definition = ChainDefinition::falcon_development("account isolation".into());
+            definition.falcon_aggregation = aggregation;
+            let directory = tempfile::tempdir().unwrap();
+            let database = directory.path().join("wallet.sqlite");
+            let result = super::WalletSession::new(
+                blst::min_pk::SecretKey::key_gen(&[71; 32], &[]).unwrap(),
+                dg_xch_clients::rpc::full_node::FullnodeClient::new_simulator("127.0.0.1", 8555, 5)
+                    .unwrap(),
+                std::sync::Arc::new(definition.constants().unwrap()),
+                [42; 32].into(),
+                database.clone(),
+            )
+            .await;
+            assert!(
+                result
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("matching wallet identity")
+            );
+            assert!(!database.exists());
+        }
+    }
+
     use super::*;
 
     const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -1098,5 +1301,43 @@ mod tests {
             account.unlock(password).unwrap().to_bytes()
         );
         assert!(account_path(directory.path(), "../../escape").is_err());
+    }
+}
+
+#[cfg(all(test, feature = "falcon"))]
+mod falcon_account_tests {
+    use super::*;
+    use dg_xch_core::signatures::SignatureProfile;
+    #[test]
+    fn encrypted_falcon_account_roundtrip_rejects_wrong_profile_and_tampering() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let mut account = Account::import_for_profile(
+            "Test".into(),
+            "dgx".into(),
+            phrase,
+            "test-password-123",
+            SignatureProfile::FnDsa512V2,
+        )
+        .unwrap();
+        let secret = account
+            .unlock_for_profile("test-password-123", SignatureProfile::FnDsa512V2)
+            .unwrap();
+        assert_eq!(secret.id().unwrap(), account.id);
+        assert!(
+            account
+                .unlock_for_profile("test-password-123", SignatureProfile::Bls12381Aug)
+                .is_err()
+        );
+        assert!(
+            account
+                .unlock_for_profile("wrong-password", SignatureProfile::FnDsa512V2)
+                .is_err()
+        );
+        account.network = "another-network".into();
+        assert!(
+            account
+                .unlock_for_profile("test-password-123", SignatureProfile::FnDsa512V2)
+                .is_err()
+        );
     }
 }

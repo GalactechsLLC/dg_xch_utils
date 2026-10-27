@@ -220,6 +220,12 @@ impl Wallet<MemoryWalletStore, MemoryWalletConfig> for MemoryWallet {
         info: WalletInfo<MemoryWalletStore>,
         config: MemoryWalletConfig,
     ) -> Result<Self, Error> {
+        if !info.constants.signature_profile.is_bls() {
+            return Err(Error::other(format!(
+                "{} requires a matching wallet identity; this account uses a different signature profile",
+                dg_xch_core::branding::consensus_label(&info.constants)
+            )));
+        }
         let fullnode_client = if info.constants.simulated {
             FullnodeClient::new_simulator(&config.fullnode_host.clone(), config.fullnode_port, 60)?
         } else {

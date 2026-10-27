@@ -342,12 +342,15 @@ fn create_farmer(
         fullnode_rpc_port: 8444,
         signage_point_timeout_seconds: Config::<()>::default().signage_point_timeout_seconds,
         falcon_key_file: None,
+        #[cfg(feature = "falcon")]
+        runtime_falcon_keys: None,
         farmer_info: vec![FarmingInfo {
             farmer_secret_key: Bytes32::from(farmer.to_bytes()),
             pool_secret_key: Some(Bytes32::from(pool.to_bytes())),
             ..FarmingInfo::default()
         }],
         pool_info: Vec::new(),
+        falcon_pools: Vec::new(),
         pool_ca_certificates: Vec::new(),
         payout_address: encode_puzzle_hash(&payout, "dgx")?,
         harvester_configs: HarvesterConfig {
@@ -430,6 +433,7 @@ fn create_falcon_farmer(
         fullnode_rpc_host: "localhost".to_owned(),
         fullnode_rpc_port: 8444,
         falcon_key_file: Some(PathBuf::from("/service/falcon-keys.bin")),
+        runtime_falcon_keys: None,
         payout_address: encode_puzzle_hash(&payout, "dgx")?,
         harvester_configs: HarvesterConfig {
             plot_directories: vec!["/plots".to_owned()],

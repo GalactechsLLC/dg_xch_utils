@@ -52,6 +52,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
+mod account_wallet;
 pub mod accounts;
 pub mod assets;
 pub mod common;

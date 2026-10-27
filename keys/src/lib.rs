@@ -236,6 +236,13 @@ pub fn master_sk_to_pooling_authentication_sk(
     )
 }
 
+/// Recover the BIP39 seed without deriving a signature-scheme-specific key.
+pub fn mnemonic_seed(mnemonic: &str) -> Result<Zeroizing<[u8; 64]>, Error> {
+    let mnemonic = Mnemonic::from_str(mnemonic)
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;
+    Ok(Zeroizing::new(mnemonic.to_seed("")))
+}
+
 pub fn key_from_mnemonic_str(mnemonic: &str) -> Result<SecretKey, Error> {
     let mnemonic = Mnemonic::from_str(mnemonic)
         .map_err(|e| Error::new(ErrorKind::InvalidInput, format!("{e:?}")))?;

@@ -116,20 +116,35 @@ impl FarmingPlot {
                     .falcon
                     .as_ref()
                     .ok_or_else(|| Error::other("missing Falcon plot keys"))?;
-                let pool =
-                    Bytes48::from(<[u8; 48]>::try_from(&memo[32..80]).map_err(Error::other)?);
+                let (pool, contract, offset) = if info.portable {
+                    (
+                        None,
+                        Some(Bytes32::from(
+                            <[u8; 32]>::try_from(&memo[32..64]).map_err(Error::other)?,
+                        )),
+                        64,
+                    )
+                } else {
+                    (
+                        Some(Bytes48::from(
+                            <[u8; 48]>::try_from(&memo[32..80]).map_err(Error::other)?,
+                        )),
+                        None,
+                        80,
+                    )
+                };
                 let plot =
-                    Bytes48::from(<[u8; 48]>::try_from(&memo[80..128]).map_err(Error::other)?);
+                    Bytes48::from(<[u8; 48]>::try_from(&memo[offset..]).map_err(Error::other)?);
                 let signer = keyring
                     .plot(plot)
                     .ok_or_else(|| Error::other("unknown Falcon plot key"))?;
-                if keyring.pool(pool).is_none()
+                if pool.is_some_and(|pool| keyring.pool(pool).is_none())
                     || public_key_id(&signer.public_key()) != plot
                     || calculate_plot_id_v2(
                         info.strength,
                         plot,
-                        Some(pool),
-                        None,
+                        pool,
+                        contract,
                         info.index,
                         info.meta_group,
                     )
@@ -145,8 +160,8 @@ impl FarmingPlot {
                     falcon_signer: Some(signer),
                     genesis: constants.genesis_challenge,
                     farmer_public_key: plot,
-                    pool_public_key: Some(pool),
-                    pool_contract_puzzle_hash: None,
+                    pool_public_key: pool,
+                    pool_contract_puzzle_hash: contract,
                     plot_public_key: plot,
                 });
             }
@@ -1031,6 +1046,98 @@ mod tests {
                     count == 2 || portable && count == 1
                 );
             }
+        }
+    }
+
+    #[cfg(feature = "falcon")]
+    #[test]
+    fn falcon_portable_plots_bind_contract_and_sign_with_existing_plot_identity() {
+        use dg_xch_core::signatures::{
+            SignatureSigner, falcon_block::public_key_id, falcon_keys::FalconKeyring,
+        };
+        let constants = ChainDefinition::falcon_development("Falcon portable fixture".into())
+            .constants()
+            .unwrap();
+        let keys = Arc::new(FalconKeyring::generate(1).unwrap());
+        let key = public_key_id(&keys.plots[0].plot.public_key());
+        let contract = Bytes32::from([5; 32]);
+        for portable in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let pool = (!portable).then(|| public_key_id(&keys.plots[0].pool.public_key()));
+            let binding = portable.then_some(contract);
+            let id = calculate_plot_id_v2(2, key, pool, binding, 0, 0);
+            let params =
+                ProofParams::new(id, constants.plot_size_v2, 2, constants.is_testnet).unwrap();
+            let mut memo = b"DGXFAL02".to_vec();
+            memo.resize(32, 0);
+            if let Some(pool) = pool {
+                memo.extend_from_slice(pool.as_ref());
+            }
+            if let Some(contract) = binding {
+                memo.extend_from_slice(contract.as_ref());
+            }
+            memo.extend_from_slice(key.as_ref());
+            let path = directory.path().join("falcon.plot");
+            let native = dg_xch_pos::pos2::compact::CompactPlot::build(
+                params,
+                dg_xch_pos::pos2::plotting::PlotLimits {
+                    memory_bytes: 64 * 1024 * 1024,
+                    max_entries: 1 << 20,
+                    max_work: 10_000_000,
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            dg_xch_plotter::format::write_compact(
+                &mut File::create(&path).unwrap(),
+                &native,
+                0,
+                0,
+                &memo,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let farming_keys = FarmingKeys {
+                falcon: Some(keys.clone()),
+                farmer_public_keys: Vec::new(),
+                pool_public_keys: Vec::new(),
+                pool_contract_hashes: vec![contract],
+            };
+            let plot = FarmingPlot::open(path.clone(), &farming_keys, &constants).unwrap();
+            assert_eq!(plot.info.portable, portable);
+            assert_eq!(
+                plot.proof([6; 32].into(), Vec::new())
+                    .pool_contract_puzzle_hash,
+                binding
+            );
+            let messages = vec![[7; 32].into(); if portable { 1 } else { 2 }];
+            let signed = plot
+                .sign(RequestSignatures {
+                    plot_identifier: plot.path.identifier().to_string(),
+                    challenge_hash: [8; 32].into(),
+                    sp_hash: [9; 32].into(),
+                    messages: messages.clone(),
+                    message_data: None,
+                    rc_block_unfinished: None,
+                })
+                .unwrap();
+            let expected = signed
+                .message_signatures
+                .iter()
+                .map(|(message, signature)| (key, message.const_bytes().to_vec(), *signature))
+                .collect::<Vec<_>>();
+            assert!(
+                signed
+                    .authorization
+                    .as_ref()
+                    .unwrap()
+                    .verify_messages(constants.genesis_challenge, &expected)
+            );
+            let wrong = FarmingKeys {
+                falcon: Some(Arc::new(FalconKeyring::generate(1).unwrap())),
+                ..farming_keys
+            };
+            assert!(FarmingPlot::open(path, &wrong, &constants).is_err());
         }
     }
 

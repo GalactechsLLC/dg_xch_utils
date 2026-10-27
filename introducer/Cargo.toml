@@ -23,3 +23,7 @@ tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"]
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+falcon = ["dg_xch_core/falcon"]
+labrador = ["falcon", "dg_xch_core/labrador"]

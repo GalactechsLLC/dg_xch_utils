@@ -59,7 +59,8 @@ num-bigint = "0.4.6"
 serde_json = "1.0.154"
 
 [features]
-falcon = ["dg_xch_core/falcon", "dg_xch_node/falcon", "pos2", "dep:clap", "dep:zeroize"]
+labrador = ["falcon", "dg_xch_core/labrador", "dg_xch_node/labrador", "dg_full_node?/labrador"]
+falcon = ["dg_xch_core/falcon", "dg_xch_node/falcon", "pos2", "dep:clap", "dep:zeroize", "dg_full_node?/falcon"]
 default = ["pos2"]
 # Native plot creation, proving, and solving for proof of space 2.
 pos2 = ["dep:dg_xch_plotter"]

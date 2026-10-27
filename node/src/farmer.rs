@@ -126,19 +126,24 @@ pub fn validate_declared_proof_with_context(
                 declare.reward_chain_sp_signature,
             ),
         ];
-        if let (Some(pool), Some(target), Some(signature)) = (
+        match (
             declare.proof_of_space.pool_public_key,
+            declare.proof_of_space.pool_contract_puzzle_hash,
             declare.pool_target,
             declare.pool_signature,
         ) {
-            use dg_xch_serialize::ChiaSerialize;
-            let Ok(message) = target.to_bytes(dg_xch_serialize::ChiaProtocolVersion::default())
-            else {
-                return DeclareVerdict::InvalidProof;
-            };
-            messages.push((pool, message, signature));
-        } else {
-            return DeclareVerdict::InvalidProof;
+            (Some(pool), None, Some(target), Some(signature)) => {
+                use dg_xch_serialize::ChiaSerialize;
+                let Ok(message) = target.to_bytes(dg_xch_serialize::ChiaProtocolVersion::default())
+                else {
+                    return DeclareVerdict::InvalidProof;
+                };
+                messages.push((pool, message, signature));
+            }
+            // Portable plots commit the reward contract in their plot identity.
+            // Only the plot key signs the two signage-point messages.
+            (None, Some(_), None, None) => {}
+            _ => return DeclareVerdict::InvalidProof,
         }
         if !auth.verify_messages(constants.genesis_challenge, &messages) {
             return DeclareVerdict::InvalidProof;

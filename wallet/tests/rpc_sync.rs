@@ -240,6 +240,9 @@ impl MockRpc {
                     }
                     Err(error) => panic!("mock RPC accept: {error}"),
                 };
+                // Accepted sockets can inherit the listener's nonblocking mode.
+                // Request parsing below uses blocking reads with a timeout.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
@@ -301,8 +304,11 @@ impl MockRpc {
 impl Drop for MockRpc {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
-            worker.join().unwrap();
+        if let Some(worker) = self.worker.take()
+            && let Err(panic) = worker.join()
+            && !std::thread::panicking()
+        {
+            std::panic::resume_unwind(panic);
         }
     }
 }

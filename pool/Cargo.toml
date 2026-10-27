@@ -7,6 +7,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+labrador = ["falcon", "dg_xch_core/labrador", "dg_xch_wallet/labrador"]
+falcon = ["dg_xch_core/falcon", "dg_xch_wallet/falcon"]
+
 [dependencies]
 async-trait = "0.1.89"
 blst = { version = "0.3.16", features = ["portable"] }

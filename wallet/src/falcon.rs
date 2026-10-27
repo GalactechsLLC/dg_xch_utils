@@ -233,6 +233,9 @@ impl FalconWallet {
 
 #[async_trait]
 impl TransactionWallet for FalconWallet {
+    fn consensus_constants(&self) -> &ConsensusConstants {
+        &self.constants
+    }
     async fn owner_puzzle(&self, puzzle_hash: &Bytes32) -> Result<Program<'static>, Error> {
         if *puzzle_hash != self.puzzle_hash() {
             return Err(Error::other("wallet does not own puzzle"));
