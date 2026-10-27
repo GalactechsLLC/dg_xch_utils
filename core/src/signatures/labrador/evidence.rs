@@ -179,6 +179,38 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// Replace remaining direct witnesses while retaining independently proved statements.
+    /// Proof-count limits are checked before any native work starts.
+    pub fn prove_direct(mut self, genesis: Bytes32) -> Result<Self, Error> {
+        use zeroize::{Zeroize, Zeroizing};
+        let batches = self.direct.len().div_ceil(super::MAX_BATCH);
+        if self.proofs.len() + batches > MAX_ZK_PROOFS {
+            return Err(Error::other("wallet ZK proof count limit exceeded"));
+        }
+        let mut direct: Vec<_> = self.direct.drain().collect();
+        direct.sort_by_key(|(key, _)| (key.0.const_bytes(), key.1));
+        let mut requirements = Vec::with_capacity(direct.len());
+        let mut signatures = Zeroizing::new(Vec::with_capacity(direct.len()));
+        for (_, (requirement, mut signature)) in direct {
+            requirements.push(requirement);
+            signatures.push(signature);
+            signature.zeroize();
+        }
+        for (requirements, signatures) in requirements
+            .chunks(super::MAX_BATCH)
+            .zip(signatures.chunks(super::MAX_BATCH))
+        {
+            let proof = super::prove_profile(
+                LabradorProfile::Packed11ZkV2,
+                genesis,
+                requirements,
+                signatures,
+            )?;
+            self.proofs.push((requirements.to_vec(), proof));
+        }
+        Ok(self)
+    }
+
     pub fn proof_count(&self) -> usize {
         self.proofs.len()
     }

@@ -14,14 +14,57 @@ use dg_xch_wallet::{
 use std::{collections::HashSet, sync::Arc};
 
 fn setup() -> (CoinsetSimulator, FalconWallet, FalconWallet) {
-    let constants = ChainDefinition::falcon_development("Falcon wallet tests".into())
-        .constants()
-        .unwrap();
+    setup_for_profile(false)
+}
+
+fn setup_for_profile(zk: bool) -> (CoinsetSimulator, FalconWallet, FalconWallet) {
+    let constants = wallet_constants(zk);
+
     let alice = FalconWallet::new(FalconSigner::generate().unwrap(), Arc::new(constants)).unwrap();
     let bob = FalconWallet::new(FalconSigner::generate().unwrap(), Arc::new(constants)).unwrap();
     let mut simulator = CoinsetSimulator::new();
     simulator.constants = constants;
     (simulator, alice, bob)
+}
+
+fn wallet_constants(zk: bool) -> ConsensusConstants {
+    let mut chain = ChainDefinition::falcon_development("Falcon wallet tests".into());
+    if zk {
+        chain.falcon_aggregation =
+            Some(dg_xch_core::signatures::labrador::LabradorProfile::Packed11ZkV2);
+    }
+    chain.constants().unwrap()
+}
+
+fn assert_authorizations(bundle: &SpendBundle, count: usize, zk: bool) {
+    let auth = bundle.authorization.as_ref().unwrap();
+    if zk && count > 0 {
+        assert!(auth.transactions.is_empty());
+        #[cfg(feature = "labrador")]
+        {
+            let (_, hidden, direct) = dg_xch_core::signatures::labrador::evidence_stats(
+                count,
+                auth.labrador.as_ref().unwrap(),
+            )
+            .unwrap();
+            assert_eq!((hidden, direct), (count, 0));
+        }
+        #[cfg(not(feature = "labrador"))]
+        panic!("ZK test requires labrador");
+    } else {
+        assert_eq!(auth.transactions.len(), count);
+        assert!(auth.labrador.is_none());
+    }
+}
+
+fn corrupt_authorization(bundle: &mut SpendBundle) {
+    let auth = bundle.authorization.as_mut().unwrap();
+    if let Some(proof) = &mut auth.labrador {
+        let last = proof.len() - 1;
+        proof[last] ^= 1;
+    } else {
+        auth.transactions[0][100] ^= 1;
+    }
 }
 
 #[cfg(feature = "labrador")]
@@ -44,11 +87,18 @@ async fn wallet_zk_proofs_compose_with_direct_spends_and_survive_block_assembly(
     sim.constants = constants;
     let alice = FalconWallet::new(FalconSigner::generate().unwrap(), Arc::new(constants)).unwrap();
     let bob = FalconWallet::new(FalconSigner::generate().unwrap(), Arc::new(constants)).unwrap();
+    let mut direct_constants = constants;
+    direct_constants.falcon_aggregation = None;
+    let direct_wallet = FalconWallet::new(
+        FalconSigner::generate().unwrap(),
+        Arc::new(direct_constants),
+    )
+    .unwrap();
     let coins = [
         fund(&mut sim, &alice, 600),
         fund(&mut sim, &alice, 700),
         fund(&mut sim, &bob, 800),
-        fund(&mut sim, &bob, 900),
+        fund(&mut sim, &direct_wallet, 900),
     ];
     let a = alice
         .payment(
@@ -74,7 +124,7 @@ async fn wallet_zk_proofs_compose_with_direct_spends_and_survive_block_assembly(
         )
         .await
         .unwrap();
-    let direct = bob
+    let direct = direct_wallet
         .payment(
             &coins[3..],
             &[Payment {
@@ -86,7 +136,9 @@ async fn wallet_zk_proofs_compose_with_direct_spends_and_survive_block_assembly(
         )
         .await
         .unwrap();
+    let automatic = a.clone();
     let a = prove_zk(a, &constants, 101).await.unwrap();
+    assert_eq!(automatic, a, "already proved bundles must not be reproved");
     let b = prove_zk(b, &constants, 101).await.unwrap();
     assert!(a.authorization.as_ref().unwrap().transactions.is_empty());
     assert!(b.authorization.as_ref().unwrap().transactions.is_empty());
@@ -100,6 +152,17 @@ async fn wallet_zk_proofs_compose_with_direct_spends_and_survive_block_assembly(
         .as_ref()
         .unwrap();
     assert_eq!(labrador::evidence_stats(4, proof).unwrap(), (2, 3, 1));
+    let fully_proved = prove_zk(combined.clone(), &constants, 101).await.unwrap();
+    let auth = fully_proved.authorization.as_ref().unwrap();
+    assert!(auth.transactions.is_empty());
+    assert_eq!(
+        labrador::evidence_stats(4, auth.labrador.as_ref().unwrap()).unwrap(),
+        (3, 4, 0)
+    );
+    sim.clone().new_transaction(fully_proved).unwrap();
+    let mut corrupt = a.clone();
+    corrupt_authorization(&mut corrupt);
+    assert!(prove_zk(corrupt, &constants, 101).await.is_err());
     assert!(combine(&[a.clone(), a.clone()], &constants, 101).is_err());
     let mut missing = combined.clone();
     missing.coin_spends.remove(0);
@@ -174,6 +237,19 @@ fn fund(sim: &mut CoinsetSimulator, wallet: &FalconWallet, amount: u64) -> CoinR
 
 #[tokio::test]
 async fn falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization() {
+    falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization_for_profile(false).await;
+}
+
+#[cfg(feature = "labrador")]
+#[tokio::test]
+#[ignore = "requires native LaBRADOR worker"]
+async fn zk_falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization() {
+    falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization_for_profile(true).await;
+}
+
+async fn falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization_for_profile(
+    zk: bool,
+) {
     use dg_xch_core::{
         blockchain::coin_spend::CoinSpend,
         clvm::{
@@ -184,9 +260,7 @@ async fn falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization() 
     };
     use dg_xch_puzzles::pool_v2::{PlotNft, PoolConfig, PoolOwner};
     use dg_xch_wallet::signing::TransactionWallet;
-    let constants = ChainDefinition::falcon_development("Falcon PlotNFT".into())
-        .constants()
-        .unwrap();
+    let constants = wallet_constants(zk);
     let key = Arc::new(FalconSigner::generate().unwrap());
     let wallet = FalconWallet::new(key.clone(), Arc::new(constants)).unwrap();
     let mut sim = CoinsetSimulator::new();
@@ -208,7 +282,7 @@ async fn falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization() 
         dg_xch_wallet::pooling::fund_falcon_launch(&wallet, origin, launch.clone(), 0, sim.height)
             .await
             .unwrap();
-    assert_eq!(bundle.authorization.as_ref().unwrap().transactions.len(), 1);
+    assert_authorizations(&bundle, 1, zk);
     sim.new_transaction(bundle).unwrap();
     assert!(sim.coin_record(launch.singleton.name()).is_some());
     let definition = PlotNft {
@@ -262,7 +336,7 @@ async fn falcon_plotnft_launch_and_owner_member_use_only_falcon_authorization() 
             .unwrap(),
     };
     let signed = wallet.authorize(vec![spend], sim.height).await.unwrap();
-    assert_eq!(signed.authorization.as_ref().unwrap().transactions.len(), 1);
+    assert_authorizations(&signed, 1, zk);
     let mut changed = signed.clone();
     changed.coin_spends[0].solution = Program::to(vec![SExp::from(vec![9u8; 32])])
         .serialized()
@@ -463,7 +537,21 @@ async fn independent_wallet_bundles_combine_without_losing_occurrences() {
 
 #[tokio::test]
 async fn cat_partial_transfers_and_nft_round_trip_use_falcon_and_preserve_assets() {
-    let (mut sim, alice, bob) = setup();
+    cat_partial_transfers_and_nft_round_trip_use_falcon_and_preserve_assets_for_profile(false)
+        .await;
+}
+
+#[cfg(feature = "labrador")]
+#[tokio::test]
+#[ignore = "requires native LaBRADOR worker"]
+async fn zk_cat_partial_transfers_and_nft_round_trip_use_falcon_and_preserve_assets() {
+    cat_partial_transfers_and_nft_round_trip_use_falcon_and_preserve_assets_for_profile(true).await;
+}
+
+async fn cat_partial_transfers_and_nft_round_trip_use_falcon_and_preserve_assets_for_profile(
+    zk: bool,
+) {
+    let (mut sim, alice, bob) = setup_for_profile(zk);
     let funding = fund(&mut sim, &alice, 2000);
     let mint = build_asset_transaction(
         &alice,
@@ -497,7 +585,7 @@ async fn cat_partial_transfers_and_nft_round_trip_use_falcon_and_preserve_assets
     )
     .await
     .unwrap();
-    assert_eq!(send.authorization.as_ref().unwrap().transactions.len(), 2);
+    assert_authorizations(&send, 2, zk);
     let mut bad_lineage = send.clone();
     bad_lineage.coin_spends[0].coin.parent_coin_info = [91; 32].into();
     assert!(sim.new_transaction(bad_lineage).is_err());
@@ -591,7 +679,7 @@ async fn cat_partial_transfers_and_nft_round_trip_use_falcon_and_preserve_assets
         .await
         .unwrap();
         let mut bad = transfer.clone();
-        bad.authorization.as_mut().unwrap().transactions[0][100] ^= 1;
+        corrupt_authorization(&mut bad);
         assert!(sim.new_transaction(bad).is_err());
         sim.new_transaction(transfer.clone()).unwrap();
         current = assets(&sim, &transfer, recipient.puzzle_hash())
@@ -720,8 +808,19 @@ async fn mixed_256_signature_wallet_batch_fits_the_mempool_budget() {
 
 #[tokio::test]
 async fn falcon_offers_round_trip_take_and_cancel_with_shared_cat_rules() {
+    falcon_offers_round_trip_take_and_cancel_with_shared_cat_rules_for_profile(false).await;
+}
+
+#[cfg(feature = "labrador")]
+#[tokio::test]
+#[ignore = "requires native LaBRADOR worker"]
+async fn zk_falcon_offers_round_trip_take_and_cancel_with_shared_cat_rules() {
+    falcon_offers_round_trip_take_and_cancel_with_shared_cat_rules_for_profile(true).await;
+}
+
+async fn falcon_offers_round_trip_take_and_cancel_with_shared_cat_rules_for_profile(zk: bool) {
     use dg_xch_wallet::offers::{OfferAmount, OfferAsset, OfferInputs, review};
-    let (mut sim, maker, taker) = setup();
+    let (mut sim, maker, taker) = setup_for_profile(zk);
     let maker_coins = [fund(&mut sim, &maker, 200)];
     let funding = [fund(&mut sim, &taker, 200)];
     let empty = HashSet::new();
@@ -777,21 +876,33 @@ async fn falcon_offers_round_trip_take_and_cancel_with_shared_cat_rules() {
             .is_err()
     );
     let completed = taker_inputs.take(&offer.text, 0).await.unwrap();
-    assert!(completed.authorization.as_ref().unwrap().transactions.len() >= 2);
+    assert_authorizations(&offer.maker_bundle, 1, zk);
+    assert_authorizations(&completed, 2, zk);
     let cancellation = maker_inputs.cancel(&offer.maker_bundle, 1).await.unwrap();
     let mut cancelled = sim.clone();
     cancelled.new_transaction(cancellation).unwrap();
     assert!(cancelled.new_transaction(completed.clone()).is_err());
     let mut forged = completed.clone();
-    forged.authorization.as_mut().unwrap().transactions[0][20] ^= 1;
+    corrupt_authorization(&mut forged);
     assert!(sim.clone().new_transaction(forged).is_err());
     sim.new_transaction(completed).unwrap();
 }
 
 #[tokio::test]
 async fn did_launch_and_normal_transfer_use_falcon_owner_authorization() {
+    did_launch_and_normal_transfer_use_falcon_owner_authorization_for_profile(false).await;
+}
+
+#[cfg(feature = "labrador")]
+#[tokio::test]
+#[ignore = "requires native LaBRADOR worker"]
+async fn zk_did_launch_and_normal_transfer_use_falcon_owner_authorization() {
+    did_launch_and_normal_transfer_use_falcon_owner_authorization_for_profile(true).await;
+}
+
+async fn did_launch_and_normal_transfer_use_falcon_owner_authorization_for_profile(zk: bool) {
     use dg_xch_wallet::assets::DidType;
-    let (mut sim, owner, recipient) = setup();
+    let (mut sim, owner, recipient) = setup_for_profile(zk);
     let funding = [fund(&mut sim, &owner, 100)];
     let empty = HashSet::new();
     let launch = build_asset_transaction(
@@ -828,14 +939,8 @@ async fn did_launch_and_normal_transfer_use_falcon_owner_authorization() {
     )
     .await
     .unwrap();
-    assert!(
-        !transfer
-            .authorization
-            .as_ref()
-            .unwrap()
-            .transactions
-            .is_empty()
-    );
+    assert_authorizations(&launch, 2, zk);
+    assert_authorizations(&transfer, 1, zk);
     sim.new_transaction(transfer.clone()).unwrap();
     let received = assets(&sim, &transfer, recipient.puzzle_hash());
     assert!(

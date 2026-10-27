@@ -40,11 +40,20 @@ jobs:
       - name: Test profile isolation and wallet and pool behavior
         run: |
           cargo test --locked -p dg_xch_core --lib branding::tests --features '${{ matrix.crypto }}'
-          cargo test --locked -p dg_xch_core --test clvm_runtime_gaps --test flag_ladder --features '${{ matrix.crypto }}'
+          cargo test --locked -p dg_xch_core --test clvm_runtime_gaps --test flag_ladder --test labrador --features '${{ matrix.crypto }}'
           cargo test --locked -p dg_xch_gui -p dg_xch_farmer --lib --features '${{ matrix.crypto }}'
-          cargo test --locked -p dg_xch_wallet --lib --test standard_wallet --test falcon_wallet --features '${{ matrix.crypto }}'
+          cargo test --locked -p dg_xch_wallet --lib --test standard_wallet --test falcon_wallet --test rpc_sync --features '${{ matrix.crypto }}'
           cargo test --locked -p dg_xch_pool --lib --features '${{ matrix.crypto }}'
           cargo test --locked -p dg_xch_dev_tools --test stack_profiles --features '${{ matrix.crypto }}'
+      - name: Test native wallet ZK proving and submission
+        if: matrix.profile == 'post-quantum'
+        timeout-minutes: 20
+        env:
+          DGX_LABRADOR_WORKER: ${{ github.workspace }}/target/release/dg_xch_labrador_worker
+        run: |
+          cargo test --locked -p dg_xch_core --features labrador --test labrador real_wallet_zk_proof -- --ignored --exact
+          cargo test --locked -p dg_xch_wallet --features labrador \
+          --test falcon_wallet --test rpc_sync -- --ignored --test-threads=1
       - name: Package executable products
         shell: bash
         run: |

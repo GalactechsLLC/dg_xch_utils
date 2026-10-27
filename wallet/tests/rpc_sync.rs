@@ -195,6 +195,7 @@ impl Fixture {
                 json!({"success":true,"coin_records":records})
             }
             "/get_coin_records_by_hint" => json!({"success":true,"coin_records":[]}),
+            "/push_tx" => json!({"success":true,"status":"SUCCESS"}),
             _ => {
                 return (
                     404,
@@ -269,7 +270,7 @@ impl MockRpc {
                         length = value.trim().parse::<usize>().unwrap();
                     }
                 }
-                assert!(length <= 65536);
+                assert!(length <= 2 * 1024 * 1024);
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body).unwrap();
                 drop(reader);
@@ -569,4 +570,124 @@ async fn genesis_is_checked_before_capability_negotiation() {
     );
     assert_eq!(mock.count("/get_rpc_capabilities"), 0);
     assert_eq!(mock.count("/get_wallet_coin_records"), 0);
+}
+
+#[cfg(feature = "labrador")]
+#[tokio::test]
+#[ignore = "requires native LaBRADOR worker and loopback RPC"]
+async fn zk_wallet_session_persists_and_broadcasts_only_proofs() {
+    zk_wallet_session(false).await;
+}
+
+#[cfg(feature = "labrador")]
+#[tokio::test]
+async fn zk_wallet_prover_failure_never_broadcasts_or_reserves_coins() {
+    const CHILD: &str = "DGX_TEST_MISSING_ZK_WORKER";
+    if std::env::var_os(CHILD).is_none() {
+        let directory = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "zk_wallet_prover_failure_never_broadcasts_or_reserves_coins",
+            ])
+            .env(CHILD, "1")
+            .env(
+                "DGX_LABRADOR_WORKER",
+                directory.path().join("missing-worker"),
+            )
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    zk_wallet_session(true).await;
+}
+
+#[cfg(feature = "labrador")]
+async fn zk_wallet_session(fail: bool) {
+    use dg_xch_core::{
+        blockchain::spend_bundle::SpendBundle,
+        consensus::{
+            block_generator::{conditions_from_spend_bundle, validate_block_authorization},
+            chain_definition::ChainDefinition,
+        },
+        signatures::labrador::{LabradorProfile, evidence_stats},
+    };
+    use dg_xch_wallet::accounts::AccountSecret;
+    let mut definition = ChainDefinition::falcon_development("wallet RPC ZK".into());
+    definition.falcon_aggregation = Some(LabradorProfile::Packed11ZkV2);
+    let constants = definition.constants().unwrap();
+    let secret = AccountSecret::Falcon(zeroize::Zeroizing::new([47; 64]));
+    let account_id = secret.id().unwrap();
+    let mock = MockRpc::new(Capability::Version(1));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("zk.sqlite");
+    let mut session = WalletSession::new_with_secret(
+        secret,
+        mock.client.clone(),
+        Arc::new(constants),
+        genesis(),
+        path.clone(),
+    )
+    .await
+    .unwrap();
+    mock.fixture.lock().unwrap().records = coins(session.snapshot().receive_puzzle_hash, 1);
+    let result = session.send([71; 32].into(), 1, 0).await;
+    if fail {
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot start LaBRADOR worker")
+        );
+        assert_eq!(mock.count("/push_tx"), 0);
+        assert!(session.transactions().is_empty());
+        assert_eq!(session.snapshot().spendable, session.snapshot().confirmed);
+    } else {
+        let id = result.unwrap();
+        assert_eq!(mock.count("/push_tx"), 1);
+        let bundle: SpendBundle = {
+            let fixture = mock.fixture.lock().unwrap();
+            let (_, request) = fixture
+                .calls
+                .iter()
+                .find(|(path, _)| path == "/push_tx")
+                .unwrap();
+            serde_json::from_value(request["spend_bundle"].clone()).unwrap()
+        };
+        assert_eq!(bundle.name().unwrap(), id);
+        let auth = bundle.authorization.as_ref().unwrap();
+        assert!(auth.transactions.is_empty());
+        assert_eq!(
+            evidence_stats(1, auth.labrador.as_ref().unwrap()).unwrap(),
+            (1, 1, 0)
+        );
+        let conditions = conditions_from_spend_bundle(&bundle, 42, &constants).unwrap();
+        validate_block_authorization(
+            &conditions,
+            &auth.transaction_witness().unwrap(),
+            &constants,
+        )
+        .unwrap();
+        assert_eq!(session.transactions()[0].bundle, bundle);
+    }
+    session.checkpoint().await.unwrap();
+    drop(session);
+    let mut database = WalletDatabase::open(&path, &account_id, genesis())
+        .await
+        .unwrap();
+    let stored = database.load().await.unwrap().unwrap();
+    if fail {
+        assert!(stored.transactions.is_empty());
+        assert!(stored.reserved_coins().is_empty());
+    } else {
+        assert_eq!(stored.transactions.len(), 1);
+        let auth = stored.transactions[0]
+            .bundle
+            .authorization
+            .as_ref()
+            .unwrap();
+        assert!(auth.transactions.is_empty());
+        assert!(auth.labrador.is_some());
+    }
 }

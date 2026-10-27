@@ -260,3 +260,31 @@ fn real_wallet_zk_batch() {
     assert_eq!(proof[42 + 40 * requirements.len() + 5], 1);
     labrador::verify_evidence(profile, genesis, &requirements, &proof).unwrap();
 }
+
+#[test]
+fn wallet_prover_rejects_excessive_proof_count_before_native_work() {
+    let count = labrador::MAX_BATCH * labrador::MAX_ZK_PROOFS + 1;
+    let requirements: Vec<_> = (0..count)
+        .map(|index| SignatureRequirement::Falcon {
+            occurrence: SignatureOccurrence {
+                coin_id: [1; 32].into(),
+                condition_index: index as u32,
+            },
+            public_key: Box::new([0; 897]),
+            message: vec![],
+        })
+        .collect();
+    let signatures = vec![[0; 666]; count];
+    let mut evidence = labrador::Evidence::default();
+    evidence
+        .add(
+            &requirements,
+            AuthorizationWitness::FalconDirect(&signatures),
+        )
+        .unwrap();
+    let error = match evidence.prove_direct([2; 32].into()) {
+        Ok(_) => panic!("excessive proof count was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(error.to_string(), "wallet ZK proof count limit exceeded");
+}

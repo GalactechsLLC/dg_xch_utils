@@ -281,7 +281,7 @@ impl TransactionWallet for FalconWallet {
             labrador: None,
         }
         .into();
-        Ok(bundle)
+        crate::signing::finalize_authorization(bundle, &self.constants, height).await
     }
 }
 
@@ -289,12 +289,26 @@ impl TransactionWallet for FalconWallet {
 /// ZK proof before RPC submission. The private signing key never enters the prover.
 #[cfg(feature = "labrador")]
 pub async fn prove_zk(
+    bundle: SpendBundle,
+    constants: &ConsensusConstants,
+    height: u32,
+) -> Result<SpendBundle, Error> {
+    let constants = *constants;
+    tokio::task::spawn_blocking(move || prove_zk_blocking(bundle, &constants, height))
+        .await
+        .map_err(Error::other)?
+}
+
+#[cfg(feature = "labrador")]
+fn prove_zk_blocking(
     mut bundle: SpendBundle,
     constants: &ConsensusConstants,
     height: u32,
 ) -> Result<SpendBundle, Error> {
     use dg_xch_core::signatures::labrador::{self, LabradorProfile};
-    if constants.falcon_aggregation != Some(LabradorProfile::Packed11ZkV2) {
+    if constants.signature_profile.is_bls()
+        || constants.falcon_aggregation != Some(LabradorProfile::Packed11ZkV2)
+    {
         return Err(Error::other(
             "wallet ZK requires the explicit ZK chain profile",
         ));
@@ -307,7 +321,6 @@ pub async fn prove_zk(
         .ok_or_else(|| Error::other("missing wallet authorization"))?;
     if auth.genesis != constants.genesis_challenge
         || !auth.header.is_empty()
-        || auth.labrador.is_some()
         || bundle.aggregated_signature
             != transaction_reference(constants.genesis_challenge, &conditions.falcon_signatures)
     {
@@ -318,18 +331,19 @@ pub async fn prove_zk(
         .iter()
         .map(|c| c.requirement())
         .collect::<Vec<_>>();
-    let signatures = auth.transactions.clone();
+    validate_block_authorization(&conditions, &auth.transaction_witness()?, constants)
+        .map_err(Error::other)?;
+    if requirements.is_empty() {
+        return Ok(bundle);
+    }
+    if let Some(proof) = &auth.labrador
+        && labrador::evidence_stats(requirements.len(), proof)?.2 == 0
+    {
+        return Ok(bundle);
+    }
+    let mut evidence = labrador::Evidence::default();
+    evidence.add(&requirements, auth.transaction_witness()?)?;
     let genesis = constants.genesis_challenge;
-    let proof = tokio::task::spawn_blocking(move || {
-        labrador::prove_profile(
-            LabradorProfile::Packed11ZkV2,
-            genesis,
-            &requirements,
-            &signatures,
-        )
-    })
-    .await
-    .map_err(Error::other)??;
     let auth = bundle
         .authorization
         .as_mut()
@@ -338,7 +352,9 @@ pub async fn prove_zk(
     use zeroize::Zeroize;
     auth.transactions.zeroize();
     auth.transactions.clear();
-    auth.labrador = Some(proof);
+    *auth = evidence
+        .prove_direct(genesis)?
+        .finish(genesis, &requirements)?;
     Ok(bundle)
 }
 

@@ -284,6 +284,7 @@ impl TransactionWallet for AccountWallet {
                         key.sign_message(r.message.as_slice()).map_err(Error::other)
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
+                drop(keys);
                 bundle.aggregated_signature = transaction_reference(
                     w.constants.genesis_challenge,
                     &conditions.falcon_signatures,
@@ -295,7 +296,7 @@ impl TransactionWallet for AccountWallet {
                     labrador: None,
                 }
                 .into();
-                Ok(bundle)
+                crate::signing::finalize_authorization(bundle, &w.constants, height).await
             }
         }
     }

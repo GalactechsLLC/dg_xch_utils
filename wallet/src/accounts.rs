@@ -1098,6 +1098,13 @@ impl WalletSession {
         bundle: SpendBundle,
         replacement: Option<Bytes32>,
     ) -> Result<Bytes32, Error> {
+        use crate::signing::TransactionWallet;
+        let bundle = crate::signing::finalize_authorization(
+            bundle,
+            self.wallet.consensus_constants(),
+            self.stored.snapshot.height.unwrap_or(0),
+        )
+        .await?;
         let name = bundle.name()?;
         let mut next = self.stored.clone();
         let offer = if let Some(replacement) = replacement {

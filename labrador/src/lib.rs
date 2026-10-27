@@ -149,12 +149,21 @@ fn run(data: Vec<u8>) -> Result<Vec<u8>, Error> {
     let executable = std::env::var_os("DGX_LABRADOR_WORKER")
         .map(std::path::PathBuf::from)
         .unwrap_or(std::env::current_exe()?.with_file_name("dg_xch_labrador_worker"));
-    let mut child = Command::new(executable)
+    let mut child = Command::new(&executable)
         .env_clear()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()?;
+        .spawn()
+        .map_err(|error| {
+            Error::new(
+                error.kind(),
+                format!(
+                    "cannot start LaBRADOR worker {}: {error}; install the matching dg_xch_labrador_worker beside the application or set DGX_LABRADOR_WORKER",
+                    executable.display()
+                ),
+            )
+        })?;
     let mut input = child.stdin.take().unwrap();
     let output = child.stdout.take().unwrap();
     let start = Instant::now();

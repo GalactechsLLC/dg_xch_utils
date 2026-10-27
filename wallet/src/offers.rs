@@ -374,7 +374,13 @@ impl<W: TransactionWallet> OfferInputs<'_, W> {
         if spends.is_empty() {
             return Ok(SpendBundle::empty());
         }
-        self.wallet.authorize(spends, self.height).await
+        let bundle = self.wallet.authorize(spends, self.height).await?;
+        crate::signing::finalize_authorization(
+            bundle,
+            self.wallet.consensus_constants(),
+            self.height,
+        )
+        .await
     }
 
     async fn build(
@@ -584,7 +590,12 @@ impl<W: TransactionWallet> OfferInputs<'_, W> {
         };
         completed.coin_spends.extend(settlement_spends);
         completed.validate(Some(MAX_COST), 0, self.wallet.consensus_constants(), false)?;
-        Ok(completed)
+        crate::signing::finalize_authorization(
+            completed,
+            self.wallet.consensus_constants(),
+            self.height,
+        )
+        .await
     }
 
     pub async fn cancel(&self, maker: &SpendBundle, fee: u64) -> Result<SpendBundle, Error> {

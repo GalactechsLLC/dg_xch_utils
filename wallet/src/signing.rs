@@ -8,6 +8,27 @@ use dg_xch_core::{
 use num_traits::ToPrimitive;
 use std::{collections::HashMap, io::Error};
 
+/// Finalize authorization according to the selected chain, before exporting,
+/// persisting, or broadcasting wallet transactions. ZK failures never downgrade.
+pub async fn finalize_authorization(
+    bundle: SpendBundle,
+    constants: &dg_xch_core::consensus::constants::ConsensusConstants,
+    height: u32,
+) -> Result<SpendBundle, Error> {
+    if constants.falcon_aggregation
+        == Some(dg_xch_core::signatures::labrador::LabradorProfile::Packed11ZkV2)
+    {
+        #[cfg(feature = "labrador")]
+        return crate::falcon::prove_zk(bundle, constants, height).await;
+        #[cfg(not(feature = "labrador"))]
+        return Err(Error::other(
+            "wallet ZK requires a build with the labrador feature",
+        ));
+    }
+    let _ = height;
+    Ok(bundle)
+}
+
 #[async_trait]
 pub trait TransactionWallet: Send + Sync {
     fn consensus_constants(&self) -> &dg_xch_core::consensus::constants::ConsensusConstants;
@@ -52,5 +73,38 @@ impl TransactionWallet for MemoryWallet {
                 .ok_or_else(|| Error::other("invalid network cost limit"))?,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dg_xch_core::{
+        consensus::constants::MAINNET,
+        signatures::{SignatureProfile, labrador::LabradorProfile},
+    };
+
+    #[tokio::test]
+    async fn finalization_preserves_non_zk_profiles_and_rejects_missing_zk_authorization() {
+        let bundle = SpendBundle::empty();
+        assert_eq!(
+            finalize_authorization(bundle.clone(), &MAINNET, 0)
+                .await
+                .unwrap(),
+            bundle
+        );
+        let mut constants = MAINNET;
+        constants.signature_profile = SignatureProfile::FnDsa512V2;
+        for aggregation in [None, Some(LabradorProfile::Packed11V2)] {
+            constants.falcon_aggregation = aggregation;
+            assert_eq!(
+                finalize_authorization(bundle.clone(), &constants, 0)
+                    .await
+                    .unwrap(),
+                bundle
+            );
+        }
+        constants.falcon_aggregation = Some(LabradorProfile::Packed11ZkV2);
+        assert!(finalize_authorization(bundle, &constants, 0).await.is_err());
     }
 }
