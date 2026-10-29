@@ -78,7 +78,7 @@ impl WalletStore for MemoryWalletStore {
 
     fn next_index(&self) -> u32 {
         self.current_index
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |index| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |index| {
                 Some(index.saturating_add(1))
             })
             .map_or(u32::MAX, |index| index.saturating_add(1))
