@@ -52,8 +52,8 @@ pub const fn fse_tablestep(table_size: u32) -> u32 {
 }
 
 /*-**************************************************************
-*  FSE NCount encoding-decoding
-****************************************************************/
+ *  FSE NCount encoding-decoding
+ ****************************************************************/
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::cast_sign_loss)]
