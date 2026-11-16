@@ -797,6 +797,37 @@ mod certificate_tests {
     }
 
     #[test]
+    fn public_peer_certificate_matches_current_chia_ca_identifier() {
+        use der::DecodePem;
+        use x509_cert::Certificate;
+        use x509_cert::ext::pkix::{AuthorityKeyIdentifier, SubjectKeyIdentifier};
+
+        // Chia renewed this public CA on 2025-11-19, keeping its key and serial
+        // but adding this SHA-1 subject-key identifier. An AKI synthesized from
+        // the older CA instead uses SHA-256 and OpenSSL rejects the client leaf.
+        // Source: Chia-Network/chia-blockchain, chia/ssl/chia_ca.crt.
+        let expected = hex::decode("3e0a4efb9c7b8e587eeeaa5804a57a44b050165a").unwrap();
+        let (leaf, key) =
+            generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes()).unwrap();
+        validate_ssl_cert_and_key(&leaf, &key).unwrap();
+        let leaf_certificate = Certificate::from_pem(&leaf).unwrap();
+        let (_, authority) = leaf_certificate
+            .tbs_certificate()
+            .get_extension::<AuthorityKeyIdentifier>()
+            .unwrap()
+            .expect("peer certificate must identify its issuer");
+        assert_eq!(authority.key_identifier.unwrap().as_bytes(), expected);
+        let ca = Certificate::from_pem(CHIA_CA_CRT).unwrap();
+        let (_, subject) = ca
+            .tbs_certificate()
+            .get_extension::<SubjectKeyIdentifier>()
+            .unwrap()
+            .expect("the current Chia CA includes its subject-key identifier");
+        assert_eq!(subject.0.as_bytes(), expected);
+        verify_leaf(CHIA_CA_CRT.as_bytes(), &leaf, &["chia.net"]);
+    }
+
+    #[test]
     fn public_chia_ca_and_pkcs8_and_pkcs1_signing_keys_are_supported() {
         let (leaf, key) =
             generate_ca_signed_cert_data(CHIA_CA_CRT.as_bytes(), CHIA_CA_KEY.as_bytes()).unwrap();
